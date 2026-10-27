@@ -33,7 +33,6 @@ pub struct FeatureSnapshot {
     pub enable_poseidon_syscall: bool,
     pub remaining_compute_units_syscall_enabled: bool,
     pub enable_alt_bn128_compression_syscall: bool,
-    pub abort_on_invalid_curve: bool,
     pub get_sysvar_syscall_enabled: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub move_stake_and_move_lamports_ixs: bool,
@@ -78,6 +77,7 @@ pub struct FeatureSnapshot {
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
     pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub secp256r1_syscall_enabled: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -114,7 +114,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_compression_syscall: is_active(
                 &enable_alt_bn128_compression_syscall::ID,
             ),
-            abort_on_invalid_curve: is_active(&abort_on_invalid_curve::ID),
             get_sysvar_syscall_enabled: is_active(&get_sysvar_syscall_enabled::ID),
             enable_get_epoch_stake_syscall: is_active(&enable_get_epoch_stake_syscall::ID),
             move_stake_and_move_lamports_ixs: is_active(&move_stake_and_move_lamports_ixs::ID),
@@ -177,6 +176,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
             pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
+            secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
         }
     }
 }
@@ -289,7 +289,6 @@ impl FeatureSet {
             enable_bpf_loader_set_authority_checked_ix: snapshot
                 .enable_bpf_loader_set_authority_checked_ix,
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
-            abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
@@ -338,6 +337,7 @@ impl FeatureSet {
                 .early_instruction_trace_overflow_detection,
             unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
             pass_input_metadata_in_vm_r3_r5: snapshot.pass_input_metadata_in_vm_r3_r5,
+            secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
         }
     }
 }
@@ -1543,6 +1543,10 @@ pub mod pass_input_metadata_in_vm_r3_r5 {
     solana_pubkey::declare_id!("r3r5hXFhEZLB2VCDXmUysuDZj4oMbtW8JRVUqvQSgqE");
 }
 
+pub mod secp256r1_syscall_enabled {
+    solana_pubkey::declare_id!("SeRjtX7Abiq5hQYbzdCny266oveDseHZh9tnrs2cdVC");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2648,6 +2652,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             pass_input_metadata_in_vm_r3_r5::id(),
             "SIMD-0683: Pass ABIv1 input metadata via registers r3-r5",
+        ),
+        (
+            secp256r1_syscall_enabled::id(),
+            "SIMD-0565: Enable secp256r1 syscalls",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

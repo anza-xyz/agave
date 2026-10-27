@@ -783,13 +783,13 @@ mod tests {
             TransactionMessage as ProtoTransactionMessage, VoteAccountVersion,
             acct_state::DataRepr,
         },
-        solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
+        solana_account::Account,
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_runtime::sysvar_account::create_account,
+        solana_runtime::sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account},
         solana_sdk_ids::{native_loader, system_program, sysvar},
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
@@ -844,7 +844,7 @@ mod tests {
     {
         input_account(
             pubkey,
-            create_account(value, DUMMY_INHERITABLE_ACCOUNT_FIELDS).into(),
+            create_account(value, RENT_UNADJUSTED_INITIAL_BALANCE).into(),
         )
     }
 

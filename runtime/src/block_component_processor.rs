@@ -1357,7 +1357,7 @@ mod tests {
             marker_step(
                 VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                     parent_slot,
-                    parent_block_id: Hash::default(),
+                    parent_block_id: BlockId::default(),
                 }),
                 false,
             )

@@ -573,7 +573,7 @@ impl ParentInfo {
 
         Some(ParentInfo {
             parent_slot: header.parent_slot,
-            parent_block_id: header.parent_block_id,
+            parent_block_id: header.parent_block_id.to_hash(),
             replay_fec_set_index: 0,
         })
     }

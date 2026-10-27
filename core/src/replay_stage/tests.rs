@@ -287,7 +287,7 @@ fn insert_update_parent_slot(
 ) {
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: block_header_parent_slot,
-        parent_block_id: Hash::new_unique(),
+        parent_block_id: BlockId::new_unique(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: update_parent_slot,
@@ -3866,7 +3866,7 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
-        parent_block_id: Hash::default(),
+        parent_block_id: BlockId::default(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
@@ -3969,7 +3969,7 @@ fn test_before_update_soft_dead() {
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
-        parent_block_id: Hash::default(),
+        parent_block_id: BlockId::default(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,

@@ -721,7 +721,10 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
-            agave_scheduler_handshake::{ClientLogon, setup_local_session},
+            agave_scheduler_handshake::{
+                AgaveSimulateWorkerSession, ClientLogon, ClientSimulateWorkerSession,
+                setup_local_session,
+            },
             agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
             crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
@@ -763,6 +766,8 @@ pub(crate) mod external {
             receiver: shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
             sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
             should_drain_executes: bool,
+            simulate_workers: Vec<AgaveSimulateWorkerSession>,
+            client_simulate_workers: Option<ClientSimulateWorkerSession>,
         }
 
         impl ExternalTestFrame {
@@ -911,15 +916,17 @@ pub(crate) mod external {
             let logon = ClientLogon {
                 worker_count: 1,
                 check_worker_count: 1,
+                simulate_worker_count: 1,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
                 progress_tracker_capacity: 16,
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
-                flags: 0,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
+                pack_to_simulate_worker_capacity: 16,
+                simulate_worker_to_pack_capacity: 16,
             };
             let (mut agave_session, mut client_session) = setup_local_session(logon).unwrap();
             let agave_worker = agave_session.workers.pop().unwrap();
@@ -955,6 +962,8 @@ pub(crate) mod external {
                 receiver: agave_worker.pack_to_worker,
                 sender: agave_worker.worker_to_pack,
                 should_drain_executes: false,
+                simulate_workers: agave_session.simulate_workers,
+                client_simulate_workers: client_session.simulate_workers,
             }
         }
 
@@ -1429,6 +1438,61 @@ pub(crate) mod external {
             assert!(responses[0].fee_payer_balance > 0);
             assert_eq!(test_frame.bank.get_balance(&recipient), 1);
 
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_simulation_worker_uses_handshake_queues() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+            let agave_session = test_frame.simulate_workers.pop().unwrap();
+            let client_session = test_frame.client_simulate_workers.take().unwrap();
+            let (record_sender, _record_receiver) = record_channels(false);
+            let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+            let mut worker = ExternalWorker::new(
+                Arc::new(AtomicBool::new(false)),
+                Consumer::new(
+                    Committer::new(None, replay_vote_sender, None),
+                    TransactionRecorder::new(record_sender),
+                    None,
+                ),
+                agave_session.allocator,
+                test_frame.shared_leader_state.clone(),
+            );
+
+            client_session
+                .pack_to_simulate_worker
+                .try_write(PackToExecutionWorkerMessage {
+                    flags: 0,
+                    max_working_slot: test_frame.bank.slot(),
+                    batch: batch.region,
+                })
+                .unwrap();
+            assert_matches!(
+                worker
+                    .iterate_simulation(
+                        &agave_session.pack_to_simulate_worker,
+                        &agave_session.simulate_worker_to_pack,
+                    )
+                    .unwrap(),
+                IterationResult::ProcessedMessage
+            );
+
+            let response = client_session.simulate_worker_to_pack.try_read().unwrap();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
             test_frame.free_batch(batch);
         }
 

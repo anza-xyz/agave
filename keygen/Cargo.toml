@@ -35,6 +35,7 @@ bs58 = { workspace = true, features = ["std"] }
 clap = { version = "3.2.23", default-features = false, features = ["cargo", "std", "suggestions"] }
 dirs-next = { workspace = true }
 num_cpus = { workspace = true }
+rand = { workspace = true }
 serde_json = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-clap-v3-utils = { workspace = true }

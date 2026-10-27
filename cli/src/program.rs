@@ -3,11 +3,11 @@ use {
         checks::*,
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error,
+            log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{
-            ComputeUnitConfig, UpdateComputeUnitLimitResult, WithComputeUnitConfig,
-            simulate_and_update_compute_unit_limit_versioned,
+            ComputeUnitConfig, WithComputeUnitConfig, set_compute_unit_limit,
+            simulate_and_update_compute_unit_limit,
         },
         feature::{CliFeatureStatus, status_from_account},
     },
@@ -15,6 +15,7 @@ use {
     bip39::{Language, Mnemonic},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
+    rand::RngCore,
     solana_account::state_traits::StateMutWincode as _,
     solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
@@ -69,7 +70,7 @@ use {
         verifier::{LocalVerifier, RequisiteVerifier},
         vm::Config,
     },
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
     solana_signature::Signature,
     solana_signer::Signer,
     solana_syscalls::create_program_runtime_environment,
@@ -79,7 +80,7 @@ use {
         node_address_service::LeaderTpuCacheServiceConfig,
         websocket_node_address_service::WebsocketNodeAddressService,
     },
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
     std::{
         fs::File,
@@ -1623,7 +1624,7 @@ async fn process_program_upgrade(
     let blockhash = blockhash_query
         .get_blockhash(&rpc_client, config.commitment)
         .await?;
-    let message = Message::new_with_blockhash(
+    let message = VersionedMessage::Legacy(Message::new_with_blockhash(
         &[loader_v3_instruction::upgrade(
             &program_id,
             &buffer_pubkey,
@@ -1632,14 +1633,11 @@ async fn process_program_upgrade(
         )],
         Some(&fee_payer_signer.pubkey()),
         &blockhash,
-    );
+    ));
 
+    let signers = &[fee_payer_signer, upgrade_authority_signer];
+    let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
     if sign_only {
-        let mut tx = Transaction::new_unsigned(message);
-        let signers = &[fee_payer_signer, upgrade_authority_signer];
-        // Using try_partial_sign here because fee_payer_signer might not be the fee payer we
-        // end up using for this transaction (it might be NullSigner in `--sign-only` mode).
-        tx.try_partial_sign(signers, blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1663,8 +1661,9 @@ async fn process_program_upgrade(
         )
         .await?;
 
-        let message = VersionedMessage::Legacy(message);
-        let fee = rpc_client.get_fee_for_versioned_message(&message).await?;
+        let fee = rpc_client
+            .get_fee_for_versioned_message(&tx.message)
+            .await?;
         check_account_for_spend_and_fee_with_commitment(
             &rpc_client,
             &fee_payer_signer.pubkey(),
@@ -1673,8 +1672,6 @@ async fn process_program_upgrade(
             config.commitment,
         )
         .await?;
-        let signers = &[fee_payer_signer, upgrade_authority_signer];
-        let tx = VersionedTransaction::try_new(message, &dedup_signers(signers))?;
         let final_tx_sig = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -1797,8 +1794,8 @@ async fn process_set_authority(
         .get_blockhash(rpc_client, config.commitment)
         .await?;
 
-    let mut tx = if let Some(ref pubkey) = program_pubkey {
-        Transaction::new_unsigned(Message::new(
+    let message = if let Some(ref pubkey) = program_pubkey {
+        VersionedMessage::Legacy(Message::new(
             &[loader_v3_instruction::set_upgrade_authority(
                 pubkey,
                 &authority_signer.pubkey(),
@@ -1808,7 +1805,7 @@ async fn process_set_authority(
         ))
     } else if let Some(pubkey) = buffer_pubkey {
         if let Some(ref new_authority) = new_authority {
-            Transaction::new_unsigned(Message::new(
+            VersionedMessage::Legacy(Message::new(
                 &[loader_v3_instruction::set_buffer_authority(
                     &pubkey,
                     &authority_signer.pubkey(),
@@ -1825,8 +1822,8 @@ async fn process_set_authority(
 
     let signers = &[config.signers[0], authority_signer];
 
+    let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(signers, blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1835,7 +1832,6 @@ async fn process_set_authority(
             },
         )
     } else {
-        tx.try_sign(signers, blockhash)?;
         rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -1877,7 +1873,7 @@ async fn process_set_authority_checked(
         .get_blockhash(rpc_client, config.commitment)
         .await?;
 
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[loader_v3_instruction::set_upgrade_authority_checked(
             &program_pubkey,
             &authority_signer.pubkey(),
@@ -1887,8 +1883,8 @@ async fn process_set_authority_checked(
     ));
 
     let signers = &[config.signers[0], authority_signer, new_authority_signer];
+    let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(signers, blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1897,7 +1893,6 @@ async fn process_set_authority_checked(
             },
         )
     } else {
-        tx.try_sign(signers, blockhash)?;
         rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -2255,7 +2250,7 @@ async fn close(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let blockhash = rpc_client.get_latest_blockhash().await?;
 
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[loader_v3_instruction::close_any(
             account_pubkey,
             recipient_pubkey,
@@ -2265,7 +2260,12 @@ async fn close(
         Some(&config.signers[0].pubkey()),
     ));
 
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
+    let tx = message_into_signed_transaction(
+        message,
+        &[config.signers[0], authority_signer],
+        blockhash,
+        false,
+    )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -2522,9 +2522,14 @@ async fn process_extend_program(
         Some(&payer_pubkey),
         additional_bytes,
     );
-    let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&fee_payer_pubkey)));
+    let message = VersionedMessage::Legacy(Message::new(&[instruction], Some(&fee_payer_pubkey)));
 
-    tx.try_sign(&[config.signers[0], payer_signer], blockhash)?;
+    let tx = message_into_signed_transaction(
+        message,
+        &[config.signers[0], payer_signer],
+        blockhash,
+        false,
+    )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -2552,17 +2557,19 @@ async fn process_extend_program(
         }))
 }
 
-pub fn calculate_max_chunk_size(baseline_msg: Message) -> usize {
-    let tx_size = wincode::serialized_size(&Transaction {
+pub fn calculate_max_chunk_size(baseline_msg: VersionedMessage) -> usize {
+    // Reserve one byte for growth of the shortvec instruction data length.
+    // The loader limits write instruction data to PACKET_DATA_SIZE for every version.
+    let size_limit = PACKET_DATA_SIZE - 1;
+    let tx_size = wincode::serialized_size(&VersionedTransaction {
         signatures: vec![
             Signature::default();
-            baseline_msg.header.num_required_signatures as usize
+            baseline_msg.header().num_required_signatures as usize
         ],
         message: baseline_msg,
     })
     .unwrap() as usize;
-    // add 1 byte buffer to account for shortvec encoding
-    PACKET_DATA_SIZE.saturating_sub(tx_size).saturating_sub(1)
+    size_limit.saturating_sub(tx_size)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2605,14 +2612,14 @@ async fn do_process_program_deploy(
         };
 
     let initial_message = if !initial_instructions.is_empty() {
-        Some(Message::new_with_blockhash(
+        Some(VersionedMessage::Legacy(Message::new_with_blockhash(
             &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
                 compute_unit_limit,
             }),
             Some(&fee_payer_signer.pubkey()),
             &blockhash,
-        ))
+        )))
     } else {
         None
     };
@@ -2630,7 +2637,11 @@ async fn do_process_program_deploy(
             compute_unit_price,
             compute_unit_limit,
         });
-        Message::new_with_blockhash(&instructions, Some(&fee_payer_signer.pubkey()), &blockhash)
+        VersionedMessage::Legacy(Message::new_with_blockhash(
+            &instructions,
+            Some(&fee_payer_signer.pubkey()),
+            &blockhash,
+        ))
     };
 
     let mut write_messages = vec![];
@@ -2638,10 +2649,7 @@ async fn do_process_program_deploy(
     for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
         let offset = i.saturating_mul(chunk_size);
         if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-            write_messages.push(VersionedMessage::Legacy(create_msg(
-                offset as u32,
-                chunk.to_vec(),
-            )));
+            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
         }
     }
 
@@ -2663,15 +2671,12 @@ async fn do_process_program_deploy(
             compute_unit_limit,
         });
 
-        Some(Message::new_with_blockhash(
+        Some(VersionedMessage::Legacy(Message::new_with_blockhash(
             &instructions,
             Some(&fee_payer_signer.pubkey()),
             &blockhash,
-        ))
+        )))
     };
-
-    let initial_message = initial_message.map(VersionedMessage::Legacy);
-    let final_message = final_message.map(VersionedMessage::Legacy);
 
     if !skip_fee_check {
         check_payer(
@@ -2747,14 +2752,14 @@ async fn do_process_write_buffer(
         };
 
     let initial_message = if !initial_instructions.is_empty() {
-        Some(Message::new_with_blockhash(
+        Some(VersionedMessage::Legacy(Message::new_with_blockhash(
             &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
                 compute_unit_limit,
             }),
             Some(&fee_payer_signer.pubkey()),
             &blockhash,
-        ))
+        )))
     } else {
         None
     };
@@ -2772,7 +2777,11 @@ async fn do_process_write_buffer(
             compute_unit_price,
             compute_unit_limit,
         });
-        Message::new_with_blockhash(&instructions, Some(&fee_payer_signer.pubkey()), &blockhash)
+        VersionedMessage::Legacy(Message::new_with_blockhash(
+            &instructions,
+            Some(&fee_payer_signer.pubkey()),
+            &blockhash,
+        ))
     };
 
     let mut write_messages = vec![];
@@ -2780,14 +2789,9 @@ async fn do_process_write_buffer(
     for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
         let offset = i.saturating_mul(chunk_size);
         if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-            write_messages.push(VersionedMessage::Legacy(create_msg(
-                offset as u32,
-                chunk.to_vec(),
-            )));
+            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
         }
     }
-
-    let initial_message = initial_message.map(VersionedMessage::Legacy);
 
     if !skip_fee_check {
         check_payer(
@@ -2846,84 +2850,84 @@ async fn do_process_program_upgrade(
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let compute_unit_limit = ComputeUnitLimit::Simulated;
 
-    let (initial_message, write_messages, balance_needed) = if let Some(buffer_signer) =
-        buffer_signer
-    {
-        let (mut initial_instructions, balance_needed, buffer_program_data) =
-            if let Some(buffer_program_data) = buffer_program_data {
-                (vec![], 0, buffer_program_data)
-            } else {
-                (
-                    loader_v3_instruction::create_buffer(
-                        &fee_payer_signer.pubkey(),
-                        &buffer_signer.pubkey(),
-                        &upgrade_authority.pubkey(),
+    let (initial_message, write_messages, balance_needed) =
+        if let Some(buffer_signer) = buffer_signer {
+            let (mut initial_instructions, balance_needed, buffer_program_data) =
+                if let Some(buffer_program_data) = buffer_program_data {
+                    (vec![], 0, buffer_program_data)
+                } else {
+                    (
+                        loader_v3_instruction::create_buffer(
+                            &fee_payer_signer.pubkey(),
+                            &buffer_signer.pubkey(),
+                            &upgrade_authority.pubkey(),
+                            min_rent_exempt_program_data_balance,
+                            program_len,
+                        )?,
                         min_rent_exempt_program_data_balance,
-                        program_len,
-                    )?,
-                    min_rent_exempt_program_data_balance,
-                    vec![0; program_len],
+                        vec![0; program_len],
+                    )
+                };
+
+            if auto_extend {
+                extend_program_data_if_needed(
+                    &mut initial_instructions,
+                    &rpc_client,
+                    config.commitment,
+                    &fee_payer_signer.pubkey(),
+                    program_id,
+                    program_len,
                 )
+                .await?;
+            }
+
+            let initial_message = if !initial_instructions.is_empty() {
+                Some(VersionedMessage::Legacy(Message::new_with_blockhash(
+                    &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
+                        compute_unit_price,
+                        compute_unit_limit: ComputeUnitLimit::Simulated,
+                    }),
+                    Some(&fee_payer_signer.pubkey()),
+                    &blockhash,
+                )))
+            } else {
+                None
             };
 
-        if auto_extend {
-            extend_program_data_if_needed(
-                &mut initial_instructions,
-                &rpc_client,
-                config.commitment,
-                &fee_payer_signer.pubkey(),
-                program_id,
-                program_len,
-            )
-            .await?;
-        }
-
-        let initial_message = if !initial_instructions.is_empty() {
-            Some(Message::new_with_blockhash(
-                &initial_instructions.with_compute_unit_config(&ComputeUnitConfig {
+            let buffer_signer_pubkey = buffer_signer.pubkey();
+            let upgrade_authority_pubkey = upgrade_authority.pubkey();
+            let create_msg = |offset: u32, bytes: Vec<u8>| {
+                let instructions = vec![loader_v3_instruction::write(
+                    &buffer_signer_pubkey,
+                    &upgrade_authority_pubkey,
+                    offset,
+                    bytes,
+                )]
+                .with_compute_unit_config(&ComputeUnitConfig {
                     compute_unit_price,
-                    compute_unit_limit: ComputeUnitLimit::Simulated,
-                }),
-                Some(&fee_payer_signer.pubkey()),
-                &blockhash,
-            ))
-        } else {
-            None
-        };
+                    compute_unit_limit,
+                });
+                VersionedMessage::Legacy(Message::new_with_blockhash(
+                    &instructions,
+                    Some(&fee_payer_signer.pubkey()),
+                    &blockhash,
+                ))
+            };
 
-        let buffer_signer_pubkey = buffer_signer.pubkey();
-        let upgrade_authority_pubkey = upgrade_authority.pubkey();
-        let create_msg = |offset: u32, bytes: Vec<u8>| {
-            let instructions = vec![loader_v3_instruction::write(
-                &buffer_signer_pubkey,
-                &upgrade_authority_pubkey,
-                offset,
-                bytes,
-            )]
-            .with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            });
-            Message::new_with_blockhash(&instructions, Some(&fee_payer_signer.pubkey()), &blockhash)
-        };
-
-        // Create and add write messages
-        let mut write_messages = vec![];
-        let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
-        for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
-            let offset = i.saturating_mul(chunk_size);
-            if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-                write_messages.push(VersionedMessage::Legacy(create_msg(
-                    offset as u32,
-                    chunk.to_vec(),
-                )));
+            // Create and add write messages
+            let mut write_messages = vec![];
+            let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
+            for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
+                let offset = i.saturating_mul(chunk_size);
+                if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
+                    write_messages.push(create_msg(offset as u32, chunk.to_vec()));
+                }
             }
-        }
 
-        (initial_message, write_messages, balance_needed)
-    } else {
-        (None, vec![], 0)
-    };
+            (initial_message, write_messages, balance_needed)
+        } else {
+            (None, vec![], 0)
+        };
 
     // Create and add final message
     let final_instructions = vec![loader_v3_instruction::upgrade(
@@ -2936,15 +2940,12 @@ async fn do_process_program_upgrade(
         compute_unit_price,
         compute_unit_limit,
     });
-    let final_message = Message::new_with_blockhash(
+    let final_message = VersionedMessage::Legacy(Message::new_with_blockhash(
         &final_instructions,
         Some(&fee_payer_signer.pubkey()),
         &blockhash,
-    );
+    ));
     let final_message = Some(final_message);
-
-    let initial_message = initial_message.map(VersionedMessage::Legacy);
-    let final_message = final_message.map(VersionedMessage::Legacy);
 
     if !skip_fee_check {
         check_payer(
@@ -3210,12 +3211,8 @@ async fn send_deploy_messages(
     if let Some(mut message) = initial_message {
         if let Some(initial_signer) = initial_signer {
             trace!("Preparing the required accounts");
-            simulate_and_update_compute_unit_limit_versioned(
-                compute_unit_limit,
-                &rpc_client,
-                &mut message,
-            )
-            .await?;
+            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
+                .await?;
 
             // Most of the initial_transaction combinations require both the fee-payer and new program
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
@@ -3231,7 +3228,6 @@ async fn send_deploy_messages(
             let blockhash = rpc_client.get_latest_blockhash().await?;
             message.set_recent_blockhash(blockhash);
             let initial_transaction = VersionedTransaction::try_new(message, &signers)?;
-
             let result = rpc_client
                 .send_and_confirm_transaction_with_spinner_and_config(
                     &initial_transaction,
@@ -3255,58 +3251,16 @@ async fn send_deploy_messages(
         // consumed and then reuse that value as the compute unit limit for all
         // write messages.
         {
-            let mut message = write_messages[0].clone();
-            match simulate_and_update_compute_unit_limit_versioned(
+            if let Some(limit) = simulate_and_update_compute_unit_limit(
                 compute_unit_limit,
                 &rpc_client,
-                &mut message,
+                &mut write_messages[0],
             )
             .await?
             {
-                UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) => {
-                    for msg in &mut write_messages {
-                        let (instructions, account_keys) = match msg {
-                            VersionedMessage::Legacy(message) => {
-                                Some((&mut message.instructions, &message.account_keys))
-                            }
-                            VersionedMessage::V0(message) => {
-                                Some((&mut message.instructions, &message.account_keys))
-                            }
-                            VersionedMessage::V1(_) => None,
-                        }
-                        .unwrap();
-                        // Write messages are all assumed to be identical except
-                        // the program data being written. But just in case that
-                        // assumption is broken, assert that we are only ever
-                        // changing the instruction data for a compute budget
-                        // instruction.
-                        let instruction = &mut instructions[ix_index];
-                        assert_eq!(
-                            account_keys.get(usize::from(instruction.program_id_index)),
-                            Some(&compute_budget::id())
-                        );
-                        instruction
-                            .data
-                            .clone_from(&message.instructions()[ix_index].data);
-                    }
+                for message in &mut write_messages[1..] {
+                    set_compute_unit_limit(message, limit);
                 }
-                UpdateComputeUnitLimitResult::UpdatedTransactionConfig => {
-                    let message = match &message {
-                        VersionedMessage::V1(message) => Some(message),
-                        _ => None,
-                    }
-                    .unwrap();
-                    for msg in &mut write_messages {
-                        let msg = match msg {
-                            VersionedMessage::V1(msg) => Some(msg),
-                            _ => None,
-                        }
-                        .unwrap();
-                        msg.config.compute_unit_limit = message.config.compute_unit_limit;
-                    }
-                }
-                UpdateComputeUnitLimitResult::NoComputeUnitLimitFound
-                | UpdateComputeUnitLimitResult::SimulationNotConfigured => {}
             }
 
             let cancel_token = CancellationToken::new();
@@ -3385,12 +3339,8 @@ async fn send_deploy_messages(
     {
         trace!("Deploying program");
 
-        simulate_and_update_compute_unit_limit_versioned(
-            compute_unit_limit,
-            &rpc_client,
-            &mut message,
-        )
-        .await?;
+        simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
+            .await?;
         let blockhash = rpc_client.get_latest_blockhash().await?;
         message.set_recent_blockhash(blockhash);
         let mut signers = final_signers.to_vec();
@@ -3416,7 +3366,9 @@ async fn send_deploy_messages(
 fn create_ephemeral_keypair()
 -> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
     const WORDS: usize = 12;
-    let mnemonic = Mnemonic::generate_in(Language::English, WORDS)?;
+    let mut entropy = [0u8; WORDS / 3 * 4];
+    rand::rng().fill_bytes(&mut entropy);
+    let mnemonic = Mnemonic::from_entropy_in(Language::English, &entropy)?;
     let seed = mnemonic.to_seed("");
     let new_keypair = keypair_from_seed(&seed)?;
 
@@ -3475,6 +3427,27 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::write_keypair_file,
     };
+
+    #[test]
+    fn test_v1_write_chunk_fits_packet() {
+        let payer = Pubkey::new_unique();
+        let buffer = Pubkey::new_unique();
+        let create_message = |bytes| {
+            VersionedMessage::V1(
+                solana_message::v1::Message::try_compile_with_config(
+                    &payer,
+                    &[loader_v3_instruction::write(&buffer, &payer, 0, bytes)],
+                    Hash::default(),
+                    solana_message::v1::TransactionConfig::empty(),
+                )
+                .unwrap(),
+            )
+        };
+
+        let chunk_size = calculate_max_chunk_size(create_message(Vec::new()));
+        let transaction = VersionedTransaction::new_unsigned(create_message(vec![0; chunk_size]));
+        assert!(wincode::serialized_size(&transaction).unwrap() as usize <= PACKET_DATA_SIZE);
+    }
 
     fn make_tmp_path(name: &str) -> String {
         let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());

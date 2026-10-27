@@ -6,7 +6,6 @@ pub struct SVMFeatureSet {
     pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
-    pub abort_on_invalid_curve: bool,
     pub blake3_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
     pub disable_sbpf_v0_execution: bool,
@@ -50,6 +49,7 @@ pub struct SVMFeatureSet {
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
     pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub secp256r1_syscall_enabled: bool,
 }
 
 impl SVMFeatureSet {
@@ -60,7 +60,6 @@ impl SVMFeatureSet {
             account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
             deplete_cu_meter_on_vm_failure: true,
-            abort_on_invalid_curve: true,
             blake3_syscall_enabled: true,
             disable_fees_sysvar: true,
             disable_sbpf_v0_execution: true,
@@ -104,6 +103,7 @@ impl SVMFeatureSet {
             early_instruction_trace_overflow_detection: true,
             unbound_loader_v3_instruction_data: true,
             pass_input_metadata_in_vm_r3_r5: true,
+            secp256r1_syscall_enabled: true,
         }
     }
 }

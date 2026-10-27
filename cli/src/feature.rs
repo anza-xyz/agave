@@ -3,6 +3,7 @@ use {
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
             log_instruction_custom_error, log_instruction_custom_error_to_str,
+            message_into_signed_transaction,
         },
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
@@ -25,7 +26,7 @@ use {
         Feature, activate_with_lamports, error::FeatureGateError, from_account,
         instruction::revoke_pending_activation,
     },
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -34,7 +35,6 @@ use {
         response::RpcVoteAccountInfo,
     },
     solana_system_interface::error::SystemError,
-    solana_transaction::Transaction,
     std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc, str::FromStr},
 };
 
@@ -1033,16 +1033,15 @@ async fn process_activate(
         &fee_payer.pubkey(),
         ComputeUnitLimit::Default,
         |lamports| {
-            Message::new(
+            VersionedMessage::Legacy(Message::new(
                 &activate_with_lamports(&feature_id, &fee_payer.pubkey(), lamports),
                 Some(&fee_payer.pubkey()),
-            )
+            ))
         },
         config.commitment,
     )
     .await?;
-    let mut transaction = Transaction::new_unsigned(message);
-    transaction.try_sign(&config.signers, blockhash)?;
+    let transaction = message_into_signed_transaction(message, &config.signers, blockhash, false)?;
 
     writeln_stdout(format_args!(
         "Activating {} ({})",
@@ -1090,16 +1089,15 @@ async fn process_revoke(
         &fee_payer.pubkey(),
         ComputeUnitLimit::Default,
         |_lamports| {
-            Message::new(
+            VersionedMessage::Legacy(Message::new(
                 &[revoke_pending_activation(&feature_id)],
                 Some(&fee_payer.pubkey()),
-            )
+            ))
         },
         config.commitment,
     )
     .await?;
-    let mut transaction = Transaction::new_unsigned(message);
-    transaction.try_sign(&config.signers, blockhash)?;
+    let transaction = message_into_signed_transaction(message, &config.signers, blockhash, false)?;
 
     writeln_stdout(format_args!(
         "Revoking {} ({})",

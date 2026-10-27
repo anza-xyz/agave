@@ -671,7 +671,9 @@ mod external {
             consume_worker::external::ExternalWorker,
             transaction_scheduler::check_worker::external::ExternalCheckWorker,
         },
-        agave_scheduler_handshake::{AgaveCheckWorkerSession, AgaveSession, AgaveWorkerSession},
+        agave_scheduler_handshake::{
+            AgaveCheckWorkerSession, AgaveSession, AgaveSimulateWorkerSession, AgaveWorkerSession,
+        },
         tpu_to_pack::BankingPacketReceivers,
     };
 
@@ -679,11 +681,11 @@ mod external {
         pub(super) fn spawn_external(
             &self,
             AgaveSession {
-                flags: _,
                 tpu_to_pack,
                 progress_tracker,
                 check_workers,
                 workers,
+                simulate_workers,
             }: AgaveSession,
         ) -> Result<Vec<JoinHandle<()>>, ()> {
             info!("Spawning external scheduler");
@@ -694,11 +696,10 @@ mod external {
             assert!(workers.len() <= BankingStage::max_num_workers().get());
 
             // Spawn the external consumer workers.
-            let simulation_worker_count = 0;
             let mut threads = Vec::with_capacity(
-                workers.len() + simulation_worker_count + check_workers.len() + 2,
+                workers.len() + simulate_workers.len() + check_workers.len() + 2,
             );
-            let mut worker_metrics = Vec::with_capacity(workers.len() + simulation_worker_count);
+            let mut worker_metrics = Vec::with_capacity(workers.len() + simulate_workers.len());
             for (
                 index,
                 AgaveWorkerSession {
@@ -735,39 +736,41 @@ mod external {
                 );
             }
 
-            // The simulation queues will come from the handshake once it exposes them.
-            if simulation_worker_count > 0 {
-                let (_pack_to_simulation, simulation_receiver) = shaq::mpmc::pair(16).unwrap();
-                let (simulation_sender, _simulation_to_pack) = shaq::mpmc::pair(16).unwrap();
+            for (
+                index,
+                AgaveSimulateWorkerSession {
+                    allocator,
+                    pack_to_simulate_worker,
+                    simulate_worker_to_pack,
+                },
+            ) in simulate_workers.into_iter().enumerate()
+            {
+                let id = index as u32;
+                let consume_worker = ExternalWorker::new(
+                    self.worker_exit_signal.clone(),
+                    Consumer::new(
+                        self.committer.clone(),
+                        self.transaction_recorder.clone(),
+                        self.log_messages_bytes_limit,
+                    ),
+                    allocator,
+                    self.poh_recorder.read().unwrap().shared_leader_state(),
+                );
 
-                for id in 0..simulation_worker_count {
-                    let consume_worker = ExternalWorker::new(
-                        self.worker_exit_signal.clone(),
-                        Consumer::new(
-                            self.committer.clone(),
-                            self.transaction_recorder.clone(),
-                            self.log_messages_bytes_limit,
-                        ),
-                        rts_alloc::Allocator::join_from_existing(&tpu_to_pack.allocator).unwrap(),
-                        self.poh_recorder.read().unwrap().shared_leader_state(),
-                    );
-
-                    worker_metrics.push(consume_worker.metrics_handle());
-                    let receiver = simulation_receiver.clone();
-                    let sender = simulation_sender.clone();
-                    threads.push(
-                        Builder::new()
-                            .name(format!("solESimWorker{id:02}"))
-                            .spawn(move || {
-                                if let Err(err) =
-                                    consume_worker.run_simulation_worker(receiver, sender)
-                                {
-                                    error!("External simulation worker error; err={err}");
-                                }
-                            })
-                            .unwrap(),
-                    );
-                }
+                worker_metrics.push(consume_worker.metrics_handle());
+                threads.push(
+                    Builder::new()
+                        .name(format!("solESimWorker{id:02}"))
+                        .spawn(move || {
+                            if let Err(err) = consume_worker.run_simulation_worker(
+                                pack_to_simulate_worker,
+                                simulate_worker_to_pack,
+                            ) {
+                                error!("External simulation worker error; err={err}");
+                            }
+                        })
+                        .unwrap(),
+                );
             }
 
             for (

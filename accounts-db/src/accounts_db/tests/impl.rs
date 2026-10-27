@@ -10,10 +10,7 @@ use {
     },
     itertools::Itertools as _,
     rand::{prelude::SliceRandom as _, rng},
-    solana_account::{
-        Account, AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, InheritableAccountFields,
-        WritableAccount as _,
-    },
+    solana_account::{Account, AccountSharedData, WritableAccount as _},
     solana_clock::Slot,
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
@@ -60,21 +57,14 @@ fn store_rooted_nonzero_accounts<'a>(
     accounts_db.add_root_and_flush_write_cache(slot);
 }
 
-fn create_loadable_account_with_fields(
-    name: &str,
-    (lamports, rent_epoch): InheritableAccountFields,
-) -> AccountSharedData {
+fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
     AccountSharedData::from(Account {
-        lamports,
+        lamports: 1,
         owner: solana_sdk_ids::native_loader::id(),
         data: name.as_bytes().to_vec(),
         executable: true,
-        rent_epoch,
+        rent_epoch: u64::MAX,
     })
-}
-
-fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
-    create_loadable_account_with_fields(name, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
 }
 
 fn create_store_for_shrink_tests(
