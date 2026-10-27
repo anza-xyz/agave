@@ -1450,6 +1450,40 @@ fn test_reward_certificates_keep_bounded_alternatives_and_accept_broader_signer_
 }
 
 #[test]
+fn test_reward_subset_certificate_is_forwarded_after_a_larger_certificate() {
+    let slot = 10;
+    let ctx = TestContext::new_with_reward_slot(
+        1024,
+        MigrationStatus::post_migration_status(),
+        Some(slot + 8),
+    );
+    let cert_type = CertificateType::new_unique_notar(slot);
+    ctx.generated_cert_types.insert_cert(cert_type);
+    // Both certificates meet the threshold. A whole batch containing ranks 7..10 can extend
+    // the second certificate, but overlaps the first, so both must reach reward recovery.
+    for end in [8, 7] {
+        let cert = test_create_base2_certificate(
+            &ctx.bls_keypairs(),
+            ctx.cluster_info.my_shred_version(),
+            cert_type,
+            &(0..end).collect::<Vec<_>>(),
+        );
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                ConsensusMessage::Certificate(cert.clone()),
+                Pubkey::new_unique(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ));
+        assert_eq!(
+            receive_reward_certificates(&ctx.reward_receiver, 1),
+            vec![cert],
+        );
+    }
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
 fn test_relayed_copies_do_not_crowd_out_an_alternative_in_one_batch() {
     let slot = 10;
     let mut ctx = TestContext::new_unstarted(
@@ -1701,7 +1735,7 @@ fn test_certificate_for_another_reward_leader_is_not_forwarded() {
 }
 
 #[test]
-fn test_direct_reward_vote_includes_recovery_signatures() {
+fn test_direct_reward_vote_shares_the_verified_aggregate() {
     let slot = 10;
     let mut ctx = TestContext::new_unstarted(
         1024,
@@ -1729,17 +1763,11 @@ fn test_direct_reward_vote_includes_recovery_signatures() {
         )],
         ctx.cluster_info.my_shred_version(),
     ));
-    receive_messages(&ctx.pool_receiver, 1, 0);
-    // Reward inputs are sent before the pool batch: both the direct vote and its raw signature
-    // for recovering reward certificates.
-    assert!(matches!(
-        ctx.reward_receiver.try_recv(),
-        Ok(RewardInput::External(_))
-    ));
-    assert!(matches!(
-        ctx.reward_receiver.try_recv(),
-        Ok(RewardInput::VoteSignatures { .. })
-    ));
+    let (votes, _) = receive_messages(&ctx.pool_receiver, 1, 0);
+    let RewardInput::External(reward_votes) = ctx.reward_receiver.try_recv().unwrap() else {
+        panic!("expected the verified vote aggregates");
+    };
+    assert_eq!(reward_votes, votes);
     assert!(ctx.reward_receiver.is_empty());
 }
 
@@ -1777,10 +1805,6 @@ fn test_reward_vote_retry_is_deduplicated_after_root_advance() {
     assert!(matches!(
         ctx.reward_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap(),
         RewardInput::External(_),
-    ));
-    assert!(matches!(
-        ctx.reward_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap(),
-        RewardInput::VoteSignatures { .. },
     ));
 
     advance_root(&ctx, slot + 1);

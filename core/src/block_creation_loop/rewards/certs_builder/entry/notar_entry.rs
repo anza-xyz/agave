@@ -35,7 +35,7 @@ impl NotarEntry {
     /// Accumulates a new observed vote aggregate from another validator.
     pub(super) fn add_aggregate(
         &mut self,
-        aggregate: VoteAggregate,
+        aggregate: &VoteAggregate,
         vote_account_pubkeys: Vec<Pubkey>,
         block_id: BlockId,
         max_validators: usize,
@@ -50,7 +50,7 @@ impl NotarEntry {
     /// Accumulates a new observed own vote msg.
     pub(super) fn add_own_msg(
         &mut self,
-        vote_msg: VoteMessage,
+        vote_msg: &VoteMessage,
         vote_account_pubkey: Pubkey,
         block_id: BlockId,
         max_validators: usize,
@@ -122,7 +122,7 @@ mod tests {
         let (aggregate, vote_account_pubkeys) =
             new_reward_vote_aggregate(notar_vote, rank as usize, &keypairs, None, shred_version);
         entry
-            .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
+            .add_aggregate(&aggregate, vote_account_pubkeys, blockid0, max_validators)
             .unwrap();
     }
 
@@ -148,7 +148,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, Some(&stakes), shred_version);
             entry
-                .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
+                .add_aggregate(&aggregate, vote_account_pubkeys, blockid0, max_validators)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -159,7 +159,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, Some(&stakes), shred_version);
             entry
-                .add_aggregate(aggregate, vote_account_pubkeys, blockid1, max_validators)
+                .add_aggregate(&aggregate, vote_account_pubkeys, blockid1, max_validators)
                 .unwrap();
         }
         let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();
@@ -189,7 +189,7 @@ mod tests {
             shred_version,
         );
         entry
-            .add_aggregate(aggregate, vote_account_pubkeys, blockid0, max_validators)
+            .add_aggregate(&aggregate, vote_account_pubkeys, blockid0, max_validators)
             .unwrap();
 
         let blockid1 = BlockId::new_unique();
@@ -204,7 +204,7 @@ mod tests {
             shred_version,
         );
         entry
-            .add_aggregate(aggregate, vote_account_pubkeys, blockid1, max_validators)
+            .add_aggregate(&aggregate, vote_account_pubkeys, blockid1, max_validators)
             .unwrap();
 
         let blockid2 = BlockId::new_unique();
@@ -216,7 +216,7 @@ mod tests {
             new_reward_vote_aggregate(notar, 4, &keypairs, None, shred_version);
         let expected_validators = vote_account_pubkeys.clone();
         entry
-            .add_aggregate(aggregate, vote_account_pubkeys, blockid2, max_validators)
+            .add_aggregate(&aggregate, vote_account_pubkeys, blockid2, max_validators)
             .unwrap();
 
         let (notar_cert, validators) = entry.build_cert(slot).unwrap().unwrap();

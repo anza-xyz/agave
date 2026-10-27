@@ -2,7 +2,10 @@ use {
     super::*,
     crate::block_creation_loop::{
         SlotMetrics,
-        rewards::msg_types::{RewardRespSucc, RewardResponse},
+        rewards::{
+            certs_builder::recovery::Recovery,
+            msg_types::{RewardRespSucc, RewardResponse},
+        },
     },
     agave_bls_sigverify::{
         bls_sigverifier::{SigVerifierChannels, SigVerifierContext, spawn_service},
@@ -262,15 +265,19 @@ impl Rewards {
         let exit = Arc::new(AtomicBool::new(false));
         let (input, input_receiver) = bounded(0);
         let (requests, request_receiver) = bounded(1);
-        let mut builder = CertsBuilder::new(cluster_info.clone());
-        let prepared = builder.observe_recovery_completions();
-        let context = Context::new(
+        let builder = CertsBuilder::new();
+        let mut recovery = Recovery::new();
+        let prepared = recovery.observe_completions();
+        let context = Context::new_with_gates(
             exit.clone(),
             cluster_info,
             input_receiver,
             request_receiver,
             sharable_banks,
             builder,
+            recovery,
+            None,
+            None,
         );
         let handler = thread::spawn(move || context.run());
         Self {
@@ -295,7 +302,7 @@ impl Rewards {
     fn forward_vote(&self, verifier: &Verifier, message: &VoteMessage) {
         let input = verifier.rewards.recv_timeout(RECEIVE_TIMEOUT).unwrap();
         let RewardInput::External(aggregates) = &input else {
-            panic!("expected the verified aggregate before its raw signature sidecar");
+            panic!("expected the verified vote aggregate");
         };
         assert_eq!(aggregates.len(), 1);
         assert_eq!(*aggregates[0].vote(), message.vote);
@@ -303,19 +310,7 @@ impl Rewards {
             aggregates[0].ranks().iter_ones().collect::<Vec<_>>(),
             vec![usize::from(message.rank)]
         );
-        self.forward(input);
-        let input = verifier.rewards.recv_timeout(RECEIVE_TIMEOUT).unwrap();
-        let RewardInput::VoteSignatures { vote, signatures } = &input else {
-            panic!("expected the original raw signature sidecar");
-        };
-        assert_eq!(*vote, message.vote);
-        assert_eq!(
-            signatures,
-            &vec![(
-                message.rank,
-                solana_bls_signatures::Signature::from(message.signature)
-            )]
-        );
+        assert_eq!(aggregates[0].signature(), &message.signature);
         self.forward(input);
         self.flush();
     }
@@ -536,14 +531,15 @@ impl Drop for ReleaseRecoveryGate {
 fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baselines() {
     let fixture = ServiceFixture::new();
     let cluster_info = cluster_info(&fixture.keys[2]);
-    let mut builder = CertsBuilder::new(cluster_info.clone());
-    // Fill the actual source-slot seed cap before moving Recovery to its controller. The gated
+    let builder = CertsBuilder::new();
+    let mut recovery = Recovery::new();
+    // Fill the actual source-slot seed cap before starting its controller. The gated
     // incoming proof is a broader signer set, so release resumes real admission scoring at the cap.
     for block in std::iter::once(fixture.block).chain((0..3).map(|_| Block::new_unique(FIRST_SLOT)))
     {
-        builder.handle_input(
-            &fixture.root,
-            RewardInput::Certificates(vec![fixture.certificate(block, &[0, 1])]),
+        recovery.add_certificate(
+            fixture.certificate(block, &[0, 1]),
+            fixture.root.get_rank_map(block.slot).unwrap(),
         );
     }
     let (input, input_receiver) = bounded(1);
@@ -557,6 +553,7 @@ fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baseline
         request_receiver,
         fixture.banks.clone(),
         builder,
+        recovery,
         Some((admission_started, admission_release)),
         None,
     );
@@ -567,19 +564,13 @@ fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baseline
         ]))
         .unwrap();
     context.process_next_input().unwrap();
-    context.process_next_input().unwrap();
     started.recv_timeout(RECEIVE_TIMEOUT).unwrap();
 
-    // The paused controller cannot drain its sixty-four evidence slots. The sixty-fifth raw
-    // signature input therefore takes the full path without blocking the direct-vote service.
+    // Fill and exceed the remaining evidence budget while the controller is paused. Dropped
+    // optional inputs must not block the direct-vote service.
     let message = signed_vote(&fixture.root, &fixture.keys[1], fixture.block);
     for _ in 0..65 {
-        input
-            .send(RewardInput::VoteSignatures {
-                vote: message.vote,
-                signatures: vec![(message.rank, message.signature.into())],
-            })
-            .unwrap();
+        input.send(RewardInput::Own(message.clone())).unwrap();
         context.process_next_input().unwrap();
     }
 
@@ -592,8 +583,11 @@ fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baseline
         } else {
             Block::new_unique(FIRST_SLOT + offset)
         };
-        input.send(fixture.direct_vote(block)).unwrap();
-        context.process_next_input().unwrap();
+        // The first source already has this validator's own vote from filling the input queue.
+        if offset != 0 {
+            input.send(fixture.direct_vote(block)).unwrap();
+            context.process_next_input().unwrap();
+        }
         let mut metrics = SlotMetrics::new(block.slot + NUM_SLOTS_FOR_REWARD, true);
         let token = requestor
             .request_reward_certs(
@@ -634,22 +628,16 @@ fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baseline
     fixture.assert_direct_reward(&response.result.unwrap(), block);
 
     drop(release);
-    context.shutdown_recovery();
+    let (mut builder, mut recovery) = context.into_parts();
     // None of the work released after the consumed cutoff can recreate the sealed first source.
-    let (reply_sender, reply_receiver) = bounded(1);
-    context
-        .builder
-        .build_request(
-            Ok(RewardRequest {
-                bank_slot: FIRST_SLOT + NUM_SLOTS_FOR_REWARD,
-                reply_sender,
-                request_sent: Instant::now(),
-            }),
-            None,
-        )
-        .unwrap();
     assert_eq!(
-        wait_for_recovery(reply_receiver.try_recv().unwrap()),
+        builder
+            .build_certs(FIRST_SLOT + NUM_SLOTS_FOR_REWARD)
+            .unwrap(),
+        RewardRespSucc::default(),
+    );
+    assert_eq!(
+        recovery.finish(FIRST_SLOT, SHRED_VERSION, RewardRespSucc::default()),
         RewardRespSucc::default(),
     );
 }
@@ -658,11 +646,12 @@ fn test_blocked_recovery_admission_and_full_build_queue_preserve_direct_baseline
 fn test_blocked_recovery_selection_preserves_direct_baseline_at_requestor_cutoff() {
     let fixture = ServiceFixture::new();
     let cluster_info = cluster_info(&fixture.keys[2]);
-    let mut builder = CertsBuilder::new(cluster_info.clone());
-    let prepared = builder.observe_recovery_completions();
-    builder.handle_input(
-        &fixture.root,
-        RewardInput::Certificates(vec![fixture.certificate(fixture.block, &[0, 1])]),
+    let builder = CertsBuilder::new();
+    let mut recovery = Recovery::new();
+    let prepared = recovery.observe_completions();
+    recovery.add_certificate(
+        fixture.certificate(fixture.block, &[0, 1]),
+        fixture.root.get_rank_map(FIRST_SLOT).unwrap(),
     );
     let (input, input_receiver) = bounded(1);
     let (mut requestor, request_receiver) = CertsRequestor::new();
@@ -675,6 +664,7 @@ fn test_blocked_recovery_selection_preserves_direct_baseline_at_requestor_cutoff
         request_receiver,
         fixture.banks.clone(),
         builder,
+        recovery,
         None,
         Some((selection_started, selection_release)),
     );
@@ -701,14 +691,14 @@ fn test_blocked_recovery_selection_preserves_direct_baseline_at_requestor_cutoff
     fixture.assert_direct_reward(&baseline, fixture.block);
     assert_eq!(metrics.reward_certs_skipped, 0);
     drop(release);
-    context.shutdown_recovery();
+    drop(context);
 }
 
 #[test]
 fn test_direct_votes_publish_baseline_with_recovery_running() {
     let fixture = ServiceFixture::new();
     let cluster_info = cluster_info(&fixture.keys[2]);
-    let builder = CertsBuilder::new(cluster_info.clone());
+    let builder = CertsBuilder::new();
     let (input, input_receiver) = bounded(1);
     let (requests, request_receiver) = bounded(1);
     let mut context = Context::new(
@@ -733,75 +723,56 @@ fn test_direct_votes_publish_baseline_with_recovery_running() {
     let response = reply_receiver.try_recv().unwrap();
     assert!(response.recovery.is_some());
     fixture.assert_direct_reward(&response.result.unwrap(), fixture.block);
-    context.shutdown_recovery();
+    drop(context);
 }
 
 #[test]
 fn test_certificate_batch_yields_to_build_requests_and_drops_sealed_remainder() {
-    let keys: Vec<_> = (0..3).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
-    let mut genesis =
-        create_genesis_config_with_vote_accounts(1_000_000_000, &keys, vec![450, 350, 200])
-            .genesis_config;
-    genesis.epoch_schedule = EpochSchedule::without_warmup();
-    let (bank, bank_forks) = Bank::new_for_tests(&genesis).wrap_with_bank_forks_for_tests();
-    Bank::new_from_parent_with_bank_forks(
-        bank_forks.as_ref(),
-        bank,
-        SlotLeader::default(),
-        FIRST_SLOT - 1,
+    let fixture = ServiceFixture::new();
+    let cluster_info = cluster_info(&fixture.keys[2]);
+    let builder = CertsBuilder::new();
+    let mut recovery = Recovery::new();
+    let prepared = recovery.observe_completions();
+    recovery.add_certificate(
+        fixture.certificate(fixture.block, &[0, 1]),
+        fixture.root.get_rank_map(FIRST_SLOT).unwrap(),
     );
-    bank_forks
-        .write()
-        .unwrap()
-        .set_root(FIRST_SLOT - 1, None, None);
-    let banks = bank_forks.read().unwrap().sharable_banks();
-    let root = banks.root();
-    let block = Block::new_unique(FIRST_SLOT);
-    let certificate = |voters: &[&ValidatorVoteKeypairs]| {
-        let mut accumulator = AggregateAccumulator::new(keys.len());
-        for voter in voters {
-            accumulator
-                .add_own_vote_message(&signed_vote(&root, voter, block))
-                .unwrap();
-        }
-        accumulator
-            .try_build_base2_cert(
-                CertificateType::Notarize(block),
-                root.get_rank_map(block.slot).unwrap().total_stake(),
-            )
-            .unwrap()
-            .unwrap()
-    };
-    let initial = certificate(&[&keys[0], &keys[1]]);
-    let broader = certificate(&[&keys[0], &keys[1], &keys[2]]);
-    let cluster_info = cluster_info(&keys[2]);
-    let mut builder = CertsBuilder::new(cluster_info.clone());
-    let prepared = builder.observe_recovery_completions();
     let (input, input_receiver) = bounded(1);
     let (requests, request_receiver) = bounded(1);
-    let mut context = Context::new(
+    let (admission_started, started) = bounded(1);
+    let (release, admission_release) = bounded(1);
+    let mut context = Context::new_with_gates(
         Arc::new(AtomicBool::new(false)),
         cluster_info,
         input_receiver,
         request_receiver,
-        banks,
+        fixture.banks.clone(),
         builder,
+        recovery,
+        Some((admission_started, admission_release)),
+        None,
     );
-    let batch: Vec<_> = std::iter::once(initial)
-        .chain(std::iter::repeat_n(broader, 31))
-        .collect();
-    input.send(RewardInput::Certificates(batch)).unwrap();
-    context.process_next_input().unwrap();
-    assert_eq!(context.pending_certificates.len(), 32);
-    context.process_next_input().unwrap();
-    assert_eq!(context.pending_certificates.len(), 31);
-
-    // Seed verification runs separately from admission. Prepare just the first proof before
-    // testing whether the request interrupts the remaining certificates in this same batch.
+    let release = ReleaseRecoveryGate(release);
     assert_eq!(prepared.recv_timeout(RECEIVE_TIMEOUT).unwrap(), FIRST_SLOT);
 
-    // A request arriving after the first certificate must interrupt this batch.
-    // Its result excludes the broader proof that remains in the same input.
+    // The controller owns this entire batch. Pause its first admission so the broader proof
+    // and the rest of the batch cannot finish before the baseline request fixes its cutoff.
+    input
+        .send(RewardInput::Certificates(vec![
+            fixture.certificate(
+                fixture.block,
+                &[0, 1, 2]
+            );
+            32
+        ]))
+        .unwrap();
+    context.process_next_input().unwrap();
+    started.recv_timeout(RECEIVE_TIMEOUT).unwrap();
+
+    // A queued request takes priority over the next input, even with recovery admission blocked.
+    input
+        .send(fixture.direct_vote(Block::new_unique(FIRST_SLOT + 1)))
+        .unwrap();
     let (reply_sender, reply_receiver) = bounded(1);
     requests
         .send(RewardRequest {
@@ -811,20 +782,26 @@ fn test_certificate_batch_yields_to_build_requests_and_drops_sealed_remainder() 
         })
         .unwrap();
     context.process_next_input().unwrap();
-    assert_eq!(context.pending_certificates.len(), 31);
-    let response = wait_for_recovery(reply_receiver.try_recv().unwrap());
-    assert_rewards(&bank_forks, root, &response, block, &[&keys[0], &keys[1]]);
-    // No later input is received until the current batch has been consumed.
-    input.send(RewardInput::Certificates(vec![])).unwrap();
-    for remaining in (0..31).rev() {
-        context.process_next_input().unwrap();
-        assert_eq!(context.pending_certificates.len(), remaining);
-        assert_eq!(context.aggregates_receiver.len(), 1);
-    }
+    assert_eq!(context.aggregates_receiver.len(), 1);
+    let response = reply_receiver.try_recv().unwrap();
+    assert_eq!(
+        response.result.as_ref().unwrap(),
+        &RewardRespSucc::default()
+    );
+
+    drop(release);
+    let response = wait_for_recovery(response);
+    assert_rewards(
+        &fixture.bank_forks,
+        fixture.root.clone(),
+        &response,
+        fixture.block,
+        &[&fixture.keys[0], &fixture.keys[1]],
+    );
     context.process_next_input().unwrap();
     assert!(context.aggregates_receiver.is_empty());
 
-    // The rest of the batch arrived after the build sealed this source slot.
+    // Certificates left in the controller's batch cannot recreate the sealed source slot.
     let (reply_sender, reply_receiver) = bounded(1);
     requests
         .send(RewardRequest {
@@ -838,7 +815,6 @@ fn test_certificate_batch_yields_to_build_requests_and_drops_sealed_remainder() 
         wait_for_recovery(reply_receiver.try_recv().unwrap()),
         RewardRespSucc::default(),
     );
-    context.shutdown_recovery();
 }
 
 #[test]
@@ -910,7 +886,7 @@ fn test_reward_certificate_recovers_vote_lost_on_direct_quic_path_before_cutoff(
             b_vote.clone(),
             SHRED_VERSION,
         ));
-        // C receives B's raw vote, and its verifier/reward sidecar contains B's rank only.
+        // C receives B's vote, and its verified reward aggregate contains B's rank only.
         // A cannot deliver to C because neither endpoint admits the missing A -> C path.
         c_verifier.receive_vote(&b_vote);
         rewards.forward_vote(&c_verifier, &b_vote);

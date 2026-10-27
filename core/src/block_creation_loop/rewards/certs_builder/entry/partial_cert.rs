@@ -41,10 +41,10 @@ impl PartialCert {
     /// Accumulates a new observed vote aggregate from another validator.
     pub(super) fn add_aggregate(
         &mut self,
-        aggregate: VoteAggregate,
+        aggregate: &VoteAggregate,
         mut vote_account_pubkeys: Vec<Pubkey>,
     ) -> Result<(), AggregateAccumulatorError> {
-        self.accumulator.add_aggregate(&aggregate)?;
+        self.accumulator.add_aggregate(aggregate)?;
         self.validators.append(&mut vote_account_pubkeys);
         Ok(())
     }
@@ -52,10 +52,10 @@ impl PartialCert {
     /// Accumulates a new observed vote msg from this node.
     pub(super) fn add_own_msg(
         &mut self,
-        vote_msg: VoteMessage,
+        vote_msg: &VoteMessage,
         vote_account_pubkey: Pubkey,
     ) -> Result<(), AggregateAccumulatorError> {
-        self.accumulator.add_own_vote_message(&vote_msg)?;
+        self.accumulator.add_own_vote_message(vote_msg)?;
         self.validators.push(vote_account_pubkey);
         Ok(())
     }
@@ -123,7 +123,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(skip, rank, &keypairs, None, shred_version);
             partial_cert
-                .add_aggregate(aggregate, vote_account_pubkeys)
+                .add_aggregate(&aggregate, vote_account_pubkeys)
                 .unwrap();
             let BuildResult::Success { bitmap, .. } = partial_cert.clone().build_sig_bitmap()
             else {
@@ -144,12 +144,12 @@ mod tests {
         let (aggregate, vote_account_pubkeys) =
             new_reward_vote_aggregate(skip, 0, &keypairs, None, shred_version);
         partial_cert
-            .add_aggregate(aggregate, vote_account_pubkeys)
+            .add_aggregate(&aggregate, vote_account_pubkeys)
             .unwrap();
         let (aggregate, vote_account_pubkeys) =
             new_reward_vote_aggregate(skip, 1, &keypairs, None, shred_version);
         partial_cert
-            .add_aggregate(aggregate, vote_account_pubkeys)
+            .add_aggregate(&aggregate, vote_account_pubkeys)
             .unwrap();
     }
 }

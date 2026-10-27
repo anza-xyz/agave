@@ -6,9 +6,9 @@ use {
         reward_certificate::NUM_SLOTS_FOR_REWARD,
         vote::Vote,
     },
+    bitvec::vec::BitVec,
     crossbeam_channel::{Sender, TrySendError},
     log::warn,
-    solana_bls_signatures::Signature,
     solana_clock::Slot,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_metrics::datapoint_info,
@@ -23,17 +23,12 @@ use {
 };
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RewardInput {
+    /// Verified vote aggregates used by both direct rewards and certificate recovery.
     External(Vec<VoteAggregate>),
     Own(VoteMessage),
     Certificates(Vec<Certificate>),
-    /// Individual components of a verified vote batch. The components have not
-    /// necessarily been verified independently of the batch.
-    VoteSignatures {
-        vote: Vote,
-        signatures: Vec<(u16, Signature)>,
-    },
 }
 
 #[must_use]
@@ -63,13 +58,13 @@ pub(crate) fn reward_window_open(source_slot: Slot, root_slot: Slot) -> bool {
 }
 
 #[must_use]
-/// Returns the ordinary reward vote signed by every signer in a certificate.
+/// Returns the ordinary reward vote and the ranks of its signers in a certificate.
 /// Mixed primary/fallback signatures cannot be separated for ordinary rewards.
-pub fn certificate_reward_vote(
+pub fn decode_certificate_reward(
     cert_type: &CertificateType,
     bitmap: &[u8],
     max_validators: usize,
-) -> Option<Vote> {
+) -> Option<(Vote, BitVec<u8>)> {
     let vote = match cert_type {
         CertificateType::Notarize(block)
         | CertificateType::FinalizeFast(block)
@@ -77,18 +72,19 @@ pub fn certificate_reward_vote(
         CertificateType::Skip(slot) => Vote::new_skip_vote(*slot),
         CertificateType::Finalize(_) | CertificateType::Genesis(_) => return None,
     };
-    match decode(bitmap, max_validators).ok()? {
-        Decoded::Base2(_) => Some(vote),
-        Decoded::Base3(_, fallback)
+    let ranks = match decode(bitmap, max_validators).ok()? {
+        Decoded::Base2(ranks) => ranks,
+        Decoded::Base3(ranks, fallback)
             if matches!(
                 cert_type,
                 CertificateType::Skip(_) | CertificateType::NotarizeFallback(_)
             ) && !fallback.any() =>
         {
-            Some(vote)
+            ranks
         }
-        Decoded::Base3(_, _) => None,
-    }
+        Decoded::Base3(_, _) => return None,
+    };
+    Some((vote, ranks))
 }
 
 const MAX_PENDING_REWARD_CERTIFICATES: usize = 256;
@@ -132,7 +128,7 @@ impl RewardCertificateSender {
         my_pubkey: &Pubkey,
         leader_schedule: &LeaderScheduleCache,
         root_bank: &Bank,
-        certificates: &[Certificate],
+        certificates: Vec<Certificate>,
         channel: &Sender<RewardInput>,
     ) {
         self.expire(root_bank.slot());
@@ -156,7 +152,7 @@ impl RewardCertificateSender {
             ) || !root_bank
                 .get_rank_map(cert.cert_type.slot())
                 .is_some_and(|map| {
-                    certificate_reward_vote(&cert.cert_type, &cert.bitmap, map.len()).is_some()
+                    decode_certificate_reward(&cert.cert_type, &cert.bitmap, map.len()).is_some()
                 })
             {
                 continue;
@@ -166,7 +162,7 @@ impl RewardCertificateSender {
         self.retry(root_bank.slot(), channel);
     }
 
-    fn enqueue(&mut self, cert: &Certificate) {
+    fn enqueue(&mut self, cert: Certificate) {
         if self
             .pending
             .iter()
@@ -181,7 +177,7 @@ impl RewardCertificateSender {
             .iter()
             .position(|pending| pending.cert_type.slot() > cert.cert_type.slot())
             .unwrap_or(self.pending.len());
-        self.pending.insert(index, cert.clone());
+        self.pending.insert(index, cert);
         if self.pending.len() > MAX_PENDING_REWARD_CERTIFICATES {
             self.pending.pop_back();
             self.stats.pending_cap_dropped += 1;
@@ -310,7 +306,7 @@ mod tests {
         agave_votor_messages::consensus_message::Block,
         bitvec::vec::BitVec,
         crossbeam_channel::bounded,
-        solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature},
         solana_runtime::{
             bank::SlotLeader,
             bank_forks::BankForks,
@@ -333,8 +329,8 @@ mod tests {
         channel.send(RewardInput::Certificates(vec![])).unwrap();
         let mut sender = RewardCertificateSender::new();
         let cert = certificate(10);
-        sender.enqueue(&cert);
-        sender.enqueue(&cert);
+        sender.enqueue(cert.clone());
+        sender.enqueue(cert.clone());
         sender.retry(10, &channel);
         assert_eq!(sender.pending.len(), 1);
         assert_eq!(sender.stats.channel_full.0, 1);
@@ -354,7 +350,7 @@ mod tests {
         let (channel, receiver) = bounded(1);
         channel.send(RewardInput::Certificates(vec![])).unwrap();
         let mut sender = RewardCertificateSender::new();
-        sender.enqueue(&certificate(10));
+        sender.enqueue(certificate(10));
         sender.retry(17, &channel);
         assert!(sender.has_pending());
         receiver.try_recv().unwrap();
@@ -367,9 +363,9 @@ mod tests {
     #[test]
     fn test_reward_certificate_retry_bounds_pending_and_each_batch() {
         let mut sender = RewardCertificateSender::new();
-        sender.enqueue(&certificate(1_000));
+        sender.enqueue(certificate(1_000));
         for slot in 1..=MAX_PENDING_REWARD_CERTIFICATES {
-            sender.enqueue(&certificate(slot as Slot));
+            sender.enqueue(certificate(slot as Slot));
         }
         assert_eq!(sender.pending.len(), MAX_PENDING_REWARD_CERTIFICATES);
         assert_eq!(sender.pending.front().unwrap().cert_type.slot(), 1);
@@ -394,7 +390,7 @@ mod tests {
     fn test_reward_certificate_retry_drops_disconnected_backlog() {
         let mut sender = RewardCertificateSender::new();
         for slot in 1..=MAX_PENDING_REWARD_CERTIFICATES {
-            sender.enqueue(&certificate(slot as Slot));
+            sender.enqueue(certificate(slot as Slot));
         }
         let (channel, receiver) = bounded(1);
         drop(receiver);
@@ -465,7 +461,7 @@ mod tests {
                 &my_pubkey,
                 &leader_schedule,
                 &root_bank,
-                &certificates,
+                certificates,
                 &channel,
             );
         }
@@ -489,7 +485,7 @@ mod tests {
                 &my_pubkey,
                 &leader_schedule,
                 &bank,
-                &[certificate(cert_type)],
+                vec![certificate(cert_type)],
                 &channel,
             );
         }
@@ -498,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn certificate_reward_vote_requires_a_pure_ordinary_payload() {
+    fn decode_certificate_reward_requires_a_pure_ordinary_payload() {
         let block = Block::new_unique(10);
         let mut primary = BitVec::<u8>::repeat(false, 3);
         primary.set(0, true);
@@ -507,6 +503,10 @@ mod tests {
         let pure_base3 = encode_base3(&primary, &fallback).unwrap();
         fallback.set(1, true);
         let mixed_base3 = encode_base3(&primary, &fallback).unwrap();
+        let reward = |cert_type: &CertificateType, bitmap: &[u8]| {
+            decode_certificate_reward(cert_type, bitmap, 3)
+                .map(|(vote, ranks)| (vote, ranks.iter_ones().collect::<Vec<_>>()))
+        };
 
         for cert_type in [
             CertificateType::Notarize(block),
@@ -514,33 +514,27 @@ mod tests {
             CertificateType::NotarizeFallback(block),
         ] {
             assert_eq!(
-                certificate_reward_vote(&cert_type, &base2, 3),
-                Some(Vote::new_notarization_vote(block)),
+                reward(&cert_type, &base2),
+                Some((Vote::new_notarization_vote(block), vec![0])),
             );
         }
         for cert_type in [
             CertificateType::Skip(block.slot),
             CertificateType::NotarizeFallback(block),
         ] {
-            assert_eq!(
-                certificate_reward_vote(&cert_type, &pure_base3, 3),
-                certificate_reward_vote(&cert_type, &base2, 3),
-            );
-            assert_eq!(certificate_reward_vote(&cert_type, &mixed_base3, 3), None);
+            assert_eq!(reward(&cert_type, &pure_base3), reward(&cert_type, &base2));
+            assert_eq!(reward(&cert_type, &mixed_base3), None);
         }
         assert_eq!(
-            certificate_reward_vote(&CertificateType::Skip(block.slot), &base2, 3),
-            Some(Vote::new_skip_vote(block.slot)),
+            reward(&CertificateType::Skip(block.slot), &base2),
+            Some((Vote::new_skip_vote(block.slot), vec![0])),
         );
         for cert_type in [
             CertificateType::Finalize(block.slot),
             CertificateType::Genesis(block),
         ] {
-            assert_eq!(certificate_reward_vote(&cert_type, &base2, 3), None);
+            assert_eq!(reward(&cert_type, &base2), None);
         }
-        assert_eq!(
-            certificate_reward_vote(&CertificateType::Notarize(block), &pure_base3, 3),
-            None,
-        );
+        assert_eq!(reward(&CertificateType::Notarize(block), &pure_base3), None);
     }
 }

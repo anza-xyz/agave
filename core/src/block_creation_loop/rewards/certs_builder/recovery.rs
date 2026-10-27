@@ -11,31 +11,24 @@
 //! - *Seed*: a verified certificate whose signers all signed one ordinary vote, a skip or the
 //!   notarization of one block. Notarize, FinalizeFast, primary-only NotarizeFallback and Skip
 //!   certificates qualify; mixed primary/fallback certificates cannot be separated.
-//! - *Payload*: that vote. Seeds and raw components are kept per payload.
-//! - *Raw component*: one validator's signature from an optimistic batch, which verified only as a
-//!   whole. Components are therefore untrusted.
-//! - *Extension*: a seed plus the raw components of signers outside it, verified as a whole.
-//! - *Prepared* candidates: verified extensions, kept for the build.
+//! - *Payload*: that vote. Seeds and verified vote aggregates are kept per payload.
+//! - *Extension*: a seed plus complete vote aggregates with disjoint signer sets.
+//! - *Prepared* candidates: replay-verified extensions, kept for the build.
 //! - *Sealed*: a source slot whose reward certificates were built. It is never recreated.
 //!
 //! # Verification
 //!
 //! One background worker checks extensions with the `verify_base2` call replay uses, against the
-//! source slot's epoch rank map and the local shred version. Colluders can submit components that
-//! cancel within their batch, so a failed extension is bisected: parts that verify with the seed
-//! are combined and checked again, and isolated invalid components are evicted, since their
-//! senders cannot replace them. Seed preparation and extensions share a 27-check job budget. Once
-//! seeds are prepared, that is enough to isolate an invalid component among 2,000 voters and still
-//! combine the verified parts. Preparation that exhausts the budget schedules another job. It skips
-//! extensions that another seed or a prepared extension already covers. Jobs extend seeds, not
-//! earlier extensions, so while invalid components remain, each job bisects again from its seed.
+//! source slot's epoch rank map and the local shred version. An optimistic vote batch verifies
+//! only as a whole, so recovery keeps its aggregate signature and signer bitmap together. An
+//! aggregate that overlaps a seed or an already included aggregate cannot be added or split.
+//! Each job checks at most four seeds and one extension per seed. It skips extensions that another
+//! seed or a prepared extension already covers.
 //!
 //! # Selection
 //!
 //! A build picks the skip/notar pair with the most unique stake among the baseline, the seeds and
-//! the prepared extensions, but only pairs that keep every validator the baseline pays. The
-//! exception is a validator whose own component a check proved invalid: its vote only verified in
-//! a batch where colluders' errors cancelled, and must not keep honest signers out. Before
+//! the prepared extensions, but only pairs that keep every validator the baseline pays. Before
 //! publishing a certificate beyond the baseline, the worker verifies its exact payload, signature
 //! and bitmap as replay will. The immutable checked candidate also pins its source epoch rank map
 //! and shred version. Builds select only matching checked candidates and never verify signatures.
@@ -44,23 +37,23 @@
 //! The baseline service publishes its direct response first, with a bounded channel for an optional
 //! upgrade. The requestor takes that upgrade only if it is already available, so slow or saturated
 //! recovery cannot withhold the baseline. Each request fixes a cutoff before assembling its direct
-//! snapshot: only candidates checked by then are eligible, and only component failures proved by
-//! then may relax the baseline's required signer set.
+//! snapshot: only candidates checked by then are eligible.
 //!
 //! # Bounds and deadlines
 //!
 //! A source slot keeps at most four payloads and four seeds, eight prepared extensions per payload
-//! and one raw component per rank. When payloads are full, a batch with more raw stake displaces
-//! the weakest payload that holds only raw components; signers with more stake than each batch of
-//! a real payload can keep it out until a certificate for it arrives, and the baseline still pays
-//! those votes. A payload is checked at most every 62.5 ms, least recently checked first, with one
-//! job in flight. Builds never wait for the worker, late inputs and results cannot recreate a
+//! and at most as many vote aggregates per payload as validators in the rank map. When payloads
+//! are full, a batch with more stake displaces the weakest payload that holds only direct votes.
+//! Signers with more stake than each batch of a real payload can keep it out until a certificate
+//! for it arrives, and the baseline still pays those votes. A payload is checked at most every
+//! 62.5 ms, least recently checked first, with one job in flight. Builds never wait for the worker,
+//! late inputs and results cannot recreate a
 //! sealed slot, and state is dropped when the source slot's reward window closes. If the worker
 //! exits, recovery keeps serving its prepared candidates.
 //!
 //! # Metrics and benchmarks
 //!
-//! `reward-certs-recovery` reports checks, failures, evictions, fallbacks, late inputs, recovered
+//! `reward-certs-recovery` reports checks, failures, rejected evidence, late inputs, recovered
 //! stake, and worker time. `unverified_outputs` counts admitted
 //! seeds rejected by their replay recheck, before publication; it should stay zero because ingress
 //! verified those seeds. The `reward_recovery` criterion benches measure builds and jobs at 1,024
@@ -69,7 +62,9 @@
 use {
     super::super::msg_types::RewardRespSucc,
     agave_bls_cert_verify::cert_verify::verify_base2,
-    agave_bls_sigverify::rewards::certificate_reward_vote,
+    agave_bls_sigverify::{
+        rewards::decode_certificate_reward, sig_verified_messages::VoteAggregate,
+    },
     agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::{
         certificate::Certificate,
@@ -80,15 +75,13 @@ use {
     },
     bitvec::vec::BitVec,
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
-    solana_bls_signatures::{
-        Signature, SignatureCompressed, SignatureProjective, signature::SignatureAffine,
-    },
+    solana_bls_signatures::{SignatureCompressed, SignatureProjective},
     solana_clock::Slot,
-    solana_runtime::{bank::MAX_ALPENGLOW_VOTE_ACCOUNTS, epoch_stakes::BLSPubkeyToRankMap},
+    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
     solana_signer_store::{Decoded, decode, encode_base2},
     std::{
         cmp::Reverse,
-        collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry},
+        collections::{BTreeMap, HashMap},
         sync::Arc,
         thread::{self, JoinHandle},
         time::{Duration, Instant},
@@ -106,14 +99,8 @@ const MAX_READY_CANDIDATES_PER_PAYLOAD: usize = 8;
 // Pace work throughout the reward window rather than exhausting a lifetime budget on early
 // partial batches. Each job checks at most four seeds, on a single background worker.
 const CHECK_INTERVAL: Duration = Duration::from_micros(62_500);
-// Bisecting a failed extension isolates an invalid raw component with at most two checks for
-// each halving of the largest rank map.
-const MAX_BISECTION_CHECKS: usize =
-    2 * (usize::BITS - (MAX_ALPENGLOW_VOTE_ACCOUNTS - 1).leading_zeros()) as usize;
-// Seed preparation shares this budget with extensions. Once the seeds are prepared, this covers
-// every seed's complete extension, one bisection and the narrower extension it leaves. If preparing
-// new seeds prevents an exhausted job from isolating a component, it schedules another paced job.
-const MAX_CHECKS_PER_JOB: u64 = (MAX_CERTIFICATES_PER_SLOT + MAX_BISECTION_CHECKS + 1) as u64;
+// Each job checks at most four seeds and one extension of each seed.
+const MAX_CHECKS_PER_JOB: u64 = (2 * MAX_CERTIFICATES_PER_SLOT) as u64;
 
 #[derive(Clone)]
 struct Candidate {
@@ -125,10 +112,6 @@ struct Candidate {
 }
 
 impl Candidate {
-    fn same_evidence(&self, other: &Self) -> bool {
-        self.vote == other.vote && self.signature == other.signature && self.bitmap == other.bitmap
-    }
-
     fn covers(&self, other: &Self) -> bool {
         self.vote == other.vote && other.ranks.iter_ones().all(|rank| self.ranks[rank])
     }
@@ -160,12 +143,8 @@ impl Candidate {
     }
 
     fn from_certificate(cert: Certificate, rank_map: &BLSPubkeyToRankMap) -> Option<Self> {
-        let vote = certificate_reward_vote(&cert.cert_type, &cert.bitmap, rank_map.len())?;
-        let ranks = match decode(&cert.bitmap, rank_map.len()).ok()? {
-            Decoded::Base2(ranks) => ranks,
-            Decoded::Base3(ranks, fallback) if fallback.not_any() => ranks,
-            _ => return None,
-        };
+        let (vote, ranks) =
+            decode_certificate_reward(&cert.cert_type, &cert.bitmap, rank_map.len())?;
         Self::new(vote, cert.signature.try_into().ok()?, ranks, rank_map)
     }
 }
@@ -188,14 +167,14 @@ impl CheckContext {
 /// rank metadata are never changed after this value is constructed.
 #[derive(Clone)]
 struct CheckedCandidate {
-    candidate: Candidate,
+    candidate: Arc<Candidate>,
     context: CheckContext,
     checked_at: Instant,
 }
 
 impl CheckedCandidate {
     fn verify(
-        candidate: Candidate,
+        candidate: Arc<Candidate>,
         rank_map: &Arc<BLSPubkeyToRankMap>,
         shred_version: u16,
     ) -> Option<Self> {
@@ -221,26 +200,62 @@ impl std::ops::Deref for CheckedCandidate {
 
 #[derive(Clone)]
 enum SeedCheck {
-    Valid(CheckedCandidate),
+    Pending,
+    Valid {
+        context: CheckContext,
+        checked_at: Instant,
+    },
     Invalid {
-        candidate: Candidate,
         context: CheckContext,
     },
 }
 
 impl SeedCheck {
-    fn candidate(&self) -> &Candidate {
+    fn context(&self) -> Option<&CheckContext> {
         match self {
-            Self::Valid(candidate) => candidate,
-            Self::Invalid { candidate, .. } => candidate,
+            Self::Pending => None,
+            Self::Valid { context, .. } | Self::Invalid { context } => Some(context),
+        }
+    }
+}
+
+/// Retains one immutable proof with its check status. Worker snapshots share the proof, and a
+/// result can update only the same retained seed, even if replacements happened during its check.
+#[derive(Clone)]
+struct Seed {
+    candidate: Arc<Candidate>,
+    check: SeedCheck,
+}
+
+impl Seed {
+    fn new(candidate: Candidate) -> Self {
+        Self {
+            candidate: Arc::new(candidate),
+            check: SeedCheck::Pending,
         }
     }
 
-    fn context(&self) -> &CheckContext {
-        match self {
-            Self::Valid(candidate) => &candidate.context,
-            Self::Invalid { context, .. } => context,
-        }
+    fn checked(&self) -> Option<CheckedCandidate> {
+        let SeedCheck::Valid {
+            context,
+            checked_at,
+        } = &self.check
+        else {
+            return None;
+        };
+        Some(CheckedCandidate {
+            candidate: self.candidate.clone(),
+            context: context.clone(),
+            checked_at: *checked_at,
+        })
+    }
+}
+
+impl std::ops::Deref for Seed {
+    type Target = Candidate;
+
+    fn deref(&self) -> &Self::Target {
+        &self.candidate
     }
 }
 
@@ -365,7 +380,10 @@ fn retain_ready(
     if ready.len() > MAX_READY_CANDIDATES_PER_PAYLOAD {
         // Normally newer generations dominate their older counterparts. Bound the frontier
         // even when certificate replacement introduces additional incomparable signer sets.
-        let quality = CoverageQuality::new(ready.iter().map(|c| &c.candidate).collect(), rank_map);
+        let quality = CoverageQuality::new(
+            ready.iter().map(|c| c.candidate.as_ref()).collect(),
+            rank_map,
+        );
         let remove = (0..ready.len())
             .max_by_key(|&remove| quality.score((0..ready.len()).filter(|&index| index != remove)))
             .expect("the frontier is over its bound, so not empty");
@@ -375,13 +393,10 @@ fn retain_ready(
 
 #[derive(Default)]
 struct PayloadState {
-    // These are deliberately raw Signature bytes, not VoteAggregate or verified VoteMessage.
-    signatures: BTreeMap<u16, Signature>,
-    /// Ranks whose component a check against a verified seed proved invalid.
-    evicted: BTreeMap<u16, Instant>,
-    seeds: Vec<Candidate>,
-    /// At most one check per retained seed, including failed checks so bad evidence cannot spin.
-    checked_seeds: Vec<SeedCheck>,
+    // Keep the signature and signer bitmap together. An optimistic aggregate cannot be split.
+    aggregates: Vec<Arc<VoteAggregate>>,
+    // Failed checks stay with their seed so bad evidence cannot spin.
+    seeds: Vec<Seed>,
     ready: Vec<CheckedCandidate>,
     generation: u64,
     scheduled_generation: u64,
@@ -390,29 +405,24 @@ struct PayloadState {
 }
 
 impl PayloadState {
-    /// Stake of the signers of retained raw components.
-    fn raw_stake(&self, rank_map: &BLSPubkeyToRankMap) -> u64 {
-        stake_of_ranks(
-            rank_map,
-            self.signatures.keys().map(|&rank| usize::from(rank)),
-        )
+    /// Unique stake of the signers of retained vote aggregates.
+    fn aggregate_stake(&self, rank_map: &BLSPubkeyToRankMap) -> u64 {
+        let mut ranks = BitVec::<u8>::repeat(false, rank_map.len());
+        for aggregate in &self.aggregates {
+            ranks |= aggregate.ranks();
+        }
+        stake_of_ranks(rank_map, ranks.iter_ones())
     }
 
     fn needs_check(&self) -> bool {
         self.seeds.iter().any(|seed| {
-            !self
-                .checked_seeds
-                .iter()
-                .any(|checked| checked.candidate().same_evidence(seed))
-        }) || (self.generation != self.scheduled_generation
-            && self.checked_seeds.iter().any(|seed| {
-                let SeedCheck::Valid(seed) = seed else {
-                    return false;
-                };
-                self.signatures
-                    .keys()
-                    .any(|&rank| !seed.ranks[usize::from(rank)])
-            }))
+            matches!(seed.check, SeedCheck::Pending)
+                || (self.generation != self.scheduled_generation
+                    && matches!(seed.check, SeedCheck::Valid { .. })
+                    && self.aggregates.iter().any(|aggregate| {
+                        aggregate.ranks().iter_ones().all(|rank| !seed.ranks[rank])
+                    }))
+        })
     }
 }
 
@@ -427,11 +437,10 @@ struct Job {
     generation: u64,
     rank_map: Arc<BLSPubkeyToRankMap>,
     shred_version: u16,
-    seeds: Vec<Candidate>,
-    checked_seeds: Vec<SeedCheck>,
-    signatures: BTreeMap<u16, Signature>,
-    /// Signer sets of this payload's prepared candidates when the job was scheduled.
-    ready: Vec<BitVec<u8>>,
+    seeds: Vec<Seed>,
+    aggregates: Vec<Arc<VoteAggregate>>,
+    /// Immutable prepared evidence shared with the controller when the job was scheduled.
+    ready: Vec<Arc<Candidate>>,
     #[cfg(test)]
     verification_gate: Option<(Sender<()>, Receiver<()>)>,
 }
@@ -440,147 +449,11 @@ struct JobResult {
     vote: Vote,
     generation: u64,
     candidates: Vec<CheckedCandidate>,
-    seed_checks: Vec<SeedCheck>,
-    /// Preparing a seed consumed checks needed by an unfinished extension. Preparing the seed is
-    /// progress, so the next job can safely retry with the full extension budget.
-    retry: bool,
+    seeds: Vec<Seed>,
     rejected_seeds: u64,
-    /// Raw components shown to be invalid, which later checks must exclude.
-    invalid_components: Vec<(u16, Signature, Instant)>,
     checks: u64,
     failed_checks: u64,
-    seed_fallbacks: u64,
     worker_us: u64,
-}
-
-// A transient worker return value, never a collection: keep successful candidates inline rather
-// than allocating a box for every successful signature check.
-#[allow(clippy::large_enum_variant)]
-enum Check {
-    Valid(CheckedCandidate),
-    Invalid,
-    /// The job's check budget is exhausted.
-    Exhausted,
-}
-
-/// Extends verified seeds with raw components, verifying each extension as a replayer would.
-struct Checker<'a> {
-    vote: Vote,
-    payload: Vec<u8>,
-    rank_map: &'a Arc<BLSPubkeyToRankMap>,
-    shred_version: u16,
-    /// Raw components, with their points once an extension needs them. Validating a point is the
-    /// costly part of aggregation, so each component is validated at most once per job, and only
-    /// if an extension that will be checked uses it.
-    components: Vec<(u16, &'a Signature, Option<SignatureAffine>)>,
-    checks: u64,
-    failed_checks: u64,
-    exhausted: bool,
-}
-
-impl Checker<'_> {
-    /// Validates the points of `part` that no earlier extension needed. Returns the components
-    /// that are not valid signature points, which no extension can use.
-    fn validate(&mut self, part: &[usize]) -> Vec<usize> {
-        let mut invalid = vec![];
-        for &index in part {
-            let (_, signature, point) = &mut self.components[index];
-            if point.is_none() {
-                match SignatureAffine::try_from(*signature) {
-                    Ok(valid) => *point = Some(valid),
-                    Err(_) => invalid.push(index),
-                }
-            }
-        }
-        invalid
-    }
-
-    /// Checks the extension of `seed` with `part`, unless the job has already made `limit` checks.
-    fn check(
-        &mut self,
-        seed: &Candidate,
-        seed_signature: &SignatureProjective,
-        part: &[usize],
-        limit: u64,
-    ) -> Check {
-        if self.checks >= limit {
-            self.exhausted = true;
-            return Check::Exhausted;
-        }
-        let mut signature = *seed_signature;
-        let mut ranks = seed.ranks.clone();
-        for &index in part {
-            ranks.set(usize::from(self.components[index].0), true);
-        }
-        // Every part comes from an extension whose points were validated.
-        debug_assert!(part.iter().all(|&index| self.components[index].2.is_some()));
-        if signature
-            .aggregate_with(
-                part.iter()
-                    .filter_map(|&index| self.components[index].2.as_ref()),
-            )
-            .is_err()
-        {
-            return Check::Invalid;
-        }
-        let Some(candidate) = Candidate::new(self.vote, signature.into(), ranks, self.rank_map)
-        else {
-            return Check::Invalid;
-        };
-        self.checks += 1;
-        if verifies(&self.payload, &candidate, self.rank_map) {
-            Check::Valid(CheckedCandidate {
-                candidate,
-                context: CheckContext {
-                    rank_map: self.rank_map.clone(),
-                    shred_version: self.shred_version,
-                },
-                checked_at: Instant::now(),
-            })
-        } else {
-            self.failed_checks += 1;
-            Check::Invalid
-        }
-    }
-
-    /// Splits a failed extension, depth first, until it isolates invalid components. A part that
-    /// verifies with the seed sums to its signers' true signatures, so verified parts can be
-    /// combined. Returns them with their candidates, and the isolated invalid components. One
-    /// check of the job's budget is left for combining the verified parts.
-    fn bisect(
-        &mut self,
-        seed: &Candidate,
-        seed_signature: &SignatureProjective,
-        failed: &[usize],
-    ) -> (Vec<(Vec<usize>, CheckedCandidate)>, Vec<usize>) {
-        let mut verified = vec![];
-        let mut invalid = vec![];
-        let mut failed_parts = vec![failed];
-        while let Some(part) = failed_parts.pop() {
-            if let [index] = part {
-                invalid.push(*index);
-                continue;
-            }
-            let (left, right) = part.split_at(part.len() / 2);
-            match self.check(seed, seed_signature, left, MAX_CHECKS_PER_JOB - 1) {
-                Check::Exhausted => break,
-                // The right half cannot also verify, or the whole part would have verified.
-                Check::Valid(candidate) => {
-                    verified.push((left.to_vec(), candidate));
-                    failed_parts.push(right);
-                }
-                Check::Invalid => {
-                    match self.check(seed, seed_signature, right, MAX_CHECKS_PER_JOB - 1) {
-                        Check::Exhausted => break,
-                        Check::Valid(candidate) => verified.push((right.to_vec(), candidate)),
-                        Check::Invalid => failed_parts.push(right),
-                    }
-                    failed_parts.push(left);
-                }
-            }
-        }
-        (verified, invalid)
-    }
 }
 
 impl Job {
@@ -588,34 +461,16 @@ impl Job {
         let start = Instant::now();
         #[cfg(test)]
         let mut verification_gate = self.verification_gate;
-        let component_ranks: Vec<u16> = self.signatures.keys().copied().collect();
-        let mut checker = Checker {
-            vote: self.vote,
-            payload: get_vote_payload_to_sign(self.vote, self.shred_version),
-            rank_map: &self.rank_map,
-            shred_version: self.shred_version,
-            components: self
-                .signatures
-                .iter()
-                .map(|(&rank, signature)| (rank, signature, None))
-                .collect(),
-            checks: 0,
-            failed_checks: 0,
-            exhausted: false,
-        };
-        let mut seeds = vec![];
-        let mut seed_checks = vec![];
+        let mut checks = 0;
+        let mut failed_checks = 0;
+        let mut seeds = self.seeds;
         let mut rejected_seeds = 0;
-        for seed in self.seeds {
-            if let Some(checked) = self.checked_seeds.iter().find(|checked| {
-                checked.candidate().same_evidence(&seed)
-                    && checked
-                        .context()
-                        .matches(&self.rank_map, self.shred_version)
-            }) {
-                if let SeedCheck::Valid(candidate) = checked {
-                    seeds.push(candidate.clone());
-                }
+        for seed in &mut seeds {
+            if seed
+                .check
+                .context()
+                .is_some_and(|context| context.matches(&self.rank_map, self.shred_version))
+            {
                 continue;
             }
             #[cfg(test)]
@@ -624,155 +479,86 @@ impl Job {
                 let _ = release.recv();
             }
             // There are at most four retained seeds, so their checks always fit the total budget.
-            checker.checks += 1;
-            let checked =
-                match CheckedCandidate::verify(seed.clone(), &self.rank_map, self.shred_version) {
-                    Some(candidate) => {
-                        seeds.push(candidate.clone());
-                        SeedCheck::Valid(candidate)
+            checks += 1;
+            seed.check = match CheckedCandidate::verify(
+                seed.candidate.clone(),
+                &self.rank_map,
+                self.shred_version,
+            ) {
+                Some(candidate) => SeedCheck::Valid {
+                    context: candidate.context,
+                    checked_at: candidate.checked_at,
+                },
+                None => {
+                    failed_checks += 1;
+                    rejected_seeds += 1;
+                    SeedCheck::Invalid {
+                        context: CheckContext {
+                            rank_map: self.rank_map.clone(),
+                            shred_version: self.shred_version,
+                        },
                     }
-                    None => {
-                        checker.failed_checks += 1;
-                        rejected_seeds += 1;
-                        SeedCheck::Invalid {
-                            candidate: seed,
-                            context: CheckContext {
-                                rank_map: self.rank_map.clone(),
-                                shred_version: self.shred_version,
-                            },
-                        }
-                    }
-                };
-            seed_checks.push(checked);
-        }
-        // Only replay-checked seeds may suppress another extension or be used to judge a raw
-        // component invalid. A bad seed must never cause an honest component's eviction.
-        let seed_signers: Vec<_> = seeds.iter().map(|seed| seed.ranks.clone()).collect();
-        // Keep alternatives: the largest notar candidate need not complement a skip candidate
-        // best, and a seed covering invalid raw components can succeed after another seed fails.
-        let mut extensions: Vec<_> = seeds
-            .into_iter()
-            .filter_map(|seed| {
-                let mut ranks = seed.ranks.clone();
-                for &rank in self.signatures.keys() {
-                    ranks.set(usize::from(rank), true);
                 }
-                let stake = stake_of_ranks(&self.rank_map, ranks.iter_ones());
-                (stake > seed.stake).then_some((stake, seed))
-            })
-            .collect();
-        extensions.sort_by_key(|(stake, _)| Reverse(*stake));
-        let mut invalid = vec![false; component_ranks.len()];
-        let mut invalid_components = vec![];
-        let mut candidates: Vec<CheckedCandidate> = vec![];
-        let mut seed_fallbacks = 0;
-        for (_, seed) in extensions.into_iter().take(MAX_CERTIFICATES_PER_SLOT) {
-            let mut outside: Vec<_> = (0..component_ranks.len())
-                .filter(|&index| {
-                    !invalid[index] && !seed.ranks[usize::from(component_ranks[index])]
-                })
-                .collect();
-            let prospective = |part: &[usize]| {
-                let mut signers = seed.ranks.clone();
-                for &index in part {
-                    signers.set(usize::from(component_ranks[index]), true);
-                }
-                signers
             };
-            // Equal or smaller signer sets cannot improve any skip/notar union, whether those of a
-            // seed or prepared by an earlier job or by this one. A previously failed attempt does
-            // not suppress a different seed with the same prospective set.
-            let prepared = |ranks: BitVec<u8>, candidates: &[CheckedCandidate]| {
-                self.ready
+        }
+        // Combine only complete, disjoint aggregates. A certificate that overlaps part of an
+        // optimistic batch cannot use the remainder, even when individual signatures cancel.
+        let checked_seeds: Vec<_> = seeds.iter().filter_map(Seed::checked).collect();
+        let mut aggregates: Vec<_> = self.aggregates.iter().collect();
+        aggregates.sort_by_key(|aggregate| Reverse(aggregate.stake()));
+        let mut candidates: Vec<CheckedCandidate> = vec![];
+        for seed in &checked_seeds {
+            let mut ranks = seed.ranks.clone();
+            let mut outside = vec![];
+            for aggregate in &aggregates {
+                if aggregate.ranks().iter_ones().all(|rank| !ranks[rank]) {
+                    ranks |= aggregate.ranks();
+                    outside.push(aggregate.signature());
+                }
+            }
+            if outside.is_empty()
+                || self
+                    .ready
                     .iter()
-                    .chain(&seed_signers)
+                    .map(|candidate| &candidate.ranks)
+                    .chain(checked_seeds.iter().map(|seed| &seed.ranks))
                     .chain(candidates.iter().map(|candidate| &candidate.ranks))
                     .any(|covered| ranks.iter_ones().all(|rank| covered[rank]))
-            };
-            if outside.is_empty() || prepared(prospective(&outside), &candidates) {
+            {
                 continue;
             }
-            // Without a check left, validating this extension's components would be wasted.
-            if checker.checks >= MAX_CHECKS_PER_JOB {
-                checker.exhausted = true;
-                break;
-            }
-            let undecodable = checker.validate(&outside);
-            if !undecodable.is_empty() {
-                for index in undecodable {
-                    invalid[index] = true;
-                    let (rank, signature, _) = checker.components[index];
-                    invalid_components.push((rank, *signature, Instant::now()));
-                }
-                outside.retain(|&index| !invalid[index]);
-                if outside.is_empty() || prepared(prospective(&outside), &candidates) {
-                    continue;
-                }
-            }
-            let Ok(seed_signature) = SignatureProjective::try_from(&seed.signature) else {
+            let Ok(mut signature) = SignatureProjective::try_from(&seed.signature) else {
                 continue;
             };
-            match checker.check(&seed, &seed_signature, &outside, MAX_CHECKS_PER_JOB) {
-                Check::Exhausted => break,
-                Check::Valid(candidate) => {
-                    seed_fallbacks += u64::from(checker.failed_checks != 0);
-                    candidates.push(candidate);
-                }
-                Check::Invalid => {
-                    // An optimistic batch proves only its aggregate, so some of its components
-                    // can be invalid. Isolate them and keep the verified remainder.
-                    let (verified, isolated) = checker.bisect(&seed, &seed_signature, &outside);
-                    for index in isolated {
-                        invalid[index] = true;
-                        let (rank, signature, _) = checker.components[index];
-                        invalid_components.push((rank, *signature, Instant::now()));
-                    }
-                    let valid: Vec<_> = verified
-                        .iter()
-                        .flat_map(|(part, _)| part.iter().copied())
-                        .collect();
-                    if valid.is_empty() || prepared(prospective(&valid), &candidates) {
-                        continue;
-                    }
-                    // A single verified part is the narrower extension. Several parts are
-                    // combined and verified again before the result can be published; bisection
-                    // leaves a check for that. Disjoint verified parts always combine, so the
-                    // strongest part, which verified alone, is only a safeguard.
-                    let combined = if verified.len() > 1 {
-                        checker.check(&seed, &seed_signature, &valid, MAX_CHECKS_PER_JOB)
-                    } else {
-                        Check::Exhausted
-                    };
-                    let candidate = match combined {
-                        Check::Valid(candidate) => Some(candidate),
-                        Check::Invalid | Check::Exhausted => verified
-                            .into_iter()
-                            .map(|(_, candidate)| candidate)
-                            .max_by_key(|candidate| candidate.stake),
-                    };
-                    if let Some(candidate) = candidate {
-                        seed_fallbacks += 1;
-                        candidates.push(candidate);
-                    }
-                }
+            if signature.aggregate_with(outside.into_iter()).is_err() {
+                continue;
+            }
+            let Some(candidate) =
+                Candidate::new(self.vote, signature.into(), ranks, &self.rank_map)
+            else {
+                continue;
+            };
+            checks += 1;
+            match CheckedCandidate::verify(candidate.into(), &self.rank_map, self.shred_version) {
+                Some(candidate) => candidates.push(candidate),
+                None => failed_checks += 1,
             }
         }
+        debug_assert!(checks <= MAX_CHECKS_PER_JOB);
         JobResult {
             vote: self.vote,
             generation: self.generation,
             candidates,
-            retry: checker.exhausted && !seed_checks.is_empty(),
-            seed_checks,
+            seeds,
             rejected_seeds,
-            invalid_components,
-            checks: checker.checks,
-            failed_checks: checker.failed_checks,
-            seed_fallbacks,
+            checks,
+            failed_checks,
             worker_us: start.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
         }
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
 pub(in crate::block_creation_loop::rewards) struct Recovery {
     slots: BTreeMap<Slot, SlotState>,
     jobs: Option<Sender<Job>>,
@@ -789,24 +575,21 @@ pub(in crate::block_creation_loop::rewards) struct Recovery {
     pub(super) metrics: RecoveryMetrics,
 }
 
-/// Recovery counters, which the builder drains into its periodic report.
+/// Recovery counters, reported by the controller that owns the engine.
 #[derive(Default)]
 pub(super) struct RecoveryMetrics {
     pub(super) checks: u64,
     pub(super) completed_jobs: u64,
     pub(super) failed_checks: u64,
-    /// Candidates prepared after a failed check, from another seed or from verified parts.
-    pub(super) seed_fallbacks: u64,
     pub(super) rate_limited_updates: u64,
     pub(super) replaced_certificates: u64,
     pub(super) dropped_certificates: u64,
     pub(super) dropped_payloads: u64,
-    pub(super) invalid_signature_ranks: u64,
-    pub(super) invalid_components: u64,
+    pub(super) invalid_vote_aggregates: u64,
     pub(super) late_results: u64,
-    /// Certificates and raw signatures for a source slot that was already built or pruned.
+    /// Certificates and vote aggregates for a source slot that was already built or pruned.
     pub(super) late_certificates: u64,
-    pub(super) late_signature_components: u64,
+    pub(super) late_vote_aggregates: u64,
     pub(super) recovered_stake: u64,
     /// Admitted seed certificates rejected by replay verification during preparation. These
     /// indicate a bug because ingress verifies every seed before forwarding it.
@@ -816,61 +599,20 @@ pub(super) struct RecoveryMetrics {
 }
 
 impl RecoveryMetrics {
-    pub(super) fn merge(&mut self, other: Self) {
-        let Self {
-            checks,
-            completed_jobs,
-            failed_checks,
-            seed_fallbacks,
-            rate_limited_updates,
-            replaced_certificates,
-            dropped_certificates,
-            dropped_payloads,
-            invalid_signature_ranks,
-            invalid_components,
-            late_results,
-            late_certificates,
-            late_signature_components,
-            recovered_stake,
-            unverified_outputs,
-            worker_exits,
-            worker_us,
-        } = other;
-        self.checks += checks;
-        self.completed_jobs += completed_jobs;
-        self.failed_checks += failed_checks;
-        self.seed_fallbacks += seed_fallbacks;
-        self.rate_limited_updates += rate_limited_updates;
-        self.replaced_certificates += replaced_certificates;
-        self.dropped_certificates += dropped_certificates;
-        self.dropped_payloads += dropped_payloads;
-        self.invalid_signature_ranks += invalid_signature_ranks;
-        self.invalid_components += invalid_components;
-        self.late_results += late_results;
-        self.late_certificates += late_certificates;
-        self.late_signature_components += late_signature_components;
-        self.recovered_stake += recovered_stake;
-        self.unverified_outputs += unverified_outputs;
-        self.worker_exits += worker_exits;
-        self.worker_us.merge(worker_us);
-    }
-
     pub(super) fn report(&self) {
         datapoint_info!(
             "reward-certs-recovery",
             ("checks", self.checks, i64),
             ("failed_checks", self.failed_checks, i64),
             ("completed_jobs", self.completed_jobs, i64),
-            ("seed_fallbacks", self.seed_fallbacks, i64),
             ("rate_limited_updates", self.rate_limited_updates, i64),
             ("replaced_certificates", self.replaced_certificates, i64),
             ("dropped_certificates", self.dropped_certificates, i64),
             ("dropped_payloads", self.dropped_payloads, i64),
-            ("invalid_signature_ranks", self.invalid_signature_ranks, i64),
-            ("invalid_components", self.invalid_components, i64),
+            ("invalid_vote_aggregates", self.invalid_vote_aggregates, i64),
             ("late_results", self.late_results, i64),
             ("late_certificates", self.late_certificates, i64),
-            ("late_signature_components", self.late_signature_components, i64),
+            ("late_vote_aggregates", self.late_vote_aggregates, i64),
             ("recovered_stake", self.recovered_stake, i64),
             ("unverified_outputs", self.unverified_outputs, i64),
             ("worker_exits", self.worker_exits, i64),
@@ -881,7 +623,14 @@ impl RecoveryMetrics {
     }
 }
 
+impl Default for Recovery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Recovery {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
     pub(super) fn new() -> Self {
         let (jobs_sender, jobs_receiver) = bounded::<Job>(1);
         let (results_sender, results_receiver) = bounded(1);
@@ -936,7 +685,9 @@ impl Recovery {
 
     /// Observes completed result collection without blocking the service or growing a test queue.
     #[cfg(test)]
-    pub(super) fn observe_completions(&mut self) -> Receiver<Slot> {
+    pub(in crate::block_creation_loop::rewards) fn observe_completions(
+        &mut self,
+    ) -> Receiver<Slot> {
         let (sender, receiver) = bounded(64);
         self.completion_sender = Some(sender);
         receiver
@@ -964,42 +715,37 @@ impl Recovery {
         (state.rank_map.len() == rank_map.len()).then_some(state)
     }
 
-    pub(super) fn add_signatures(
+    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
+    pub(super) fn add_aggregate(
         &mut self,
-        vote: Vote,
-        signatures: impl IntoIterator<Item = (u16, Signature)>,
+        aggregate: VoteAggregate,
         rank_map: &Arc<BLSPubkeyToRankMap>,
     ) {
+        let vote = *aggregate.vote();
         if !matches!(vote, Vote::Notarize(_) | Vote::Skip(_)) {
+            return;
+        }
+        if aggregate.ranks().len() != rank_map.len() || aggregate.ranks().not_any() {
+            self.metrics.invalid_vote_aggregates += 1;
             return;
         }
         let Some(slot) = Self::slot(&mut self.slots, vote.slot(), rank_map) else {
             return;
         };
-        let signatures: Vec<_> = signatures.into_iter().collect();
-        let mut displaced_payloads = 0;
         if !slot.payloads.contains_key(&vote) && slot.payloads.len() >= MAX_PAYLOADS_PER_SLOT {
-            // Signers of made-up blocks can each open a payload with their own vote. Let a batch
-            // with more raw stake displace the weakest payload that holds only raw components, so
-            // colluders cannot keep out a real payload whose batch outweighs theirs.
-            let incoming = stake_of_ranks(
-                rank_map,
-                signatures
-                    .iter()
-                    .map(|&(rank, _)| usize::from(rank))
-                    .filter(|&rank| rank < rank_map.len())
-                    .collect::<BTreeSet<_>>(),
-            );
+            // A stronger batch may displace a payload that holds only direct votes. Certificate
+            // evidence keeps priority, so made-up blocks cannot crowd it out.
+            let incoming = stake_of_ranks(rank_map, aggregate.ranks().iter_ones());
             let weakest = slot
                 .payloads
                 .iter()
                 .filter(|(_, state)| state.seeds.is_empty() && state.ready.is_empty())
-                .map(|(&vote, state)| (state.raw_stake(rank_map), vote))
+                .map(|(&vote, state)| (state.aggregate_stake(rank_map), vote))
                 .min_by_key(|&(stake, _)| stake);
             match weakest {
                 Some((stake, weakest)) if stake < incoming => {
                     slot.payloads.remove(&weakest);
-                    displaced_payloads += 1;
+                    self.metrics.dropped_payloads += 1;
                 }
                 _ => {
                     self.metrics.dropped_payloads += 1;
@@ -1008,21 +754,20 @@ impl Recovery {
             }
         }
         let state = slot.payloads.entry(vote).or_default();
-        let mut invalid_ranks = 0;
-        for (rank, signature) in signatures {
-            if usize::from(rank) >= rank_map.len() {
-                invalid_ranks += 1;
-                continue;
-            }
-            if let Entry::Vacant(entry) = state.signatures.entry(rank) {
-                entry.insert(signature);
-                state.generation = state.generation.saturating_add(1);
-            }
+        // Different overlapping batches can extend different seeds. Keep those alternatives,
+        // but bound their count and ignore duplicate signer sets (verified BLS signatures are unique).
+        if state.aggregates.len() < rank_map.len()
+            && !state
+                .aggregates
+                .iter()
+                .any(|existing| existing.ranks() == aggregate.ranks())
+        {
+            state.aggregates.push(Arc::new(aggregate));
+            state.generation = state.generation.saturating_add(1);
         }
-        self.metrics.invalid_signature_ranks += invalid_ranks;
-        self.metrics.dropped_payloads += displaced_payloads;
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
     pub(super) fn add_certificate(
         &mut self,
         cert: Certificate,
@@ -1064,12 +809,12 @@ impl Recovery {
                         .seeds
                         .iter()
                         .enumerate()
-                        .map(move |(index, seed)| (Some((vote, index)), seed))
+                        .map(move |(index, seed)| (Some((vote, index)), seed.candidate.as_ref()))
                         .chain(
                             state
                                 .ready
                                 .iter()
-                                .map(|candidate| (None, &candidate.candidate)),
+                                .map(|candidate| (None, candidate.candidate.as_ref())),
                         )
                 })
                 .collect();
@@ -1091,10 +836,10 @@ impl Recovery {
                     vec![None]
                 };
             for remove_payload in payload_removals {
-                // Raw components do not count towards coverage, so among plans with equal
-                // coverage, remove the payload with the least raw stake.
-                let removed_raw_stake =
-                    remove_payload.map_or(0, |vote| slot.payloads[&vote].raw_stake(rank_map));
+                // Direct vote aggregates do not count towards checked coverage. Among plans with
+                // equal coverage, remove the payload with the least direct stake.
+                let removed_vote_stake =
+                    remove_payload.map_or(0, |vote| slot.payloads[&vote].aggregate_stake(rank_map));
                 for remove_seed in std::iter::once(None)
                     .chain(seeds.iter().map(|&(vote, index, _)| Some((vote, index))))
                 {
@@ -1116,7 +861,7 @@ impl Recovery {
                                 .then_some(index)
                         });
                     let score = quality.score(kept.chain(std::iter::once(new_index)));
-                    let key = (score, Reverse(removed_raw_stake));
+                    let key = (score, Reverse(removed_vote_stake));
                     if score > current && best.as_ref().is_none_or(|(best, _)| key > *best) {
                         best = Some((key, (remove_payload, remove_seed)));
                     }
@@ -1140,27 +885,9 @@ impl Recovery {
                 let removed_seed = state.seeds.remove(index);
                 // A broader seed is not publishable until its worker check completes. Preserve
                 // the old checked proof as a bounded prepared fallback in the meantime.
-                if let Some(checked) =
-                    state
-                        .checked_seeds
-                        .iter()
-                        .find_map(|checked| match checked {
-                            SeedCheck::Valid(checked)
-                                if checked.candidate.same_evidence(&removed_seed) =>
-                            {
-                                Some(checked.clone())
-                            }
-                            _ => None,
-                        })
-                {
+                if let Some(checked) = removed_seed.checked() {
                     retain_ready(&mut state.ready, checked, &slot.rank_map);
                 }
-                state.checked_seeds.retain(|checked| {
-                    state
-                        .seeds
-                        .iter()
-                        .any(|seed| checked.candidate().same_evidence(seed))
-                });
                 state.generation = state.generation.saturating_add(1);
                 removed += 1;
             }
@@ -1169,7 +896,7 @@ impl Recovery {
             self.metrics.dropped_payloads += u64::from(remove_payload.is_some());
         }
         let state = slot.payloads.entry(candidate.vote).or_default();
-        state.seeds.push(candidate);
+        state.seeds.push(Seed::new(candidate));
         slot.num_certificates += 1;
         state.generation = state.generation.saturating_add(1);
     }
@@ -1188,7 +915,6 @@ impl Recovery {
             self.metrics.completed_jobs += 1;
             self.metrics.checks += result.checks;
             self.metrics.failed_checks += result.failed_checks;
-            self.metrics.seed_fallbacks += result.seed_fallbacks;
             self.metrics.unverified_outputs += result.rejected_seeds;
             self.metrics.worker_us.add_sample(result.worker_us);
             let Some(slot) = self.slots.get_mut(&result.vote.slot()) else {
@@ -1206,42 +932,29 @@ impl Recovery {
             // Slots removed at the cutoff are never recreated. An older generation is still valid
             // evidence, but must not overwrite a newer, better prepared candidate.
             if result.generation <= state.generation {
-                for checked in result.seed_checks {
-                    if state
-                        .seeds
-                        .iter()
-                        .any(|seed| checked.candidate().same_evidence(seed))
-                        && Arc::ptr_eq(&checked.context().rank_map, &slot.rank_map)
+                for checked in result.seeds {
+                    if checked
+                        .check
+                        .context()
+                        .is_some_and(|context| Arc::ptr_eq(&context.rank_map, &slot.rank_map))
+                        && let Some(seed) = state
+                            .seeds
+                            .iter_mut()
+                            .find(|seed| Arc::ptr_eq(&seed.candidate, &checked.candidate))
                     {
-                        state.checked_seeds.retain(|existing| {
-                            !existing.candidate().same_evidence(checked.candidate())
-                        });
-                        state.checked_seeds.push(checked);
+                        seed.check = checked.check;
                     }
                 }
                 for candidate in result.candidates {
                     retain_ready(&mut state.ready, candidate, &slot.rank_map);
                 }
             }
-            // A sender cannot replace its component for a payload, and keeping an invalid one
-            // would fail every later extension that includes it.
-            let mut evicted = false;
-            for (rank, signature, checked_at) in result.invalid_components {
-                if state.signatures.get(&rank) == Some(&signature) {
-                    state.signatures.remove(&rank);
-                    state.evicted.entry(rank).or_insert(checked_at);
-                    self.metrics.invalid_components += 1;
-                    evicted = true;
-                }
-            }
-            if evicted || result.retry {
-                state.generation = state.generation.saturating_add(1);
-            }
             #[cfg(test)]
             self.notify_completion(result.vote.slot());
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
     pub(super) fn poll(&mut self, shred_version: u16) {
         self.collect_ready();
         if self.in_flight || self.worker_exited {
@@ -1250,19 +963,26 @@ impl Recovery {
         let mut next = None;
         for (&slot_number, slot) in &mut self.slots {
             for (&vote, state) in &mut slot.payloads {
-                let checked_len = state.checked_seeds.len();
+                let mut invalidated = false;
+                for seed in &mut state.seeds {
+                    if seed
+                        .check
+                        .context()
+                        .is_some_and(|context| !context.matches(&slot.rank_map, shred_version))
+                    {
+                        seed.check = SeedCheck::Pending;
+                        invalidated = true;
+                    }
+                }
                 let ready_len = state.ready.len();
-                state
-                    .checked_seeds
-                    .retain(|checked| checked.context().matches(&slot.rank_map, shred_version));
                 state
                     .ready
                     .retain(|candidate| candidate.context.matches(&slot.rank_map, shred_version));
-                if checked_len != state.checked_seeds.len() || ready_len != state.ready.len() {
+                if invalidated || ready_len != state.ready.len() {
                     state.generation = state.generation.saturating_add(1);
                 }
                 if !state.needs_check() {
-                    // A job already covers this generation, or no seed misses a component. Either
+                    // A job already covers this generation, or no seed has a disjoint aggregate. Either
                     // way, later polls need not scan it again.
                     state.scheduled_generation = state.generation;
                     continue;
@@ -1302,12 +1022,11 @@ impl Recovery {
             rank_map: slot.rank_map.clone(),
             shred_version,
             seeds: state.seeds.clone(),
-            checked_seeds: state.checked_seeds.clone(),
-            signatures: state.signatures.clone(),
+            aggregates: state.aggregates.clone(),
             ready: state
                 .ready
                 .iter()
-                .map(|candidate| candidate.ranks.clone())
+                .map(|candidate| candidate.candidate.clone())
                 .collect(),
             #[cfg(test)]
             verification_gate: self.verification_gate.take(),
@@ -1323,6 +1042,7 @@ impl Recovery {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
     pub(super) fn poll_interval(&self) -> Duration {
         if !self.worker_exited
             && (self.in_flight
@@ -1337,6 +1057,8 @@ impl Recovery {
         }
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifier_attr::qualifiers(pub))]
     pub(super) fn finish(
         &mut self,
         slot: Slot,
@@ -1368,9 +1090,7 @@ impl Recovery {
             });
             direct.push((vote, notar.signature, notar.bitmap()));
         }
-        // Recovery only adds signers: every validator the direct baseline pays stays paid, unless
-        // a check proved its own signature invalid. Such a vote only verified in a batch where
-        // colluders' errors cancelled, and must not veto recovery for everyone else.
+        // Recovery only adds signers: every validator the direct baseline pays stays paid.
         let mut required = BitVec::<u8>::repeat(false, state.rank_map.len());
         let mut candidates = vec![];
         for (vote, signature, bitmap) in direct {
@@ -1380,31 +1100,20 @@ impl Recovery {
             let Some(candidate) = Candidate::new(vote, signature, ranks, &state.rank_map) else {
                 return baseline;
             };
-            let mut paid = candidate.ranks.clone();
-            if let Some(payload) = state.payloads.get(&vote) {
-                for (&rank, &checked_at) in &payload.evicted {
-                    if checked_at <= cutoff {
-                        paid.set(usize::from(rank), false);
-                    }
-                }
-            }
-            required |= &paid;
-            candidates.push(candidate);
+            required |= &candidate.ranks;
+            candidates.push(Arc::new(candidate));
         }
         for payload in state.payloads.into_values() {
             candidates.extend(
                 payload
-                    .checked_seeds
+                    .seeds
                     .into_iter()
-                    .filter_map(|seed| match seed {
-                        SeedCheck::Valid(checked)
-                            if checked.context.matches(&state.rank_map, shred_version)
-                                && checked.checked_at <= cutoff =>
-                        {
-                            Some(checked.candidate)
-                        }
-                        _ => None,
-                    }),
+                    .filter_map(|seed| seed.checked())
+                    .filter(|checked| {
+                        checked.context.matches(&state.rank_map, shred_version)
+                            && checked.checked_at <= cutoff
+                    })
+                    .map(|checked| checked.candidate),
             );
             candidates.extend(payload.ready.into_iter().filter_map(|checked| {
                 checked
@@ -1415,7 +1124,11 @@ impl Recovery {
                     .map(|checked| checked.candidate)
             }));
         }
-        let Some(selected) = select_pair(&candidates, &state.rank_map, &required) else {
+        let Some(selected) = select_pair(
+            candidates.iter().map(Arc::as_ref),
+            &state.rank_map,
+            &required,
+        ) else {
             return baseline;
         };
         let baseline_validators: std::collections::HashSet<_> =
@@ -1485,26 +1198,19 @@ impl StakeLookup {
 }
 
 fn select_pair<'a>(
-    candidates: &'a [Candidate],
+    candidates: impl IntoIterator<Item = &'a Candidate>,
     rank_map: &BLSPubkeyToRankMap,
     required: &BitVec<u8>,
 ) -> Option<Selection<'a>> {
-    let skips: Vec<_> = std::iter::once(None)
-        .chain(
-            candidates
-                .iter()
-                .filter(|c| matches!(c.vote, Vote::Skip(_)))
-                .map(Some),
-        )
-        .collect();
-    let notars: Vec<_> = std::iter::once(None)
-        .chain(
-            candidates
-                .iter()
-                .filter(|c| matches!(c.vote, Vote::Notarize(_)))
-                .map(Some),
-        )
-        .collect();
+    let mut skips = vec![None];
+    let mut notars = vec![None];
+    for candidate in candidates {
+        match candidate.vote {
+            Vote::Skip(_) => skips.push(Some(candidate)),
+            Vote::Notarize(_) => notars.push(Some(candidate)),
+            _ => (),
+        }
+    }
     let empty = vec![0; rank_map.len().div_ceil(8)];
     // Both inputs are ordinary owned BitVecs after Candidate::new. Normalize required as well,
     // and exclude dead tail bits: they are not part of the logical signer set.

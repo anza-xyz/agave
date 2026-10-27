@@ -571,10 +571,6 @@ impl SigVerifyVoteStats {
 pub(super) struct VoteSenderStats {
     pub(super) metrics_sender: SenderStats,
     pub(super) rewards_sender: SenderStats,
-    /// Raw vote signatures for reward recovery, counted apart from the votes in `rewards_sender`.
-    /// Its `channel_full` counts messages dropped once the reward channel is half full, which
-    /// includes a full channel.
-    pub(super) reward_signatures_sender: SenderStats,
     pub(super) pool_sender: SenderStats,
     pub(super) repair_sender: SenderStats,
 }
@@ -584,14 +580,11 @@ impl VoteSenderStats {
         let Self {
             metrics_sender,
             rewards_sender,
-            reward_signatures_sender,
             pool_sender,
             repair_sender,
         } = other;
         self.metrics_sender.merge(metrics_sender);
         self.rewards_sender.merge(rewards_sender);
-        self.reward_signatures_sender
-            .merge(reward_signatures_sender);
         self.pool_sender.merge(pool_sender);
         self.repair_sender.merge(repair_sender);
     }
@@ -600,13 +593,11 @@ impl VoteSenderStats {
         let Self {
             metrics_sender,
             rewards_sender,
-            reward_signatures_sender,
             pool_sender,
             repair_sender,
         } = self;
         metrics_sender.report();
         rewards_sender.report();
-        reward_signatures_sender.report();
         pool_sender.report();
         repair_sender.report();
     }
@@ -617,9 +608,6 @@ impl Default for VoteSenderStats {
         Self {
             metrics_sender: SenderStats::new("bls_vote_sigverify_metrics_sender_stats"),
             rewards_sender: SenderStats::new("bls_vote_sigverify_rewards_sender_stats"),
-            reward_signatures_sender: SenderStats::new(
-                "bls_vote_sigverify_reward_signatures_sender_stats",
-            ),
             repair_sender: SenderStats::new("bls_vote_sigverify_repair_sender_stats"),
             pool_sender: SenderStats::new("bls_vote_sigverify_pool_sender_stats"),
         }

@@ -1,7 +1,8 @@
 use {
     super::{super::CertsBuilder, *},
     crate::block_creation_loop::rewards::{
-        msg_types::RewardRequest, reward_certs_service::run_with_builder_for_tests,
+        msg_types::RewardRequest,
+        reward_certs_service::{Context, run_with_recovery_for_tests},
     },
     agave_bls_sigverify::{rewards::RewardInput, sig_verified_messages::VoteAggregate},
     agave_votor_messages::{
@@ -10,16 +11,14 @@ use {
         reward_certificate::NUM_SLOTS_FOR_REWARD,
     },
     rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom},
-    solana_bls_signatures::{
-        BLS_SIGNATURE_AFFINE_SIZE, Keypair as BlsKeypair, PubkeyCompressed, Scalar,
-    },
+    solana_bls_signatures::{Keypair as BlsKeypair, PubkeyCompressed, Scalar, Signature},
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, SlotLeader},
+        bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS, SlotLeader},
         bank_forks::BankForks,
         epoch_stakes::VersionedEpochStakes,
         genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
@@ -128,6 +127,26 @@ impl Fixture {
         SignatureProjective::aggregate(self.signatures(vote, ranks).iter().map(|(_, sig)| sig))
             .unwrap()
             .into()
+    }
+
+    fn vote_aggregate(&self, vote: Vote, ranks: &[usize]) -> VoteAggregate {
+        VoteAggregate::new_from_verified_votes(
+            self.rank_map.len(),
+            agave_votor_messages::wire::VotePayloadToSign::new_from_vote(vote, SHRED_VERSION),
+            ranks.iter().map(|&rank| {
+                (
+                    rank as u16,
+                    self.rank_map.get_pubkey_stake_entry(rank).unwrap().stake,
+                )
+            }),
+            SignatureProjective::try_from(&self.aggregate(vote, ranks)).unwrap(),
+        )
+    }
+
+    fn add_votes(&self, recovery: &mut Recovery, vote: Vote, ranks: &[usize]) {
+        for &rank in ranks {
+            recovery.add_aggregate(self.vote_aggregate(vote, &[rank]), &self.rank_map);
+        }
     }
 
     fn certificate(&self, vote: Vote, ranks: &[usize]) -> Certificate {
@@ -267,103 +286,123 @@ fn wait_until_prepared_with_shred_version(recovery: &mut Recovery, shred_version
     }
 }
 
-fn builder() -> CertsBuilder {
+fn cluster_info() -> Arc<ClusterInfo> {
     let keypair = Arc::new(Keypair::new());
     let mut contact = ContactInfo::new_localhost(&keypair.pubkey(), 0);
     contact.set_shred_version(SHRED_VERSION);
-    CertsBuilder::new(Arc::new(ClusterInfo::new(
+    Arc::new(ClusterInfo::new(
         contact,
         keypair,
         SocketAddrSpace::Unspecified,
-    )))
+    ))
+}
+
+/// Drives the production routing while recovery runs on its controller thread.
+fn service_context(fixture: &Fixture) -> (Context, Receiver<Slot>) {
+    let builder = CertsBuilder::new();
+    let cluster_info = cluster_info();
+    let mut recovery = Recovery::new();
+    let prepared = recovery.observe_completions();
+    let (_, inputs) = bounded(1);
+    let (_, requests) = bounded(1);
+    let banks = fixture.bank_forks.read().unwrap().sharable_banks();
+    (
+        Context::new_with_gates(
+            Arc::new(AtomicBool::new(false)),
+            cluster_info,
+            inputs,
+            requests,
+            banks,
+            builder,
+            recovery,
+            None,
+            None,
+        ),
+        prepared,
+    )
+}
+
+fn build_from_service(context: &mut Context, source_slot: Slot) -> RewardRespSucc {
+    let (reply_sender, reply_receiver) = bounded(1);
+    context
+        .build_request(Ok(RewardRequest {
+            bank_slot: source_slot + NUM_SLOTS_FOR_REWARD,
+            reply_sender,
+            request_sent: Instant::now(),
+        }))
+        .unwrap();
+    let response = reply_receiver.try_recv().unwrap();
+    response
+        .recovery
+        .unwrap()
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|error| match error {
+            crossbeam_channel::RecvTimeoutError::Disconnected => response.result.unwrap(),
+            crossbeam_channel::RecvTimeoutError::Timeout => panic!("recovery did not finish"),
+        })
 }
 
 #[test]
 fn test_service_loop_schedules_and_collects_jobs_without_further_input() {
     let fixture = Fixture::new();
     let sources = [SLOT, SLOT + 1];
-    let mut builder = builder();
-    let cluster_info = builder.cluster_info.clone();
+    let builder = CertsBuilder::new();
+    let cluster_info = cluster_info();
     // A gated worker holds the first job while the second source's evidence arrives, so only the
-    // idle service loop can schedule the second job.
+    // idle controller loop can schedule the second job.
     let (jobs_sender, jobs_receiver) = bounded::<Job>(1);
     let (results_sender, results_receiver) = bounded(1);
-    let (finished_sender, finished_receiver) = bounded(sources.len());
-    // This sender drops before the builder on panic, so the worker cannot strand Drop::join.
     let (release_sender, release_receiver) = bounded::<()>(0);
     let worker = thread::spawn(move || {
         while let Ok(job) = jobs_receiver.recv() {
             if release_receiver.recv().is_err() {
                 return;
             }
-            let slot = job.vote.slot();
-            let _ = results_sender.send(job.run());
-            let _ = finished_sender.send(slot);
+            if results_sender.send(job.run()).is_err() {
+                return;
+            }
         }
     });
-    builder.recovery = Some(Recovery::from_worker(jobs_sender, results_receiver, worker));
-    let direct = |vote: Vote, rank: usize| {
-        VoteAggregate::new_from_verified_vote(
-            NUM_VALIDATORS,
-            VoteMessage {
-                vote,
-                signature: fixture.signatures(vote, &[rank])[0].1.try_into().unwrap(),
-                rank: u16::try_from(rank).unwrap(),
-                stake: fixture.rank_map.get_pubkey_stake_entry(rank).unwrap().stake,
-            },
-        )
-    };
+    let mut recovery = Recovery::from_worker(jobs_sender, results_receiver, worker);
+    let completed = recovery.observe_completions();
+    let (input, input_receiver) = bounded(4);
     for slot in sources {
         let vote = Vote::new_skip_vote(slot);
-        // The certificate lacks rank 4's direct vote, so only a verified extension may replace
-        // the direct baseline.
-        for input in [
-            RewardInput::External(vec![direct(vote, 3), direct(vote, 4)]),
-            RewardInput::VoteSignatures {
-                vote,
-                signatures: fixture.signatures(vote, &[3, 4]),
-            },
+        for input_value in [
+            RewardInput::External(vec![
+                fixture.vote_aggregate(vote, &[3]),
+                fixture.vote_aggregate(vote, &[4]),
+            ]),
             RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
         ] {
-            builder.handle_input(&fixture.bank, input);
+            input.send(input_value).unwrap();
         }
     }
-    assert!(builder.recovery_mut().in_flight);
-
     let exit = Arc::new(AtomicBool::new(false));
-    let (_input, input_receiver) = bounded(0);
     let (requests, request_receiver) = bounded(sources.len());
     let sharable_banks = fixture.bank_forks.read().unwrap().sharable_banks();
     let service = thread::spawn({
         let exit = exit.clone();
         move || {
-            run_with_builder_for_tests(
+            run_with_recovery_for_tests(
                 exit,
                 cluster_info,
                 input_receiver,
                 request_receiver,
                 sharable_banks,
                 builder,
+                recovery,
+                None,
             )
         }
     });
-    let release = || {
+    for slot in sources {
         release_sender
             .send_timeout((), Duration::from_secs(10))
-            .expect("the worker received a job")
-    };
-    release();
-    assert_eq!(
-        finished_receiver.recv_timeout(Duration::from_secs(10)),
-        Ok(SLOT)
-    );
-    // No input arrives from here on. Only the idle loop collects the first result and schedules
-    // the second job.
-    release();
-    assert_eq!(
-        finished_receiver.recv_timeout(Duration::from_secs(10)),
-        Ok(SLOT + 1)
-    );
+            .expect("the worker received a job");
+        assert_eq!(completed.recv_timeout(Duration::from_secs(10)), Ok(slot));
+    }
+    // No more evidence arrives. Only the idle controller collects results and schedules work.
     for slot in sources {
         let (reply_sender, reply_receiver) = bounded(1);
         requests
@@ -376,48 +415,35 @@ fn test_service_loop_schedules_and_collects_jobs_without_further_input() {
         let response = reply_receiver
             .recv_timeout(Duration::from_secs(10))
             .unwrap();
-        let baseline = response.result.unwrap();
         let response = response
             .recovery
-            .map(|receiver| receiver.recv_timeout(Duration::from_secs(10)).unwrap())
-            .unwrap_or(baseline);
+            .unwrap()
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
         fixture.assert_response_at(slot, &response, Some(&[0, 1, 2, 3, 4]), None);
     }
     exit.store(true, Ordering::Relaxed);
+    drop(input);
     service.join().unwrap();
 }
 
 #[test]
-fn test_default_builder_recovers_missing_reward_votes() {
+fn test_service_extends_a_certificate_with_external_vote_aggregates() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
-    let direct = |rank: usize| {
-        VoteAggregate::new_from_verified_vote(
-            NUM_VALIDATORS,
-            VoteMessage {
-                vote,
-                signature: fixture.signatures(vote, &[rank])[0].1.try_into().unwrap(),
-                rank: u16::try_from(rank).unwrap(),
-                stake: fixture.rank_map.get_pubkey_stake_entry(rank).unwrap().stake,
-            },
-        )
-    };
-    let mut builder = builder();
-    for input in [
-        RewardInput::External(vec![direct(0), direct(1)]),
-        RewardInput::VoteSignatures {
-            vote,
-            signatures: fixture.signatures(vote, &[0, 1]),
-        },
-        RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
-    ] {
-        builder.handle_input(&fixture.bank, input);
-    }
-    wait_until_prepared(builder.recovery_mut());
-    let response = builder
-        .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD))
-        .unwrap();
-    fixture.assert_response(&response, Some(&[0, 1, 2, 3]), None);
+    let (mut context, prepared) = service_context(&fixture);
+    context.handle_input(RewardInput::External(vec![
+        fixture.vote_aggregate(vote, &[4, 5]),
+    ]));
+    context.handle_input(RewardInput::Certificates(vec![
+        fixture.certificate(vote, &[0, 1, 2, 3]),
+    ]));
+    assert_eq!(
+        prepared.recv_timeout(Duration::from_secs(10)).unwrap(),
+        SLOT
+    );
+    let response = build_from_service(&mut context, SLOT);
+    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4, 5]), None);
 }
 
 #[test]
@@ -455,7 +481,11 @@ fn test_prepared_seed_is_not_reverified_at_build() {
     recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
     wait_until_prepared(&mut recovery);
     assert_eq!(recovery.metrics.checks, 1);
-    assert_eq!(recovery.slots[&SLOT].payloads[&vote].checked_seeds.len(), 1);
+    assert!(
+        recovery.slots[&SLOT].payloads[&vote].seeds[0]
+            .checked()
+            .is_some()
+    );
     // A gate left at the coordinator cannot be entered by finish: verification lives in Job.
     let (started, started_receiver) = bounded(1);
     let (_release, release_receiver) = bounded(1);
@@ -502,7 +532,10 @@ fn test_replaced_checked_seed_remains_available_while_new_seed_check_is_blocked(
             .iter()
             .all(|seed| seed.ranks != fixture.ranks(&original))
     );
-    assert_eq!(state.checked_seeds.len(), MAX_CERTIFICATES_PER_SLOT - 1);
+    assert_eq!(
+        state.seeds.iter().filter_map(Seed::checked).count(),
+        MAX_CERTIFICATES_PER_SLOT - 1
+    );
     assert_eq!(state.ready.len(), 1);
     assert_eq!(state.ready[0].ranks, fixture.ranks(&original));
     assert!(state.ready.len() <= MAX_READY_CANDIDATES_PER_PAYLOAD);
@@ -528,7 +561,8 @@ fn test_checked_candidates_require_the_exact_rank_map_and_shred_version() {
     let vote = Vote::new_skip_vote(SLOT);
     let candidate = CheckedCandidate::verify(
         Candidate::from_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map)
-            .unwrap(),
+            .unwrap()
+            .into(),
         &fixture.rank_map,
         SHRED_VERSION,
     )
@@ -539,7 +573,7 @@ fn test_checked_candidates_require_the_exact_rank_map_and_shred_version() {
         (&fixture.rank_map, SHRED_VERSION + 1),
     ] {
         let mut recovery = Recovery::new();
-        recovery.add_signatures(vote, [], rank_map);
+        recovery.add_aggregate(fixture.vote_aggregate(vote, &[0]), rank_map);
         recovery
             .slots
             .get_mut(&SLOT)
@@ -567,7 +601,7 @@ fn test_changed_shred_version_rechecks_seed_in_the_worker() {
     assert_eq!(recovery.metrics.checks, 2);
     assert_eq!(recovery.metrics.unverified_outputs, 1);
     assert!(matches!(
-        recovery.slots[&SLOT].payloads[&vote].checked_seeds[0],
+        recovery.slots[&SLOT].payloads[&vote].seeds[0].check,
         SeedCheck::Invalid { .. }
     ));
     wait_until_prepared(&mut recovery);
@@ -577,20 +611,19 @@ fn test_changed_shred_version_rechecks_seed_in_the_worker() {
 }
 
 #[test]
-fn test_rejected_seed_cannot_evict_honest_raw_components_or_spin() {
+fn test_rejected_seed_keeps_vote_aggregates_and_cannot_spin() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
     let mut certificate = fixture.certificate(vote, &[0, 1, 2, 3]);
     certificate.signature = fixture.aggregate(vote, &[0]);
     let mut recovery = Recovery::new();
     recovery.add_certificate(certificate, &fixture.rank_map);
-    recovery.add_signatures(vote, fixture.signatures(vote, &[4, 5]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[4, 5]);
     wait_until_prepared(&mut recovery);
     assert_eq!(recovery.metrics.checks, 1);
     assert_eq!(recovery.metrics.unverified_outputs, 1);
-    assert_eq!(recovery.metrics.invalid_components, 0);
     let state = &recovery.slots[&SLOT].payloads[&vote];
-    assert_eq!(state.signatures.len(), 2);
+    assert_eq!(state.aggregates.len(), 2);
     assert!(state.ready.is_empty());
     for _ in 0..4 {
         recovery.poll(SHRED_VERSION);
@@ -601,38 +634,34 @@ fn test_rejected_seed_cannot_evict_honest_raw_components_or_spin() {
 }
 
 #[test]
-fn test_seed_preparation_and_bisection_share_the_bounded_job_budget() {
+fn test_seed_preparation_and_extensions_share_the_bounded_job_budget() {
     let fixture = Fixture::new_with_num_validators(SLOT, EpochSchedule::without_warmup(), 24);
     let vote = Vote::new_skip_vote(SLOT);
     let mut recovery = Recovery::new();
     for rank in 0..MAX_CERTIFICATES_PER_SLOT {
         recovery.add_certificate(fixture.certificate(vote, &[rank]), &fixture.rank_map);
     }
-    let invalid_ranks: Vec<_> = (MAX_CERTIFICATES_PER_SLOT..24).collect();
-    recovery.add_signatures(
-        vote,
-        fixture.signatures(Vote::new_skip_vote(SLOT + 1), &invalid_ranks),
-        &fixture.rank_map,
-    );
-    wait_for_check(&mut recovery);
-    assert!(recovery.metrics.checks <= MAX_CHECKS_PER_JOB);
+    let outside: Vec<_> = (MAX_CERTIFICATES_PER_SLOT..24).collect();
+    recovery.add_aggregate(fixture.vote_aggregate(vote, &outside), &fixture.rank_map);
+    wait_until_prepared(&mut recovery);
+    assert_eq!(recovery.metrics.checks, MAX_CHECKS_PER_JOB);
+    assert_eq!(recovery.metrics.failed_checks, 0);
+    assert_eq!(recovery.metrics.completed_jobs, 1);
     assert_eq!(
-        recovery.slots[&SLOT].payloads[&vote].checked_seeds.len(),
+        recovery.slots[&SLOT].payloads[&vote]
+            .seeds
+            .iter()
+            .filter_map(Seed::checked)
+            .count(),
         MAX_CERTIFICATES_PER_SLOT
     );
-    assert!(recovery.metrics.invalid_components > 0);
-    wait_until_prepared(&mut recovery);
-    assert!(recovery.slots[&SLOT].payloads[&vote].signatures.is_empty());
-    assert_eq!(
-        recovery.metrics.invalid_components,
-        invalid_ranks.len() as u64
-    );
-    assert!(recovery.metrics.checks <= recovery.metrics.completed_jobs * MAX_CHECKS_PER_JOB);
-    let checks = recovery.metrics.checks;
     let response = recovery.finish(SLOT, SHRED_VERSION, RewardRespSucc::default());
-    assert_eq!(response.validators.len(), 1);
-    let skip = response.skip.as_ref().unwrap();
-    let Decoded::Base2(ranks) = decode(skip.to_bitmap(), fixture.rank_map.len()).unwrap() else {
+    assert_eq!(response.validators.len(), outside.len() + 1);
+    let Decoded::Base2(ranks) = decode(
+        response.skip.as_ref().unwrap().to_bitmap(),
+        fixture.rank_map.len(),
+    )
+    .unwrap() else {
         panic!("expected base2 output");
     };
     fixture.assert_response(
@@ -640,11 +669,11 @@ fn test_seed_preparation_and_bisection_share_the_bounded_job_budget() {
         Some(&ranks.iter_ones().collect::<Vec<_>>()),
         None,
     );
-    assert_eq!(recovery.metrics.checks, checks);
+    assert_eq!(recovery.metrics.checks, MAX_CHECKS_PER_JOB);
 }
 
 #[test]
-fn test_certificate_and_outside_direct_votes_merge_in_either_arrival_order() {
+fn test_certificate_and_disjoint_vote_aggregates_merge_in_either_arrival_order() {
     let fixture = Fixture::new();
     let block_id = BlockId::new_unique();
     let vote = Vote::new_notarization_vote(Block {
@@ -654,14 +683,15 @@ fn test_certificate_and_outside_direct_votes_merge_in_either_arrival_order() {
     for certificate_first in [false, true] {
         let mut recovery = Recovery::new();
         let cert = fixture.certificate(vote, &[0, 1, 2, 3]);
-        // This direct batch straddles the certificate bitmap: ranks 2 and 3 overlap.
-        let signatures = fixture.signatures(vote, &[2, 3, 4, 5]);
         if certificate_first {
-            recovery.add_certificate(cert, &fixture.rank_map);
+            recovery.add_certificate(cert.clone(), &fixture.rank_map);
             recovery.poll(SHRED_VERSION);
-            recovery.add_signatures(vote, signatures, &fixture.rank_map);
-        } else {
-            recovery.add_signatures(vote, signatures, &fixture.rank_map);
+        }
+        // One complete batch is inside the certificate and the other is outside it.
+        for ranks in [[2, 3], [4, 5]] {
+            recovery.add_aggregate(fixture.vote_aggregate(vote, &ranks), &fixture.rank_map);
+        }
+        if !certificate_first {
             recovery.poll(SHRED_VERSION);
             recovery.add_certificate(cert, &fixture.rank_map);
         }
@@ -671,6 +701,39 @@ fn test_certificate_and_outside_direct_votes_merge_in_either_arrival_order() {
         fixture.assert_response(&response, None, Some((block_id, &[0, 1, 2, 3, 4, 5])));
         assert_eq!(recovery.metrics.recovered_stake, 200);
     }
+}
+
+#[test]
+fn test_smaller_certificate_extends_an_aggregate_that_overlaps_a_larger_certificate() {
+    let fixture = Fixture::new();
+    let vote = Vote::new_skip_vote(SLOT);
+    let mut recovery = Recovery::new();
+    recovery.add_certificate(
+        fixture.certificate(vote, &[0, 1, 2, 3, 4]),
+        &fixture.rank_map,
+    );
+    recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
+    recovery.add_aggregate(fixture.vote_aggregate(vote, &[4, 5]), &fixture.rank_map);
+    wait_until_prepared(&mut recovery);
+    let response = recovery.finish(SLOT, SHRED_VERSION, fixture.response(vote, &[4, 5]));
+    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4, 5]), None);
+    assert_eq!(recovery.metrics.recovered_stake, 400);
+    assert_eq!(recovery.metrics.failed_checks, 0);
+}
+
+#[test]
+fn test_overlapping_vote_aggregates_remain_whole_alternatives() {
+    let fixture = Fixture::new();
+    let vote = Vote::new_skip_vote(SLOT);
+    let mut recovery = Recovery::new();
+    for ranks in [&[0, 1][..], &[1, 2][..], &[3][..]] {
+        recovery.add_aggregate(fixture.vote_aggregate(vote, ranks), &fixture.rank_map);
+    }
+    recovery.add_certificate(fixture.certificate(vote, &[0, 4, 5]), &fixture.rank_map);
+    wait_until_prepared(&mut recovery);
+    assert_eq!(recovery.metrics.failed_checks, 0);
+    let response = recovery.finish(SLOT, SHRED_VERSION, fixture.response(vote, &[0, 1, 2, 3]));
+    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4, 5]), None);
 }
 
 #[test]
@@ -708,10 +771,10 @@ fn test_recovery_never_drops_a_validator_the_baseline_pays() {
     fixture.assert_response(&response, None, Some((block_id, &[0, 1, 2, 3])));
     assert_eq!(recovery.metrics.recovered_stake, 0);
 
-    // An extension with rank 3's component keeps it, so it replaces the baseline.
+    // An extension with rank 3's vote aggregate keeps it, so it replaces the baseline.
     let mut recovery = Recovery::new();
     recovery.add_certificate(certificate(), &fixture.rank_map);
-    recovery.add_signatures(vote, fixture.signatures(vote, &[3]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[3]);
     wait_for_check(&mut recovery);
     wait_until_prepared(&mut recovery);
     let response = recovery.finish(SLOT, SHRED_VERSION, baseline());
@@ -720,75 +783,55 @@ fn test_recovery_never_drops_a_validator_the_baseline_pays() {
 }
 
 #[test]
-fn test_split_optimistic_components_are_reverified_and_fall_back_on_failure() {
+fn test_optimistic_aggregate_is_never_split_at_a_certificate_boundary() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
     let mut signatures = fixture.signatures(vote, &[0, 1, 2, 3, 4]);
-    let delta = BlsKeypair::new().sign(b"perturbation");
-    let delta: Signature = delta.into();
-    signatures[0].1 = SignatureProjective::aggregate_with_weights(
-        [&signatures[0].1, &delta].into_iter(),
-        [Scalar::ONE, Scalar::ONE].iter(),
-    )
-    .unwrap()
-    .into();
-    signatures[4].1 = SignatureProjective::aggregate_with_weights(
-        [&signatures[4].1, &delta].into_iter(),
-        [Scalar::ONE, -Scalar::ONE].iter(),
-    )
-    .unwrap()
-    .into();
-    // The entire direct batch verifies because its invalid components cancel.
-    let direct_signature: SignatureCompressed =
-        SignatureProjective::aggregate(signatures.iter().map(|(_, signature)| signature))
-            .unwrap()
-            .into();
-    let direct_bitmap = encode_base2(&fixture.ranks(&[0, 1, 2, 3, 4])).unwrap();
-    verify_base2(
-        &get_vote_payload_to_sign(vote, SHRED_VERSION),
-        &direct_signature,
-        &direct_bitmap,
+    let delta: Signature = BlsKeypair::new().sign(b"perturbation").into();
+    for (index, weight) in [(0, Scalar::ONE), (4, -Scalar::ONE)] {
+        signatures[index].1 = SignatureProjective::aggregate_with_weights(
+            [&signatures[index].1, &delta].into_iter(),
+            [Scalar::ONE, weight].iter(),
+        )
+        .unwrap()
+        .into();
+    }
+    let direct = VoteAggregate::new_from_verified_votes(
         fixture.rank_map.len(),
-        |rank| {
-            fixture
-                .rank_map
-                .get_pubkey_stake_entry(rank)
-                .map(|entry| entry.bls_pubkey)
-        },
-        None,
-    )
-    .unwrap();
-    let baseline = RewardRespSucc {
-        skip: Some(SkipRewardCertificate::try_new(SLOT, direct_signature, direct_bitmap).unwrap()),
-        notar: None,
-        validators: (0..5)
-            .map(|rank| {
-                fixture
-                    .rank_map
-                    .get_pubkey_stake_entry(rank)
-                    .unwrap()
-                    .vote_account_pubkey
-            })
-            .collect(),
-    };
-    let mut recovery = Recovery::new();
-    recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
-    recovery.add_signatures(vote, signatures, &fixture.rank_map);
-    wait_for_check(&mut recovery);
-    assert_eq!(recovery.metrics.failed_checks, 1);
-    assert!(recovery.slots[&SLOT].payloads[&vote].ready.is_empty());
-    // The only outside component is the invalid one, so the failed check already isolates it.
-    assert_eq!(recovery.metrics.checks, 2);
-    assert_eq!(recovery.metrics.invalid_components, 1);
-    assert!(
-        !recovery.slots[&SLOT].payloads[&vote]
-            .signatures
-            .contains_key(&4)
+        agave_votor_messages::wire::VotePayloadToSign::new_from_vote(vote, SHRED_VERSION),
+        (0..5).map(|rank| {
+            (
+                rank as u16,
+                fixture.rank_map.get_pubkey_stake_entry(rank).unwrap().stake,
+            )
+        }),
+        SignatureProjective::aggregate(signatures.iter().map(|(_, signature)| signature)).unwrap(),
     );
-    // Replacing the inside component with a valid seed leaves an invalid outside signature.
-    let response = recovery.finish(SLOT, SHRED_VERSION, baseline);
-    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4]), None);
-    assert_eq!(recovery.metrics.recovered_stake, 0);
+    assert_eq!(direct, fixture.vote_aggregate(vote, &[0, 1, 2, 3, 4]));
+    for (seed, expected) in [
+        (&[0, 1, 2, 3][..], &[0, 1, 2, 3, 4][..]),
+        (&[5][..], &[0, 1, 2, 3, 4, 5][..]),
+    ] {
+        let mut recovery = Recovery::new();
+        recovery.add_certificate(fixture.certificate(vote, seed), &fixture.rank_map);
+        recovery.add_aggregate(direct.clone(), &fixture.rank_map);
+        wait_until_prepared(&mut recovery);
+        assert_eq!(recovery.metrics.failed_checks, 0);
+        assert_eq!(
+            recovery.slots[&SLOT].payloads[&vote]
+                .aggregates
+                .iter()
+                .map(Arc::as_ref)
+                .collect::<Vec<_>>(),
+            vec![&direct]
+        );
+        let response = recovery.finish(
+            SLOT,
+            SHRED_VERSION,
+            fixture.response(vote, &[0, 1, 2, 3, 4]),
+        );
+        fixture.assert_response(&response, Some(expected), None);
+    }
 }
 
 #[test]
@@ -1042,31 +1085,31 @@ fn test_certificate_storage_is_bounded_and_duplicate_bitmaps_do_not_use_budget()
 }
 
 #[test]
-fn test_raw_signature_storage_is_bounded_and_keeps_first_component() {
+fn test_vote_aggregate_storage_is_bounded_and_ignores_duplicate_coverage() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
-    let signatures = fixture.signatures(vote, &[0, 1, 2, 3, 4, 5]);
-    let first_signature = signatures[0].1;
     let mut recovery = Recovery::new();
-    recovery.add_signatures(vote, signatures, &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[0, 1, 2, 3, 4, 5]);
     let generation = recovery.slots[&SLOT].payloads[&vote].generation;
-    let replacement: Signature = fixture.keypairs[0].sign(b"replacement").into();
-    recovery.add_signatures(
-        vote,
-        [
-            (0, replacement),
-            (u16::try_from(NUM_VALIDATORS).unwrap(), replacement),
-        ],
-        &fixture.rank_map,
+    recovery.add_aggregate(fixture.vote_aggregate(vote, &[0, 1]), &fixture.rank_map);
+    let mismatched = VoteAggregate::new_from_verified_vote(
+        NUM_VALIDATORS + 1,
+        VoteMessage {
+            vote,
+            signature: *fixture.vote_aggregate(vote, &[0]).signature(),
+            rank: 0,
+            stake: fixture.rank_map.get_pubkey_stake_entry(0).unwrap().stake,
+        },
     );
+    recovery.add_aggregate(mismatched, &fixture.rank_map);
     let state = &recovery.slots[&SLOT].payloads[&vote];
-    assert_eq!(state.signatures.len(), fixture.rank_map.len());
-    assert_eq!(state.signatures[&0], first_signature);
+    assert_eq!(state.aggregates.len(), fixture.rank_map.len());
+    assert_eq!(*state.aggregates[0], fixture.vote_aggregate(vote, &[0]));
     assert_eq!(state.generation, generation);
-    assert_eq!(recovery.metrics.invalid_signature_ranks, 1);
+    assert_eq!(recovery.metrics.invalid_vote_aggregates, 1);
     for _ in 0..MAX_PAYLOADS_PER_SLOT + 2 {
         let vote = Vote::new_notarization_vote(Block::new_unique(SLOT));
-        recovery.add_signatures(vote, fixture.signatures(vote, &[0]), &fixture.rank_map);
+        recovery.add_aggregate(fixture.vote_aggregate(vote, &[0]), &fixture.rank_map);
     }
     assert_eq!(recovery.slots[&SLOT].payloads.len(), MAX_PAYLOADS_PER_SLOT);
     assert_eq!(recovery.metrics.dropped_payloads, 3);
@@ -1079,7 +1122,7 @@ fn test_finished_or_pruned_slots_are_not_recreated_by_worker_results() {
     for prune in [false, true] {
         let mut recovery = Recovery::new();
         recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
-        recovery.add_signatures(vote, fixture.signatures(vote, &[4, 5]), &fixture.rank_map);
+        fixture.add_votes(&mut recovery, vote, &[4, 5]);
         recovery.poll(SHRED_VERSION);
         assert!(recovery.in_flight);
         if prune {
@@ -1099,7 +1142,7 @@ fn test_finished_or_pruned_slots_are_not_recreated_by_worker_results() {
 }
 
 #[test]
-fn test_builder_accepts_finalized_source_slot_using_its_epoch_rank_map() {
+fn test_service_accepts_finalized_source_slot_using_its_epoch_rank_map() {
     let source_slot = 124;
     let fixture = Fixture::new_at(source_slot, EpochSchedule::custom(128, 128, false));
     let mut root_bank = Bank::new_from_parent(fixture.bank.clone(), SlotLeader::default(), 130);
@@ -1137,33 +1180,38 @@ fn test_builder_accepts_finalized_source_slot_using_its_epoch_rank_map() {
             .vote_account_pubkey,
     );
     let vote = Vote::new_skip_vote(source_slot);
-    let mut builder = builder();
-    builder.handle_input(
-        &root_bank,
-        RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
+    fixture.bank_forks.write().unwrap().insert(root_bank);
+    fixture
+        .bank_forks
+        .write()
+        .unwrap()
+        .set_root(130, None, None);
+    let (mut context, prepared) = service_context(&fixture);
+    context.handle_input(RewardInput::Certificates(vec![
+        fixture.certificate(vote, &[0, 1, 2, 3]),
+    ]));
+    assert_eq!(
+        prepared.recv_timeout(Duration::from_secs(10)).unwrap(),
+        source_slot
     );
-    wait_until_prepared(builder.recovery_mut());
-    let response = builder
-        .build_certs(source_slot.saturating_add(NUM_SLOTS_FOR_REWARD))
-        .unwrap();
+    let response = build_from_service(&mut context, source_slot);
     fixture.assert_response(&response, Some(&[0, 1, 2, 3]), None);
 }
 
 #[test]
-fn test_builder_rejects_late_evidence_for_sealed_slot_even_while_root_lags() {
+fn test_service_rejects_late_evidence_for_sealed_slot_even_while_root_lags() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
-    let mut builder = builder();
-    // Reporting would reset the counters this test reads, however slowly it runs.
-    builder.metrics.last_report = Instant::now().checked_add(Duration::from_secs(60)).unwrap();
-    builder.handle_input(
-        &fixture.bank,
-        RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
+    let (mut context, prepared) = service_context(&fixture);
+    context.metrics.last_report = Instant::now().checked_add(Duration::from_secs(60)).unwrap();
+    context.handle_input(RewardInput::Certificates(vec![
+        fixture.certificate(vote, &[0, 1, 2, 3]),
+    ]));
+    assert_eq!(
+        prepared.recv_timeout(Duration::from_secs(10)).unwrap(),
+        SLOT
     );
-    wait_until_prepared(builder.recovery_mut());
-    let response = builder
-        .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD))
-        .unwrap();
+    let response = build_from_service(&mut context, SLOT);
     fixture.assert_response(&response, Some(&[0, 1, 2, 3]), None);
     assert_eq!(fixture.bank.slot(), SLOT);
     let own_vote = VoteMessage {
@@ -1172,41 +1220,25 @@ fn test_builder_rejects_late_evidence_for_sealed_slot_even_while_root_lags() {
         rank: 5,
         stake: fixture.rank_map.get_pubkey_stake_entry(5).unwrap().stake,
     };
-    let external_vote = VoteMessage {
-        vote,
-        signature: fixture.signatures(vote, &[4])[0].1.try_into().unwrap(),
-        rank: 4,
-        stake: fixture.rank_map.get_pubkey_stake_entry(4).unwrap().stake,
-    };
     for input in [
         RewardInput::Certificates(vec![fixture.certificate(vote, &[2, 3, 4, 5])]),
-        RewardInput::VoteSignatures {
-            vote,
-            signatures: fixture.signatures(vote, &[4, 5]),
-        },
-        RewardInput::External(vec![VoteAggregate::new_from_verified_vote(
-            NUM_VALIDATORS,
-            external_vote,
-        )]),
+        RewardInput::External(vec![fixture.vote_aggregate(vote, &[4])]),
         RewardInput::Own(own_vote),
     ] {
-        builder.handle_input(&fixture.bank, input);
-        assert!(!builder.aggregates.contains_key(&SLOT));
-        assert!(!builder.recovery_mut().slots.contains_key(&SLOT));
+        context.handle_input(input);
+        assert!(!context.builder.aggregates.contains_key(&SLOT));
     }
-    assert_eq!(builder.metrics.late_vote_aggregates, 2);
-    assert_eq!(builder.metrics.recovery.late_certificates, 1);
-    assert_eq!(builder.metrics.recovery.late_signature_components, 2);
+    assert_eq!(context.metrics.late_vote_aggregates, 2);
     assert_eq!(
-        builder
-            .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD).saturating_add(1))
-            .unwrap(),
-        RewardRespSucc::default(),
+        build_from_service(&mut context, SLOT + 1),
+        RewardRespSucc::default()
     );
+    let (_, recovery) = context.into_parts();
+    assert!(!recovery.slots.contains_key(&SLOT));
 }
 
 #[test]
-fn test_builder_uses_verified_ready_candidate_while_newer_worker_job_is_blocked() {
+fn test_recovery_uses_verified_ready_candidate_while_newer_worker_job_is_blocked() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
     let certificate = fixture.certificate(vote, &[0, 1, 2, 3]);
@@ -1215,20 +1247,21 @@ fn test_builder_uses_verified_ready_candidate_while_newer_worker_job_is_blocked(
         generation: 1,
         rank_map: fixture.rank_map.clone(),
         shred_version: SHRED_VERSION,
-        seeds: vec![Candidate::from_certificate(certificate.clone(), &fixture.rank_map).unwrap()],
-        checked_seeds: vec![],
+        seeds: vec![Seed::new(
+            Candidate::from_certificate(certificate.clone(), &fixture.rank_map).unwrap(),
+        )],
         verification_gate: None,
-        signatures: fixture.signatures(vote, &[4]).into_iter().collect(),
+        aggregates: vec![Arc::new(fixture.vote_aggregate(vote, &[4]))],
         ready: vec![],
     }
     .run()
     .candidates;
     let ready = ready.pop().unwrap();
-    let mut builder = builder();
     let (jobs_sender, jobs_receiver) = bounded::<Job>(1);
     let (results_sender, results_receiver) = bounded(1);
     let (started_sender, started_receiver) = bounded(1);
-    // This sender drops before the builder on panic, so the worker cannot strand Drop::join.
+    // Drop the release sender before recovery on panic, so its worker can exit before joining.
+    let mut recovery;
     let (release_sender, release_receiver) = bounded(1);
     let worker = thread::spawn(move || {
         if let Ok(job) = jobs_receiver.recv() {
@@ -1237,10 +1270,9 @@ fn test_builder_uses_verified_ready_candidate_while_newer_worker_job_is_blocked(
             let _ = results_sender.send(job.run());
         }
     });
-    builder.recovery = Some(Recovery::from_worker(jobs_sender, results_receiver, worker));
-    builder.handle_input(&fixture.bank, RewardInput::Certificates(vec![certificate]));
-    builder
-        .recovery_mut()
+    recovery = Recovery::from_worker(jobs_sender, results_receiver, worker);
+    recovery.add_certificate(certificate, &fixture.rank_map);
+    recovery
         .slots
         .get_mut(&SLOT)
         .unwrap()
@@ -1248,24 +1280,17 @@ fn test_builder_uses_verified_ready_candidate_while_newer_worker_job_is_blocked(
         .get_mut(&vote)
         .unwrap()
         .ready = vec![ready];
-    builder.handle_input(
-        &fixture.bank,
-        RewardInput::VoteSignatures {
-            vote,
-            signatures: fixture.signatures(vote, &[4, 5]),
-        },
-    );
+    recovery.add_certificate(fixture.certificate(vote, &[1, 2, 3, 5]), &fixture.rank_map);
+    recovery.poll(SHRED_VERSION);
     started_receiver
         .recv_timeout(Duration::from_secs(10))
         .unwrap();
-    let response = builder
-        .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD))
-        .unwrap();
-    assert!(builder.recovery_mut().in_flight);
+    let response = recovery.finish(SLOT, SHRED_VERSION, RewardRespSucc::default());
+    assert!(recovery.in_flight);
     release_sender.send(()).unwrap();
     fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4]), None);
-    wait_for_check(builder.recovery_mut());
-    assert!(!builder.recovery_mut().slots.contains_key(&SLOT));
+    wait_for_check(&mut recovery);
+    assert!(!recovery.slots.contains_key(&SLOT));
 }
 
 #[test]
@@ -1278,7 +1303,7 @@ fn test_rate_limited_updates_refresh_after_more_than_sixteen_completed_jobs() {
         &fixture.rank_map,
     );
     for (index, rank) in (27..43).enumerate() {
-        recovery.add_signatures(vote, fixture.signatures(vote, &[rank]), &fixture.rank_map);
+        fixture.add_votes(&mut recovery, vote, &[rank]);
         recovery
             .slots
             .get_mut(&SLOT)
@@ -1290,7 +1315,7 @@ fn test_rate_limited_updates_refresh_after_more_than_sixteen_completed_jobs() {
         wait_for_completed_jobs(&mut recovery, u64::try_from(index + 1).unwrap());
     }
     assert_eq!(recovery.metrics.completed_jobs, 16);
-    recovery.add_signatures(vote, fixture.signatures(vote, &[43]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[43]);
     recovery
         .slots
         .get_mut(&SLOT)
@@ -1327,9 +1352,9 @@ fn test_scheduler_serves_new_payload_before_rechecking_hot_older_slot() {
     let new = Vote::new_skip_vote(SLOT + 1);
     let mut recovery = Recovery::new();
     recovery.add_certificate(fixture.certificate(hot, &[0, 1, 2, 3]), &fixture.rank_map);
-    recovery.add_signatures(hot, fixture.signatures(hot, &[4]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, hot, &[4]);
     wait_for_check(&mut recovery);
-    recovery.add_signatures(hot, fixture.signatures(hot, &[5]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, hot, &[5]);
     recovery
         .slots
         .get_mut(&SLOT)
@@ -1339,7 +1364,7 @@ fn test_scheduler_serves_new_payload_before_rechecking_hot_older_slot() {
         .unwrap()
         .last_check = Some(Instant::now().checked_sub(CHECK_INTERVAL).unwrap());
     recovery.add_certificate(fixture.certificate(new, &[0, 1, 2, 3]), &fixture.rank_map);
-    recovery.add_signatures(new, fixture.signatures(new, &[4]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, new, &[4]);
     recovery.poll(SHRED_VERSION);
     let hot_state = &recovery.slots[&SLOT].payloads[&hot];
     assert_ne!(hot_state.scheduled_generation, hot_state.generation);
@@ -1350,267 +1375,48 @@ fn test_scheduler_serves_new_payload_before_rechecking_hot_older_slot() {
 }
 
 #[test]
-fn test_failed_largest_seed_falls_back_to_seed_covering_invalid_components() {
-    let fixture = Fixture::new();
-    let vote = Vote::new_skip_vote(SLOT);
-    let mut signatures = fixture.signatures(vote, &[0, 4, 5]);
-    let delta: Signature = BlsKeypair::new().sign(b"cancelling components").into();
-    for ((_, signature), weight) in signatures.iter_mut().zip([Scalar::ONE, -Scalar::ONE]) {
-        *signature = SignatureProjective::aggregate_with_weights(
-            [&*signature, &delta].into_iter(),
-            [Scalar::ONE, weight].iter(),
-        )
-        .unwrap()
-        .into();
-    }
-    let mut recovery = Recovery::new();
-    // This larger prospective union splits the cancelling pair and fails verification. Bisection
-    // isolates rank 4's invalid component and keeps the valid rank 5 extension.
-    recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
-    // Covering both components makes the smaller extension safe, despite the failed first seed.
-    recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 4]), &fixture.rank_map);
-    recovery.add_signatures(vote, signatures, &fixture.rank_map);
-    wait_for_check(&mut recovery);
-    assert_eq!(recovery.metrics.checks, 6);
-    assert_eq!(recovery.metrics.failed_checks, 2);
-    assert_eq!(recovery.metrics.seed_fallbacks, 2);
-    assert_eq!(recovery.metrics.invalid_components, 1);
-    let state = &recovery.slots[&SLOT].payloads[&vote];
-    assert!(!state.signatures.contains_key(&4));
-    assert_eq!(state.ready.len(), 2);
-    let response = recovery.finish(SLOT, SHRED_VERSION, fixture.response(vote, &[0, 4, 5]));
-    // The direct baseline pays rank 4 because its batch verified as a whole, but its own
-    // component was proven invalid, so the floor no longer requires it. Both extensions add rank
-    // 5, and the bisected extension of the larger seed is prepared first.
-    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 5]), None);
-}
-
-#[test]
-fn test_bisection_recovers_honest_components_behind_a_cancelling_pair() {
-    let fixture = Fixture::new_with_num_validators(SLOT, EpochSchedule::without_warmup(), 10);
-    let vote = Vote::new_skip_vote(SLOT);
-    // Colluding ranks 2 and 7 submit invalid components that cancel in their optimistic batch.
-    let mut signatures = fixture.signatures(vote, &[2, 5, 6, 7, 8, 9]);
-    let delta: Signature = BlsKeypair::new().sign(b"cancelling components").into();
-    for (index, weight) in [(0, Scalar::ONE), (3, -Scalar::ONE)] {
-        signatures[index].1 = SignatureProjective::aggregate_with_weights(
-            [&signatures[index].1, &delta].into_iter(),
-            [Scalar::ONE, weight].iter(),
-        )
-        .unwrap()
-        .into();
-    }
-    let mut recovery = Recovery::new();
-    // The seed covers rank 2, so only rank 7's invalid component reaches the extension.
-    recovery.add_certificate(
-        fixture.certificate(vote, &[0, 1, 2, 3, 4]),
-        &fixture.rank_map,
-    );
-    recovery.add_signatures(vote, signatures, &fixture.rank_map);
-    wait_for_check(&mut recovery);
-    // Complete extension, ranks [5, 6], [7] and [8, 9], then the combined remainder.
-    assert_eq!(recovery.metrics.checks, 6);
-    assert_eq!(recovery.metrics.failed_checks, 2);
-    assert_eq!(recovery.metrics.invalid_components, 1);
-    assert!(
-        !recovery.slots[&SLOT].payloads[&vote]
-            .signatures
-            .contains_key(&7)
-    );
-    // Eviction schedules another check, which finds the remainder already prepared.
-    recovery
-        .slots
-        .get_mut(&SLOT)
-        .unwrap()
-        .payloads
-        .get_mut(&vote)
-        .unwrap()
-        .last_check = Some(Instant::now().checked_sub(CHECK_INTERVAL).unwrap());
-    wait_for_completed_jobs(&mut recovery, 2);
-    assert_eq!(recovery.metrics.checks, 6);
-    // The optimistic batch verified as a whole, so the direct baseline pays both colluders.
-    // Rank 7's own signature is proven invalid, so it cannot keep the honest seed signers out.
-    let response = recovery.finish(
-        SLOT,
-        SHRED_VERSION,
-        fixture.response(vote, &[2, 5, 6, 7, 8, 9]),
-    );
-    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4, 5, 6, 8, 9]), None);
-}
-
-#[test]
-fn test_undecodable_component_is_evicted_without_a_check() {
-    let fixture = Fixture::new();
-    let vote = Vote::new_skip_vote(SLOT);
-    let mut recovery = Recovery::new();
-    recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
-    let mut signatures = fixture.signatures(vote, &[4]);
-    signatures.push((5, Signature([0xff; BLS_SIGNATURE_AFFINE_SIZE])));
-    recovery.add_signatures(vote, signatures, &fixture.rank_map);
-    wait_for_check(&mut recovery);
-    assert_eq!(recovery.metrics.checks, 2);
-    assert_eq!(recovery.metrics.failed_checks, 0);
-    assert_eq!(recovery.metrics.invalid_components, 1);
-    assert!(
-        !recovery.slots[&SLOT].payloads[&vote]
-            .signatures
-            .contains_key(&5)
-    );
-    let response = recovery.finish(SLOT, SHRED_VERSION, RewardRespSucc::default());
-    fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4]), None);
-}
-
-#[test]
-fn test_bisection_budget_bounds_each_job_and_still_evicts_invalid_components() {
-    let fixture = Fixture::new_with_num_validators(SLOT, EpochSchedule::without_warmup(), 24);
-    let vote = Vote::new_skip_vote(SLOT);
-    let mut recovery = Recovery::new();
-    recovery.add_certificate(fixture.certificate(vote, &[0]), &fixture.rank_map);
-    // Every component signs another payload, so isolating all of them exceeds one job's budget.
-    let invalid_ranks = (1..24).collect::<Vec<_>>();
-    recovery.add_signatures(
-        vote,
-        fixture.signatures(Vote::new_skip_vote(SLOT + 1), &invalid_ranks),
-        &fixture.rank_map,
-    );
-    wait_for_check(&mut recovery);
-    // Bisection leaves one check for combining verified parts, and no part verifies here.
-    assert_eq!(recovery.metrics.checks, MAX_CHECKS_PER_JOB - 1);
-    let evicted = recovery.metrics.invalid_components;
-    assert!(evicted > 0);
-    assert!(evicted < invalid_ranks.len() as u64);
-    // Eviction schedules another job, which isolates the rest within its own budget.
-    recovery
-        .slots
-        .get_mut(&SLOT)
-        .unwrap()
-        .payloads
-        .get_mut(&vote)
-        .unwrap()
-        .last_check = Some(Instant::now().checked_sub(CHECK_INTERVAL).unwrap());
-    wait_for_completed_jobs(&mut recovery, 2);
-    assert_eq!(
-        recovery.metrics.invalid_components,
-        invalid_ranks.len() as u64
-    );
-    assert_eq!(recovery.metrics.failed_checks, recovery.metrics.checks - 1);
-    assert!(recovery.slots[&SLOT].payloads[&vote].signatures.is_empty());
-    let response = recovery.finish(SLOT, SHRED_VERSION, RewardRespSucc::default());
-    fixture.assert_response(&response, Some(&[0]), None);
-}
-
-#[test]
-fn test_randomized_recovery_keeps_honest_components_and_publishes_only_verified_coverage() {
-    const VALIDATORS: usize = 12;
+fn test_randomized_recovery_keeps_baseline_signers_with_overlapping_aggregates() {
+    const VALIDATORS: usize = 24;
     let fixture =
         Fixture::new_with_num_validators(SLOT, EpochSchedule::without_warmup(), VALIDATORS);
     let vote = Vote::new_skip_vote(SLOT);
-    let honest = fixture.signatures(vote, &(0..VALIDATORS).collect::<Vec<_>>());
-    let certificate = |ranks: &[usize]| Certificate {
-        cert_type: CertificateType::Skip(SLOT),
-        signature: SignatureProjective::aggregate(ranks.iter().map(|&rank| &honest[rank].1))
-            .unwrap()
-            .into(),
-        bitmap: encode_base2(&fixture.ranks(ranks)).unwrap(),
-    };
-    let perturb = |signature: &Signature, delta: &Signature, weight: Scalar| -> Signature {
-        SignatureProjective::aggregate_with_weights(
-            [signature, delta].into_iter(),
-            [Scalar::ONE, weight].iter(),
-        )
-        .unwrap()
-        .into()
-    };
-    for case in 0..24u64 {
-        let mut rng = StdRng::seed_from_u64(case);
-        let seeds: Vec<Vec<usize>> = (0..rng.random_range(1..=3))
-            .map(|_| {
-                let ranks: Vec<_> = (0..VALIDATORS).filter(|_| rng.random_bool(0.5)).collect();
-                if ranks.is_empty() { vec![0] } else { ranks }
-            })
-            .collect();
-        let mut included: Vec<_> = (0..VALIDATORS).filter(|_| rng.random_bool(0.75)).collect();
-        included.shuffle(&mut rng);
-        let delta: Signature = BlsKeypair::new().sign(&case.to_le_bytes()).into();
-        let mut components: Vec<_> = included.iter().map(|&rank| honest[rank]).collect();
-        let mut invalid = HashSet::new();
-        // Cancelling pairs, then lone invalid components, then possibly an undecodable one.
-        let pairs = rng.random_range(0..=2).min(components.len() / 2);
-        for pair in 0..pairs {
-            for (index, weight) in [(2 * pair, Scalar::ONE), (2 * pair + 1, -Scalar::ONE)] {
-                components[index].1 = perturb(&components[index].1, &delta, weight);
-                invalid.insert(components[index].0);
-            }
-        }
-        let lone = rng
-            .random_range(0..=2)
-            .min(components.len().saturating_sub(2 * pairs));
-        for (rank, signature) in components.iter_mut().skip(2 * pairs).take(lone) {
-            *signature = perturb(signature, &delta, Scalar::ONE);
-            invalid.insert(*rank);
-        }
-        if 2 * pairs + lone < components.len() && rng.random_bool(0.3) {
-            let index = 2 * pairs + lone;
-            components[index].1 = Signature([0xff; BLS_SIGNATURE_AFFINE_SIZE]);
-            invalid.insert(components[index].0);
-        }
-        let honest_ranks: HashSet<_> = included
-            .iter()
-            .map(|&rank| u16::try_from(rank).unwrap())
-            .filter(|rank| !invalid.contains(rank))
-            .collect();
-
+    let mut rng = StdRng::seed_from_u64(42);
+    for _ in 0..24 {
+        let mut shuffled: Vec<_> = (0..VALIDATORS).collect();
+        shuffled.shuffle(&mut rng);
+        let direct = &shuffled[..VALIDATORS / 2];
         let mut recovery = Recovery::new();
-        for ranks in &seeds {
-            recovery.add_certificate(certificate(ranks), &fixture.rank_map);
+        for chunk in direct.chunks(rng.random_range(1..=4)) {
+            let aggregate = fixture.vote_aggregate(vote, chunk);
+            recovery.add_aggregate(aggregate.clone(), &fixture.rank_map);
+            recovery.add_aggregate(aggregate, &fixture.rank_map);
         }
-        recovery.add_signatures(vote, components, &fixture.rank_map);
-        // Run jobs until nothing changed is left to check, bypassing only the pacing interval. A
-        // scheduled job no longer needs a check, so wait for any job in flight as well.
-        for _ in 0..32 {
-            if !recovery.in_flight {
-                let state = recovery
-                    .slots
-                    .get_mut(&SLOT)
-                    .unwrap()
-                    .payloads
-                    .get_mut(&vote)
-                    .unwrap();
-                if !state.needs_check() {
-                    break;
-                }
-                state.last_check = Some(Instant::now().checked_sub(CHECK_INTERVAL).unwrap());
-            }
-            let completed = recovery.metrics.completed_jobs;
-            wait_for_completed_jobs(&mut recovery, completed + 1);
-        }
-        assert!(!recovery.in_flight, "case {case} did not converge");
-        let state = &recovery.slots[&SLOT].payloads[&vote];
-        assert!(!state.needs_check(), "case {case} did not converge");
-        for rank in &honest_ranks {
-            assert!(
-                state.signatures.contains_key(rank),
-                "case {case} evicted honest rank {rank}",
-            );
-        }
-
-        let response = recovery.finish(SLOT, SHRED_VERSION, RewardRespSucc::default());
-        let skip = response.skip.as_ref().unwrap();
-        let Decoded::Base2(published) = decode(skip.to_bitmap(), VALIDATORS).unwrap() else {
-            panic!("reward output must use base2");
+        shuffled.shuffle(&mut rng);
+        recovery.add_certificate(
+            fixture.certificate(vote, &shuffled[..16]),
+            &fixture.rank_map,
+        );
+        wait_until_prepared(&mut recovery);
+        assert_eq!(recovery.metrics.failed_checks, 0);
+        assert_eq!(recovery.metrics.unverified_outputs, 0);
+        let direct = recovery.slots[&SLOT].payloads[&vote]
+            .aggregates
+            .iter()
+            .flat_map(|aggregate| aggregate.ranks().iter_ones())
+            .collect::<Vec<_>>();
+        let baseline = fixture.response(vote, &direct);
+        let response = recovery.finish(SLOT, SHRED_VERSION, baseline);
+        let Decoded::Base2(ranks) =
+            decode(response.skip.as_ref().unwrap().to_bitmap(), VALIDATORS).unwrap()
+        else {
+            panic!("expected base2 output");
         };
-        let published: Vec<_> = published.iter_ones().collect();
-        // Verifies the aggregate and the exact validator list, as a replayer would.
-        fixture.assert_response(&response, Some(&published), None);
-        // Equal stakes: each seed extended by its honest outside components is a lower bound.
-        for ranks in &seeds {
-            let mut covered: HashSet<_> = ranks.iter().copied().collect();
-            covered.extend(honest_ranks.iter().map(|&rank| usize::from(rank)));
-            assert!(
-                published.len() >= covered.len(),
-                "case {case}: published {published:?}, seed {ranks:?} with honest {honest_ranks:?}",
-            );
-        }
+        assert!(direct.iter().all(|&rank| ranks[rank]));
+        fixture.assert_response(
+            &response,
+            Some(&ranks.iter_ones().collect::<Vec<_>>()),
+            None,
+        );
     }
 }
 
@@ -1631,7 +1437,7 @@ fn test_exited_worker_stops_scheduling_and_keeps_prepared_candidates() {
     });
     let mut recovery = Recovery::from_worker(jobs_sender, results_receiver, worker);
     recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 3]), &fixture.rank_map);
-    recovery.add_signatures(vote, fixture.signatures(vote, &[4]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[4]);
     wait_for_check(&mut recovery);
     assert_eq!(recovery.slots[&SLOT].payloads[&vote].ready.len(), 1);
     recovery
@@ -1642,7 +1448,7 @@ fn test_exited_worker_stops_scheduling_and_keeps_prepared_candidates() {
         .get_mut(&vote)
         .unwrap()
         .last_check = Some(Instant::now().checked_sub(CHECK_INTERVAL).unwrap());
-    recovery.add_signatures(vote, fixture.signatures(vote, &[5]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[5]);
     recovery.poll(SHRED_VERSION);
     assert!(recovery.in_flight);
     let start = Instant::now();
@@ -1657,7 +1463,7 @@ fn test_exited_worker_stops_scheduling_and_keeps_prepared_candidates() {
     assert!(!recovery.in_flight);
     assert_eq!(recovery.poll_interval(), Duration::from_secs(1));
     // Later evidence neither schedules work nor makes the service poll at the busy interval.
-    recovery.add_signatures(vote, fixture.signatures(vote, &[5]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[5]);
     recovery.poll(SHRED_VERSION);
     assert!(!recovery.in_flight);
     assert_eq!(recovery.poll_interval(), Duration::from_secs(1));
@@ -1668,51 +1474,22 @@ fn test_exited_worker_stops_scheduling_and_keeps_prepared_candidates() {
 }
 
 #[test]
-fn test_exhausted_bisection_budget_still_combines_verified_parts() {
-    let fixture = Fixture::new_with_num_validators(SLOT, EpochSchedule::without_warmup(), 24);
-    let vote = Vote::new_skip_vote(SLOT);
-    let mut recovery = Recovery::new();
-    recovery.add_certificate(fixture.certificate(vote, &[0]), &fixture.rank_map);
-    // Isolating all five invalid components takes more than one job's budget.
-    let invalid_ranks = [2, 4, 7, 13, 18];
-    let honest_ranks: Vec<_> = (1..24)
-        .filter(|rank| !invalid_ranks.contains(rank))
-        .collect();
-    let mut signatures = fixture.signatures(vote, &honest_ranks);
-    signatures.extend(fixture.signatures(Vote::new_skip_vote(SLOT + 1), &invalid_ranks));
-    recovery.add_signatures(vote, signatures, &fixture.rank_map);
-    wait_for_check(&mut recovery);
-    // The check left for combining the verified parts is used, so this job publishes them.
-    assert_eq!(recovery.metrics.checks, MAX_CHECKS_PER_JOB);
-    assert!(recovery.metrics.invalid_components > 0);
-    assert!(recovery.metrics.invalid_components < invalid_ranks.len() as u64);
-    let ready = &recovery.slots[&SLOT].payloads[&vote].ready;
-    assert_eq!(ready.len(), 1);
-    assert!(ready[0].ranks.count_ones() > 2);
-    assert!(invalid_ranks.iter().all(|&rank| !ready[0].ranks[rank]));
-}
-
-#[test]
-fn test_raw_payloads_for_made_up_blocks_cannot_keep_out_stronger_payloads() {
+fn test_vote_payloads_for_made_up_blocks_cannot_keep_out_stronger_payloads() {
     let fixture = Fixture::new();
     let mut recovery = Recovery::new();
-    // Each colluder's own vote for a made-up block opens a payload with one raw component.
+    // Each colluder's own vote for a made-up block opens a payload with one vote aggregate.
     for rank in 0..MAX_PAYLOADS_PER_SLOT {
         let made_up = Vote::new_notarization_vote(Block::new_unique(SLOT));
-        recovery.add_signatures(
-            made_up,
-            fixture.signatures(made_up, &[rank]),
-            &fixture.rank_map,
-        );
+        fixture.add_votes(&mut recovery, made_up, &[rank]);
     }
     let skip = Vote::new_skip_vote(SLOT);
-    recovery.add_signatures(skip, fixture.signatures(skip, &[4, 5]), &fixture.rank_map);
+    recovery.add_aggregate(fixture.vote_aggregate(skip, &[4, 5]), &fixture.rank_map);
     assert!(recovery.slots[&SLOT].payloads.contains_key(&skip));
     assert_eq!(recovery.slots[&SLOT].payloads.len(), MAX_PAYLOADS_PER_SLOT);
     assert_eq!(recovery.metrics.dropped_payloads, 1);
     // A payload no stronger than the weakest one does not displace it.
     let weak = Vote::new_notarization_vote(Block::new_unique(SLOT));
-    recovery.add_signatures(weak, fixture.signatures(weak, &[5]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, weak, &[5]);
     assert!(!recovery.slots[&SLOT].payloads.contains_key(&weak));
     assert_eq!(recovery.metrics.dropped_payloads, 2);
     // A certificate for a new payload displaces a made-up payload, not the stronger skip payload.
@@ -1728,22 +1505,22 @@ fn test_raw_payloads_for_made_up_blocks_cannot_keep_out_stronger_payloads() {
 fn test_own_vote_extends_an_external_certificate() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
-    let mut builder = builder();
-    builder.handle_input(
-        &fixture.bank,
-        RewardInput::Certificates(vec![fixture.certificate(vote, &[0, 1, 2, 3])]),
-    );
+    let (mut context, prepared) = service_context(&fixture);
     let own_vote = VoteMessage {
         vote,
         signature: fixture.signatures(vote, &[4])[0].1.try_into().unwrap(),
         rank: 4,
         stake: fixture.rank_map.get_pubkey_stake_entry(4).unwrap().stake,
     };
-    builder.handle_input(&fixture.bank, RewardInput::Own(own_vote));
-    wait_until_prepared(builder.recovery_mut());
-    let response = builder
-        .build_certs(SLOT.saturating_add(NUM_SLOTS_FOR_REWARD))
-        .unwrap();
+    context.handle_input(RewardInput::Own(own_vote));
+    context.handle_input(RewardInput::Certificates(vec![
+        fixture.certificate(vote, &[0, 1, 2, 3]),
+    ]));
+    assert_eq!(
+        prepared.recv_timeout(Duration::from_secs(10)).unwrap(),
+        SLOT
+    );
+    let response = build_from_service(&mut context, SLOT);
     fixture.assert_response(&response, Some(&[0, 1, 2, 3, 4]), None);
 }
 
@@ -1754,12 +1531,12 @@ fn test_unchanged_prepared_extension_is_not_reverified() {
     let mut recovery = Recovery::new();
     recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2]), &fixture.rank_map);
     recovery.add_certificate(fixture.certificate(vote, &[3, 4, 5]), &fixture.rank_map);
-    recovery.add_signatures(vote, fixture.signatures(vote, &[0, 3]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[0, 3]);
     wait_for_check(&mut recovery);
     assert_eq!(recovery.metrics.checks, 4);
     // Rank 1 extends only the second seed. The first seed's prospective set is unchanged and
     // already prepared, and the larger new extension does not cover it.
-    recovery.add_signatures(vote, fixture.signatures(vote, &[1]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[1]);
     recovery
         .slots
         .get_mut(&SLOT)
@@ -1785,8 +1562,8 @@ fn test_extension_covered_by_another_seed_is_not_checked() {
         fixture.certificate(vote, &[0, 1, 2, 3, 4, 5]),
         &fixture.rank_map,
     );
-    // Only the smaller seed misses these components, and the larger seed covers its extension.
-    recovery.add_signatures(vote, fixture.signatures(vote, &[3, 4]), &fixture.rank_map);
+    // Only the smaller seed misses these aggregates, and the larger seed covers its extension.
+    fixture.add_votes(&mut recovery, vote, &[3, 4]);
     wait_for_check(&mut recovery);
     assert_eq!(recovery.metrics.checks, 2);
     let response = recovery.finish(SLOT, SHRED_VERSION, RewardRespSucc::default());
@@ -1808,33 +1585,39 @@ fn test_request_cutoff_excludes_certificates_checked_after_the_baseline() {
 }
 
 #[test]
-fn test_request_cutoff_preserves_baseline_floor_until_component_failure_was_proved() {
+fn test_failed_extension_never_relaxes_the_baseline_signer_floor() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
     let mut recovery = Recovery::new();
-    recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2, 4]), &fixture.rank_map);
-    wait_until_prepared(&mut recovery);
-    let cutoff = Instant::now();
-    recovery.add_signatures(
-        vote,
-        fixture.signatures(Vote::new_skip_vote(SLOT + 1), &[3]),
+    recovery.add_certificate(
+        fixture.certificate(vote, &[0, 1, 2, 4, 5]),
         &fixture.rank_map,
     );
+    // Break the ingress invariant to ensure even a failed replay check cannot remove baseline payees.
+    let wrong_vote = Vote::new_skip_vote(SLOT + 1);
+    let mismatched = VoteAggregate::new_from_verified_vote(
+        NUM_VALIDATORS,
+        VoteMessage {
+            vote,
+            signature: *fixture.vote_aggregate(wrong_vote, &[3]).signature(),
+            rank: 3,
+            stake: fixture.rank_map.get_pubkey_stake_entry(3).unwrap().stake,
+        },
+    );
+    recovery.add_aggregate(mismatched, &fixture.rank_map);
     wait_until_prepared(&mut recovery);
-    assert_eq!(recovery.metrics.invalid_components, 1);
-    // The older seed would win on stake if a failure proved after the request could relax its
-    // required signer floor. The direct baseline must still pay rank 3 at the earlier cutoff.
-    let response = recovery.finish_at(SLOT, SHRED_VERSION, fixture.response(vote, &[2, 3]), cutoff);
-    fixture.assert_response(&response, Some(&[2, 3]), None);
+    assert_eq!(recovery.metrics.failed_checks, 1);
+    let response = recovery.finish(SLOT, SHRED_VERSION, fixture.response(vote, &[0, 1, 2, 3]));
+    fixture.assert_response(&response, Some(&[0, 1, 2, 3]), None);
 }
 
 #[test]
-fn test_components_inside_every_seed_schedule_no_job() {
+fn test_aggregates_inside_every_seed_schedule_no_job() {
     let fixture = Fixture::new();
     let vote = Vote::new_skip_vote(SLOT);
     let mut recovery = Recovery::new();
     recovery.add_certificate(fixture.certificate(vote, &[0, 1, 2]), &fixture.rank_map);
-    recovery.add_signatures(vote, fixture.signatures(vote, &[0, 1]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, vote, &[0, 1]);
     wait_until_prepared(&mut recovery);
     recovery.poll(SHRED_VERSION);
     assert!(!recovery.in_flight);
@@ -1858,7 +1641,7 @@ fn test_smaller_prepared_notar_candidate_can_maximize_skip_union() {
         fixture.certificate(notar, &[3, 4, 5, 6, 7, 8]),
         &fixture.rank_map,
     );
-    recovery.add_signatures(notar, fixture.signatures(notar, &[9]), &fixture.rank_map);
+    fixture.add_votes(&mut recovery, notar, &[9]);
     wait_for_check(&mut recovery);
     assert_eq!(recovery.metrics.checks, 4);
     assert_eq!(recovery.slots[&SLOT].payloads[&notar].ready.len(), 2);
@@ -1916,12 +1699,12 @@ fn test_full_certificate_budget_admits_broader_and_complementary_proofs() {
 }
 
 #[test]
-fn test_raw_payload_pressure_cannot_exclude_a_verified_certificate() {
+fn test_vote_payload_pressure_cannot_exclude_a_verified_certificate() {
     let fixture = Fixture::new();
     let mut recovery = Recovery::new();
     for _ in 0..MAX_PAYLOADS_PER_SLOT {
         let vote = Vote::new_notarization_vote(Block::new_unique(SLOT));
-        recovery.add_signatures(vote, fixture.signatures(vote, &[0]), &fixture.rank_map);
+        fixture.add_votes(&mut recovery, vote, &[0]);
     }
     let skip = Vote::new_skip_vote(SLOT);
     recovery.add_certificate(fixture.certificate(skip, &[0, 1, 2, 3]), &fixture.rank_map);
@@ -1945,7 +1728,8 @@ fn test_prepared_frontier_is_bounded_and_keeps_complementary_signer_coverage() {
                 fixture.certificate(notar, &(4..12).collect::<Vec<_>>()),
                 &fixture.rank_map,
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             &fixture.rank_map,
             SHRED_VERSION,
         )
@@ -1962,7 +1746,8 @@ fn test_prepared_frontier_is_bounded_and_keeps_complementary_signer_coverage() {
                         fixture.certificate(notar, &ranks),
                         &fixture.rank_map,
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .into(),
                     &fixture.rank_map,
                     SHRED_VERSION,
                 )
@@ -1974,7 +1759,7 @@ fn test_prepared_frontier_is_bounded_and_keeps_complementary_signer_coverage() {
     }
     assert_eq!(ready.len(), MAX_READY_CANDIDATES_PER_PAYLOAD);
     let mut recovery = Recovery::new();
-    recovery.add_signatures(notar, [], &fixture.rank_map);
+    recovery.add_aggregate(fixture.vote_aggregate(notar, &[0]), &fixture.rank_map);
     recovery
         .slots
         .get_mut(&SLOT)

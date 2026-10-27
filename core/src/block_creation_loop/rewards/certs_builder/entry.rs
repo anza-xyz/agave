@@ -41,7 +41,7 @@ impl Entry {
     /// Adds the given [`VoteAggregate`] from another validator to the aggregate.
     pub(super) fn add_aggregate(
         &mut self,
-        aggregate: VoteAggregate,
+        aggregate: &VoteAggregate,
         vote_account_pubkeys: Vec<Pubkey>,
     ) -> Result<(), AggregateAccumulatorError> {
         match *aggregate.vote() {
@@ -59,7 +59,7 @@ impl Entry {
     /// Adds the given [`VoteMessage`] from this node itself to the aggregate.
     pub(super) fn add_own_msg(
         &mut self,
-        vote_msg: VoteMessage,
+        vote_msg: &VoteMessage,
         vote_account_pubkey: Pubkey,
     ) -> Result<(), AggregateAccumulatorError> {
         match vote_msg.vote {
@@ -251,7 +251,7 @@ mod tests {
         let (aggregate, vote_account_pubkeys) =
             new_reward_vote_aggregate(skip, 0, &keypairs, None, shred_version);
         entry
-            .add_aggregate(aggregate, vote_account_pubkeys)
+            .add_aggregate(&aggregate, vote_account_pubkeys)
             .unwrap();
         let resp = entry.build_certs(slot).unwrap();
         assert_eq!(resp.notar, None);
@@ -283,7 +283,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, None, shred_version);
             entry
-                .add_aggregate(aggregate, vote_account_pubkeys)
+                .add_aggregate(&aggregate, vote_account_pubkeys)
                 .unwrap();
         }
         for rank in 2..5 {
@@ -294,7 +294,7 @@ mod tests {
             let (aggregate, vote_account_pubkeys) =
                 new_reward_vote_aggregate(notar, rank, &keypairs, None, shred_version);
             entry
-                .add_aggregate(aggregate, vote_account_pubkeys)
+                .add_aggregate(&aggregate, vote_account_pubkeys)
                 .unwrap();
         }
         let resp = entry.build_certs(slot).unwrap();
@@ -322,14 +322,14 @@ mod tests {
             &[(0, 100), (1, 100)],
             shred_version,
         );
-        entry.add_aggregate(aggregate, skip_validators).unwrap();
+        entry.add_aggregate(&aggregate, skip_validators).unwrap();
 
         let block_id = BlockId::new_unique();
         let notar = Vote::new_notarization_vote(Block { slot, block_id });
         let (aggregate, notar_validators) =
             new_reward_vote_aggregate(notar, 2, &keypairs, None, shred_version);
         entry
-            .add_aggregate(aggregate, notar_validators.clone())
+            .add_aggregate(&aggregate, notar_validators.clone())
             .unwrap();
 
         let resp = entry.build_certs(slot).unwrap();
@@ -356,13 +356,13 @@ mod tests {
             &[(0, 100), (1, 100)],
             shred_version,
         );
-        entry.add_aggregate(aggregate, notar_validators).unwrap();
+        entry.add_aggregate(&aggregate, notar_validators).unwrap();
 
         let skip = Vote::new_skip_vote(slot);
         let (aggregate, skip_validators) =
             new_reward_vote_aggregate(skip, 2, &keypairs, None, shred_version);
         entry
-            .add_aggregate(aggregate, skip_validators.clone())
+            .add_aggregate(&aggregate, skip_validators.clone())
             .unwrap();
 
         let resp = entry.build_certs(slot).unwrap();

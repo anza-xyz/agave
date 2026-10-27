@@ -10,12 +10,11 @@ use {
         sig_verified_messages::VoteAggregate,
         stats::VoteSenderStats,
         utils::{
-            send_sig_verified_batch_to_pool, send_vote_signatures_to_rewards,
-            send_votes_to_metrics, send_votes_to_repair, send_votes_to_rewards,
+            send_sig_verified_batch_to_pool, send_votes_to_metrics, send_votes_to_repair,
+            send_votes_to_rewards,
         },
     },
     agave_votor_messages::vote::Vote,
-    solana_bls_signatures::Signature,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -27,9 +26,6 @@ pub(crate) struct VerifiedBatch {
     vote: Vote,
     aggregates: Vec<VoteAggregate>,
     sender_vote_account_pubkeys: Vec<Pubkey>,
-    // These components have not necessarily been verified individually. A reward aggregate
-    // using a subset of an optimistic batch must be verified before it is published.
-    reward_signatures: Vec<(u16, Signature)>,
 }
 
 impl VerifiedBatch {
@@ -37,13 +33,11 @@ impl VerifiedBatch {
         vote: Vote,
         aggregates: Vec<VoteAggregate>,
         sender_vote_account_pubkeys: Vec<Pubkey>,
-        reward_signatures: Vec<(u16, Signature)>,
     ) -> Self {
         Self {
             vote,
             aggregates,
             sender_vote_account_pubkeys,
-            reward_signatures,
         }
     }
 
@@ -52,8 +46,8 @@ impl VerifiedBatch {
     }
 
     #[cfg(test)]
-    pub(crate) fn reward_signatures(&self) -> &[(u16, Signature)] {
-        &self.reward_signatures
+    pub(crate) fn aggregates(&self) -> &[VoteAggregate] {
+        &self.aggregates
     }
 
     pub(crate) fn process_and_send(
@@ -68,13 +62,6 @@ impl VerifiedBatch {
             send_votes_to_rewards(
                 my_pubkey,
                 self.aggregates.clone(),
-                &channels.channel_to_reward,
-                stats,
-            );
-            send_vote_signatures_to_rewards(
-                my_pubkey,
-                self.vote,
-                self.reward_signatures,
                 &channels.channel_to_reward,
                 stats,
             );

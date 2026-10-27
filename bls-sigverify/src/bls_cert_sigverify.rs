@@ -8,8 +8,8 @@
 //! half of the space, so consensus never waits for reward verification. Block footer certificates
 //! arrive the same way, from blockstore. The reward verifier forwards certificates that verified
 //! to rewards, and retains up to four signer sets per type. It verifies an unverified candidate
-//! only if its signer set is not inside a retained one and, once four are retained, only if it
-//! would improve their coverage. It does so within eight attempts per type and eight checks
+//! only if its signer set is distinct and, once four are retained, only if it would improve
+//! their coverage. It does so within eight attempts per type and eight checks
 //! overall per 250 ms, for at most 1,024 types that never verified. Those budgets are not fair
 //! across types.
 //!
@@ -25,7 +25,7 @@ use {
         bls_sigverifier::{BAN_TIMEOUT, NUM_SLOTS_FOR_VERIFY},
         errors::SigVerifyCertError,
         rewards::{
-            RewardCertificateSender, RewardInput, certificate_reward_vote, reward_window_open,
+            RewardCertificateSender, RewardInput, decode_certificate_reward, reward_window_open,
         },
         sig_verified_messages::SigVerifiedBatch,
         stats::{RewardCertVerifierStats, SigVerifyCertStats},
@@ -50,7 +50,6 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_signer_store::{Decoded, decode},
     std::{
         collections::{HashMap, HashSet},
         sync::{Arc, PoisonError, RwLock, TryLockError},
@@ -76,9 +75,11 @@ const MAX_PENDING_REWARD_INPUTS: usize = 256;
 /// rest stays available for consensus proofs, which are the most useful reward evidence.
 const MAX_PENDING_REWARD_CANDIDATES: usize = MAX_PENDING_REWARD_INPUTS / 2;
 
+type RewardBitmaps = Vec<Arc<[u8]>>;
+
 #[derive(Clone)]
 struct VerifiedCertificateState {
-    bitmaps: Vec<Vec<u8>>,
+    bitmaps: RewardBitmaps,
     remaining_reward_attempts: usize,
     /// Whether a certificate of this type has verified, on either path.
     has_verified_certificate: bool,
@@ -184,24 +185,22 @@ enum CertificateCacheAction {
 
 /// An unverified bitmap may claim useful coverage, but never evicts trusted
 /// evidence until its signature has verified. Keep both union coverage and the
-/// strength of individual proofs when choosing a replacement.
+/// strength of individual proofs when choosing a replacement. At capacity this is a
+/// heuristic: only recovery knows which whole vote aggregates can extend each signer set.
 fn certificate_cache_action(
     cert_type: &CertificateType,
     bitmap: &[u8],
-    bitmaps: &[Vec<u8>],
+    bitmaps: &[Arc<[u8]>],
     root_bank: &Bank,
 ) -> CertificateCacheAction {
-    if bitmaps.iter().any(|existing| existing == bitmap) {
+    if bitmaps.iter().any(|existing| existing.as_ref() == bitmap) {
         return CertificateCacheAction::Duplicate;
     }
     let Some(rank_map) = root_bank.get_rank_map(cert_type.slot()) else {
         return CertificateCacheAction::NoImprovement;
     };
     let ranks = |bitmap: &[u8]| {
-        certificate_reward_vote(cert_type, bitmap, rank_map.len())?;
-        let mut ranks = match decode(bitmap, rank_map.len()).ok()? {
-            Decoded::Base2(ranks) | Decoded::Base3(ranks, _) => ranks,
-        };
+        let (_, mut ranks) = decode_certificate_reward(cert_type, bitmap, rank_map.len())?;
         ranks.resize(rank_map.len(), false);
         Some(ranks)
     };
@@ -215,13 +214,8 @@ fn certificate_cache_action(
     if existing.iter().any(|ranks| ranks == &candidate) {
         return CertificateCacheAction::Duplicate;
     }
-    // A subset of a retained signer set pays no one new and extends no further.
-    if existing
-        .iter()
-        .any(|ranks| candidate.iter_ones().all(|rank| ranks[rank]))
-    {
-        return CertificateCacheAction::NoImprovement;
-    }
+    // A smaller signer set can combine with a whole vote aggregate that overlaps a larger
+    // certificate. Retain distinct alternatives while there is room, including subsets.
     if bitmaps.len() < MAX_REWARD_CERTIFICATES_PER_TYPE {
         return CertificateCacheAction::Insert;
     }
@@ -266,9 +260,10 @@ fn certificate_cache_action(
 }
 
 /// Signer sets the reward verifier retains, by type. The consensus loop reads them to drop copies
-/// before those use up a batch's per-type limit.
+/// before those use up a batch's per-type limit. Entries share immutable bitmap bytes with the
+/// verifier's state; publishing a snapshot only copies the bounded list of references.
 #[derive(Clone, Default)]
-pub(super) struct RetainedRewardBitmaps(Arc<RwLock<HashMap<CertificateType, Vec<Vec<u8>>>>>);
+pub(super) struct RetainedRewardBitmaps(Arc<RwLock<HashMap<CertificateType, RewardBitmaps>>>);
 
 impl RetainedRewardBitmaps {
     /// Whether `bitmap` is exactly a signer set retained for `cert_type`. A copy cannot add
@@ -285,10 +280,10 @@ impl RetainedRewardBitmaps {
         };
         retained
             .get(cert_type)
-            .is_some_and(|bitmaps| bitmaps.iter().any(|retained| retained == bitmap))
+            .is_some_and(|bitmaps| bitmaps.iter().any(|retained| retained.as_ref() == bitmap))
     }
 
-    pub(super) fn publish(&self, cert_type: CertificateType, bitmaps: &[Vec<u8>]) {
+    pub(super) fn publish(&self, cert_type: CertificateType, bitmaps: &[Arc<[u8]>]) {
         if !bitmaps.is_empty() {
             self.0
                 .write()
@@ -665,7 +660,7 @@ impl RewardCertificateWorker {
                 &self.cluster_info.id(),
                 &self.leader_schedule,
                 &root_bank,
-                &verified_certs,
+                verified_certs,
                 &self.channel_to_reward,
             );
         }
@@ -720,11 +715,11 @@ impl RewardCertificates {
             root_bank,
         ) {
             CertificateCacheAction::Insert => {
-                state.bitmaps.push(cert.bitmap.clone());
+                state.bitmaps.push(Arc::from(cert.bitmap.as_slice()));
                 true
             }
             CertificateCacheAction::Replace(index) => {
-                state.bitmaps[index] = cert.bitmap.clone();
+                state.bitmaps[index] = Arc::from(cert.bitmap.as_slice());
                 true
             }
             CertificateCacheAction::Duplicate | CertificateCacheAction::NoImprovement => false,
@@ -808,9 +803,9 @@ struct RewardVerifyOutcome {
     global_budget_dropped: usize,
 }
 
-/// Verifies only candidates that add useful reward coverage, within the per-type budget in
-/// `state` and the shared `remaining_reward_attempts`. Up to four useful signer sets are retained,
-/// with verified replacements allowed when coverage improves.
+/// Verifies distinct reward signer sets within the per-type budget in `state` and the shared
+/// `remaining_reward_attempts`. Up to four signer sets are retained, with verified replacements
+/// allowed when coverage improves.
 fn verify_reward_group(
     certs: Vec<CertPayload>,
     root_bank: &Bank,
@@ -860,9 +855,11 @@ fn verify_reward_group(
             Ok(cert) => {
                 state.has_verified_certificate = true;
                 match cache_action {
-                    CertificateCacheAction::Insert => state.bitmaps.push(cert.bitmap.clone()),
+                    CertificateCacheAction::Insert => {
+                        state.bitmaps.push(Arc::from(cert.bitmap.as_slice()));
+                    }
                     CertificateCacheAction::Replace(index) => {
-                        state.bitmaps[index] = cert.bitmap.clone();
+                        state.bitmaps[index] = Arc::from(cert.bitmap.as_slice());
                     }
                     CertificateCacheAction::Duplicate | CertificateCacheAction::NoImprovement => {
                         unreachable!("only useful candidates are verified")
@@ -984,7 +981,7 @@ mod tests {
             candidates
         };
         // Cover reward-only searches and an already known external certificate.
-        for existing in [Vec::new(), vec![first.bitmap.clone()]] {
+        for existing in [Vec::new(), vec![Arc::from(first.bitmap.as_slice())]] {
             let mut state = VerifiedCertificateState::new();
             state.has_verified_certificate = !existing.is_empty();
             state.bitmaps = existing;
@@ -1009,7 +1006,7 @@ mod tests {
         );
         let mut state = VerifiedCertificateState::new();
         state.has_verified_certificate = true;
-        state.bitmaps = vec![first.bitmap.clone()];
+        state.bitmaps = vec![Arc::from(first.bitmap.as_slice())];
         let rewards = verify_reward_candidates(verified.reward_candidates, &bank, state);
         assert!(rewards.verified_certs.is_empty());
         assert_eq!(rewards.attempted, MAX_CERTIFICATE_CANDIDATES_PER_TYPE);
@@ -1023,7 +1020,9 @@ mod tests {
             test_create_base2_unverified_certificate(&keypairs, 0, cert_type, &ranks)
         };
         let bitmaps = (0usize..4)
-            .map(|start| create((start..start.saturating_add(7)).collect()).bitmap)
+            .map(|start| {
+                Arc::<[u8]>::from(create((start..start.saturating_add(7)).collect()).bitmap)
+            })
             .collect::<Vec<_>>();
         let broader = create((0..8).collect());
         let started = Instant::now();
@@ -1070,11 +1069,17 @@ mod tests {
             accepted.state.bitmaps.len(),
             MAX_REWARD_CERTIFICATES_PER_TYPE
         );
-        assert!(accepted.state.bitmaps.contains(&broader.bitmap));
+        assert!(
+            accepted
+                .state
+                .bitmaps
+                .iter()
+                .any(|bitmap| bitmap.as_ref() == broader.bitmap)
+        );
     }
 
     #[test]
-    fn test_subsets_of_retained_signer_sets_are_not_verified() {
+    fn test_subset_certificates_remain_available_for_disjoint_vote_aggregates() {
         let (bank, keypairs, _thread_pool) = fixture();
         let cert_type = CertificateType::new_unique_notar(10);
         let create = |ranks: Vec<_>| {
@@ -1086,19 +1091,25 @@ mod tests {
         let overlapping = create((3..10).collect());
         let mut state = VerifiedCertificateState::new();
         state.has_verified_certificate = true;
-        state.bitmaps = vec![retained.bitmap.clone()];
+        state.bitmaps = vec![Arc::from(retained.bitmap.as_slice())];
         let outcome = verify_reward_candidates(
-            vec![payload(subset), payload(overlapping.clone())],
+            vec![payload(subset.clone()), payload(overlapping.clone())],
             &bank,
             state,
         );
-        // Only the signer set that pays someone new is verified and retained.
+        // A whole vote aggregate containing rank 7 can extend the subset even though it
+        // overlaps the retained certificate. Both alternatives must reach recovery.
         assert!(outcome.failures.is_empty());
-        assert_eq!(outcome.attempted, 1);
-        assert_eq!(outcome.coverage_dropped, 1);
+        assert_eq!(outcome.attempted, 2);
+        assert_eq!(outcome.coverage_dropped, 0);
+        assert_eq!(outcome.verified_certs.len(), 2);
         assert_eq!(
             outcome.state.bitmaps,
-            vec![retained.bitmap, overlapping.bitmap]
+            vec![
+                retained.bitmap.into(),
+                subset.bitmap.into(),
+                overlapping.bitmap.into()
+            ]
         );
     }
 

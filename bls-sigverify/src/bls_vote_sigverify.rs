@@ -3,10 +3,9 @@ use {
         bls_sigverifier::SigVerifierChannels,
         bls_vote_sigverify::batch::Batch,
         errors::SigVerifyVoteError,
-        rewards::rewards_wants_vote,
         stats::{SigVerifyVoteStats, VoteSenderStats, VoteVerificationStats},
     },
-    agave_votor_messages::{vote::Vote, wire::VotePayloadToSign},
+    agave_votor_messages::wire::VotePayloadToSign,
     agave_votor_transport::endpoint::BanSender,
     rayon::{
         ThreadPool,
@@ -48,16 +47,8 @@ pub(super) fn verify_and_send_votes(
             .par_iter_mut()
             .fold(
                 || (Saturating(0), VoteVerificationStats::default()),
-                |(mut total_votes_to_verify, mut vote_verification_stats), (payload, batch)| {
-                    // Raw signatures are only useful for reward recovery.
-                    let retain_reward_signatures = rewards_wants_vote(
-                        my_pubkey,
-                        leader_schedule,
-                        root_bank.slot(),
-                        &Vote::from(*payload),
-                    );
-                    let (votes_to_verify, stats) =
-                        batch.verify(retain_reward_signatures, ban_sender, thread_pool);
+                |(mut total_votes_to_verify, mut vote_verification_stats), (_, batch)| {
+                    let (votes_to_verify, stats) = batch.verify(ban_sender, thread_pool);
                     total_votes_to_verify += votes_to_verify;
                     vote_verification_stats.merge(stats);
                     (total_votes_to_verify, vote_verification_stats)

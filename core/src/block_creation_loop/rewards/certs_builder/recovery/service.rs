@@ -6,15 +6,35 @@ use {
     agave_votor_messages::reward_certificate::NUM_SLOTS_FOR_REWARD,
     crossbeam_channel::select_biased,
     solana_runtime::bank::Bank,
-    std::sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
+// A certificate consumes one unit even when certificates share an input message. Keep the
+// certificate backlog bounded when forwarding whole batches, including the controller's batch.
 const INPUT_CAPACITY: usize = 64;
 const FINISH_CAPACITY: usize = 16;
 
 struct Input {
     bank: Arc<Bank>,
     input: RewardInput,
+    permit: InputPermit,
+}
+
+struct InputPermit {
+    units: usize,
+    pending: Arc<AtomicUsize>,
+}
+
+impl Drop for InputPermit {
+    fn drop(&mut self) {
+        self.pending.fetch_sub(self.units, Ordering::Relaxed);
+    }
+}
+
+struct PendingCertificates {
+    bank: Arc<Bank>,
+    certificates: std::vec::IntoIter<Certificate>,
+    _permit: InputPermit,
 }
 
 struct Finish {
@@ -52,6 +72,7 @@ impl ServiceMetrics {
 /// A bounded, nonblocking handle. Its controller owns the engine and never builds direct votes.
 pub(in crate::block_creation_loop::rewards) struct RecoveryService {
     inputs: Option<Sender<Input>>,
+    pending_inputs: Arc<AtomicUsize>,
     finishes: Option<Sender<Finish>>,
     /// The first source slot that has not been requested. This also seals dropped finish commands.
     minimum_slot: Arc<AtomicU64>,
@@ -63,12 +84,9 @@ pub(in crate::block_creation_loop::rewards) struct RecoveryService {
 }
 
 impl RecoveryService {
-    pub(in crate::block_creation_loop::rewards) fn new(
-        recovery: Recovery,
-        shred_version: u16,
-    ) -> Self {
+    pub(in crate::block_creation_loop::rewards) fn new(shred_version: u16) -> Self {
         Self::spawn(
-            recovery,
+            Recovery::new(),
             shred_version,
             #[cfg(test)]
             None,
@@ -124,6 +142,7 @@ impl RecoveryService {
             .expect("spawn the reward recovery controller");
         Self {
             inputs: Some(inputs),
+            pending_inputs: Arc::new(AtomicUsize::new(0)),
             finishes: Some(finishes),
             minimum_slot,
             discarded_minimum,
@@ -145,11 +164,35 @@ impl RecoveryService {
         bank: Arc<Bank>,
         input: RewardInput,
     ) {
-        if matches!(input, RewardInput::External(_)) {
+        let units = match &input {
+            RewardInput::Certificates(certificates) => certificates.len(),
+            RewardInput::External(_) | RewardInput::Own(_) => 1,
+        };
+        if units == 0 {
             return;
         }
+        if self
+            .pending_inputs
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |pending| {
+                pending
+                    .checked_add(units)
+                    .filter(|&total| total <= INPUT_CAPACITY)
+            })
+            .is_err()
+        {
+            self.metrics.dropped_inputs.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let input = Input {
+            bank,
+            input,
+            permit: InputPermit {
+                units,
+                pending: self.pending_inputs.clone(),
+            },
+        };
         if let Some(inputs) = &self.inputs
-            && inputs.try_send(Input { bank, input }).is_err()
+            && inputs.try_send(input).is_err()
         {
             self.metrics.dropped_inputs.fetch_add(1, Ordering::Relaxed);
         }
@@ -217,7 +260,7 @@ struct Controller {
     discarded_minimum: Arc<AtomicU64>,
     metrics: Arc<ServiceMetrics>,
     stop: Arc<AtomicBool>,
-    pending: Option<(Arc<Bank>, std::vec::IntoIter<Certificate>)>,
+    pending: Option<PendingCertificates>,
     shred_version: Arc<AtomicU64>,
     last_report: Instant,
     sealed_through: Option<Slot>,
@@ -251,9 +294,9 @@ impl Controller {
                 self.metrics.report();
                 self.last_report = Instant::now();
             }
-            if let Some((bank, certificates)) = &mut self.pending {
-                if let Some(cert) = certificates.next() {
-                    let bank = bank.clone();
+            if let Some(pending) = &mut self.pending {
+                if let Some(cert) = pending.certificates.next() {
+                    let bank = pending.bank.clone();
                     self.certificate(&bank, cert);
                     continue;
                 }
@@ -295,7 +338,14 @@ impl Controller {
         let _ = finish.reply.try_send(response);
     }
 
-    fn input(&mut self, Input { bank, input }: Input) {
+    fn input(
+        &mut self,
+        Input {
+            bank,
+            input,
+            permit,
+        }: Input,
+    ) {
         let root_minimum = bank
             .slot()
             .checked_sub(NUM_SLOTS_FOR_REWARD)
@@ -304,27 +354,32 @@ impl Controller {
         self.recovery.retain_from(self.root_minimum);
         match input {
             RewardInput::Certificates(certificates) => {
-                self.pending = Some((bank, certificates.into_iter()));
+                self.pending = Some(PendingCertificates {
+                    bank,
+                    certificates: certificates.into_iter(),
+                    _permit: permit,
+                });
             }
-            RewardInput::VoteSignatures { vote, signatures } => {
-                if vote.slot() < self.minimum() {
-                    self.recovery.metrics.late_signature_components += signatures.len() as u64;
-                } else if let Some(rank_map) = bank.get_rank_map(vote.slot()) {
-                    self.recovery.add_signatures(vote, signatures, rank_map);
+            RewardInput::External(aggregates) => {
+                for aggregate in aggregates {
+                    let slot = aggregate.vote().slot();
+                    if slot < self.minimum() {
+                        self.recovery.metrics.late_vote_aggregates += 1;
+                    } else if let Some(rank_map) = bank.get_rank_map(slot) {
+                        self.recovery.add_aggregate(aggregate, rank_map);
+                    }
                 }
             }
             RewardInput::Own(message) => {
                 if message.vote.slot() < self.minimum() {
-                    self.recovery.metrics.late_signature_components += 1;
+                    self.recovery.metrics.late_vote_aggregates += 1;
                 } else if let Some(rank_map) = bank.get_rank_map(message.vote.slot()) {
-                    self.recovery.add_signatures(
-                        message.vote,
-                        [(message.rank, message.signature.into())],
+                    self.recovery.add_aggregate(
+                        VoteAggregate::new_from_verified_vote(rank_map.len(), message),
                         rank_map,
                     );
                 }
             }
-            RewardInput::External(_) => (),
         }
     }
 
@@ -344,5 +399,63 @@ impl Controller {
             }
             self.recovery.add_certificate(certificate, rank_map);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, agave_votor_messages::certificate::CertificateType};
+
+    #[test]
+    fn test_certificate_batches_share_the_bounded_input_budget() {
+        // Drop the release sender before the service on panic, so the controller can exit.
+        let service;
+        let (started_sender, started) = bounded(1);
+        let (release, release_receiver) = bounded(1);
+        service = RecoveryService::new_with_gates(
+            Recovery::new(),
+            0,
+            None,
+            Some((started_sender, release_receiver)),
+        );
+        let (reply, response) = bounded(1);
+        service.finish(0, 0, RewardRespSucc::default(), Instant::now(), reply);
+        started.recv_timeout(Duration::from_secs(10)).unwrap();
+
+        let bank = Arc::new(Bank::default_for_tests());
+        let certificate = Certificate {
+            cert_type: CertificateType::Skip(1),
+            signature: SignatureProjective::identity().into(),
+            bitmap: vec![],
+        };
+        service.input(
+            bank.clone(),
+            RewardInput::Certificates(vec![certificate.clone(); INPUT_CAPACITY + 1]),
+        );
+        assert_eq!(service.pending_inputs.load(Ordering::Relaxed), 0);
+
+        for _ in 0..2 {
+            service.input(
+                bank.clone(),
+                RewardInput::Certificates(vec![certificate.clone(); INPUT_CAPACITY / 2]),
+            );
+        }
+        // Two messages consume all sixty-four certificate units. Neither another certificate
+        // nor an ordinary input may expand that backlog while the controller is paused.
+        assert_eq!(service.inputs.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            service.pending_inputs.load(Ordering::Relaxed),
+            INPUT_CAPACITY
+        );
+        service.input(bank.clone(), RewardInput::Certificates(vec![certificate]));
+        service.input(bank, RewardInput::External(vec![]));
+        assert_eq!(service.inputs.as_ref().unwrap().len(), 2);
+        assert_eq!(service.metrics.dropped_inputs.load(Ordering::Relaxed), 3);
+
+        let pending = service.pending_inputs.clone();
+        drop(release);
+        response.recv_timeout(Duration::from_secs(10)).unwrap();
+        service.join();
+        assert_eq!(pending.load(Ordering::Relaxed), 0);
     }
 }

@@ -13,7 +13,7 @@ use {
         pubkeys::VerifiedVotorSlotsMessage,
         rank_map_cache::RankMapCache,
         rewards::{
-            RewardInput, certificate_reward_vote, rewards_wants_certificate, rewards_wants_vote,
+            RewardInput, decode_certificate_reward, rewards_wants_certificate, rewards_wants_vote,
         },
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
@@ -387,7 +387,7 @@ impl SigVerifier {
         ) && root_bank
             .get_rank_map(cert.cert_type.slot())
             .is_some_and(|map| {
-                certificate_reward_vote(&cert.cert_type, &cert.bitmap, map.len()).is_some()
+                decode_certificate_reward(&cert.cert_type, &cert.bitmap, map.len()).is_some()
             })
     }
 
@@ -796,7 +796,7 @@ mod tests {
         verifier
             .reward_verifier
             .retained()
-            .publish(cert_type, std::slice::from_ref(&retained.bitmap));
+            .publish(cert_type, &[Arc::from(retained.bitmap.as_slice())]);
         let alternative = certificate(&(1..8).collect::<Vec<_>>());
         let forged_alternative = forge(&alternative, b"forged");
         // Copies of a retained signer set are dropped whatever their signatures.

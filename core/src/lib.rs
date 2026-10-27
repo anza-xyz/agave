@@ -32,7 +32,8 @@ mod result;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod reward_certs {
     pub use crate::block_creation_loop::rewards::{
-        certs_builder::CertsBuilder, msg_types::RewardRespSucc,
+        certs_builder::{CertsBuilder, recovery::Recovery},
+        msg_types::RewardRespSucc,
     };
 }
 pub mod sample_performance_service;

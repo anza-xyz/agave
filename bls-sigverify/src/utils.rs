@@ -7,10 +7,9 @@ use {
         sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         stats::{SenderStats, VoteSenderStats},
     },
-    agave_votor_messages::{certificate::Certificate, vote::Vote},
+    agave_votor_messages::certificate::Certificate,
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info, warn},
-    solana_bls_signatures::Signature,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
@@ -52,51 +51,11 @@ pub(super) fn send_votes_to_rewards(
     }
     let len = votes.len();
     let msg = RewardInput::External(votes);
-    send_reward_input(my_pubkey, msg, len, channel, &mut stats.rewards_sender);
-}
-
-pub(super) fn send_vote_signatures_to_rewards(
-    my_pubkey: &Pubkey,
-    vote: Vote,
-    signatures: Vec<(u16, Signature)>,
-    channel: &Sender<RewardInput>,
-    stats: &mut VoteSenderStats,
-) {
-    if signatures.is_empty() {
-        return;
-    }
-    // Raw signatures only serve reward recovery, so they may fill at most half of the channel and
-    // cannot crowd out the direct votes every reward certificate is built from.
-    if channel
-        .capacity()
-        .is_some_and(|capacity| channel.len() >= capacity / 2)
-    {
-        stats.reward_signatures_sender.channel_full += 1;
-        return;
-    }
-    let len = signatures.len();
-    let msg = RewardInput::VoteSignatures { vote, signatures };
-    send_reward_input(
-        my_pubkey,
-        msg,
-        len,
-        channel,
-        &mut stats.reward_signatures_sender,
-    );
-}
-
-fn send_reward_input(
-    my_pubkey: &Pubkey,
-    msg: RewardInput,
-    len: usize,
-    channel: &Sender<RewardInput>,
-    stats: &mut SenderStats,
-) {
     match channel.try_send(msg) {
-        Ok(()) => stats.sent += len as u64,
+        Ok(()) => stats.rewards_sender.sent += len as u64,
         Err(TrySendError::Full(_)) => {
             warn!("{my_pubkey}: channel \"{REWARDS_CHANNEL}\" is full, dropping msg");
-            stats.channel_full += 1
+            stats.rewards_sender.channel_full += 1
         }
         Err(TrySendError::Disconnected(_)) => {
             warn!("{my_pubkey}: channel \"{REWARDS_CHANNEL}\" disconnected");
@@ -191,33 +150,5 @@ pub(super) fn send_certs_to_pool(
         Err(TrySendError::Disconnected(_)) => {
             Err(SigVerifyCertError::ChannelDisconnected(POOL_CHANNEL))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, crossbeam_channel::bounded, solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE};
-
-    #[test]
-    fn test_raw_signatures_leave_half_the_reward_channel_to_direct_votes() {
-        let (channel, receiver) = bounded(4);
-        let mut stats = VoteSenderStats::default();
-        let vote = Vote::new_skip_vote(1);
-        let signatures = || vec![(0, Signature([0; BLS_SIGNATURE_AFFINE_SIZE]))];
-        let pubkey = Pubkey::new_unique();
-        for _ in 0..2 {
-            send_vote_signatures_to_rewards(&pubkey, vote, signatures(), &channel, &mut stats);
-        }
-        assert_eq!(receiver.len(), 2);
-        // The channel is half full, so further raw signatures are dropped.
-        send_vote_signatures_to_rewards(&pubkey, vote, signatures(), &channel, &mut stats);
-        assert_eq!(receiver.len(), 2);
-        assert_eq!(stats.reward_signatures_sender.sent.0, 2);
-        assert_eq!(stats.reward_signatures_sender.channel_full.0, 1);
-        // Direct votes may still use the rest.
-        for _ in 0..2 {
-            channel.try_send(RewardInput::Certificates(vec![])).unwrap();
-        }
-        assert!(channel.is_full());
     }
 }

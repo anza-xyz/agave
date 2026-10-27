@@ -51,16 +51,11 @@ impl Batch {
     #[must_use]
     pub(super) fn verify(
         &mut self,
-        retain_reward_signatures: bool,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
     ) -> (usize, VoteVerificationStats) {
-        self.batch_state.verify(
-            self.rank_map.len(),
-            retain_reward_signatures,
-            ban_sender,
-            thread_pool,
-        )
+        self.batch_state
+            .verify(self.rank_map.len(), ban_sender, thread_pool)
     }
 
     pub(super) fn process(
@@ -100,19 +95,14 @@ impl BatchState {
     fn verify(
         &mut self,
         max_validators: usize,
-        retain_reward_signatures: bool,
         ban_sender: &BanSender,
         thread_pool: &ThreadPool,
     ) -> (usize, VoteVerificationStats) {
         match self {
             Self::Unverified(unverified_batch) => {
                 let num_votes_to_sigverify = unverified_batch.len();
-                let (verified_batch, stats) = unverified_batch.verify(
-                    max_validators,
-                    retain_reward_signatures,
-                    ban_sender,
-                    thread_pool,
-                );
+                let (verified_batch, stats) =
+                    unverified_batch.verify(max_validators, ban_sender, thread_pool);
                 *self = Self::Verified(verified_batch);
                 (num_votes_to_sigverify, stats)
             }

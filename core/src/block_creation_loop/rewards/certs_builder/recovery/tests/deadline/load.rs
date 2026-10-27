@@ -1,14 +1,10 @@
 //! Optimized, explicitly invoked measurements of the real service and production requestor.
-//! Prepared historical frontiers are verified before timing; background bisection runs while cap
+//! Prepared historical frontiers are verified before timing; background verification runs while cap
 //! admissions are queued alongside the measured requests. With certificate evidence, the first
 //! request arrives while the recovery controller has already dispatched a cap admission. Baseline
 //! readiness is timed separately from the block footer's fixed observation window. Shared-host
 //! timings are observations, not hard production latency guarantees.
-use {
-    super::*,
-    crate::block_creation_loop::rewards::reward_certs_service::run_with_builder_and_admission_gate_for_tests,
-    std::sync::Mutex,
-};
+use {super::*, std::sync::Mutex};
 
 const SOURCES: usize = 8;
 const ROUNDS: usize = 4;
@@ -16,12 +12,7 @@ const ROUNDS: usize = 4;
 // an implementation can stop early when it finds a pair covering every validator.
 const OMITTED_RANK: usize = 0;
 
-type PreparedPayload = (
-    Vote,
-    Candidate,
-    Vec<CheckedCandidate>,
-    BTreeMap<u16, Signature>,
-);
+type PreparedPayload = (Vote, Candidate, Vec<CheckedCandidate>, Vec<VoteAggregate>);
 type JobMeasurements = Arc<Mutex<Vec<(u64, u64)>>>;
 
 struct Source {
@@ -103,30 +94,17 @@ fn prepare(fixture: &Fixture) -> Vec<Source> {
                                 })
                                 .collect();
                             CheckedCandidate::verify(
-                                candidate(fixture, vote, &signatures, &ranks),
+                                candidate(fixture, vote, &signatures, &ranks).into(),
                                 &fixture.rank_map,
                                 SHRED_VERSION,
                             )
                             .unwrap()
                         })
                         .collect();
-                    let mut raw: BTreeMap<_, _> = signatures[n / 2..].iter().copied().collect();
-                    // These pairs cancel within the direct batch. The seed covers one member of each
-                    // pair, so its full extension fails and the worker must bisect the outside subset.
-                    let delta: Signature =
-                        BlsKeypair::new().sign(b"deadline bisection load").into();
-                    for (inside, outside) in [(n / 2, n * 4 / 5), (n / 2 + 1, n * 9 / 10)] {
-                        for (rank, weight) in [(inside, Scalar::ONE), (outside, -Scalar::ONE)] {
-                            let original = raw.get_mut(&(rank as u16)).unwrap();
-                            *original = SignatureProjective::aggregate_with_weights(
-                                [&*original, &delta].into_iter(),
-                                [Scalar::ONE, weight].iter(),
-                            )
-                            .unwrap()
-                            .into();
-                        }
-                    }
-                    (vote, seed, ready, raw)
+                    let aggregates = (n / 2..n)
+                        .map(|rank| fixture.vote_aggregate(vote, &[rank]))
+                        .collect();
+                    (vote, seed, ready, aggregates)
                 })
                 .collect();
             let cap_vote = Vote::new_notarization_vote(Block {
@@ -163,12 +141,17 @@ fn service_builder(
     fixture: &Fixture,
     sources: &[Source],
     with_certificate_evidence: bool,
-) -> (CertsBuilder, JobMeasurements, Option<Receiver<()>>) {
-    let mut builder = builder();
+) -> (
+    CertsBuilder,
+    Recovery,
+    JobMeasurements,
+    Option<Receiver<()>>,
+) {
+    let mut builder = CertsBuilder::new();
     for source in sources {
         builder.handle_input(
             &fixture.bank,
-            RewardInput::External(vec![source.baseline.clone()]),
+            &RewardInput::External(vec![source.baseline.clone()]),
         );
     }
     let measurements = Arc::new(Mutex::new(Vec::new()));
@@ -195,13 +178,13 @@ fn service_builder(
             let payloads = source
                 .payloads
                 .iter()
-                .map(|(vote, seed, ready, raw)| {
+                .map(|(vote, seed, ready, aggregates)| {
                     (
                         *vote,
                         PayloadState {
-                            seeds: vec![seed.clone()],
+                            seeds: vec![Seed::new(seed.clone())],
                             ready: ready.clone(),
-                            signatures: raw.clone(),
+                            aggregates: aggregates.iter().cloned().map(Arc::new).collect(),
                             generation: 1,
                             ..PayloadState::default()
                         },
@@ -217,10 +200,9 @@ fn service_builder(
                 },
             );
         }
-        builder.recovery = Some(recovery);
-        (builder, measurements, Some(started))
+        (builder, recovery, measurements, Some(started))
     } else {
-        (builder, measurements, None)
+        (builder, Recovery::new(), measurements, None)
     }
 }
 
@@ -249,9 +231,9 @@ fn reward_recovery_production_deadline_load() {
             let mut completed_jobs = 0;
             let mut failed_checks = 0;
             for _ in 0..ROUNDS {
-                let (builder, jobs, started) =
+                let (builder, recovery, jobs, started) =
                     service_builder(&fixture, &sources, with_certificate_evidence);
-                let cluster_info = builder.cluster_info.clone();
+                let cluster_info = cluster_info();
                 let my_pubkey = cluster_info.id();
                 let banks = fixture.bank_forks.read().unwrap().sharable_banks();
                 let exit = Arc::new(AtomicBool::new(false));
@@ -261,13 +243,14 @@ fn reward_recovery_production_deadline_load() {
                 let (admission_started_sender, admission_started) = bounded(1);
                 let (release_admission, admission_release) = bounded(1);
                 let service = thread::spawn(move || {
-                    run_with_builder_and_admission_gate_for_tests(
+                    run_with_recovery_for_tests(
                         service_exit,
                         cluster_info,
                         inputs,
                         requests,
                         banks,
                         builder,
+                        recovery,
                         with_certificate_evidence
                             .then_some((admission_started_sender, admission_release)),
                     )
@@ -404,9 +387,10 @@ fn reward_recovery_production_deadline_load() {
             );
             if with_certificate_evidence {
                 assert!(
-                    failed_checks > 0,
-                    "background bisection load did not execute"
+                    completed_jobs > 0,
+                    "background verification load did not execute"
                 );
+                assert_eq!(failed_checks, 0);
             }
             if budget == Duration::from_millis(50) {
                 assert_eq!(
