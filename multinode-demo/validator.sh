@@ -51,8 +51,6 @@ EOF
   exit 1
 }
 
-maybeRequireTower=true
-
 positional_args=()
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -184,9 +182,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 == --accounts-db-skip-shrink ]]; then
       args+=("$1")
       shift
-    elif [[ $1 == --skip-require-tower ]]; then
-      maybeRequireTower=false
-      shift
     elif [[ $1 == --block-production-method ]]; then
       args+=("$1" "$2")
       shift 2
@@ -271,11 +266,6 @@ default_arg --log -
 default_arg --full-rpc-api
 default_arg --no-incremental-snapshots
 default_arg --allow-private-addr
-
-if [[ $maybeRequireTower = true ]]; then
-  default_arg --require-tower
-fi
-
 
 program=$agave_validator
 

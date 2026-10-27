@@ -19,7 +19,7 @@ use {
             BankingControlMsg, BankingStage,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        consensus::{Tower, tower_storage::TowerStorage},
+        consensus::tower_storage::TowerStorage,
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
@@ -597,7 +597,7 @@ impl AdminRpc for AdminRpcImpl {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        require_tower: bool,
+        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity request received");
@@ -608,19 +608,14 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_identity_from_bytes(
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        require_tower: bool,
+        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
@@ -631,12 +626,7 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
@@ -964,7 +954,6 @@ impl AdminRpcImpl {
     fn set_identity_keypair(
         meta: AdminRpcRequestMetadata,
         identity_keypair: Keypair,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
@@ -985,17 +974,6 @@ impl AdminRpcImpl {
                          {new_identity} is not supported"
                     )));
                 }
-            }
-
-            if require_tower {
-                let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
-                    .map_err(|err| {
-                        jsonrpc_core::error::Error::invalid_params(format!(
-                            "Unable to load tower file for identity {}: {}",
-                            identity_keypair.pubkey(),
-                            err
-                        ))
-                    })?;
             }
 
             if require_vote_history {
@@ -1414,7 +1392,6 @@ mod tests {
             AdminRpcImpl::set_identity_keypair(
                 rpc.meta.clone(),
                 validators[1].node_keypair.insecure_clone(),
-                false,
                 false,
             ),
             Err(jsonrpc_core::Error {

@@ -58,6 +58,7 @@ Release channels have their own copy of this changelog:
   it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
   Replace `--tpu-max-connections-per-peer N` with
   `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
+* `--require-tower` is deprecated and will be removed in a future release.
 
 ### CLI
 

@@ -433,12 +433,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Skip ledger verification at validator bootup."),
     )
     .arg(
-        clap::Arg::with_name("require_tower")
-            .long("require-tower")
-            .takes_value(false)
-            .help("Refuse to start if saved tower state is not found"),
-    )
-    .arg(
         clap::Arg::with_name("do_not_require_vote_history")
             .long("do-not-require-vote-history")
             .takes_value(false)

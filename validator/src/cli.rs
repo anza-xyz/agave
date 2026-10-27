@@ -221,6 +221,15 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     );
     add_arg!(
         // deprecated in v4.5.0
+        Arg::with_name("require_tower")
+            .long("require-tower")
+            .takes_value(false)
+            .help("Refuse to start if saved tower state is not found"),
+        usage_warning: "The --require-tower flag has been deprecated and will be removed in the \
+            future. The flag is only relevant to TowerBFT and setting it is now a no-op.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
         Arg::with_name("tpu_max_connections_per_peer")
             .long("tpu-max-connections-per-peer")
             .takes_value(true)

@@ -501,7 +501,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        require_tower: matches.is_present("require_tower"),
+        require_tower: false,
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
         vote_history_storage,
