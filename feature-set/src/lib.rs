@@ -1175,7 +1175,7 @@ pub mod move_precompile_verification_to_svm {
     solana_pubkey::declare_id!("9ypxGLzkMxi89eDerRKXWDXe44UY2z4hBig4mDhNq5Dp");
 }
 
-pub mod enable_transaction_loading_failure_fees {
+pub mod relax_transaction_loading_constraints {
     solana_pubkey::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
 }
 
@@ -2319,8 +2319,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0159: Move precompile verification into SVM",
         ),
         (
-            enable_transaction_loading_failure_fees::id(),
-            "SIMD-0082: Enable fees for some additional transaction failures",
+            relax_transaction_loading_constraints::id(),
+            "SIMD-0191: Relax Transaction Loading Constraints",
         ),
         (
             deprecate_legacy_vote_ixs::id(),
