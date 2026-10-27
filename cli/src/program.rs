@@ -1440,12 +1440,6 @@ async fn process_program_deploy(
         true
     };
 
-    if generate_ephemeral_program_id && !do_initial_deploy {
-        return Err(
-            "--generate-ephemeral-program-id may only be used for initial deployments".into(),
-        );
-    }
-
     let feature_set = if skip_feature_verification {
         FeatureSet::all_enabled()
     } else {
