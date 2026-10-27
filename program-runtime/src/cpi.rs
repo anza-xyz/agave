@@ -589,6 +589,13 @@ impl<'a> CallerAccount<'a> {
             .get(account_meta.account_index as usize)
             .ok_or(InstructionError::MissingAccount)?;
 
+        check_account_info_pointer(
+            invoke_context,
+            account.vm_addr,
+            account_metadata.vm_addr,
+            "account",
+        )?;
+
         let runtime_account =
             translate_type_mut_for_cpi::<RuntimeAccount>(memory_mapping, account.vm_addr, false)?;
         let lamports = &mut runtime_account.lamports;
