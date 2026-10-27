@@ -280,7 +280,7 @@ impl Tpu {
         // below-floor packets ahead of signature verification.
         let scheduler_priority_floor = Arc::new(SchedulerPriorityFloor::new());
 
-        let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let sigverify_stage = SigVerifyStage::new(
             packet_receiver,
             vote_packet_receiver,
             non_vote_sender,
@@ -295,7 +295,6 @@ impl Tpu {
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
-            gossip_sigverify_handle,
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),

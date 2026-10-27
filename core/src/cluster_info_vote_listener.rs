@@ -5,7 +5,6 @@ use {
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
         result::{Error, Result},
-        sigverify_stage::GossipSigVerifyHandle,
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     agave_bls_sigverify::pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
@@ -20,7 +19,10 @@ use {
     solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
-    solana_perf::packet::{self, PacketBatch},
+    solana_perf::{
+        packet::{self, PacketBatch},
+        sigverify,
+    },
     solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
@@ -446,7 +448,6 @@ impl ClusterInfoVoteListener {
     pub fn new(
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
-        gossip_sigverify_handle: GossipSigVerifyHandle,
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -470,7 +471,6 @@ impl ClusterInfoVoteListener {
                     let _ = Self::recv_loop(
                         exit,
                         &cluster_info,
-                        gossip_sigverify_handle,
                         sharable_banks,
                         verified_packets_sender,
                         verified_vote_transactions_sender,
@@ -515,7 +515,6 @@ impl ClusterInfoVoteListener {
     fn recv_loop(
         exit: Arc<AtomicBool>,
         cluster_info: &ClusterInfo,
-        mut gossip_sigverify_handle: GossipSigVerifyHandle,
         sharable_banks: SharableBanks,
         verified_packets_sender: BankingPacketSender,
         verified_vote_transactions_sender: VerifiedVoteTransactionsSender,
@@ -542,8 +541,7 @@ impl ClusterInfoVoteListener {
             let votes = cluster_info.get_votes(&mut cursor);
             if !votes.is_empty() {
                 stats.received_count += votes.len();
-                let (vote_txs, packets) =
-                    Self::verify_votes(votes, &mut gossip_sigverify_handle, &sharable_banks)?;
+                let (vote_txs, packets) = Self::verify_votes(votes, &sharable_banks);
                 // Alpenglow can become enabled while signature verification is in flight.
                 // Discard that final batch instead of forwarding legacy votes.
                 if migration_status.is_alpenglow_enabled() {
@@ -587,17 +585,13 @@ impl ClusterInfoVoteListener {
 
     fn verify_votes(
         votes: Vec<Transaction>,
-        gossip_sigverify_handle: &mut GossipSigVerifyHandle,
         sharable_banks: &SharableBanks,
-    ) -> Result<(Vec<Transaction>, Vec<PacketBatch>)> {
-        let packet_batches = packet::to_packet_batches(&votes, 1);
-        let (votes, packet_batches) =
-            gossip_sigverify_handle.verify_and_receive_votes(votes, packet_batches)?;
-        Ok(Self::filter_verified_votes(
-            votes,
-            packet_batches,
-            sharable_banks,
-        ))
+    ) -> (Vec<Transaction>, Vec<PacketBatch>) {
+        let mut packet_batches = packet::to_packet_batches(&votes, 1);
+        packet_batches
+            .iter_mut()
+            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true));
+        Self::filter_verified_votes(votes, packet_batches, sharable_banks)
     }
 
     fn filter_verified_votes(
@@ -1074,13 +1068,12 @@ impl ClusterInfoVoteListener {
 mod tests {
     use {
         super::*,
-        crate::sigverify::GossipVerifiedVoteBatch,
         crossbeam_channel::bounded,
         itertools::Itertools,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
-        solana_perf::{packet, sigverify},
+        solana_perf::packet,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
@@ -1095,46 +1088,6 @@ mod tests {
         solana_vote_program::vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, Vote},
         std::{collections::BTreeSet, iter::repeat_with, sync::Arc},
     };
-
-    fn pre_send_for_tests(
-        verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
-        votes: &[Transaction],
-    ) {
-        let mut packet_batches = packet::to_packet_batches(votes, 1);
-        // Gossip votes are legacy Transaction values, not tx-v1 packets.
-        packet_batches
-            .iter_mut()
-            .for_each(|packet_batch| sigverify::ed25519_verify_serial(packet_batch, true));
-        // There is no worker thread in these tests, so preload the verified
-        // responses that verify_votes() will receive after it sends work.
-        votes
-            .iter()
-            .cloned()
-            .zip(packet_batches)
-            .for_each(|(transaction, packet_batch)| {
-                verified_vote_sender
-                    .send(GossipVerifiedVoteBatch {
-                        transaction,
-                        packet_batch,
-                    })
-                    .unwrap();
-            });
-    }
-
-    // Avoid setting up sigverify stage.
-    fn test_verify_votes(
-        votes: Vec<Transaction>,
-        sharable_banks: &SharableBanks,
-    ) -> (Vec<Transaction>, Vec<PacketBatch>) {
-        let (worker_sender, _worker_receiver) = bounded(1024);
-        let (verified_vote_sender, verified_vote_receiver) = bounded(1024);
-        let mut gossip_sigverify_handle =
-            GossipSigVerifyHandle::new_for_tests(worker_sender, verified_vote_receiver);
-
-        pre_send_for_tests(&verified_vote_sender, &votes);
-        ClusterInfoVoteListener::verify_votes(votes, &mut gossip_sigverify_handle, sharable_banks)
-            .unwrap()
-    }
 
     #[test]
     fn test_max_vote_tx_fits() {
@@ -2216,7 +2169,8 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let votes = vec![];
-        let (vote_txs, packet_batches) = test_verify_votes(votes, &sharable_banks);
+        let (vote_txs, packet_batches) =
+            ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
         assert!(vote_txs.is_empty());
         assert!(packet_batches.is_empty());
     }
@@ -2254,7 +2208,8 @@ mod tests {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let vote_tx = test_vote_tx(voting_keypairs.first(), hash);
         let votes = vec![vote_tx];
-        let (vote_txs, packet_batches) = test_verify_votes(votes, &sharable_banks);
+        let (vote_txs, packet_batches) =
+            ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 1);
         assert_eq!(packet_batches.len(), 1);
     }
@@ -2282,7 +2237,8 @@ mod tests {
         let mut bad_vote = vote_tx.clone();
         bad_vote.signatures[0] = Signature::default();
         let votes = vec![vote_tx.clone(), bad_vote, vote_tx];
-        let (vote_txs, packet_batches) = test_verify_votes(votes, &sharable_banks);
+        let (vote_txs, packet_batches) =
+            ClusterInfoVoteListener::verify_votes(votes, &sharable_banks);
         assert_eq!(vote_txs.len(), 2);
         assert_eq!(packet_batches.len(), 2);
     }
