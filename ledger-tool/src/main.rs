@@ -564,7 +564,7 @@ fn setup_slot_recording(
         (false, false) => {
             // for regualr replay ledger, report cost-tracker-stats after each
             // slot is confirmed.
-            let slot_callback = Arc::new(move |bank: &Bank| {
+            let slot_callback = Arc::new(move |bank: &Bank, _num_entries: u64| {
                 // Block must be frozen by this point
                 assert!(bank.is_frozen());
 
@@ -642,7 +642,7 @@ fn setup_slot_recording(
 
             let slot_callback = Arc::new({
                 let slots = Arc::clone(&slot_details);
-                move |bank: &Bank| {
+                move |bank: &Bank, _num_entries: u64| {
                     let mut details = bank_hash_details::SlotDetails::new_from_bank(
                         bank,
                         include_bank_hash_components,
@@ -685,7 +685,7 @@ fn setup_slot_recording(
                 });
 
             let slots = Arc::new(Mutex::new(details.bank_hash_details));
-            let slot_callback = Arc::new(move |bank: &Bank| {
+            let slot_callback = Arc::new(move |bank: &Bank, _num_entries: u64| {
                 if slots.lock().unwrap().is_empty() {
                     error!(
                         "Expected slot: not found got slot: {} hash: {}",

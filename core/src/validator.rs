@@ -20,6 +20,7 @@ use {
         repair::{
             self, repair_handler::RepairHandlerType, serve_repair_service::ServeRepairService,
         },
+        replay_stage,
         resource_limits::{ResourceLimitError, adjust_nofile_limit},
         sample_performance_service::SamplePerformanceService,
         snapshot_packager_service::SnapshotPackagerService,
@@ -63,6 +64,7 @@ use {
     },
     solana_geyser_plugin_manager::{
         GeyserPluginManagerRequest,
+        block_metadata_notifier_interface::BlockMetadataNotifierArc,
         contact_info_notifier::{
             self as geyser_contact_info_notifier, ContactInfoNotifier as GeyserContactInfoNotifier,
         },
@@ -124,6 +126,7 @@ use {
         rpc_pubsub_service::{PubSubConfig, PubSubService},
         rpc_service::{JsonRpcService, JsonRpcServiceConfig, RpcTpuClientArgs},
         rpc_subscriptions::RpcSubscriptions,
+        slot_status_notifier::SlotStatusNotifier,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
     },
@@ -966,7 +969,7 @@ impl Validator {
                 transaction_status_service,
                 max_complete_transaction_status_slot,
             },
-            blockstore_process_options,
+            mut blockstore_process_options,
             blockstore_root_scan,
             pruned_banks_receiver,
             entry_notifier_service,
@@ -985,6 +988,12 @@ impl Validator {
                 .then(|| dependency_tracker.clone()),
         )
         .map_err(ValidatorError::Other)?;
+
+        set_startup_replay_geyser_callbacks(
+            &mut blockstore_process_options,
+            slot_status_notifier.clone(),
+            block_metadata_notifier.clone(),
+        );
 
         let event_system = initialize_event_system(&blockstore)?;
 
@@ -2461,6 +2470,34 @@ fn initialize_event_system(
     Ok(event_system)
 }
 
+/// Announce banks replayed from the blockstore at startup to geyser like banks
+/// replayed live: created before their entries are replayed, block metadata
+/// once they are frozen and verified.
+fn set_startup_replay_geyser_callbacks(
+    process_options: &mut blockstore_processor::ProcessOptions,
+    slot_status_notifier: Option<SlotStatusNotifier>,
+    block_metadata_notifier: Option<BlockMetadataNotifierArc>,
+) {
+    if let Some(slot_status_notifier) = slot_status_notifier {
+        process_options.new_bank_callback = Some(Arc::new(move |bank: &Bank| {
+            slot_status_notifier.read().unwrap().notify_created_bank(
+                bank.slot(),
+                bank.parent_slot(),
+                bank.bank_id(),
+            );
+        }));
+    }
+    if let Some(block_metadata_notifier) = block_metadata_notifier {
+        process_options.slot_callback = Some(Arc::new(move |bank: &Bank, entry_count: u64| {
+            replay_stage::notify_block_metadata(
+                block_metadata_notifier.as_ref(),
+                bank,
+                entry_count,
+            );
+        }));
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn load_blockstore(
     config: &ValidatorConfig,
@@ -3280,14 +3317,156 @@ mod tests {
         solana_gossip::contact_info::ContactInfo,
         solana_leader_schedule::SlotLeader,
         solana_ledger::{
-            blockstore, blockstore_options::AccessType, create_new_tmp_ledger,
-            genesis_utils::create_genesis_config_with_leader, get_tmp_ledger_path_auto_delete,
+            blockstore,
+            blockstore_options::AccessType,
+            create_new_tmp_ledger,
+            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
+            get_tmp_ledger_path_auto_delete,
         },
         solana_poh_config::PohConfig,
+        solana_runtime::{bank::BankId, genesis_utils::create_genesis_config_with_tower_leader},
         solana_sha256_hasher::hash,
         solana_vote_program::vote_state::{LandedVote, Lockout, VoteStateVersions},
         std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
+
+    type StartupBlockMetadata = (
+        Slot,
+        Slot,
+        BankId,
+        String,
+        String,
+        Option<i64>,
+        Option<u64>,
+        u64,
+        u64,
+    );
+
+    #[derive(Default)]
+    struct StartupReplayGeyser {
+        created: Mutex<Vec<(Slot, Slot, BankId)>>,
+        metadata: Mutex<Vec<StartupBlockMetadata>>,
+    }
+
+    struct StartupReplaySlotStatus(Arc<StartupReplayGeyser>);
+
+    impl solana_rpc::slot_status_notifier::SlotStatusNotifierInterface for StartupReplaySlotStatus {
+        fn notify_slot_confirmed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_slot_processed(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_slot_rooted(&self, _: Slot, _: Option<Slot>, _: BankId) {}
+        fn notify_first_shred_received(&self, _: Slot) {}
+        fn notify_completed(&self, _: Slot) {}
+        fn notify_created_bank(&self, slot: Slot, parent: Slot, bank_id: BankId) {
+            self.0.created.lock().unwrap().push((slot, parent, bank_id));
+        }
+        fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
+    }
+
+    impl solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifier
+        for StartupReplayGeyser
+    {
+        fn notify_block_metadata(
+            &self,
+            parent_slot: u64,
+            parent_blockhash: &str,
+            slot: u64,
+            bank_id: BankId,
+            blockhash: &str,
+            _rewards: &solana_runtime::bank::KeyedRewardsAndNumPartitions,
+            block_time: Option<i64>,
+            block_height: Option<u64>,
+            executed_transaction_count: u64,
+            entry_count: u64,
+            _commission_rate_in_basis_points: bool,
+        ) {
+            self.metadata.lock().unwrap().push((
+                slot,
+                parent_slot,
+                bank_id,
+                parent_blockhash.to_string(),
+                blockhash.to_string(),
+                block_time,
+                block_height,
+                executed_transaction_count,
+                entry_count,
+            ));
+        }
+    }
+
+    #[test]
+    fn test_startup_replay_announced_like_live_replay() {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 1_000);
+        genesis_config.ticks_per_slot = 4;
+        let (ledger_path, blockhash) =
+            solana_ledger::create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut last_hash = blockhash;
+        for slot in 1..=3 {
+            last_hash = blockstore_processor::fill_blockstore_slot_with_ticks(
+                &blockstore,
+                genesis_config.ticks_per_slot,
+                slot,
+                slot - 1,
+                last_hash,
+            );
+        }
+
+        let geyser = Arc::new(StartupReplayGeyser::default());
+        let mut process_options = blockstore_processor::ProcessOptions::default();
+        set_startup_replay_geyser_callbacks(
+            &mut process_options,
+            Some(Arc::new(RwLock::new(StartupReplaySlotStatus(
+                geyser.clone(),
+            )))),
+            Some(geyser.clone()),
+        );
+        let (bank_forks, _) = solana_ledger::bank_forks_utils::load_bank_forks_from_genesis(
+            &genesis_config,
+            &blockstore,
+            Vec::new(),
+            &process_options,
+            None,
+            None,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        let leader_schedule_cache =
+            LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
+        blockstore_processor::process_blockstore_from_root(
+            &blockstore,
+            &bank_forks,
+            compute_shred_version(&genesis_config.hash(), None),
+            &leader_schedule_cache,
+            &process_options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Every replayed bank (not bank 0) was announced created, then got the
+        // block metadata live replay would send for it.
+        let bank_forks = bank_forks.read().unwrap();
+        let live = StartupReplayGeyser::default();
+        let mut expected_created = vec![];
+        for slot in 1..=3 {
+            let bank = bank_forks.get(slot).unwrap();
+            expected_created.push((slot, slot - 1, bank.bank_id()));
+            let entry_count = blockstore.get_slot_entries(slot, 0).unwrap().len() as u64;
+            replay_stage::notify_block_metadata(&live, &bank, entry_count);
+        }
+        assert_eq!(*geyser.created.lock().unwrap(), expected_created);
+        let metadata = geyser.metadata.lock().unwrap();
+        assert_eq!(*metadata, *live.metadata.lock().unwrap());
+        for (slot, _, _, _, _, block_time, block_height, _, entry_count) in metadata.iter() {
+            assert!(block_time.is_some());
+            assert_eq!(*block_height, Some(*slot));
+            assert_eq!(*entry_count, genesis_config.ticks_per_slot);
+        }
+    }
 
     #[test]
     fn test_initialize_event_system() {

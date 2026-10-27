@@ -97,6 +97,13 @@ Release channels have their own copy of this changelog:
   Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
   can fill the shared channel and cause updates to be dropped for all subscribed plugins.
   Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+* Banks replayed from the local ledger at startup are now announced like banks replayed by
+  `ReplayStage`: `SlotStatus::CreatedBank` when the bank is created, and block metadata once it is
+  frozen and its hash verified. The snapshot root and bank 0 are not announced; a bank that fails
+  verification is created but gets no metadata. Plugin callbacks run on the startup replay thread,
+  so a slow plugin delays startup.
+* `solana-ledger` (unstable API): `ProcessSlotCallback` now also receives the slot's entry count,
+  and `ProcessOptions` has a new `new_bank_callback`.
 
 ## 4.4.0
 
