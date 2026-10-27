@@ -2,7 +2,6 @@ use {
     agave_scheduler_bindings::{
         MAX_TRANSACTIONS_PER_MESSAGE, SharableTransactionBatchRegion, SharableTransactionRegion,
     },
-    agave_transaction_view::transaction_data::TransactionData,
     core::ptr::NonNull,
     rts_alloc::Allocator,
     std::marker::PhantomData,
@@ -14,14 +13,8 @@ pub struct TransactionPtr {
     count: usize,
 }
 
-impl TransactionData for TransactionPtr {
-    fn data(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.count) }
-    }
-}
-
-impl TransactionData for &TransactionPtr {
-    fn data(&self) -> &[u8] {
+impl AsRef<[u8]> for TransactionPtr {
+    fn as_ref(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.count) }
     }
 }

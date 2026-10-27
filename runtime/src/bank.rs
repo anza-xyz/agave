@@ -89,7 +89,6 @@ use {
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_transaction_view::{
         resolved_transaction_view::ResolvedTransactionView,
-        transaction_data::TransactionData,
         transaction_version::TransactionVersion,
         transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
     },
@@ -5579,7 +5578,7 @@ impl Bank {
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<ResolvedTransactionView<D>>>
     where
-        D: TransactionData,
+        D: AsRef<[u8]>,
     {
         let max_transaction_size = match tx.version() {
             TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
@@ -5631,7 +5630,7 @@ impl Bank {
 
     /// Load addresses from ALTs (if necessary) and return the
     /// [`LoadedAddresses`] with the minimum deactivation slot.
-    pub fn load_addresses_for_view<D: TransactionData>(
+    pub fn load_addresses_for_view<D: AsRef<[u8]>>(
         &self,
         view: &SanitizedTransactionView<D>,
     ) -> std::result::Result<(Option<LoadedAddresses>, Slot), AddressLoaderError> {

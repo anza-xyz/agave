@@ -2,9 +2,7 @@
 //! Format validity is established separately by SDK / transaction-view sanitization.
 
 use {
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_view::SanitizedTransactionView,
     solana_compute_budget::compute_budget_limits::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
     solana_message::v1,
     solana_pubkey::Pubkey,
@@ -71,7 +69,7 @@ pub(crate) fn validate_transaction_config(config: &v1::TransactionConfig) -> Tra
 // TransactionConfigView is not publicly exported by transaction-view, so accept
 // the enclosing view and access its config without materializing an SDK config.
 pub(crate) fn validate_transaction_config_view(
-    transaction: &SanitizedTransactionView<impl TransactionData>,
+    transaction: &SanitizedTransactionView<impl AsRef<[u8]>>,
 ) -> TransactionResult<()> {
     validate_heap_size(
         transaction

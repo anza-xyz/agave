@@ -14,9 +14,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
     agave_votor_messages::{
         certificate::Certificate, consensus_message::BlockId, migration::MigrationStatus,
     },
@@ -524,7 +522,7 @@ pub fn process_blockstore_from_root(
 
 /// Verify that a segment of entries has the correct number of ticks and hashes
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn verify_ticks<D: TransactionData>(
+fn verify_ticks<D: AsRef<[u8]>>(
     bank: &Bank,
     entries: &[EntryView<D>],
     slot_full: bool,
