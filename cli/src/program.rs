@@ -251,10 +251,9 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("program_id")
                                 .long("program-id")
                                 .value_name("PROGRAM_ID"),
-                            "Executable program; Executable program. For initial deployments, \ 
-                             this must be a signer unless `--generate-ephemeral-program-id` was \ 
-                             passed. For upgrades, can be an address or path to a keypair, but \ 
-                             is not required to sign."
+                            "Executable program. For initial deployments, this must be a signer \
+                             unless `--generate-ephemeral-program-id` was passed. For upgrades, \
+                             can be an address or path to a keypair, but is not required to sign."
                         ))
                         .arg(
                             Arg::with_name("generate_ephemeral_program_id")
@@ -1299,11 +1298,15 @@ pub async fn process_program_subcommand(
 
 fn get_default_program_keypair(program_location: &Option<String>) -> Result<Keypair, CliError> {
     let Some(program_location) = program_location else {
-        return Err(CliError::BadParameter("Program id keypair not provided".to_string()))
+        return Err(CliError::BadParameter(
+            "Program id keypair not provided".to_string(),
+        ));
     };
     let mut keypair_file = PathBuf::from(program_location);
     let Some(mut filename) = keypair_file.file_stem().map(|stem| stem.to_os_string()) else {
-        return Err(CliError::BadParameter("Invalid program location".to_string()))
+        return Err(CliError::BadParameter(
+            "Invalid program location".to_string(),
+        ));
     };
     filename.push("-keypair");
     keypair_file.set_file_name(filename);
