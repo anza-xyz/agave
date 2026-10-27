@@ -4,7 +4,7 @@
 use solana_sysvar::recent_blockhashes::{IntoIterSorted, IterItem, MAX_ENTRIES, RecentBlockhashes};
 use {
     crate::sysvar_account::{create_account, to_account},
-    solana_account::{AccountSharedData, InheritableAccountFields},
+    solana_account::AccountSharedData,
     std::{collections::BinaryHeap, iter::FromIterator},
 };
 
@@ -23,14 +23,14 @@ where
 }
 
 #[expect(deprecated)]
-pub(in crate::bank) fn create_account_with_data_and_fields<'a, I>(
+pub(in crate::bank) fn create_account_with_data_and_lamports<'a, I>(
     recent_blockhash_iter: I,
-    fields: InheritableAccountFields,
+    lamports: u64,
 ) -> AccountSharedData
 where
     I: IntoIterator<Item = IterItem<'a>>,
 {
-    let mut account = create_account::<RecentBlockhashes>(&RecentBlockhashes::default(), fields);
+    let mut account = create_account::<RecentBlockhashes>(&RecentBlockhashes::default(), lamports);
     update_account(&mut account, recent_blockhash_iter).unwrap();
     account
 }
@@ -40,9 +40,8 @@ mod tests {
     #![allow(deprecated)]
     use {
         super::*,
-        crate::sysvar_account::from_account,
+        crate::sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, from_account},
         rand::{rng, seq::SliceRandom},
-        solana_account::DUMMY_INHERITABLE_ACCOUNT_FIELDS,
         solana_hash::{HASH_BYTES, Hash},
         solana_sysvar::recent_blockhashes::Entry,
     };
@@ -51,7 +50,10 @@ mod tests {
     where
         I: IntoIterator<Item = IterItem<'a>>,
     {
-        create_account_with_data_and_fields(recent_blockhash_iter, DUMMY_INHERITABLE_ACCOUNT_FIELDS)
+        create_account_with_data_and_lamports(
+            recent_blockhash_iter,
+            RENT_UNADJUSTED_INITIAL_BALANCE,
+        )
     }
 
     #[test]

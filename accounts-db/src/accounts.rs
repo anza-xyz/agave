@@ -3,7 +3,7 @@ use {
         account_locks::{AccountLocks, validate_account_locks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
-            AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount, PopulateReadCache,
+            AccountsAddRootTiming, AccountsDb, LoadedAccount, PopulateReadCache,
             ScanAccountStorageData, ScanStorageResult,
         },
         accounts_index::IndexKey,
@@ -112,11 +112,7 @@ impl Accounts {
         loaded_addresses: &mut LoadedAddresses,
     ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
-            .load_with_fixed_root(
-                ancestors,
-                address_table_lookup.account_key,
-                None::<fn(_, &_, _) -> _>,
-            )
+            .load(ancestors, address_table_lookup.account_key)
             .map(|(account, _rent)| account)
             .ok_or(AddressLookupError::LookupTableAccountNotFound)?;
 
@@ -166,24 +162,19 @@ impl Accounts {
         }
     }
 
-    pub fn load_with_fixed_root(
+    pub fn load_with_filter(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<(AccountSharedData, Slot)> {
-        self.accounts_db.load(
-            ancestors,
-            pubkey,
-            LoadHint::FixedMaxRoot,
-            PopulateReadCache::True,
-            load_filter,
-        )
+        self.accounts_db
+            .load(ancestors, pubkey, PopulateReadCache::True, load_filter)
     }
 
-    /// same as `load_with_fixed_root` except:
+    /// same as `load` except:
     /// if the account is not already in the read cache, it is NOT put in the read cache on successful load
-    pub fn load_with_fixed_root_do_not_populate_read_cache(
+    pub fn load_do_not_populate_read_cache(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -191,13 +182,12 @@ impl Accounts {
         self.accounts_db.load(
             ancestors,
             pubkey,
-            LoadHint::FixedMaxRoot,
             PopulateReadCache::False,
             None::<fn(_, &_, _) -> _>,
         )
     }
 
-    pub fn load_without_fixed_root(
+    pub fn load(
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
@@ -205,7 +195,6 @@ impl Accounts {
         self.accounts_db.load(
             ancestors,
             pubkey,
-            LoadHint::Unspecified,
             PopulateReadCache::True,
             None::<fn(_, &_, _) -> _>,
         )
@@ -214,13 +203,14 @@ impl Accounts {
     /// scans underlying accounts_db for this delta (slot) with a map function
     ///   from LoadedAccount to B
     /// returns only the latest/current version of B for this slot
-    pub fn scan_slot<F, B>(&self, slot: Slot, func: F) -> Vec<B>
+    pub fn scan_slot<F, B>(&self, slot: Slot, bank_id: BankId, func: F) -> Vec<B>
     where
         F: Fn(&LoadedAccount) -> Option<B> + Send + Sync,
         B: Sync + Send + Default + std::cmp::Eq,
     {
         let scan_result = self.accounts_db.scan_account_storage(
             slot,
+            bank_id,
             |loaded_account: &LoadedAccount| {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
@@ -251,9 +241,10 @@ impl Accounts {
     pub fn load_by_program_slot(
         &self,
         slot: Slot,
+        bank_id: BankId,
         program_id: Option<&Pubkey>,
     ) -> Vec<KeyedAccountSharedData> {
-        self.scan_slot(slot, |stored_account| {
+        self.scan_slot(slot, bank_id, |stored_account| {
             program_id
                 .map(|program_id| program_id == stored_account.owner())
                 .unwrap_or(true)
@@ -535,9 +526,9 @@ impl Accounts {
         accounts_db.store_accounts_unfrozen(accounts, bank_id, ancestors);
     }
 
-    /// Add a slot to root.  Root slots cannot be purged
-    pub fn add_root(&self, slot: Slot) -> AccountsAddRootTiming {
-        self.accounts_db.add_root(slot)
+    /// Root a bank.  Rooted banks cannot be purged
+    pub fn add_root(&self, bank_id: BankId) -> AccountsAddRootTiming {
+        self.accounts_db.add_root(bank_id)
     }
 }
 
@@ -739,11 +730,11 @@ mod tests {
         accounts.store_for_tests(0, &pubkey2, &account2);
         accounts.add_root_and_flush_write_cache(0);
 
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([2; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([2; 32])));
         assert_eq!(loaded.len(), 2);
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([3; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([3; 32])));
         assert_eq!(loaded, vec![(pubkey2, account2)]);
-        let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([4; 32])));
+        let loaded = accounts.load_by_program_slot(0, BankId::new(0), Some(&Pubkey::from([4; 32])));
         assert_eq!(loaded, vec![]);
     }
 
@@ -1092,7 +1083,7 @@ mod tests {
         /// useful to adapt tests written prior to introduction of the write cache
         /// to use the write cache
         pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-            self.add_root(slot);
+            self.accounts_db.add_root_for_tests(slot);
             self.accounts_db.flush_accounts_cache_slot_for_tests(slot);
         }
     }

@@ -10,15 +10,12 @@ on:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/conformance-dispatch.yml"
+      - "ci/download-test-vectors.sh"
       - "ci/test-conformance.sh"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
-
-env:
-  TEST_VECTORS_COMMIT: 0074649d2720d237546dd5f30f51c0be31477eb1
-  TEST_VECTORS_SHA256SUMS: aeee3559fcc2ae401eb624cef494dc3abaef5426332d9d121e2b86fd5d0529be
 
 jobs:
   detect:
@@ -63,16 +60,7 @@ jobs:
 
       - name: Fetch fixtures
         shell: bash
-        run: |
-          url="https://github.com/firedancer-io/test-vectors/releases/download/${TEST_VECTORS_COMMIT::8}"
-          archive="$FIXTURES_DIR.tar.gz"
-          mkdir fd-vectors
-          cd fd-vectors
-          curl -fsSL --retry 3 -O "$url/SHA256SUMS" -O "$url/$archive"
-          echo "$TEST_VECTORS_SHA256SUMS  SHA256SUMS" | sha256sum --check
-          awk -v f="$archive" '$2 == f' SHA256SUMS | sha256sum --check
-          tar -xzf "$archive"
-          rm "$archive" SHA256SUMS
+        run: ci/download-test-vectors.sh "$FIXTURES_DIR"
 
       - name: Install dependencies
         shell: bash

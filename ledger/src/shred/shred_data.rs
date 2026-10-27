@@ -10,7 +10,6 @@ pub(super) fn erasure_shard_index<T: ShredDataTrait>(shred: &T) -> Option<usize>
 }
 
 pub(super) fn sanitize<T: ShredDataTrait>(shred: &T) -> Result<(), Error> {
-    use crate::shred::ShredFlags;
     if shred.payload().len() != T::SIZE_OF_PAYLOAD {
         return Err(Error::InvalidPayloadSize(shred.payload().len()));
     }
@@ -22,10 +21,7 @@ pub(super) fn sanitize<T: ShredDataTrait>(shred: &T) -> Result<(), Error> {
             common_header.index,
         ));
     }
-    let flags = data_header.flags;
-    if flags.intersects(ShredFlags::LAST_SHRED_IN_SLOT)
-        && !flags.contains(ShredFlags::DATA_COMPLETE_SHRED)
-    {
+    if !data_header.flags.is_valid() {
         return Err(Error::InvalidShredFlags(data_header.flags.bits()));
     }
     let _data = shred.data()?;

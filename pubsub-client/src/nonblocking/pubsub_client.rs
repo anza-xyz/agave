@@ -30,15 +30,17 @@
 //!
 //! This pattern is illustrated in the example below.
 //!
-//! By default the [`block_subscribe`] and [`vote_subscribe`] events are
-//! disabled on RPC nodes. They can be enabled by passing
-//! `--rpc-pubsub-enable-block-subscription` and
-//! `--rpc-pubsub-enable-vote-subscription` to `agave-validator`. When these
-//! methods are disabled, the RPC server will return a "Method not found" error
-//! message.
+//! By default the [`block_subscribe`] event is disabled on RPC nodes. It can be
+//! enabled by passing `--rpc-pubsub-enable-block-subscription` to
+//! `agave-validator`. When this method is disabled, the RPC server will return
+//! a "Method not found" error message.
 //!
 //! [`block_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.block_subscribe
-//! [`vote_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.vote_subscribe
+//!
+//! The deprecated [`vote_subscribe`] method remains available for compatibility,
+//! but it does not receive vote notifications.
+//!
+//! [`vote_subscribe`]: PubsubClient::vote_subscribe
 //!
 //! # Examples
 //!
@@ -433,19 +435,22 @@ impl PubsubClient {
         self.subscribe("program", params).await
     }
 
-    /// Subscribe to vote events.
+    /// Subscribe to deprecated TowerBFT vote events.
     ///
-    /// Receives messages of type [`RpcVote`] when a new vote is observed. These
-    /// votes are observed prior to confirmation and may never be confirmed.
-    ///
-    /// This method is disabled by default. It can be enabled by passing
-    /// `--rpc-pubsub-enable-vote-subscription` to `agave-validator`.
+    /// This compatibility subscription remains open but does not receive
+    /// notifications.
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`voteSubscribe`] RPC method.
+    /// This method corresponds directly to the deprecated [`voteSubscribe`]
+    /// RPC method.
     ///
     /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket#votesubscribe
+    #[deprecated(
+        since = "4.5.0",
+        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
+                be removed in the next major release"
+    )]
     pub async fn vote_subscribe(&self) -> SubscribeResult<'_, RpcVote> {
         self.subscribe("vote", json!([])).await
     }

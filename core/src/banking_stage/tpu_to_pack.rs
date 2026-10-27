@@ -6,7 +6,7 @@ use {
     agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage, tpu_message_flags},
     agave_scheduler_handshake::AgaveTpuToPackSession,
     rts_alloc::Allocator,
-    solana_packet::PacketFlags,
+    solana_perf::packet::{Meta, PacketFlags},
     std::{
         net::IpAddr,
         ptr::NonNull,
@@ -133,7 +133,7 @@ fn handle_packet_batch(
 /// - `allocated_ptr` must be valid for `packet_bytes.len()` bytes.
 unsafe fn copy_packet_and_populate_message(
     packet_bytes: &[u8],
-    packet_meta: &solana_packet::Meta,
+    packet_meta: &Meta,
     allocated_ptr: NonNull<u8>,
     allocated_ptr_offset_in_allocator: usize,
 ) -> TpuToPackMessage {
@@ -199,7 +199,7 @@ mod tests {
     fn test_copy_packet_and_populate_message() {
         let packet_bytes = vec![1, 2, 3, 4, 5];
         let src_ip = Ipv4Addr::new(192, 168, 1, 1);
-        let mut packet_meta = solana_packet::Meta::default();
+        let mut packet_meta = Meta::default();
         packet_meta.size = packet_bytes.len();
         packet_meta.addr = IpAddr::V4(src_ip);
         packet_meta.port = 1;

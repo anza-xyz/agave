@@ -426,6 +426,7 @@ mod tests {
         crate::{
             alpenglow_epoch_type::AlpenglowEpochType,
             bank::{
+                SlotLeader,
                 partitioned_epoch_rewards::{
                     InflationReward, PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
                     epoch_rewards_hasher::hash_rewards_into_partitions,
@@ -765,7 +766,14 @@ mod tests {
     #[test_case(false; "no_adjust_delegations_for_rent")]
     fn test_build_updated_stake_reward(adjust_delegations_for_rent: bool) {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, bank_forks) =
+            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
+        );
         // add an entry so we can get full deactivation one epoch later
         let mut stake_history = StakeHistory::default();
         stake_history.add(

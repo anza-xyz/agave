@@ -1,55 +1,111 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
-    solana_accounts_db::{account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId},
+    solana_accounts_db::{
+        account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId,
+        accounts_file::AccountsFile,
+    },
     solana_clock::Slot,
-    std::{collections::HashSet, sync::Arc},
+    std::sync::Arc,
     wincode::{SchemaRead, SchemaWrite},
 };
 
-/// Identifies a storage file belonging to a bank snapshot, by `(slot, id)`.
+/// Identifies a storage belonging to a bank snapshot.
 ///
 /// The file is local-only (never archived) and gated behind `SNAPSHOT_FASTBOOT_VERSION`, so the
 /// on-disk encoding can use `AccountsFileId` (`u32`) directly without worrying about
 /// forward-compat with potential future widening.
-#[repr(C)]
+#[repr(u8)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
-pub struct StorageListItem {
-    pub slot: Slot,
-    pub id: AccountsFileId,
+pub enum StorageListItem {
+    AppendVec {
+        id: AccountsFileId,
+        slot: Slot,
+    },
+    Split {
+        has_data_file: bool,
+        id: AccountsFileId,
+        slot: Slot,
+    },
 }
+
+const _: () = assert!(size_of::<StorageListItem>() == 16);
 
 /// On-disk format of the storages list file.
 ///
 /// Written next to the bank snapshot on graceful exit to record which storages in the account
 /// run dirs make up the snapshot; read on startup to prune anything else before fastboot.
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        abi_digest = "DPaA5tV2PU6rbtFswCwHXGTprqYu3u2hBEZ5vzCEtLZe",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct StoragesList {
-    list: Vec<StorageListItem>,
+    pub items: Vec<StorageListItem>,
 }
 
 impl StoragesList {
     pub fn new_from_storages(snapshot_storages: &[Arc<AccountStorageEntry>]) -> Self {
-        Self::from_items(
-            snapshot_storages
-                .iter()
-                .map(|storage| StorageListItem {
-                    slot: storage.slot(),
-                    id: storage.id(),
-                })
-                .collect(),
-        )
+        let items = snapshot_storages
+            .iter()
+            .map(|storage| {
+                let slot = storage.slot();
+                let id = storage.id();
+                match &storage.accounts {
+                    AccountsFile::AppendVec(_) => StorageListItem::AppendVec { slot, id },
+                    AccountsFile::Split(split) => StorageListItem::Split {
+                        slot,
+                        id,
+                        has_data_file: split.data_file().is_some(),
+                    },
+                }
+            })
+            .collect();
+        Self { items }
     }
+}
 
-    /// Build a `StoragesList` from an existing `Vec` of items.
-    pub fn from_items(list: Vec<StorageListItem>) -> Self {
-        Self { list }
-    }
-
-    pub fn into_slot_file_id_set(self) -> HashSet<(Slot, AccountsFileId)> {
-        self.list
+impl From<LegacyStoragesList> for StoragesList {
+    fn from(legacy: LegacyStoragesList) -> StoragesList {
+        let items = legacy
+            .items
             .into_iter()
-            .map(|item| (item.slot, item.id))
-            .collect()
+            .map(|legacy_item| StorageListItem::AppendVec {
+                slot: legacy_item.slot,
+                id: legacy_item.id,
+            })
+            .collect();
+        StoragesList { items }
     }
+}
+
+/// Legacy storage list item format, used before fastboot v5.0.0
+#[repr(C)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
+#[derive(Debug, SchemaRead, SchemaWrite)]
+pub struct LegacyStorageListItem {
+    pub slot: Slot,
+    pub id: AccountsFileId,
+}
+
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        abi_digest = "4FjJ2aGVW2RSNq5XQBAMG3q13KcCJxKihG3TtXGQzoRv",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
+pub struct LegacyStoragesList {
+    pub items: Vec<LegacyStorageListItem>,
 }
 
 #[cfg(test)]
@@ -63,22 +119,56 @@ mod tests {
     #[test]
     fn test_roundtrip_storages_list() {
         let list = StoragesList {
-            list: vec![
-                StorageListItem { slot: 7, id: 42 },
-                StorageListItem { slot: 11, id: 13 },
-                StorageListItem {
+            items: vec![
+                StorageListItem::AppendVec { slot: 0, id: 0 },
+                StorageListItem::AppendVec { slot: 7, id: 42 },
+                StorageListItem::Split {
+                    slot: 11,
+                    id: 13,
+                    has_data_file: false,
+                },
+                StorageListItem::Split {
                     slot: Slot::MAX,
                     id: AccountsFileId::MAX,
+                    has_data_file: true,
                 },
             ],
         };
-        let expected_set: HashSet<(Slot, AccountsFileId)> =
-            HashSet::from([(7, 42), (11, 13), (Slot::MAX, AccountsFileId::MAX)]);
 
         let mut buf = Vec::new();
         serialize_into(Cursor::new(&mut buf), &list).unwrap();
 
         let decoded: StoragesList = deserialize_wincode_from(Cursor::new(&buf)).unwrap();
-        assert_eq!(decoded.into_slot_file_id_set(), expected_set);
+        assert_eq!(decoded.items, list.items);
+    }
+
+    #[test]
+    fn test_from_legacy_storages_list() {
+        let legacy_list = LegacyStoragesList {
+            items: vec![
+                LegacyStorageListItem { slot: 7, id: 42 },
+                LegacyStorageListItem { slot: 11, id: 13 },
+                LegacyStorageListItem {
+                    slot: Slot::MAX,
+                    id: AccountsFileId::MAX,
+                },
+            ],
+        };
+
+        let mut buf = Vec::new();
+        serialize_into(Cursor::new(&mut buf), &legacy_list).unwrap();
+
+        let expected_current: Vec<_> = legacy_list
+            .items
+            .iter()
+            .map(|item| StorageListItem::AppendVec {
+                slot: item.slot,
+                id: item.id,
+            })
+            .collect();
+
+        let decoded: LegacyStoragesList = deserialize_wincode_from(Cursor::new(&buf)).unwrap();
+        let actual_current = StoragesList::from(decoded);
+        assert_eq!(actual_current.items, expected_current);
     }
 }

@@ -5,8 +5,8 @@ use {
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::BytesPacket,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::{BytesPacket, Meta},
     std::net::SocketAddr,
 };
 
@@ -53,7 +53,7 @@ mod test {
             shred::Shredder,
             sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
         },
-        solana_packet::PacketFlags,
+        solana_perf::packet::PacketFlags,
         solana_signer::Signer,
         std::{
             collections::HashMap,

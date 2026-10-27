@@ -154,10 +154,7 @@ pub async fn check_account_for_balance_with_commitment(
         .get_balance_with_commitment(account_pubkey, commitment)
         .await?
         .value;
-    if lamports != 0 && lamports >= balance {
-        return Ok(true);
-    }
-    Ok(false)
+    Ok(lamports != 0 && lamports >= balance)
 }
 
 pub fn check_unique_pubkeys(

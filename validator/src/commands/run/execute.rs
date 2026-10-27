@@ -1,54 +1,44 @@
 #[cfg(target_os = "linux")]
-use {super::xdp, agave_xdp::transmitter::XdpConfig};
+use {
+    super::{
+        capabilities::{self, XdpMode},
+        xdp,
+    },
+    agave_xdp::transmitter::XdpConfig,
+};
 use {
     crate::{
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
         bootstrap,
         cli::{self},
-        commands::{FromClapArgMatches, run::args::RunArgs},
+        commands::{
+            FromClapArgMatches,
+            run::{
+                args::{self, RunArgs},
+                storage,
+            },
+        },
         ledger_lockfile, lock_ledger,
-    },
-    agave_snapshots::{
-        ArchiveFormat, SnapshotInterval, SnapshotVersion,
-        paths::BANK_SNAPSHOTS_DIR,
-        snapshot_config::{SnapshotConfig, SnapshotUsage},
     },
     agave_votor::vote_history_storage,
     agave_votor_transport::MAX_ENDPOINTS,
     arc_swap::ArcSwap,
-    bytesize::ByteSize,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
     crossbeam_channel::unbounded,
     log::*,
     rand::{rng, seq::SliceRandom},
-    solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_file::AccountsFileProvider,
-        accounts_index::{
-            AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
-            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold,
-            MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
-        },
-        partitioned_rewards::PartitionedEpochRewardsConfig,
-        utils::{
-            create_all_accounts_run_dirs, create_and_canonicalize_directories,
-            create_and_canonicalize_directory,
-        },
-    },
-    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
-    solana_clock::{DEFAULT_SLOTS_PER_EPOCH, Slot},
+    solana_accounts_db::utils::create_and_canonicalize_directory,
+    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of},
+    solana_clock::Slot,
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
         consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
-        resource_limits,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
-        tpu::MAX_VOTES_PER_SECOND,
         validator::{
             BlockProductionMethod, BlockVerificationMethod, SchedulerPacing, Validator,
-            ValidatorConfig, ValidatorLogConfig, ValidatorStartProgress, ValidatorTpuConfig,
-            is_snapshot_config_valid,
+            ValidatorConfig, ValidatorLogConfig, ValidatorStartProgress,
         },
     },
     solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -67,21 +57,18 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_runtime::{runtime_config::RuntimeConfig, snapshot_utils},
+    solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
-    solana_streamer::{
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
-    },
     solana_turbine::broadcast_stage::BroadcastStageType,
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
         env,
-        fs::{self, File},
+        fs::File,
         net::{IpAddr, Ipv4Addr, SocketAddr},
-        num::{NonZeroU64, NonZeroUsize},
-        path::{Path, PathBuf},
+        num::NonZeroUsize,
+        path::PathBuf,
         str::{self, FromStr},
         sync::{Arc, RwLock, atomic::AtomicBool},
     },
@@ -106,24 +93,49 @@ pub fn execute(
     }
 
     let run_args = RunArgs::from_clap_arg_match(matches)?;
+    // Canonicalize ledger path to avoid issues with symlink creation
+    let ledger_path = create_and_canonicalize_directory(&run_args.ledger_path).map_err(|err| {
+        format!(
+            "failed to create and canonicalize ledger path '{}': {err}",
+            run_args.ledger_path.display(),
+        )
+    })?;
+    let mut ledger_lock = ledger_lockfile(&ledger_path);
+    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
+    let num_threads = cli::thread_args::parse_num_threads_args(matches);
     let cli::thread_args::NumThreadConfig {
-        accounts_db_background_threads,
-        accounts_index_flush_threads,
+        accounts_db_background_threads: _,
+        accounts_index_flush_threads: _,
         block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
-        tpu_sigverify_threads,
-        tpu_transaction_forward_receive_threads,
-        tpu_transaction_receive_threads,
-        tpu_vote_transaction_receive_threads,
+        tpu_sigverify_threads: _,
+        tpu_transaction_forward_receive_threads: _,
+        tpu_transaction_receive_threads: _,
+        tpu_vote_transaction_receive_threads: _,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
         tvu_bls_sigverify_threads,
-    } = cli::thread_args::parse_num_threads_args(matches);
+    } = num_threads;
+
+    let unified_scheduler_handler_threads =
+        value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
+    let replay_arenas = value_t!(matches, "replay_arenas", usize).ok();
+    if let Some(arena_count) = replay_arenas {
+        let max_replay_arenas = unified_scheduler_handler_threads
+            .unwrap_or_else(DefaultSchedulerPool::default_handler_count)
+            .saturating_add(1);
+        if arena_count > max_replay_arenas {
+            Err(format!(
+                "--experimental-replay-arenas must be at most {max_replay_arenas} (the unified \
+                 scheduler handler thread count plus one)"
+            ))?;
+        }
+    }
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
@@ -165,11 +177,22 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    #[cfg(target_os = "linux")]
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+
+    #[cfg(not(target_os = "linux"))]
+    let poh_pinned_cpu_core = None;
+
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
-    let xdp_transmit_config: Option<XdpConfig> =
-        xdp::build_xdp_config(matches, &operation, &bind_addresses)?;
+    let xdp_transmit_config: Option<XdpConfig> = if operation == Operation::Initialize {
+        None
+    } else {
+        args::xdp_config::new_config(matches, &bind_addresses, poh_pinned_cpu_core)?
+    };
 
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
@@ -280,107 +303,24 @@ pub fn execute(
 
     #[cfg(target_os = "linux")]
     let (xdp_transmit_setup, xdp_network_config_report) = {
-        use caps::{
-            CapSet,
-            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
+        let needs_sys_nice = value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8) != 0
+            || run_args.json_rpc_config.rpc_niceness_adj != 0;
+        let xdp_mode = match xdp_transmit_config.as_ref() {
+            None => XdpMode::Disabled,
+            Some(xdp_config) if xdp_config.zero_copy => XdpMode::ZeroCopy,
+            Some(_) => XdpMode::Copy,
         };
-
-        let super::Config { primordial_caps } = config;
-
-        let mut required_caps = HashSet::new();
-        let mut retained_caps = HashSet::new();
-        let mut supported_caps = HashSet::from_iter([
-            CAP_BPF,
-            CAP_NET_ADMIN,
-            CAP_NET_RAW,
-            CAP_PERFMON,
-            CAP_SYS_NICE,
-        ]);
-
-        // make sure we keep any primordial caps
-        supported_caps.extend(primordial_caps.clone());
-        required_caps.extend(primordial_caps.clone());
-        retained_caps.extend(primordial_caps.clone());
-
-        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
-            required_caps.insert(CAP_NET_ADMIN);
-            required_caps.insert(CAP_NET_RAW);
-            if xdp_config.zero_copy {
-                required_caps.insert(CAP_BPF);
-                required_caps.insert(CAP_PERFMON);
-            }
-        }
-
-        let snapshot_packager_niceness_adj =
-            value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
-
-        if snapshot_packager_niceness_adj != 0 || run_args.json_rpc_config.rpc_niceness_adj != 0 {
-            required_caps.insert(CAP_SYS_NICE);
-            retained_caps.insert(CAP_SYS_NICE);
-        }
-
-        // lazy dev check
-        assert!(
-            required_caps.is_subset(&supported_caps),
-            "required_caps contains a cap not in supported_caps",
-        );
-
-        // validate and minimize the permitted set
-        let current_permitted =
-            caps::read(None, CapSet::Permitted).expect("permitted capset to be readable");
-        let missing_caps = required_caps
-            .difference(&current_permitted)
-            .collect::<Vec<_>>();
-        if !missing_caps.is_empty() {
-            error!(
-                "the current configuration requires the following capabilities, which have not \
-                 been permitted to the current process: {missing_caps:?}",
-            );
-            std::process::exit(1);
-        }
-        // warn about extraneous caps that no configuration requires
-        let extra_caps = current_permitted
-            .difference(&supported_caps)
-            .collect::<Vec<_>>();
-        if !extra_caps.is_empty() {
-            warn!(
-                "dropping extraneous capabilities ({extra_caps:?}) from the current process. \
-                 consider removing them from your operational configuration.",
-            );
-        }
-
-        // drop all caps that the current configuration does not require
-        caps::set(None, CapSet::Effective, &required_caps)
-            .expect("linux allows effective capset to be set");
-        caps::set(None, CapSet::Permitted, &required_caps)
-            .expect("linux allows permitted capset to be set");
-
-        // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
-        // capabilities do not leak, leaving the process in a state where it could
-        // potentially be used as a privilege escalation gadget
-        let xdp_transmit_setup_result = xdp_transmit_config.clone().map(|xdp_config| {
-            xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
-        });
-
-        // Drop temporary XDP capabilities before propagating any setup error.
-        caps::set(None, CapSet::Effective, &retained_caps)
-            .expect("linux allows effective capset to be set");
-        caps::set(None, CapSet::Permitted, &retained_caps)
-            .expect("linux allows permitted capset to be set");
-
-        xdp_transmit_setup_result.transpose()?.unzip()
+        capabilities::restrict(config.primordial_caps, needs_sys_nice, xdp_mode, || {
+            xdp_transmit_config.map(|xdp_config| {
+                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+            })
+        })?
+        .transpose()?
+        .unzip()
     };
 
     #[cfg(not(target_os = "linux"))]
     let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
-
-    #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-
-    #[cfg(not(target_os = "linux"))]
-    let poh_pinned_cpu_core = None;
 
     solana_core::validator::report_target_features();
 
@@ -412,7 +352,6 @@ pub fn execute(
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
 
-    let ledger_path = run_args.ledger_path;
     let blockstore_cleanup_strategy = BlockstoreCleanupStrategy::from_clap_arg_match(matches)?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
@@ -490,25 +429,10 @@ pub fn execute(
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
-    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
-
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
-    let accounts_shrink_optimize_total_space =
-        value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-
-    let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
-    if !(0.0..=1.0).contains(&shrink_ratio) {
-        Err(format!(
-            "the specified account-shrink-ratio is invalid, it must be between 0. and 1.0 \
-             inclusive: {shrink_ratio}"
-        ))?;
-    }
-
-    let shrink_ratio = if accounts_shrink_optimize_total_space {
-        AccountShrinkThreshold::TotalSpace { shrink_ratio }
-    } else {
-        AccountShrinkThreshold::IndividualStore { shrink_ratio }
-    };
+    let use_direct_io = !matches.is_present("no_accounts_db_snapshots_direct_io");
+    let accounts_db_config =
+        args::accounts_db_config::new_config(matches, &ledger_path, &num_threads, use_direct_io)?;
     // TODO: Once entrypoints are updated to return shred-version, this should
     // abort if it fails to obtain a shred-version, so that nodes always join
     // gossip with a valid shred-version. The code to adopt entrypoint shred
@@ -526,162 +450,6 @@ pub fn execute(
     let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
         vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
     );
-
-    let accounts_index_limit =
-        value_t!(matches, "accounts_index_limit", String).unwrap_or_else(|err| err.exit());
-    enum CliIndexLimit {
-        Unlimited,
-        Threshold(u64),
-    }
-    let cli_index_limit = match accounts_index_limit.as_str() {
-        "minimal" => {
-            warn!(
-                "Using `minimal` for `--accounts-index-limit` is deprecated. Using 25GB instead."
-            );
-            CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
-        }
-        "unlimited" => CliIndexLimit::Unlimited,
-        "25GB" => CliIndexLimit::Threshold(25_000_000_000),
-        "50GB" => CliIndexLimit::Threshold(50_000_000_000),
-        "100GB" => CliIndexLimit::Threshold(100_000_000_000),
-        "200GB" => CliIndexLimit::Threshold(200_000_000_000),
-        "400GB" => CliIndexLimit::Threshold(400_000_000_000),
-        "800GB" => CliIndexLimit::Threshold(800_000_000_000),
-        x => {
-            // clap will enforce only the above values are possible
-            unreachable!("invalid value given to `--accounts-index-limit`: '{x}'")
-        }
-    };
-
-    // Note: need to still handle --enable-accounts-disk-index until it is removed
-    let cli_index_limit = if matches.is_present("enable_accounts_disk_index") {
-        CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
-    } else {
-        cli_index_limit
-    };
-
-    let index_limit = match cli_index_limit {
-        CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
-        CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
-            num_bytes,
-            num_entries_overhead: DEFAULT_NUM_ENTRIES_OVERHEAD,
-            num_entries_to_evict: DEFAULT_NUM_ENTRIES_TO_EVICT,
-        }),
-    };
-
-    let mut accounts_index_config = AccountsIndexConfig {
-        num_flush_threads: Some(accounts_index_flush_threads),
-        index_limit,
-        ..AccountsIndexConfig::default()
-    };
-    if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
-        accounts_index_config.bins = Some(bins);
-    }
-    if let Ok(num_initial_accounts) =
-        value_t!(matches, "accounts_index_initial_accounts_count", usize)
-    {
-        accounts_index_config.num_initial_accounts = Some(num_initial_accounts);
-    }
-
-    {
-        let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
-            values_t_or_exit!(matches, "accounts_index_path", String)
-                .into_iter()
-                .map(PathBuf::from)
-                .collect()
-        } else {
-            vec![]
-        };
-        if accounts_index_paths.is_empty() {
-            accounts_index_paths = vec![ledger_path.join("accounts_index")];
-        }
-        accounts_index_config.drives = Some(accounts_index_paths);
-    }
-
-    const MB: usize = 1_024 * 1_024;
-
-    let read_cache_limit_bytes = if let Some(limits) =
-        values_of::<ByteSize>(matches, "accounts_db_read_cache_limit")
-    {
-        match limits.as_slice() {
-            [lo, hi] => {
-                let lo = usize::try_from(lo.0)?;
-                let hi = usize::try_from(hi.0)?;
-                if lo > hi {
-                    Err(format!(
-                        "invalid --accounts-db-read-cache-limit: LOW ({lo}) must be <= HIGH ({hi})",
-                    ))?;
-                }
-                Some((lo, hi))
-            }
-            _ => {
-                // clap will enforce two values are given
-                unreachable!("invalid number of values given to accounts-db-read-cache-limit")
-            }
-        }
-    } else {
-        None
-    };
-
-    let write_cache_limit_bytes =
-        value_of::<ByteSize>(matches, "accounts_db_write_cache_limit").map(|limit| limit.0);
-    // accounts-db-write-cache-limit-mb was deprecated in v4.2.0
-    let write_cache_limit_mb = value_t!(matches, "accounts_db_cache_limit_mb", u64)
-        .ok()
-        .map(|mb| mb * MB as u64);
-    // clap will enforce only one cli arg is provided, so pick whichever is Some
-    let write_cache_limit_bytes = write_cache_limit_bytes.or(write_cache_limit_mb);
-
-    let scan_filter_for_shrinking = matches
-        .value_of("accounts_db_scan_filter_for_shrinking")
-        .map(|filter| match filter {
-            "all" => ScanFilter::All,
-            "only-abnormal" => ScanFilter::OnlyAbnormal,
-            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
-            }
-        })
-        .unwrap_or_default();
-
-    let accounts_file_provider = matches
-        .value_of("accounts_db_account_storage_file_format")
-        .map(|format| match format {
-            "append-vec" => AccountsFileProvider::AppendVec,
-            "split-experimental" => AccountsFileProvider::Split,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts_db_account_storage_file_format")
-            }
-        })
-        .unwrap();
-
-    let accounts_db_config = AccountsDbConfig {
-        index: Some(accounts_index_config),
-        account_indexes: Some(account_indexes.clone()),
-        bank_hash_details_dir: ledger_path.clone(),
-        shrink_ratio,
-        read_cache_limit_bytes,
-        read_cache_evict_sample_size: None,
-        read_cache_num_shards: None,
-        write_cache_limit_bytes,
-        ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
-        ancient_storage_ideal_size: value_t!(
-            matches,
-            "accounts_db_ancient_storage_ideal_size",
-            u64
-        )
-        .ok(),
-        max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
-        skip_initial_hash_calc: false,
-        verify_index: matches.is_present("accounts_db_verify_index"),
-        partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig::default(),
-        scan_filter_for_shrinking,
-        num_background_threads: Some(accounts_db_background_threads),
-        accounts_file_provider,
-        use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
-    };
 
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
         Some(
@@ -706,18 +474,14 @@ pub fn execute(
         } else {
             vec![ledger_path.join("accounts")]
         };
-    let account_paths = create_and_canonicalize_directories(account_paths)
-        .map_err(|err| format!("unable to access account path: {err}"))?;
 
-    // From now on, use run/ paths in the same way as the previous account_paths.
-    let account_run_paths = create_all_accounts_run_dirs(&account_paths)
-        .map_err(|err| format!("unable to create account directories: {err}"))?;
-
-    let snapshot_config = new_snapshot_config(
+    let snapshot_config = args::snapshot_config::new_config(
         matches,
         &ledger_path,
-        &account_paths,
-        run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
+        args::snapshot_config::SnapshotOptions {
+            incremental_snapshot_fetch: run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
+            use_direct_io,
+        },
     )?;
 
     let use_snapshot_archives_at_startup = value_t_or_exit!(
@@ -801,7 +565,7 @@ pub fn execute(
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
-        account_paths: account_run_paths,
+        account_paths,
         accounts_db_config,
         snapshot_config,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
@@ -823,13 +587,8 @@ pub fn execute(
             "block_verification_method",
             BlockVerificationMethod
         ),
-        unified_scheduler_handler_threads: value_t!(
-            matches,
-            "unified_scheduler_handler_threads",
-            usize
-        )
-        .ok(),
-        replay_arenas: value_t!(matches, "replay_arenas", usize).ok(),
+        unified_scheduler_handler_threads,
+        replay_arenas,
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",
@@ -862,6 +621,12 @@ pub fn execute(
             i8
         ),
     };
+
+    storage::prepare(
+        &mut validator_config.account_paths,
+        &mut validator_config.snapshot_config,
+    )?;
+
     validator_config
         .block_production_method
         .warn_if_deprecated_value();
@@ -898,9 +663,6 @@ pub fn execute(
         }
     }
 
-    let mut ledger_lock = ledger_lockfile(&ledger_path);
-    let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
-
     let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
     let admin_service_post_init = Arc::new(RwLock::new(None));
     let (rpc_to_plugin_manager_sender, rpc_to_plugin_manager_receiver) =
@@ -927,25 +689,7 @@ pub fn execute(
         },
     );
 
-    let tpu_max_connections_per_peer: Option<u64> = matches
-        .value_of("tpu_max_connections_per_peer")
-        .and_then(|v| v.parse().ok());
-    let tpu_max_connections_per_unstaked_peer = tpu_max_connections_per_peer
-        .unwrap_or_else(|| value_t_or_exit!(matches, "tpu_max_connections_per_unstaked_peer", u64));
-    let tpu_max_connections_per_staked_peer = tpu_max_connections_per_peer
-        .unwrap_or_else(|| value_t_or_exit!(matches, "tpu_max_connections_per_staked_peer", u64));
-    let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
-    let tpu_max_unstaked_connections =
-        value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
-
-    let tpu_max_fwd_staked_connections =
-        value_t_or_exit!(matches, "tpu_max_fwd_staked_connections", u64);
-    let tpu_max_fwd_unstaked_connections =
-        value_t_or_exit!(matches, "tpu_max_fwd_unstaked_connections", u64);
-
-    let tpu_max_connections_per_ipaddr_per_minute: u64 =
-        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
-    let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
+    let tpu_config = args::tpu_config::new_config(matches, &num_threads)?;
 
     let cluster_entrypoints = entrypoint_addrs
         .iter()
@@ -989,15 +733,6 @@ pub fn execute(
         }
     }
 
-    snapshot_utils::remove_tmp_snapshot_archives(
-        &validator_config.snapshot_config.full_snapshot_archives_dir,
-    );
-    snapshot_utils::remove_tmp_snapshot_archives(
-        &validator_config
-            .snapshot_config
-            .incremental_snapshot_archives_dir,
-    );
-
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
             &node,
@@ -1031,60 +766,6 @@ pub fn execute(
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
-    let tpu_quic_server_config = SwQosQuicStreamerConfig {
-        quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_transaction_receive_threads,
-            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
-            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
-            ..Default::default()
-        },
-        qos_config: SwQosConfig {
-            max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
-                .try_into()
-                .unwrap(),
-            max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
-                .try_into()
-                .unwrap(),
-            max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
-            max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
-            max_streams_per_ms,
-        },
-    };
-
-    let tpu_fwd_quic_server_config = SwQosQuicStreamerConfig {
-        quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_transaction_forward_receive_threads,
-            stream_receive_window_size: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
-            max_stream_data_bytes: solana_message::v1::MAX_TRANSACTION_SIZE as u32,
-            ..Default::default()
-        },
-        qos_config: SwQosConfig {
-            max_connections_per_staked_peer: tpu_max_connections_per_staked_peer
-                .try_into()
-                .unwrap(),
-            max_connections_per_unstaked_peer: tpu_max_connections_per_unstaked_peer
-                .try_into()
-                .unwrap(),
-            max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
-            max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
-            max_streams_per_ms,
-        },
-    };
-
-    let vote_quic_server_config = SimpleQosQuicStreamerConfig {
-        quic_streamer_config: QuicStreamerConfig {
-            max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-            num_threads: tpu_vote_transaction_receive_threads,
-            ..Default::default()
-        },
-        qos_config: SimpleQosConfig {
-            max_streams_per_second: MAX_VOTES_PER_SECOND,
-            ..Default::default()
-        },
-    };
-
     let validator = Validator::new_with_exit(
         node,
         identity_keypair,
@@ -1096,13 +777,7 @@ pub fn execute(
         rpc_to_plugin_manager_receiver,
         start_progress,
         run_args.socket_addr_space,
-        ValidatorTpuConfig {
-            vote_use_quic: false,
-            tpu_quic_server_config,
-            tpu_fwd_quic_server_config,
-            vote_quic_server_config,
-            sigverify_threads: tpu_sigverify_threads,
-        },
+        tpu_config,
         admin_service_post_init,
         xdp_transmit_setup,
         exit,
@@ -1167,185 +842,4 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
         }
     }
     None
-}
-
-fn new_snapshot_config(
-    matches: &ArgMatches,
-    ledger_path: &Path,
-    account_paths: &[PathBuf],
-    incremental_snapshot_fetch: bool,
-) -> Result<SnapshotConfig, Box<dyn std::error::Error>> {
-    let (full_snapshot_archive_interval, incremental_snapshot_archive_interval) =
-        if matches.is_present("no_snapshots") {
-            // snapshots are disabled
-            (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
-        } else {
-            match (
-                incremental_snapshot_fetch,
-                value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
-            ) {
-                (true, incremental_snapshot_interval_slots) => {
-                    // incremental snapshots are enabled
-                    // use --snapshot-interval-slots for the incremental snapshot interval
-                    let full_snapshot_interval_slots =
-                        value_t_or_exit!(matches, "full_snapshot_interval_slots", NonZeroU64);
-                    (
-                        SnapshotInterval::Slots(full_snapshot_interval_slots),
-                        SnapshotInterval::Slots(incremental_snapshot_interval_slots),
-                    )
-                }
-                (false, full_snapshot_interval_slots) => {
-                    // incremental snapshots are *disabled*
-                    // use --snapshot-interval-slots for the *full* snapshot interval
-                    // also warn if --full-snapshot-interval-slots was specified
-                    if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
-                        warn!(
-                            "Incremental snapshots are disabled, yet \
-                             --full-snapshot-interval-slots was specified! Note that \
-                             --full-snapshot-interval-slots is *ignored* when incremental \
-                             snapshots are disabled. Use --snapshot-interval-slots instead.",
-                        );
-                    }
-                    (
-                        SnapshotInterval::Slots(full_snapshot_interval_slots),
-                        SnapshotInterval::Disabled,
-                    )
-                }
-            }
-        };
-
-    info!(
-        "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
-        match full_snapshot_archive_interval {
-            SnapshotInterval::Disabled => "disabled".to_string(),
-            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
-        },
-        match incremental_snapshot_archive_interval {
-            SnapshotInterval::Disabled => "disabled".to_string(),
-            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
-        },
-    );
-    // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
-    // Minimally we should warn the user in case this was a mistake.
-    if let SnapshotInterval::Slots(full_snapshot_interval_slots) = full_snapshot_archive_interval {
-        let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
-        if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
-            warn!(
-                "The full snapshot interval is excessively large: {full_snapshot_interval_slots}! \
-                 This will negatively impact the background cleanup tasks in accounts-db. \
-                 Consider a smaller value.",
-            );
-        }
-    }
-
-    let snapshots_dir = matches
-        .value_of("snapshots")
-        .map(Path::new)
-        .unwrap_or(ledger_path);
-    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create snapshots directory '{}': {err}",
-            snapshots_dir.display(),
-        )
-    })?;
-    if account_paths
-        .iter()
-        .any(|account_path| account_path == &snapshots_dir)
-    {
-        Err(
-            "the --accounts and --snapshots paths must be unique since they both create \
-             'snapshots' subdirectories, otherwise there may be collisions"
-                .to_string(),
-        )?;
-    }
-
-    let bank_snapshots_dir = snapshots_dir.join(BANK_SNAPSHOTS_DIR);
-    fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create bank snapshots directory '{}': {err}",
-            bank_snapshots_dir.display(),
-        )
-    })?;
-
-    let full_snapshot_archives_dir = matches
-        .value_of("full_snapshot_archive_path")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| snapshots_dir.clone());
-    fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create full snapshot archives directory '{}': {err}",
-            full_snapshot_archives_dir.display(),
-        )
-    })?;
-
-    let incremental_snapshot_archives_dir = matches
-        .value_of("incremental_snapshot_archive_path")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| snapshots_dir.clone());
-    fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create incremental snapshot archives directory '{}': {err}",
-            incremental_snapshot_archives_dir.display(),
-        )
-    })?;
-
-    let archive_format = {
-        let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
-        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
-            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
-        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
-            config.compression_level =
-                value_t_or_exit!(matches, "snapshot_zstd_compression_level", i32);
-        }
-        archive_format
-    };
-
-    let snapshot_version = matches
-        .value_of("snapshot_version")
-        .map(|value| {
-            value
-                .parse::<SnapshotVersion>()
-                .map_err(|err| format!("unable to parse snapshot version: {err}"))
-        })
-        .transpose()?
-        .unwrap_or(SnapshotVersion::default());
-
-    let maximum_full_snapshot_archives_to_retain =
-        value_t_or_exit!(matches, "maximum_full_snapshots_to_retain", NonZeroUsize);
-    let maximum_incremental_snapshot_archives_to_retain = value_t_or_exit!(
-        matches,
-        "maximum_incremental_snapshots_to_retain",
-        NonZeroUsize
-    );
-
-    let snapshot_config = SnapshotConfig {
-        usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
-            SnapshotUsage::LoadOnly
-        } else {
-            SnapshotUsage::LoadAndGenerate
-        },
-        full_snapshot_archive_interval,
-        incremental_snapshot_archive_interval,
-        bank_snapshots_dir,
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
-        archive_format,
-        snapshot_version,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-        use_registered_io_uring_buffers: resource_limits::check_memlock_limit_for_disk_io(
-            solana_accounts_db::accounts_db::TOTAL_IO_URING_BUFFERS_SIZE_LIMIT,
-        ),
-        use_direct_io: !matches.is_present("no_accounts_db_snapshots_direct_io"),
-    };
-
-    if !is_snapshot_config_valid(&snapshot_config) {
-        Err(
-            "invalid snapshot configuration provided: snapshot intervals are incompatible. full \
-             snapshot interval MUST be larger than incremental snapshot interval (if enabled)"
-                .to_string(),
-        )?;
-    }
-
-    Ok(snapshot_config)
 }

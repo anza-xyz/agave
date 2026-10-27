@@ -371,7 +371,7 @@ impl ValidatedBlockFinalizationCert {
     ) -> Result<CertSignature, BlockFinalizationCertError> {
         let cert_type = cert.cert_type;
         let cert = bank
-            .verify_certificate(cert)
+            .verify_certificate(cert, None)
             .map_err(|_| BlockFinalizationCertError::CertificateVerificationFailed(cert_type))?;
         debug_assert_eq!(cert.cert_type, cert_type);
         Ok(CertSignature {

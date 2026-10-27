@@ -2505,13 +2505,12 @@ mod tests {
     fn test_scheduler_active_after_stale() {
         agave_logger::setup();
 
+        // The cleaner may expire a listener on its first pass, so a zero count is optional.
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
-            &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
             &TestCheckPoint::BeforeTimeoutListenerTriggered,
-            &CheckPoint::TimeoutListenerTriggered(0),
             &CheckPoint::TimeoutListenerTriggered(1),
             &TestCheckPoint::AfterTimeoutListenerTriggered,
         ]);
@@ -3852,47 +3851,5 @@ mod tests {
             DefaultSchedulerPool::calculate_default_handler_count(None),
             4
         );
-    }
-
-    // See comment in SchedulingStateMachine::create_task() for the justification of this test
-    #[test]
-    fn test_enfoced_get_account_locks_validation() {
-        agave_logger::setup();
-
-        let GenesisConfigInfo {
-            genesis_config,
-            ref mint_keypair,
-            ..
-        } = create_genesis_config(10_000);
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = &setup_dummy_fork_graph(bank);
-
-        let mut tx = system_transaction::transfer(
-            mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        );
-        // mangle the transfer tx to try to lock fee_payer (= mint_keypair) address twice!
-        tx.message.account_keys.push(tx.message.account_keys[0]);
-
-        // this internally should call validate_account_locks() via
-        // Bank::prepare_unlocked_batch_from_single_tx().
-        let timings = &mut ExecuteTimings::default();
-        let scheduling_context = &SchedulingContext::new(bank.clone());
-        let handler_context = &HandlerContext {
-            thread_count: 0,
-            log_messages_bytes_limit: None,
-            transaction_status_sender: None,
-            replay_vote_sender: None,
-            prioritization_fee_cache: None,
-        };
-
-        let task = SchedulingStateMachine::create_task(ReplayTransaction::from(tx), 0, &mut |_| {
-            UsageQueue::new(&Capability::FifoQueueing)
-        });
-        let result =
-            DefaultTaskHandler::handle(timings, scheduling_context, &task, handler_context);
-        assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }

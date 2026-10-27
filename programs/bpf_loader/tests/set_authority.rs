@@ -17,7 +17,7 @@ mod common;
 
 #[test]
 fn test_bpf_loader_upgradeable_set_upgrade_authority() {
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
@@ -27,17 +27,16 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
-    let mut programdata_account = AccountSharedData::new(
+    let mut programdata_account = AccountSharedData::new_data_with_space(
         1,
-        UpgradeableLoaderState::size_of_programdata(0),
-        &bpf_loader_upgradeable::id(),
-    );
-    programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
+        &UpgradeableLoaderState::ProgramData {
             slot,
             upgrade_authority_address: Some(upgrade_authority_address),
-        })
-        .unwrap();
+        },
+        UpgradeableLoaderState::size_of_programdata(0),
+        &bpf_loader_upgradeable::id(),
+    )
+    .unwrap();
     let programdata_meta = AccountMeta {
         pubkey: programdata_address,
         is_signer: false,
@@ -206,7 +205,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
 #[test]
 fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     let instruction =
-        bincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
+        wincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
@@ -216,17 +215,16 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
-    let mut programdata_account = AccountSharedData::new(
+    let mut programdata_account = AccountSharedData::new_data_with_space(
         1,
-        UpgradeableLoaderState::size_of_programdata(0),
-        &bpf_loader_upgradeable::id(),
-    );
-    programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
+        &UpgradeableLoaderState::ProgramData {
             slot,
             upgrade_authority_address: Some(upgrade_authority_address),
-        })
-        .unwrap();
+        },
+        UpgradeableLoaderState::size_of_programdata(0),
+        &bpf_loader_upgradeable::id(),
+    )
+    .unwrap();
     let programdata_meta = AccountMeta {
         pubkey: programdata_address,
         is_signer: false,
@@ -439,7 +437,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
 
 #[test]
 fn test_bpf_loader_upgradeable_set_buffer_authority() {
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
@@ -447,13 +445,15 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
     let new_authority_address = Pubkey::new_unique();
     let new_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account =
-        AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(0), &loader_id);
-    buffer_account
-        .set_state(&UpgradeableLoaderState::Buffer {
+    let mut buffer_account = AccountSharedData::new_data_with_space(
+        1,
+        &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
-        })
-        .unwrap();
+        },
+        UpgradeableLoaderState::size_of_buffer(0),
+        &loader_id,
+    )
+    .unwrap();
     let mut transaction_accounts = vec![
         (buffer_address, buffer_account.clone()),
         (authority_address, authority_account.clone()),
@@ -605,7 +605,7 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
 #[test]
 fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     let instruction =
-        bincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
+        wincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
@@ -613,13 +613,15 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     let new_authority_address = Pubkey::new_unique();
     let new_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account =
-        AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(0), &loader_id);
-    buffer_account
-        .set_state(&UpgradeableLoaderState::Buffer {
+    let mut buffer_account = AccountSharedData::new_data_with_space(
+        1,
+        &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
-        })
-        .unwrap();
+        },
+        UpgradeableLoaderState::size_of_buffer(0),
+        &loader_id,
+    )
+    .unwrap();
     let mut transaction_accounts = vec![
         (buffer_address, buffer_account.clone()),
         (authority_address, authority_account.clone()),

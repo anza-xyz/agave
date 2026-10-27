@@ -70,6 +70,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(commands::plugin::command())
         .subcommand(commands::set_identity::command())
+        .subcommand(commands::set_event_filter::command())
         .subcommand(commands::set_log_filter::command())
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
@@ -217,6 +218,20 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("no-skip-initial-accounts-db-clean")
             .help("No-op; initial accounts cleaning is no longer performed"),
         usage_warning: "Initial accounts cleaning is no longer performed.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("tpu_max_connections_per_peer")
+            .long("tpu-max-connections-per-peer")
+            .takes_value(true)
+            .validator(is_parsable::<u32>)
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity. Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+        usage_warning: "It still overrides --tpu-max-connections-per-unstaked-peer and \
+                        --tpu-max-connections-per-staked-peer, but will be removed in a future \
+                        release. Set both of those instead.",
     );
     add_arg!(
         // deprecated in v4.5.0
@@ -426,7 +441,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]",
                 ),
         )

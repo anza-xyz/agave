@@ -22,7 +22,7 @@ fn test_bpf_loader_upgradeable_initialize_buffer() {
     let authority_account =
         AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(9), &loader_id);
     let instruction_data =
-        bincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
+        wincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
     let instruction_accounts = vec![
         AccountMeta {
             pubkey: buffer_address,

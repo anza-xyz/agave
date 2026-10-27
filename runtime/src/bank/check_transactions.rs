@@ -13,13 +13,13 @@ use {
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::{
-        StaticMessageWithMeta, TransactionWithMeta,
+        StaticMessageWithMeta, StaticTransactionWithMeta,
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         transaction_error_metrics::TransactionErrorMetrics,
     },
-    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
+    solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction_error::{TransactionError, TransactionResult},
 };
 
@@ -28,19 +28,23 @@ impl Bank {
     /// authority, returning the validated nonce address, and does not check status cache.
     pub fn check_transaction_without_status_cache(
         &self,
-        tx: &impl TransactionWithMeta,
+        tx: &impl StaticTransactionWithMeta,
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<Option<Pubkey>> {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let next_durable_nonce = hash_queue.next_durable_nonce();
+        let strict_nonce_checks = true;
 
         if self.check_blockhash_age(tx, max_age, &hash_queue) {
             return Ok(None);
         }
 
-        if let Some(nonce_address) = self.check_nonce_semantics(tx, &next_durable_nonce)
-            && self.check_nonce_account(tx, nonce_address, true).is_some()
+        if let Some(nonce_address) =
+            self.check_nonce_semantics(tx, &next_durable_nonce, strict_nonce_checks)
+            && self
+                .check_nonce_account(tx, nonce_address, strict_nonce_checks)
+                .is_some()
         {
             return Ok(Some(nonce_address));
         }
@@ -50,7 +54,7 @@ impl Bank {
     }
 
     /// The consensus check function that runs before SVM in both block-production and replay.
-    pub(super) fn check_transactions_before_execution<Tx: TransactionWithMeta>(
+    pub(super) fn check_transactions_before_execution<Tx: StaticTransactionWithMeta>(
         &self,
         txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
@@ -63,7 +67,7 @@ impl Bank {
 
     /// External interface for our check function, hiding `strict_nonce_checks`,
     /// which is always true for non-consensus-related uses.
-    pub fn check_transactions_external<Tx: TransactionWithMeta>(
+    pub fn check_transactions_external<Tx: StaticTransactionWithMeta>(
         &self,
         txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
@@ -81,6 +85,20 @@ impl Bank {
         )
     }
 
+    /// Check a batch of messages against the status cache under one read lock.
+    pub fn get_processed_slots_from_status_cache<'a, Msg: StaticMessageWithMeta + 'a>(
+        &self,
+        messages: impl ExactSizeIterator<Item = &'a Msg>,
+    ) -> Vec<Option<Slot>> {
+        // Allocate before acquiring the status-cache lock.
+        let mut processed_slots = Vec::with_capacity(messages.len());
+        let status_cache = self.status_cache.read().unwrap();
+        for message in messages {
+            processed_slots.push(self.get_processed_slot(message, &status_cache));
+        }
+        processed_slots
+    }
+
     // The heart of runtime transaction checking. We perform these operations, in sequence:
     // * Parse and validate the compute budget and limits, producing the struct for SVM,
     //   or reject the transaction if the compute budget is malformed.
@@ -88,7 +106,8 @@ impl Bank {
     //   - First, check if the lifetime specifier is one of the last 151 blockhashes.
     //     If so, the transaction is valid as a normal blockhash transaction.
     //   - If not, check whether the transaction is structurally valid as a nonce transaction.
-    //     This depends on no account state but does depend on ALT resolution due to write demotion.
+    //     This depends on neither account state nor ALT resolution. The nonce must be requested
+    //     writable; SVM itself checks the nonce is actually writable after write-lock demotion.
     //     Then, load the nonce account and provisionally validate the nonce can be advanced.
     //   - If neither condition holds, reject the transaction.
     // * Check if the transaction message hash is present in the StatusCache.
@@ -96,7 +115,7 @@ impl Bank {
     //
     // The options collect_processed_slots and strict_nonce_checks are not part of consensus.
     // We include everything in one omnibus function to have one clear implementation.
-    fn check_transactions<Tx: TransactionWithMeta>(
+    fn check_transactions<Tx: StaticTransactionWithMeta>(
         &self,
         txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
@@ -125,7 +144,8 @@ impl Bank {
                         ));
                     }
 
-                    if let Some(nonce_address) = self.check_nonce_semantics(tx, &next_durable_nonce)
+                    if let Some(nonce_address) =
+                        self.check_nonce_semantics(tx, &next_durable_nonce, strict_nonce_checks)
                         && self
                             .check_nonce_account(tx, nonce_address, strict_nonce_checks)
                             .is_some()
@@ -204,15 +224,16 @@ impl Bank {
 
     fn check_nonce_semantics(
         &self,
-        tx: &impl SVMMessage,
+        tx: &impl SVMStaticMessage,
         next_durable_nonce: &DurableNonce,
+        disallow_nonce_as_program_id: bool,
     ) -> Option<Pubkey> {
         let nonce_is_advanceable = tx.recent_blockhash() != next_durable_nonce.as_hash();
         if !nonce_is_advanceable {
             return None;
         }
 
-        tx.get_durable_nonce().copied()
+        tx.get_durable_nonce(disallow_nonce_as_program_id).copied()
     }
 
     fn check_nonce_account(
@@ -221,7 +242,7 @@ impl Bank {
         nonce_address: Pubkey,
         strict_nonce_checks: bool,
     ) -> Option<NonceData> {
-        let nonce_account = self.get_account_with_fixed_root(&nonce_address)?;
+        let nonce_account = self.get_account(&nonce_address)?;
 
         if strict_nonce_checks && nonce_account.data().len() != NonceState::size() {
             return None;
@@ -362,7 +383,7 @@ mod tests {
         bank.store_account(&nonce_pubkey, &nonce_account);
 
         let nonce_address = bank
-            .check_nonce_semantics(&message, &bank.next_durable_nonce())
+            .check_nonce_semantics(&message, &bank.next_durable_nonce(), false)
             .unwrap();
         assert_eq!(nonce_address, nonce_pubkey);
 
@@ -392,7 +413,7 @@ mod tests {
             &nonce_hash,
         ));
         assert!(
-            bank.check_nonce_semantics(&message, &bank.next_durable_nonce())
+            bank.check_nonce_semantics(&message, &bank.next_durable_nonce(), false)
                 .is_none()
         );
     }
@@ -425,7 +446,7 @@ mod tests {
         bank.store_account(&nonce_pubkey, &resized_nonce_account);
 
         let nonce_address = bank
-            .check_nonce_semantics(&message, &bank.next_durable_nonce())
+            .check_nonce_semantics(&message, &bank.next_durable_nonce(), true)
             .unwrap();
         assert!(
             bank.check_nonce_account(&message, nonce_address, true)
@@ -451,8 +472,12 @@ mod tests {
         );
         message.instructions[0].accounts.clear();
         assert!(
-            bank.check_nonce_semantics(&new_sanitized_message(message), &bank.next_durable_nonce())
-                .is_none()
+            bank.check_nonce_semantics(
+                &new_sanitized_message(message),
+                &bank.next_durable_nonce(),
+                false
+            )
+            .is_none()
         );
     }
 
@@ -475,7 +500,7 @@ mod tests {
             &nonce_hash,
         ));
         let nonce_address = bank
-            .check_nonce_semantics(&message, &bank.next_durable_nonce())
+            .check_nonce_semantics(&message, &bank.next_durable_nonce(), false)
             .unwrap();
         assert_eq!(nonce_address, missing_pubkey);
         assert!(
@@ -500,7 +525,7 @@ mod tests {
             &Hash::default(),
         ));
         let nonce_address = bank
-            .check_nonce_semantics(&message, &bank.next_durable_nonce())
+            .check_nonce_semantics(&message, &bank.next_durable_nonce(), false)
             .unwrap();
         assert!(
             bank.check_nonce_account(&message, nonce_address, false)
@@ -534,7 +559,7 @@ mod tests {
         ));
 
         assert!(
-            bank.check_nonce_semantics(&message, &bank.next_durable_nonce())
+            bank.check_nonce_semantics(&message, &bank.next_durable_nonce(), false)
                 .is_none()
         );
     }
@@ -592,12 +617,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            bank.check_nonce_semantics(&message, &bank.next_durable_nonce()),
+            bank.check_nonce_semantics(&message, &bank.next_durable_nonce(), false),
             None,
         );
     }
 
-    fn make_test_tx(version: TransactionVersion) -> impl TransactionWithMeta {
+    fn make_test_tx(version: TransactionVersion) -> impl StaticTransactionWithMeta {
         make_test_tx_with_blockhash(version, Hash::new_unique())
     }
 
@@ -686,7 +711,28 @@ mod tests {
         assert_eq!(check_result, Ok(None));
     }
 
-    fn check_transactions_for_tests<Tx: TransactionWithMeta>(
+    #[test]
+    fn test_get_processed_slots_from_status_cache_batch() {
+        let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let processed =
+            make_test_tx_with_blockhash(TransactionVersion::LEGACY, bank.last_blockhash());
+        let unprocessed =
+            make_test_tx_with_blockhash(TransactionVersion::LEGACY, bank.last_blockhash());
+
+        bank.status_cache.write().unwrap().insert(
+            processed.recent_blockhash(),
+            processed.message_hash(),
+            bank.slot(),
+            Ok(()),
+        );
+
+        let slots =
+            bank.get_processed_slots_from_status_cache([&processed, &unprocessed].into_iter());
+        assert_eq!(slots, vec![Some(bank.slot()), None]);
+    }
+
+    fn check_transactions_for_tests<Tx: StaticTransactionWithMeta>(
         bank: &Bank,
         txs: &[Tx],
         lock_results: &[TransactionResult<()>],

@@ -1,10 +1,12 @@
 use {
     agave_votor_messages::{
-        certificate::Certificate, fraction::Fraction,
+        certificate::Certificate,
+        fraction::Fraction,
+        stake::{NonZeroStake, Stake},
         unverified_vote_message::UnverifiedCertificate,
     },
     bitvec::vec::BitVec,
-    rayon::iter::IntoParallelRefIterator,
+    rayon::{ThreadPool, iter::IntoParallelRefIterator},
     solana_bls_signatures::{
         BlsError, PubkeyProjective, Signature as BlsSignature, SignatureProjective,
         VerifySignature,
@@ -12,7 +14,6 @@ use {
         signature::AsSignatureAffine,
     },
     solana_signer_store::{DecodeError, Decoded, decode},
-    std::num::NonZero,
     thiserror::Error,
 };
 #[cfg(feature = "dev-context-only-utils")]
@@ -24,10 +25,6 @@ use {
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_signer_store::{encode_base2, encode_base3},
 };
-
-/// Minimum size of the rayon thread pool required for this crate to use the thread pool.
-///  Otherwise, the operations will be done sequentially on the current thread.
-const THREAD_POOL_THRESHOLD: usize = 4;
 
 #[derive(Debug, PartialEq, Eq, Error)]
 pub enum Error {
@@ -45,7 +42,7 @@ pub enum Error {
     BitmapOverlap,
     #[error("Not enough stake {aggregate_stake}: {cert_fraction} < {required_fraction}")]
     NotEnoughStake {
-        aggregate_stake: u64,
+        aggregate_stake: Stake,
         cert_fraction: Fraction,
         required_fraction: Fraction,
     },
@@ -77,15 +74,16 @@ pub enum Error {
 pub fn verify_certificate(
     cert: UnverifiedCertificate,
     max_validators: usize,
-    total_stake: NonZero<u64>,
-    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
+    total_stake: NonZeroStake,
+    mut rank_map: impl FnMut(usize) -> Option<(NonZeroStake, PopVerified<BlsPubkeyAffine>)>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<Certificate, Error> {
-    let mut aggregate_stake = 0u64;
+    let mut aggregate_stake = Stake(0);
 
     // Wrap the `rank_map` to accumulate stake as a side-effect
     let accumulating_rank_map = |ind: usize| {
         rank_map(ind).map(|(stake, pubkey)| {
-            aggregate_stake = aggregate_stake.saturating_add(stake.get());
+            aggregate_stake.increment(Stake::from(stake));
             pubkey
         })
     };
@@ -100,6 +98,7 @@ pub fn verify_certificate(
             &cert.bitmap,
             max_validators,
             accumulating_rank_map,
+            thread_pool,
         )
     } else {
         verify_base2(
@@ -108,6 +107,7 @@ pub fn verify_certificate(
             &cert.bitmap,
             max_validators,
             accumulating_rank_map,
+            thread_pool,
         )
     }?;
     verify_stake(&cert, aggregate_stake, total_stake)?;
@@ -120,11 +120,11 @@ pub fn verify_certificate(
 
 fn verify_stake(
     cert: &UnverifiedCertificate,
-    aggregate_stake: u64,
-    total_stake: NonZero<u64>,
+    aggregate_stake: Stake,
+    total_stake: NonZeroStake,
 ) -> Result<(), Error> {
     let required_fraction = cert.cert_type.threshold();
-    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+    let cert_fraction = total_stake.fraction(aggregate_stake);
     if cert_fraction >= required_fraction {
         Ok(())
     } else {
@@ -147,13 +147,14 @@ pub fn verify_base2<S: AsSignatureAffine>(
     ranks: &[u8],
     max_validators: usize,
     rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     let ranks = match ranks {
         Decoded::Base2(ranks) => ranks,
         Decoded::Base3(_, _) => return Err(Error::WrongEncoding),
     };
-    verify_single_vote_signature(payload, signature, &ranks, rank_map)
+    verify_single_vote_signature(payload, signature, &ranks, rank_map, thread_pool)
 }
 
 fn verify_single_vote_signature<S: AsSignatureAffine>(
@@ -161,9 +162,10 @@ fn verify_single_vote_signature<S: AsSignatureAffine>(
     signature: &S,
     ranks: &BitVec<u8>,
     rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<(), Error> {
     let pubkeys = collect_pubkeys(ranks, rank_map)?;
-    let agg_pubkey = aggregate_pubkeys(&pubkeys)?;
+    let agg_pubkey = aggregate_pubkeys(&pubkeys, thread_pool)?;
     Ok(agg_pubkey.verify_signature(signature, payload)?)
 }
 
@@ -180,10 +182,13 @@ fn verify_base3(
     ranks: &[u8],
     max_validators: usize,
     mut rank_map: impl FnMut(usize) -> Option<PopVerified<BlsPubkeyAffine>>,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<(), Error> {
     let ranks = decode(ranks, max_validators).map_err(Error::Decode)?;
     match ranks {
-        Decoded::Base2(ranks) => verify_single_vote_signature(payload, signature, &ranks, rank_map),
+        Decoded::Base2(ranks) => {
+            verify_single_vote_signature(payload, signature, &ranks, rank_map, thread_pool)
+        }
         Decoded::Base3(ranks, fallback_ranks) => {
             check_disjoint(&ranks, &fallback_ranks)?;
 
@@ -194,14 +199,14 @@ fn verify_base3(
             let fallback_pubkeys = collect_pubkeys(&fallback_ranks, rank_map)?;
 
             if primary_pubkeys.is_empty() {
-                let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys)?;
+                let agg_pubkey = aggregate_pubkeys(&fallback_pubkeys, thread_pool)?;
                 Ok(agg_pubkey.verify_signature(signature, fallback_payload)?)
             } else if fallback_pubkeys.is_empty() {
-                let agg_pubkey = aggregate_pubkeys(&primary_pubkeys)?;
+                let agg_pubkey = aggregate_pubkeys(&primary_pubkeys, thread_pool)?;
                 Ok(agg_pubkey.verify_signature(signature, payload)?)
             } else {
-                let agg_primary = aggregate_pubkeys(&primary_pubkeys)?;
-                let agg_fallback = aggregate_pubkeys(&fallback_pubkeys)?;
+                let agg_primary = aggregate_pubkeys(&primary_pubkeys, thread_pool)?;
+                let agg_fallback = aggregate_pubkeys(&fallback_pubkeys, thread_pool)?;
 
                 // SAFETY: `aggregate_pubkeys` strictly requires `PopVerified` public keys
                 // as input. Because every constituent key has already proven possession,
@@ -215,17 +220,19 @@ fn verify_base3(
 
                 let all_messages = [payload, fallback_payload];
 
-                if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
+                if let Some(thread_pool) = thread_pool {
+                    thread_pool.install(|| {
+                        Ok(SignatureProjective::par_verify_distinct_aggregated(
+                            &all_pubkeys,
+                            signature,
+                            &all_messages,
+                        )?)
+                    })
+                } else {
                     Ok(SignatureProjective::verify_distinct_aggregated(
                         all_pubkeys.iter(),
                         signature,
                         all_messages.into_iter(),
-                    )?)
-                } else {
-                    Ok(SignatureProjective::par_verify_distinct_aggregated(
-                        &all_pubkeys,
-                        signature,
-                        &all_messages,
                     )?)
                 }
             }
@@ -237,11 +244,14 @@ fn verify_base3(
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_pubkeys(
     pubkeys: &[PopVerified<BlsPubkeyAffine>],
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<AggregatePubkey<PubkeyProjective>, Error> {
-    if rayon::current_num_threads() < THREAD_POOL_THRESHOLD {
-        PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
+    if let Some(thread_pool) = thread_pool {
+        thread_pool.install(|| {
+            PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
+        })
     } else {
-        PubkeyProjective::par_aggregate(pubkeys.par_iter()).map_err(Error::VerifySig)
+        PubkeyProjective::aggregate(pubkeys.iter()).map_err(Error::VerifySig)
     }
 }
 
@@ -456,11 +466,17 @@ mod test {
             cert_type,
             &(0..6).collect::<Vec<_>>(),
         );
-        verify_certificate(cert, 10, NonZero::new(600).unwrap(), |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        })
+        verify_certificate(
+            cert,
+            10,
+            NonZeroStake::new(600).unwrap(),
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
+            },
+            None,
+        )
         .unwrap();
     }
 
@@ -471,7 +487,7 @@ mod test {
         let cert_type = CertificateType::new_unique_notar(10);
         let per_validator_stake = 100;
         let num_validators = 10;
-        let total_stake = NonZero::new(per_validator_stake * num_validators as u64).unwrap();
+        let total_stake = NonZeroStake::new(per_validator_stake * num_validators as u64).unwrap();
 
         // with enough stake should succeed.
         let cert = test_create_base2_unverified_certificate(
@@ -480,11 +496,17 @@ mod test {
             cert_type,
             &(0..6).collect::<Vec<_>>(),
         );
-        verify_certificate(cert, 10, total_stake, |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        })
+        verify_certificate(
+            cert,
+            10,
+            total_stake,
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
+            },
+            None,
+        )
         .unwrap();
 
         // not enough stake, should fail.
@@ -494,11 +516,17 @@ mod test {
             cert_type,
             &(0..5).collect::<Vec<_>>(),
         );
-        let Err(err) = verify_certificate(cert, 10, total_stake, |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        }) else {
+        let Err(err) = verify_certificate(
+            cert,
+            10,
+            total_stake,
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
+            },
+            None,
+        ) else {
             panic!("should fail");
         };
         match err {
@@ -507,9 +535,9 @@ mod test {
                 cert_fraction,
                 required_fraction,
             } => {
-                assert_eq!(aggregate_stake, 500);
+                assert_eq!(aggregate_stake.0, 500);
                 assert_eq!(required_fraction, cert_type.threshold());
-                assert_eq!(cert_fraction, Fraction::new(500, total_stake));
+                assert_eq!(cert_fraction, total_stake.fraction(Stake(500)));
             }
             rest => panic!("wrong variant {rest:?}"),
         }
@@ -529,11 +557,17 @@ mod test {
             &primary_ranks,
             &fallback_ranks,
         );
-        verify_certificate(cert, 10, NonZero::new(700).unwrap(), |rank| {
-            bls_keypairs
-                .get(rank)
-                .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-        })
+        verify_certificate(
+            cert,
+            10,
+            NonZeroStake::new(700).unwrap(),
+            |rank| {
+                bls_keypairs
+                    .get(rank)
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
+            },
+            None,
+        )
         .unwrap();
     }
 
@@ -558,11 +592,17 @@ mod test {
             shred_version,
         };
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(1000).unwrap(), |rank| {
-                bls_keypairs
-                    .get(rank)
-                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
-            })
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(1000).unwrap(),
+                |rank| {
+                    bls_keypairs
+                        .get(rank)
+                        .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
+                },
+                None
+            )
             .unwrap_err(),
             Error::VerifySig(BlsError::PointConversion)
         );
@@ -592,12 +632,13 @@ mod test {
         verify_certificate(
             cert,
             10,
-            NonZero::new(per_validator_stake * max_validators as u64).unwrap(),
+            NonZeroStake::new(per_validator_stake * max_validators as u64).unwrap(),
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (NonZero::new(per_validator_stake).unwrap(), kp.public))
+                    .map(|kp| (NonZeroStake::new(per_validator_stake).unwrap(), kp.public))
             },
+            None,
         )
         .unwrap();
     }
@@ -640,7 +681,7 @@ mod test {
     // verification contract.
     // ----------------------------------------------------------------------------
 
-    const STAKE_PER_VALIDATOR: NonZero<u64> = NonZero::new(100).unwrap();
+    const STAKE_PER_VALIDATOR: NonZeroStake = NonZeroStake::new(100).unwrap();
 
     /// Encode a Base2 rank bitmap with the given `ranks` set out of `num_bits`.
     fn encoded_base2_bitmap(ranks: &[usize], num_bits: usize) -> Vec<u8> {
@@ -671,7 +712,7 @@ mod test {
     /// Uniform `rank_map` over `keypairs`, each with `STAKE_PER_VALIDATOR` stake.
     fn rank_map(
         keypairs: &[BLSKeypair],
-    ) -> impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)> + '_ {
+    ) -> impl FnMut(usize) -> Option<(NonZeroStake, PopVerified<BlsPubkeyAffine>)> + '_ {
         move |rank| {
             keypairs
                 .get(rank)
@@ -715,8 +756,14 @@ mod test {
         // Must fail at the signature stage (not via a decode / missing-rank path),
         // proving the extra validator cannot be smuggled in.
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -740,8 +787,14 @@ mod test {
         cert.bitmap = encoded_base2_bitmap(&[0, 1, 2, 3, 4], 6);
 
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -768,8 +821,14 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                forged,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -788,8 +847,14 @@ mod test {
 
         // An empty signer set cannot produce a valid aggregate signature.
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::EmptyAggregation)
         );
     }
@@ -805,8 +870,14 @@ mod test {
         let cert = unsigned_cert(CertificateType::new_unique_notar(10), bitmap, shred_version);
 
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::WrongEncoding
         );
     }
@@ -827,15 +898,21 @@ mod test {
         );
 
         // rank_map returns None for rank 3, simulating an unknown/unstaked validator.
-        let result = verify_certificate(cert, 10, NonZero::new(10).unwrap(), |rank| {
-            if rank == 3 {
-                None
-            } else {
-                keypairs
-                    .get(rank)
-                    .map(|kp| (STAKE_PER_VALIDATOR, kp.public))
-            }
-        });
+        let result = verify_certificate(
+            cert,
+            10,
+            NonZeroStake::new(10).unwrap(),
+            |rank| {
+                if rank == 3 {
+                    None
+                } else {
+                    keypairs
+                        .get(rank)
+                        .map(|kp| (STAKE_PER_VALIDATOR, kp.public))
+                }
+            },
+            None,
+        );
 
         assert_eq!(result.unwrap_err(), Error::MissingRank);
     }
@@ -854,8 +931,14 @@ mod test {
         );
 
         assert_eq!(
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::Decode(DecodeError::CorruptDataPayload)
         );
     }
@@ -874,8 +957,14 @@ mod test {
             let cert = unsigned_cert(CertificateType::new_unique_notar(10), bitmap, shred_version);
             // Must return (Ok/Err) without panicking; a zero signature can never
             // produce a valid certificate, so the result must be an error.
-            verify_certificate(cert, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err();
+            verify_certificate(
+                cert,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None,
+            )
+            .unwrap_err();
         }
     }
 
@@ -905,8 +994,14 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                forged,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }
@@ -935,8 +1030,14 @@ mod test {
         };
 
         assert_eq!(
-            verify_certificate(forged, 10, NonZero::new(10).unwrap(), rank_map(&keypairs))
-                .unwrap_err(),
+            verify_certificate(
+                forged,
+                10,
+                NonZeroStake::new(10).unwrap(),
+                rank_map(&keypairs),
+                None
+            )
+            .unwrap_err(),
             Error::VerifySig(BlsError::VerificationFailed)
         );
     }

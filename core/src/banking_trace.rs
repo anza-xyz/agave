@@ -23,7 +23,6 @@ use {
     },
     thiserror::Error,
 };
-
 /// Capacity of the vote channel between sigverify and the banking-stage.
 /// Sized to fit all votes from a reasonably sized cluster for 1 slot, + margin.
 const VOTE_CHANNEL_CAPACITY: usize = 1024 * 8;
@@ -52,7 +51,7 @@ pub enum TraceError {
     TooSmallDirByteLimit(DirByteLimit, DirByteLimit),
 }
 
-pub(crate) const BASENAME: &str = "events";
+const BASENAME: &str = "events";
 const TRACE_FILE_ROTATE_COUNT: u64 = 14; // target 2 weeks retention under normal load
 const TRACE_FILE_WRITE_INTERVAL_MS: u64 = 100;
 const BUF_WRITER_CAPACITY: usize = 10 * 1024 * 1024;

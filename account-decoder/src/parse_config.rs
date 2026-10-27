@@ -5,12 +5,13 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json::Value,
+    solana_account::{WINCODE_CONFIG, WincodeConfig},
     solana_config_interface::state::{ConfigKeys, get_config_data},
     solana_pubkey::Pubkey,
 };
 
 pub fn parse_config(data: &[u8], _pubkey: &Pubkey) -> Result<ConfigAccountType, ParseAccountError> {
-    let parsed_account = wincode::deserialize::<ConfigKeys>(data)
+    let parsed_account = wincode::config::deserialize::<ConfigKeys, _>(data, WINCODE_CONFIG)
         .ok()
         .and_then(|key_list| {
             if !key_list.keys.is_empty() && key_list.keys[0].0 == validator_info::id() {
@@ -31,9 +32,10 @@ pub fn parse_config(data: &[u8], _pubkey: &Pubkey) -> Result<ConfigAccountType, 
 
 fn parse_config_data<T>(data: &[u8], keys: Vec<(Pubkey, bool)>) -> Option<UiConfig<T>>
 where
-    T: wincode::DeserializeOwned<Dst = T>,
+    T: for<'de> wincode::SchemaRead<'de, WincodeConfig, Dst = T>,
 {
-    let config_data: T = wincode::deserialize(get_config_data(data).ok()?).ok()?;
+    let config_data: T =
+        wincode::config::deserialize(get_config_data(data).ok()?, WINCODE_CONFIG).ok()?;
     let keys = keys
         .iter()
         .map(|key| UiConfigKey {
@@ -70,22 +72,20 @@ mod test {
         super::*,
         crate::validator_info::ValidatorInfo,
         serde_json::json,
-        solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     };
 
-    fn create_config_account<T: wincode::Serialize<Src = T>>(
+    fn create_config_account(
         keys: Vec<(Pubkey, bool)>,
-        config_data: &T,
+        validator_info: ValidatorInfo,
         lamports: u64,
     ) -> AccountSharedData {
-        let mut data = wincode::serialize(&ConfigKeys { keys }).unwrap();
-        data.extend_from_slice(&wincode::serialize(config_data).unwrap());
-        AccountSharedData::from(Account {
+        AccountSharedData::new_data(
             lamports,
-            data,
-            owner: solana_sdk_ids::config::id(),
-            ..Account::default()
-        })
+            &(ConfigKeys { keys }, validator_info),
+            &solana_sdk_ids::config::id(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod test {
         let info_pubkey = solana_pubkey::new_rand();
         let validator_info_config_account = create_config_account(
             vec![(validator_info::id(), false), (info_pubkey, true)],
-            &validator_info,
+            validator_info,
             10,
         );
         assert_eq!(

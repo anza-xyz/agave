@@ -22,6 +22,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-cpu-utils = { workspace = true }
+agave-event-system = { workspace = true }
 agave-logger = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-votor = { workspace = true }
@@ -108,7 +109,6 @@ assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }
-scopeguard = { workspace = true }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-time-utils = { workspace = true }

@@ -59,7 +59,7 @@ impl PacketContainerEntry {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_packet::PacketFlags};
+    use {super::*, solana_perf::packet::PacketFlags};
 
     fn simple_packet_with_flags(packet_flags: PacketFlags) -> BytesPacket {
         let mut packet = BytesPacket::empty();

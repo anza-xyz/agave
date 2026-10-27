@@ -166,7 +166,7 @@ where
     /// over an interval and during a leader slot.
     timing_metrics: SchedulerTimingMetrics,
     /// Metric report handles for the worker threads.
-    worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+    worker_metrics: Vec<(String, Arc<ConsumeWorkerMetrics>)>,
     /// Detailed scheduling metrics.
     scheduling_details: SchedulingDetails,
     /// Cursor for incremental recheck sweep of the priority queue.
@@ -205,7 +205,11 @@ where
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
-            worker_metrics,
+            worker_metrics: worker_metrics
+                .into_iter()
+                .enumerate()
+                .map(|(id, metrics)| (id.to_string(), metrics))
+                .collect(),
             scheduling_details: SchedulingDetails::default(),
             recheck_cursor: None,
             recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
@@ -295,7 +299,7 @@ where
                         block_limit,
                         shared_block_cost,
                         detection_time: now,
-                        fill_time,
+                        fill_time: self.config.scheduler_pacing.fill_time(),
                     }
                 });
             }
@@ -340,7 +344,7 @@ where
                 .maybe_report_and_reset_interval(should_report);
             self.worker_metrics
                 .iter()
-                .for_each(|metrics| metrics.maybe_report_and_reset());
+                .for_each(|(id, metrics)| metrics.maybe_report_and_reset(id));
             self.scheduling_details.maybe_report();
         }
 
@@ -708,6 +712,7 @@ mod tests {
             check_work_receiver,
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
+            SharedLeaderState::new(0, None, None),
             Arc::default(),
         );
         TransactionViewReceiveAndBuffer::new(receiver, check_work_sender, check_result_receiver)

@@ -63,7 +63,7 @@ impl Bank {
             let prev_account = self
                 .rc
                 .accounts
-                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .load_do_not_populate_read_cache(&self.ancestors, address)
                 .map(|(account, _slot)| account);
             let curr_account = accounts.account(index, |account| {
                 (account.lamports() != 0).then(|| account.take_account())
@@ -137,7 +137,7 @@ impl Bank {
             let prev_account = self
                 .rc
                 .accounts
-                .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, address)
+                .load_do_not_populate_read_cache(&self.ancestors, address)
                 .map(|(account, _slot)| account);
             let curr_account = accounts.account(index, |account| {
                 (account.lamports() != 0).then(|| account.take_account())
@@ -844,12 +844,12 @@ mod tests {
         let prev_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
 
         // save the initial values of the accounts to use for asserts later
-        let prev_mint = bank.get_account_with_fixed_root(&mint_keypair.pubkey());
-        let prev_account1 = bank.get_account_with_fixed_root(&keypair1.pubkey());
-        let prev_account2 = bank.get_account_with_fixed_root(&keypair2.pubkey());
-        let prev_account3 = bank.get_account_with_fixed_root(&keypair3.pubkey());
-        let prev_account4 = bank.get_account_with_fixed_root(&keypair4.pubkey());
-        let prev_account5 = bank.get_account_with_fixed_root(&keypair5.pubkey());
+        let prev_mint = bank.get_account(&mint_keypair.pubkey());
+        let prev_account1 = bank.get_account(&keypair1.pubkey());
+        let prev_account2 = bank.get_account(&keypair2.pubkey());
+        let prev_account3 = bank.get_account(&keypair3.pubkey());
+        let prev_account4 = bank.get_account(&keypair4.pubkey());
+        let prev_account5 = bank.get_account(&keypair5.pubkey());
 
         assert!(prev_mint.is_some());
         assert!(prev_account1.is_some());
@@ -869,7 +869,7 @@ mod tests {
         ];
         let prev_sysvar_accounts: Vec<_> = sysvars
             .iter()
-            .map(|address| bank.get_account_with_fixed_root(address))
+            .map(|address| bank.get_account(address))
             .collect();
 
         let bank = {
@@ -898,12 +898,12 @@ mod tests {
         bank.freeze();
 
         let post_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
-        let post_mint = bank.get_account_with_fixed_root(&mint_keypair.pubkey());
-        let post_account1 = bank.get_account_with_fixed_root(&keypair1.pubkey());
-        let post_account2 = bank.get_account_with_fixed_root(&keypair2.pubkey());
-        let post_account3 = bank.get_account_with_fixed_root(&keypair3.pubkey());
-        let post_account4 = bank.get_account_with_fixed_root(&keypair4.pubkey());
-        let post_account5 = bank.get_account_with_fixed_root(&keypair5.pubkey());
+        let post_mint = bank.get_account(&mint_keypair.pubkey());
+        let post_account1 = bank.get_account(&keypair1.pubkey());
+        let post_account2 = bank.get_account(&keypair2.pubkey());
+        let post_account3 = bank.get_account(&keypair3.pubkey());
+        let post_account4 = bank.get_account(&keypair4.pubkey());
+        let post_account5 = bank.get_account(&keypair5.pubkey());
 
         assert!(post_mint.is_some());
         assert!(post_account1.is_some());
@@ -914,7 +914,7 @@ mod tests {
 
         let post_sysvar_accounts: Vec<_> = sysvars
             .iter()
-            .map(|address| bank.get_account_with_fixed_root(address))
+            .map(|address| bank.get_account(address))
             .collect();
 
         let mut expected_accounts_lt_hash = prev_accounts_lt_hash;

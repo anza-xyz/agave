@@ -714,7 +714,7 @@ mod tests {
     use {
         super::*,
         crate::netlink::{MacAddress, NeighborEntry, RouteEntry, VlanLinkInfo},
-        libc::{AF_INET, NUD_NOARP, NUD_PERMANENT, NUD_REACHABLE},
+        libc::{AF_INET, NUD_NOARP, NUD_PERMANENT, NUD_REACHABLE, NUD_STALE},
         std::net::{IpAddr, Ipv4Addr},
     };
 
@@ -1734,5 +1734,57 @@ mod tests {
         let router = router_from_tables(vec![], routes, interfaces);
         let next_hop = router.route_v4(dst).unwrap();
         assert!(next_hop.mac_addr.is_none());
+    }
+
+    /// Confirm we are handling stale NeighborEntry correctly: `NUD_STALE` means that the cache
+    /// contains the address of the neighbor, but the latter has not been confirmed for a certain
+    /// amount of time. It is a valid state and it must have lladdr.
+    #[test]
+    fn test_default_route_uses_stale_gateway_neighbor() {
+        let gateway = Ipv4Addr::new(10, 255, 255, 1);
+        let dst = Ipv4Addr::new(203, 0, 113, 7);
+        let mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+        let if_index = 1;
+
+        let tables = {
+            let mut tables = empty_tables();
+            assert!(tables.upsert_interface(InterfaceInfo {
+                if_index,
+                mtu: DEFAULT_MTU_FOR_TESTS,
+                gre_tunnel: None,
+                vlan_link: None,
+            }));
+            assert!(tables.upsert_neighbor(NeighborEntry {
+                destination: Some(IpAddr::V4(gateway)),
+                lladdr: Some(mac),
+                ifindex: if_index as i32,
+                state: NUD_STALE,
+                flags: 0,
+                flags_ext: 0,
+            }));
+            assert!(tables.upsert_route(test_route_entry(
+                None,
+                Some(gateway),
+                if_index,
+                0,
+                u32::from(RouteTable::Main),
+            )));
+            tables
+        };
+
+        let router = Router::from_tables(tables).unwrap();
+        let next_hop = router.route_v4(dst).unwrap();
+
+        assert_eq!(next_hop.if_index, if_index);
+        assert_eq!(next_hop.ip_addr, IpAddr::V4(gateway));
+        assert_eq!(
+            next_hop.mac_addr,
+            Some(mac),
+            "cached MAC should remain usable"
+        );
+        assert!(
+            next_hop.neigh_requires_refresh,
+            "stale neighbor must be refreshed to confirm reachability"
+        );
     }
 }

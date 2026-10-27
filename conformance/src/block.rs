@@ -10,7 +10,8 @@ use {
         self, AcctState, BlockContext as ProtoBlockContext, BlockEffects as ProtoBlockEffects,
         PrevVoteAccount as ProtoPrevVoteAccount,
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    rayon::prelude::*,
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{accounts_hash::AccountsLtHash, ancestors::Ancestors},
     solana_clock::{DEFAULT_TICKS_PER_SLOT, Epoch},
     solana_cost_model::cost_model::CostModel,
@@ -106,7 +107,7 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
         None,
         &Ancestors::default(),
     );
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(bank_id);
     let accounts_data_size_initial = accounts_to_store
         .iter()
         .map(|(_, account)| account.data().len() as u64)
@@ -119,10 +120,15 @@ pub fn execute_block_proto(context: &ProtoBlockContext) -> ProtoBlockEffects {
     let stakes_t =
         build_latest_stake_delegations(&acct_states_from_proto, parent_epoch, &stake_history);
 
-    // Convert stakes_t (current epoch delegations + stake_history from sysvar) into
-    // Stakes<StakeAccount> for the StakesCache. This mirrors new_from_snapshot which
-    // loads the StakesCache from the deserialized snapshot stakes.
-    let stakes_for_cache = Stakes::load_from_deserialized_delegations(stakes_t.clone(), |pubkey| {
+    // Build the stakes cache the way a snapshot load does. Stake accounts
+    // come from the account list, the rest from stakes_t.
+    let stake_pubkeys = accounts_to_store
+        .par_iter()
+        .filter(|(_, account)| {
+            account.lamports() > 0 && solana_sdk_ids::stake::check_id(account.owner())
+        })
+        .map(|(pubkey, _)| *pubkey);
+    let stakes_for_cache = Stakes::load_from_accounts(stakes_t.clone(), stake_pubkeys, |pubkey| {
         accounts_to_store
             .iter()
             .find(|(pk, _)| pk == pubkey)
@@ -406,54 +412,57 @@ fn feature_accounts_from_proto(
         .collect()
 }
 
-// This is a little bit hacky because there's no direct Agave API that gets us a populated
-// Stakes<Delegation> object from a set of account states. Fine, I'll do it myself...
+// Builds the vote accounts, with their stake, and the stake history the way
+// a snapshot holds them. The delegation list stays empty, as it does after a
+// snapshot load; the stakes cache is built from the stake accounts instead.
 fn build_latest_stake_delegations(
     account_states: &[(Pubkey, AccountSharedData)],
     epoch: Epoch,
     stake_history: &StakeHistory,
 ) -> DeserializableDelegationStakes {
-    let mut stakes = DeserializableDelegationStakes {
-        vote_accounts: VoteAccounts::default(),
-        stake_delegations: account_states
+    let delegations: Vec<Delegation> = account_states
+        .iter()
+        .filter(|(_, account)| account.lamports() > 0)
+        .filter_map(|(_, account)| {
+            stake_account::StakeAccount::<Delegation>::try_from(account.clone())
+                .ok()
+                .map(|stake_account| *stake_account.delegation())
+        })
+        .collect();
+    DeserializableDelegationStakes {
+        vote_accounts: account_states
             .iter()
             .filter(|(_, account)| account.lamports() > 0)
             .filter_map(|(pubkey, account)| {
-                stake_account::StakeAccount::<Delegation>::try_from(account.clone())
+                VoteAccount::try_from(account.clone())
                     .ok()
-                    .map(|stake_account| (*pubkey, *stake_account.delegation()))
+                    .map(|vote_account| (*pubkey, vote_account))
             })
-            .collect(),
+            .fold(
+                VoteAccounts::default(),
+                |mut vote_accounts, (pubkey, vote_account)| {
+                    // We can pass `new_rate_activation_epoch = 0` because the feature is
+                    // activated on all clusters.
+                    vote_accounts.insert(pubkey, vote_account, || {
+                        delegations
+                            .iter()
+                            .filter_map(|delegation| {
+                                if delegation.voter_pubkey == pubkey {
+                                    Some(delegation.stake_v2(epoch, stake_history, Some(0)))
+                                } else {
+                                    None
+                                }
+                            })
+                            .sum()
+                    });
+                    vote_accounts
+                },
+            ),
+        stake_delegations: Vec::new(),
         unused: 0,
         epoch,
         stake_history: stake_history.clone(),
-    };
-
-    // Then populate the vote accounts
-    account_states
-        .iter()
-        .filter(|(_, account)| account.lamports() > 0)
-        .for_each(|(pubkey, account)| {
-            if let Ok(vote_account) = VoteAccount::try_from(account.clone()) {
-                // We can pass `new_rate_activation_epoch = 0` because the feature is
-                // activated on all clusters.
-                stakes.vote_accounts.insert(*pubkey, vote_account, || {
-                    stakes
-                        .stake_delegations
-                        .iter()
-                        .filter_map(|(_, delegation)| {
-                            if delegation.voter_pubkey == *pubkey {
-                                Some(delegation.stake_v2(epoch, stake_history, Some(0)))
-                            } else {
-                                None
-                            }
-                        })
-                        .sum()
-                });
-            }
-        });
-
-    stakes
+    }
 }
 
 fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAccount) {
@@ -499,9 +508,7 @@ fn synthesize_vote_account(pva: &ProtoPrevVoteAccount) -> (Pubkey, u64, VoteAcco
         }),
     };
 
-    let serialized = bincode::serialize(&versioned).unwrap();
-    let mut account = AccountSharedData::new(1, serialized.len(), &solana_sdk_ids::vote::id());
-    account.set_data_from_slice(&serialized);
+    let account = AccountSharedData::new_data(1, &versioned, &solana_sdk_ids::vote::id()).unwrap();
 
     let vote_account = VoteAccount::try_from(account).unwrap();
     (vote_pubkey, pva.stake, vote_account)
@@ -527,7 +534,7 @@ fn build_prev_epoch_stakes(
         stake_history: StakeHistory::default(),
     };
 
-    Stakes::load_from_deserialized_delegations(stakes.clone(), |pubkey| {
+    Stakes::load_from_accounts(stakes.clone(), Vec::new(), |pubkey| {
         stakes
             .vote_accounts
             .get(pubkey)
@@ -776,13 +783,13 @@ mod tests {
             TransactionMessage as ProtoTransactionMessage, VoteAccountVersion,
             acct_state::DataRepr,
         },
-        solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS},
+        solana_account::Account,
         solana_clock::Clock,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_runtime::sysvar_account::create_account,
+        solana_runtime::sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account},
         solana_sdk_ids::{native_loader, system_program, sysvar},
         solana_slot_hashes::SlotHashes,
         solana_slot_history::SlotHistory,
@@ -837,7 +844,7 @@ mod tests {
     {
         input_account(
             pubkey,
-            create_account(value, DUMMY_INHERITABLE_ACCOUNT_FIELDS).into(),
+            create_account(value, RENT_UNADJUSTED_INITIAL_BALANCE).into(),
         )
     }
 
@@ -870,16 +877,7 @@ mod tests {
                 sysvar::recent_blockhashes::id(),
                 &RecentBlockhashes::default(),
             ),
-            input_account(
-                sysvar::stake_history::id(),
-                Account {
-                    lamports: 1,
-                    data: bincode::serialize(&StakeHistory::default()).unwrap(),
-                    owner: sysvar::id(),
-                    executable: false,
-                    rent_epoch: u64::MAX,
-                },
-            ),
+            sysvar_account(sysvar::stake_history::id(), &StakeHistory::default()),
             sysvar_account(sysvar::last_restart_slot::id(), &LastRestartSlot::default()),
             sysvar_account(sysvar::slot_history::id(), &slot_history),
         ]

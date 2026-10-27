@@ -2,12 +2,11 @@
 use {crate::banking_stage::packet_bytes, solana_perf::packet::BytesPacket};
 use {
     agave_transaction_view::transaction_view::SanitizedTransactionView,
-    solana_bincode::limited_deserialize,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
-    solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
+    solana_vote::vote_parser::deserialize_vote_instruction,
     solana_vote_program::vote_instruction::VoteInstruction,
     thiserror::Error,
 };
@@ -52,8 +51,8 @@ impl LatestValidatorVote {
             }
         };
 
-        match limited_deserialize::<VoteInstruction>(instruction.data, PACKET_DATA_SIZE as u64) {
-            Ok(vote_state_update_instruction)
+        match deserialize_vote_instruction(instruction.data) {
+            Some(vote_state_update_instruction)
                 if instruction_filter(&vote_state_update_instruction) =>
             {
                 let ix_key = |offset| {
@@ -106,11 +105,8 @@ impl LatestValidatorVote {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
-        let vote = SanitizedTransactionView::try_new_sanitized(
-            packet_bytes(packet).unwrap(),
-            &solana_runtime_transaction::sanitize_config::sanitize_config(),
-        )
-        .unwrap();
+        let vote =
+            SanitizedTransactionView::try_new_sanitized(packet_bytes(packet).unwrap()).unwrap();
 
         Self::new_from_view(vote, vote_source, deprecate_legacy_vote_ixs)
     }
@@ -159,8 +155,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_packet::PacketFlags,
-        solana_perf::packet::{BytesPacket, PacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_signer::Signer,
         solana_system_transaction::transfer,

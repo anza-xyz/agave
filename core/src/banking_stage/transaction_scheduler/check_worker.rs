@@ -2,8 +2,9 @@ use {
     super::receive_and_buffer::{PrecheckResult, precheck_transaction},
     crossbeam_channel::{Receiver, Sender},
     solana_perf::packet::bytes::Bytes,
+    solana_poh::poh_recorder::SharedLeaderState,
     solana_pubkey::Pubkey,
-    solana_runtime::bank_forks::SharableBanks,
+    solana_runtime::{bank::Bank, bank_forks::SharableBanks},
     std::{
         collections::HashSet,
         num::NonZeroUsize,
@@ -17,6 +18,7 @@ pub(crate) fn spawn_check_workers(
     work_receiver: Receiver<Bytes>,
     result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
+    shared_leader_state: SharedLeaderState,
     filter_keys: Arc<HashSet<Pubkey>>,
 ) -> Vec<JoinHandle<()>> {
     (0..num_workers.get())
@@ -24,11 +26,18 @@ pub(crate) fn spawn_check_workers(
             let work_receiver = work_receiver.clone();
             let result_sender = result_sender.clone();
             let sharable_banks = sharable_banks.clone();
+            let shared_leader_state = shared_leader_state.clone();
             let filter_keys = filter_keys.clone();
             Builder::new()
                 .name(format!("solBnkChk{index:02}"))
                 .spawn(move || {
-                    run_check_worker(work_receiver, result_sender, sharable_banks, filter_keys);
+                    run_check_worker(
+                        work_receiver,
+                        result_sender,
+                        sharable_banks,
+                        shared_leader_state,
+                        filter_keys,
+                    );
                 })
                 .expect("check worker thread must spawn")
         })
@@ -39,12 +48,13 @@ fn run_check_worker(
     work_receiver: Receiver<Bytes>,
     result_sender: Sender<PrecheckResult>,
     sharable_banks: SharableBanks,
+    shared_leader_state: SharedLeaderState,
     filter_keys: Arc<HashSet<Pubkey>>,
 ) {
     while let Ok(bytes) = work_receiver.recv() {
         let banks = sharable_banks.load();
-        let result =
-            precheck_transaction(bytes, &banks.root_bank, &banks.working_bank, &filter_keys);
+        let working_bank = preferred_working_bank(&shared_leader_state, banks.working_bank);
+        let result = precheck_transaction(bytes, &banks.root_bank, &working_bank, &filter_keys);
 
         // A result queue at capacity applies backpressure to check workers. Accepted
         // work is never dropped by a worker.
@@ -54,12 +64,26 @@ fn run_check_worker(
     }
 }
 
+fn preferred_working_bank(
+    shared_leader_state: &SharedLeaderState,
+    working_bank: Arc<Bank>,
+) -> Arc<Bank> {
+    let leader_state = shared_leader_state.load();
+    leader_state
+        .working_bank()
+        .filter(|bank| !bank.is_complete())
+        .cloned()
+        .unwrap_or(working_bank)
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*, crate::banking_stage::tests::create_slow_genesis_config,
-        crossbeam_channel::bounded, solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::BytesPacket, solana_runtime::bank::Bank,
+        crossbeam_channel::bounded, solana_account::AccountSharedData,
+        solana_leader_schedule::SlotLeader, solana_ledger::genesis_utils::GenesisConfigInfo,
+        solana_perf::packet::BytesPacket, solana_poh::poh_recorder::LeaderState,
+        solana_runtime::bank::Bank, solana_sdk_ids::system_program, solana_signer::Signer,
         solana_system_transaction::transfer,
     };
 
@@ -99,6 +123,7 @@ mod tests {
             work_receiver,
             result_sender,
             sharable_banks.clone(),
+            SharedLeaderState::new(0, None, None),
             Arc::default(),
         );
         for _ in 0..8 {
@@ -118,18 +143,77 @@ mod tests {
             .into_iter()
             .for_each(|handle| assert!(handle.join().is_ok()));
     }
+
+    #[test]
+    fn prefers_active_leader_bank_over_highest_working_fork() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+        let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let leader_bank = Arc::new(Bank::new_from_parent(
+            root_bank.clone(),
+            SlotLeader::new_unique(),
+            1,
+        ));
+        let working_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 2);
+        working_bank.store_account(
+            &mint_keypair.pubkey(),
+            &AccountSharedData::new(0, 0, &system_program::ID),
+        );
+        let sharable_banks = {
+            let mut forks = bank_forks.write().unwrap();
+            forks.insert(working_bank);
+            forks.sharable_banks()
+        };
+        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
+        shared_leader_state.store(Arc::new(LeaderState::new(Some(leader_bank), 0, None, None)));
+
+        let (work_sender, work_receiver) = bounded(1);
+        let (result_sender, result_receiver) = bounded(1);
+        let worker = spawn_check_workers(
+            NonZeroUsize::new(1).unwrap(),
+            work_receiver,
+            result_sender,
+            sharable_banks.clone(),
+            shared_leader_state.clone(),
+            Arc::default(),
+        )
+        .pop()
+        .unwrap();
+
+        work_sender
+            .send(transaction_bytes(&sharable_banks, &mint_keypair))
+            .unwrap();
+        assert!(result_receiver.recv().unwrap().is_ok());
+
+        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, None)));
+        work_sender
+            .send(transaction_bytes(&sharable_banks, &mint_keypair))
+            .unwrap();
+        assert!(matches!(
+            result_receiver.recv().unwrap(),
+            Err(crate::banking_stage::transaction_scheduler::receive_and_buffer::IngressCheckError::FeePayer)
+        ));
+
+        drop(work_sender);
+        worker.join().unwrap();
+    }
 }
 
 #[cfg(unix)]
 pub(crate) mod external {
     use {
+        super::preferred_working_bank,
         crate::banking_stage::transaction_scheduler::receive_and_buffer::translate_sanitized_to_runtime_view,
         agave_scheduler_bindings::{
             CheckResponseRegion, CheckWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
             PackToCheckWorkerMessage, SharablePubkeys, check_message_flags, processed_codes,
             worker_message_types::{
-                CheckResponse, fee_payer_balance_flags, parsing_and_sanitization_flags,
-                resolve_flags, scheduling_details_flags, status_check_flags,
+                CheckResponse, age_nonce_check_flags, fee_payer_balance_flags,
+                parsing_and_sanitization_flags, resolve_flags, scheduling_details_flags,
+                status_cache_check_flags,
             },
         },
         agave_scheduling_utils::{
@@ -145,17 +229,19 @@ pub(crate) mod external {
         solana_clock::Slot,
         solana_cost_model::cost_model::CostModel,
         solana_message::v0::LoadedAddresses,
-        solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
+        solana_poh::poh_recorder::SharedLeaderState,
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             bank_forks::{BankPair, SharableBanks},
         },
         solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-            transaction_meta::TransactionMeta,
+            runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
         },
-        solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+        solana_svm::{
+            account_loader::fee_payer_load_filter,
+            transaction_error_metrics::TransactionErrorMetrics,
+        },
         solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_transaction::TransactionError,
         std::{
@@ -261,9 +347,7 @@ pub(crate) mod external {
                 working_bank,
             } = self.sharable_banks.load();
             // Prefer the leader bank over the highest working fork when leader.
-            let working_bank = active_leader_state(&self.shared_leader_state)
-                .and_then(|leader_state| leader_state.working_bank().cloned())
-                .unwrap_or(working_bank);
+            let working_bank = preferred_working_bank(&self.shared_leader_state, working_bank);
 
             // SAFETY: Assumption that external scheduler does not pass messages with batch regions
             //         not pointing to valid regions in the allocator.
@@ -278,13 +362,12 @@ pub(crate) mod external {
                 core::iter::repeat_n(Self::initial_check_response(message.flags), batch.len())
                     .collect();
 
-            let sanitize_config = sanitize_config();
+            let mut error_counters = TransactionErrorMetrics::default();
             let mut status_transactions = ArrayVec::<_, MAX_TRANSACTIONS_PER_MESSAGE>::new();
             for (index, ((transaction_ptr, _), response)) in
                 batch.iter().zip(responses.iter_mut()).enumerate()
             {
-                let Ok(transaction) =
-                    SanitizedTransactionView::try_new_sanitized(transaction_ptr, &sanitize_config)
+                let Ok(transaction) = SanitizedTransactionView::try_new_sanitized(transaction_ptr)
                 else {
                     response.parsing_and_sanitization_flags |=
                         parsing_and_sanitization_flags::FAILED;
@@ -297,15 +380,22 @@ pub(crate) mod external {
                     message.flags,
                     &root_bank,
                     &working_bank,
-                )? && message.flags & check_message_flags::STATUS_CHECKS != 0
-                {
-                    status_transactions.push((index, transaction));
+                )? {
+                    if message.flags & check_message_flags::AGE_NONCE_CHECKS != 0 {
+                        Self::check_age_nonce(
+                            &transaction,
+                            response,
+                            &working_bank,
+                            &mut error_counters,
+                        );
+                    }
+                    if message.flags & check_message_flags::STATUS_CACHE_CHECKS != 0 {
+                        status_transactions.push((index, transaction));
+                    }
                 }
             }
 
-            if message.flags & check_message_flags::STATUS_CHECKS != 0 {
-                Self::check_status_checks(&status_transactions, &mut responses, &working_bank);
-            }
+            Self::check_status_cache(&status_transactions, &mut responses, &working_bank);
 
             let responses = resolve_responses_from_iter(&self.allocator, responses.into_iter())
                 .ok_or(ExternalCheckWorkerError::AllocationFailure)?;
@@ -361,7 +451,8 @@ pub(crate) mod external {
 
             if flags
                 & (check_message_flags::CALCULATE_SCHEDULING_DETAILS
-                    | check_message_flags::STATUS_CHECKS)
+                    | check_message_flags::STATUS_CACHE_CHECKS
+                    | check_message_flags::AGE_NONCE_CHECKS)
                 == 0
             {
                 return Ok(None);
@@ -382,7 +473,7 @@ pub(crate) mod external {
                 Self::check_scheduling_details(&transaction, response, working_bank);
             }
 
-            // Status checks still apply when scheduling details failed.
+            // Status and age checks still apply when scheduling details failed.
             Ok(Some(transaction))
         }
 
@@ -442,11 +533,18 @@ pub(crate) mod external {
         }
 
         fn initial_check_response(flags: u16) -> CheckResponse {
-            let initial_status_check_flags = if flags & check_message_flags::STATUS_CHECKS != 0 {
-                status_check_flags::REQUESTED
-            } else {
-                0
-            };
+            let initial_status_cache_check_flags =
+                if flags & check_message_flags::STATUS_CACHE_CHECKS != 0 {
+                    status_cache_check_flags::REQUESTED
+                } else {
+                    0
+                };
+            let initial_age_nonce_check_flags =
+                if flags & check_message_flags::AGE_NONCE_CHECKS != 0 {
+                    age_nonce_check_flags::REQUESTED
+                } else {
+                    0
+                };
             let initial_fee_payer_balance_flags =
                 if flags & check_message_flags::LOAD_FEE_PAYER_BALANCE != 0 {
                     fee_payer_balance_flags::REQUESTED
@@ -468,10 +566,11 @@ pub(crate) mod external {
 
             CheckResponse {
                 parsing_and_sanitization_flags: 0,
-                status_check_flags: initial_status_check_flags,
+                status_cache_check_flags: initial_status_cache_check_flags,
                 fee_payer_balance_flags: initial_fee_payer_balance_flags,
                 resolve_flags: initial_resolve_flags,
                 scheduling_details_flags: initial_scheduling_details_flags,
+                age_nonce_check_flags: initial_age_nonce_check_flags,
                 included_slot: 0,
                 transaction_fee: 0,
                 prioritization_fee: 0,
@@ -495,7 +594,8 @@ pub(crate) mod external {
         }
 
         fn validate_message_flags(flags: u16) -> bool {
-            const ALLOWED_CHECK_FLAGS: u16 = check_message_flags::STATUS_CHECKS
+            const ALLOWED_CHECK_FLAGS: u16 = check_message_flags::STATUS_CACHE_CHECKS
+                | check_message_flags::AGE_NONCE_CHECKS
                 | check_message_flags::LOAD_FEE_PAYER_BALANCE
                 | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
                 | check_message_flags::CALCULATE_SCHEDULING_DETAILS;
@@ -510,7 +610,7 @@ pub(crate) mod external {
         ) {
             response.fee_payer_balance_flags |= fee_payer_balance_flags::PERFORMED;
             response.fee_payer_balance = working_bank
-                .get_account_with_fixed_root(transaction.fee_payer())
+                .get_account_if(transaction.fee_payer(), fee_payer_load_filter)
                 .map(|account| account.lamports())
                 .unwrap_or(0);
             response.balance_slot = working_bank.slot();
@@ -546,47 +646,55 @@ pub(crate) mod external {
             response.allocated_accounts_data_size = cost.allocated_accounts_data_size();
         }
 
-        fn check_status_checks(
+        fn check_age_nonce(
+            transaction: &Tx,
+            response: &mut CheckResponse,
+            working_bank: &Bank,
+            error_counters: &mut TransactionErrorMetrics,
+        ) {
+            response.age_nonce_check_flags |= age_nonce_check_flags::PERFORMED;
+            match working_bank.check_transaction_without_status_cache(
+                transaction,
+                working_bank.max_processing_age(),
+                error_counters,
+            ) {
+                Ok(Some(_)) => {
+                    response.age_nonce_check_flags |= age_nonce_check_flags::VALIDATED_NONCE;
+                }
+                Err(TransactionError::BlockhashNotFound) => {
+                    response.age_nonce_check_flags |=
+                        if transaction.get_durable_nonce(true).is_some() {
+                            age_nonce_check_flags::INVALID_NONCE
+                        } else {
+                            age_nonce_check_flags::TOO_OLD
+                        };
+                }
+                Err(TransactionError::UnsupportedVersion) => {
+                    response.age_nonce_check_flags |= age_nonce_check_flags::UNSUPPORTED_VERSION;
+                }
+                _ => {}
+            }
+        }
+
+        fn check_status_cache(
             transactions: &[(usize, Tx)],
             responses: &mut [CheckResponse],
             working_bank: &Bank,
         ) {
-            let txs: ArrayVec<_, MAX_TRANSACTIONS_PER_MESSAGE> = transactions
-                .iter()
-                .map(|(_, transaction)| transaction)
-                .collect();
-            let mut error_counters = TransactionErrorMetrics::default();
-            let (status_check_results, included_slots) = working_bank
-                .check_transactions_external::<Tx>(
-                    &txs,
-                    &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE][..txs.len()],
-                    working_bank.max_processing_age(),
-                    true,
-                    &mut error_counters,
-                );
-            let included_slots = included_slots.expect("requested to collect processed slots");
+            if transactions.is_empty() {
+                return;
+            }
 
-            for (((response_index, _), status_check_result), included_slot) in transactions
-                .iter()
-                .zip(status_check_results)
-                .zip(included_slots)
-            {
-                let check_response = &mut responses[*response_index];
-                check_response.status_check_flags |= status_check_flags::PERFORMED;
-                match status_check_result {
-                    Err(TransactionError::BlockhashNotFound) => {
-                        check_response.status_check_flags |= status_check_flags::TOO_OLD;
-                    }
-                    Err(TransactionError::AlreadyProcessed) => {
-                        check_response.status_check_flags |= status_check_flags::ALREADY_PROCESSED;
-                        check_response.included_slot =
-                            included_slot.expect("included_slot must be set for already processed");
-                    }
-                    Err(TransactionError::UnsupportedVersion) => {
-                        check_response.status_check_flags |=
-                            status_check_flags::UNSUPPORTED_VERSION;
-                    }
-                    _ => {}
+            let included_slots = working_bank.get_processed_slots_from_status_cache(
+                transactions.iter().map(|(_, transaction)| transaction),
+            );
+            for ((response_index, _), included_slot) in transactions.iter().zip(included_slots) {
+                let response = &mut responses[*response_index];
+                response.status_cache_check_flags |= status_cache_check_flags::PERFORMED;
+                if let Some(included_slot) = included_slot {
+                    response.status_cache_check_flags |=
+                        status_cache_check_flags::ALREADY_PROCESSED;
+                    response.included_slot = included_slot;
                 }
             }
         }
@@ -601,23 +709,6 @@ pub(crate) mod external {
             for (index, pubkey) in loaded_addresses.enumerate() {
                 unsafe { dest.add(index).write(*pubkey) };
             }
-        }
-    }
-
-    /// Returns an active leader state if available, otherwise None.
-    fn active_leader_state(
-        shared_leader_state: &SharedLeaderState,
-    ) -> Option<arc_swap::Guard<Arc<LeaderState>>> {
-        let guard = shared_leader_state.load();
-        if guard
-            .as_ref()
-            .working_bank()
-            .map(|bank| bank.is_complete())
-            .unwrap_or(true)
-        {
-            None
-        } else {
-            Some(guard)
         }
     }
 
@@ -789,15 +880,17 @@ pub(crate) mod external {
             let logon = ClientLogon {
                 worker_count: 1,
                 check_worker_count: 1,
+                simulate_worker_count: 0,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
                 progress_tracker_capacity: 16,
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
-                flags: 0,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
+                pack_to_simulate_worker_capacity: 0,
+                simulate_worker_to_pack_capacity: 0,
             };
             let (_agave_session, client_session) = setup_local_session(logon).unwrap();
             let allocator = client_session.allocator;
@@ -847,7 +940,7 @@ pub(crate) mod external {
             let mut test_frame = setup_check_worker_test_frame();
 
             test_frame.send_message(PackToCheckWorkerMessage {
-                flags: check_message_flags::STATUS_CHECKS,
+                flags: check_message_flags::STATUS_CACHE_CHECKS,
                 batch: SharableTransactionBatchRegion {
                     num_transactions: 0,
                     transactions_offset: 0,
@@ -886,8 +979,10 @@ pub(crate) mod external {
         }
 
         #[test_case(check_message_flags::LOAD_FEE_PAYER_BALANCE; "balance_only")]
-        #[test_case(check_message_flags::STATUS_CHECKS; "status_only")]
-        #[test_case(check_message_flags::STATUS_CHECKS | check_message_flags::LOAD_FEE_PAYER_BALANCE; "both")]
+        #[test_case(check_message_flags::STATUS_CACHE_CHECKS; "status_only")]
+        #[test_case(check_message_flags::AGE_NONCE_CHECKS; "age_nonce_only")]
+        #[test_case(check_message_flags::STATUS_CACHE_CHECKS | check_message_flags::AGE_NONCE_CHECKS; "both_checks")]
+        #[test_case(check_message_flags::STATUS_CACHE_CHECKS | check_message_flags::AGE_NONCE_CHECKS | check_message_flags::LOAD_FEE_PAYER_BALANCE; "all")]
         fn test_happy_path(flags: u16) {
             let mut test_frame = setup_check_worker_test_frame();
             let fee_payer = Keypair::new();
@@ -913,13 +1008,21 @@ pub(crate) mod external {
             assert_eq!(response.processed_code, processed_codes::PROCESSED);
             let responses = test_frame.check_responses(&response.responses);
             assert_eq!(responses.len(), 1);
-            if flags & check_message_flags::STATUS_CHECKS != 0 {
+            if flags & check_message_flags::STATUS_CACHE_CHECKS != 0 {
                 assert_eq!(
-                    responses[0].status_check_flags,
-                    status_check_flags::REQUESTED | status_check_flags::PERFORMED
+                    responses[0].status_cache_check_flags,
+                    status_cache_check_flags::REQUESTED | status_cache_check_flags::PERFORMED
                 );
             } else {
-                assert_eq!(responses[0].status_check_flags, 0);
+                assert_eq!(responses[0].status_cache_check_flags, 0);
+            }
+            if flags & check_message_flags::AGE_NONCE_CHECKS != 0 {
+                assert_eq!(
+                    responses[0].age_nonce_check_flags,
+                    age_nonce_check_flags::REQUESTED | age_nonce_check_flags::PERFORMED
+                );
+            } else {
+                assert_eq!(responses[0].age_nonce_check_flags, 0);
             }
             if flags & check_message_flags::LOAD_FEE_PAYER_BALANCE != 0 {
                 assert_eq!(
@@ -962,7 +1065,8 @@ pub(crate) mod external {
                 wincode::serialize(&translation_failure).unwrap(),
                 test_serialized_transaction(Hash::new_unique()), // Unknown blockhash.
             ]);
-            let mut flags = check_message_flags::STATUS_CHECKS
+            let mut flags = check_message_flags::STATUS_CACHE_CHECKS
+                | check_message_flags::AGE_NONCE_CHECKS
                 | check_message_flags::LOAD_FEE_PAYER_BALANCE
                 | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES;
             if check_scheduling {
@@ -989,7 +1093,14 @@ pub(crate) mod external {
                 fee_payer_balance_flags::REQUESTED
             );
             assert_eq!(malformed.resolve_flags, resolve_flags::REQUESTED);
-            assert_eq!(malformed.status_check_flags, status_check_flags::REQUESTED);
+            assert_eq!(
+                malformed.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED
+            );
+            assert_eq!(
+                malformed.age_nonce_check_flags,
+                age_nonce_check_flags::REQUESTED
+            );
 
             assert_eq!(untranslated.parsing_and_sanitization_flags, 0);
             assert_eq!(
@@ -998,8 +1109,12 @@ pub(crate) mod external {
             );
             assert_eq!(untranslated.fee_payer_balance, 123_456);
             assert_eq!(
-                untranslated.status_check_flags,
-                status_check_flags::REQUESTED
+                untranslated.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED
+            );
+            assert_eq!(
+                untranslated.age_nonce_check_flags,
+                age_nonce_check_flags::REQUESTED
             );
             if check_scheduling {
                 assert_eq!(
@@ -1023,10 +1138,14 @@ pub(crate) mod external {
                 resolve_flags::REQUESTED | resolve_flags::PERFORMED
             );
             assert_eq!(
-                expired.status_check_flags,
-                status_check_flags::REQUESTED
-                    | status_check_flags::PERFORMED
-                    | status_check_flags::TOO_OLD
+                expired.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED | status_cache_check_flags::PERFORMED
+            );
+            assert_eq!(
+                expired.age_nonce_check_flags,
+                age_nonce_check_flags::REQUESTED
+                    | age_nonce_check_flags::PERFORMED
+                    | age_nonce_check_flags::TOO_OLD
             );
         }
 
@@ -1135,7 +1254,7 @@ pub(crate) mod external {
             test_frame.send_message(PackToCheckWorkerMessage {
                 flags: check_message_flags::CALCULATE_SCHEDULING_DETAILS
                     | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
-                    | check_message_flags::STATUS_CHECKS,
+                    | check_message_flags::STATUS_CACHE_CHECKS,
                 batch: batch.region,
             });
             test_frame.iterate().unwrap();
@@ -1151,8 +1270,8 @@ pub(crate) mod external {
                     | scheduling_details_flags::FAILED
             );
             assert_eq!(
-                responses[0].status_check_flags,
-                status_check_flags::REQUESTED | status_check_flags::PERFORMED
+                responses[0].status_cache_check_flags,
+                status_cache_check_flags::REQUESTED | status_cache_check_flags::PERFORMED
             );
             assert_eq!(
                 responses[0].resolve_flags,
@@ -1207,7 +1326,7 @@ pub(crate) mod external {
                 flags: check_message_flags::LOAD_FEE_PAYER_BALANCE
                     | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
                     | check_message_flags::CALCULATE_SCHEDULING_DETAILS
-                    | check_message_flags::STATUS_CHECKS,
+                    | check_message_flags::STATUS_CACHE_CHECKS,
                 batch: batch.region,
             });
             frame.iterate().unwrap();
@@ -1231,7 +1350,10 @@ pub(crate) mod external {
                     | scheduling_details_flags::PERFORMED
                     | scheduling_details_flags::FAILED
             );
-            assert_eq!(response.status_check_flags, status_check_flags::REQUESTED);
+            assert_eq!(
+                response.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED
+            );
         }
 
         #[test]

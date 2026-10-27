@@ -2,7 +2,7 @@ use {
     crate::bank::Bank,
     agave_bls_cert_verify::cert_verify::{Error as BlsCertVerifyError, verify_base2},
     agave_votor_messages::{
-        consensus_message::{Block, BlockId},
+        consensus_message::Block,
         reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
         vote::Vote,
         wire::get_vote_payload_to_sign,
@@ -114,12 +114,13 @@ impl ValidatedRewardCert {
                 skip.to_bitmap(),
                 max_validators,
                 &mut rank_map,
+                None,
             )?
         }
         if let Some(notar) = notar {
             let vote = Vote::new_notarization_vote(Block {
                 slot: notar.slot,
-                block_id: BlockId::from(notar.block_id),
+                block_id: notar.block_id,
             });
             let payload = get_vote_payload_to_sign(vote, shred_version);
             verify_base2(
@@ -128,6 +129,7 @@ impl ValidatedRewardCert {
                 notar.bitmap(),
                 max_validators,
                 rank_map,
+                None,
             )?
         }
         if validators.is_empty() {
@@ -189,7 +191,8 @@ mod tests {
         crate::genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         agave_votor_messages::{
             certificate::{CertSignature, GenesisCert},
-            consensus_message::VoteMessage,
+            consensus_message::{BlockId, VoteMessage},
+            stake::NonZeroStake,
         },
         bitvec::vec::BitVec,
         rand::Rng,
@@ -200,7 +203,7 @@ mod tests {
         },
         solana_leader_schedule::SlotLeader,
         solana_signer_store::encode_base2,
-        std::{collections::HashMap, num::NonZero},
+        std::collections::HashMap,
     };
 
     fn new_vote_msg(
@@ -215,7 +218,7 @@ mod tests {
             vote,
             signature,
             rank: rank.try_into().unwrap(),
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         }
     }
 
@@ -336,8 +339,7 @@ mod tests {
             .collect::<Vec<_>>();
         let (signature, bitmap) = build_sig_bitmap(&notar_votes);
         let notar_reward_cert =
-            NotarRewardCertificate::try_new(reward_slot, block_id.to_hash(), signature, bitmap)
-                .unwrap();
+            NotarRewardCertificate::try_new(reward_slot, block_id, signature, bitmap).unwrap();
 
         let skip_vote = Vote::new_skip_vote(reward_slot);
         let skip_votes = (num_notar_validators..num_validators)

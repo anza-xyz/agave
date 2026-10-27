@@ -24,7 +24,6 @@ agave-unstable-api = []
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "dep:rand",
-    "dep:bincode",
     "dep:solana-bls-signatures",
     "solana-bls-signatures/solana-signer-derive",
 ]
@@ -39,13 +38,11 @@ stable-abi = [
 ]
 
 [dependencies]
-bincode = { workspace = true, optional = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { version = "0.9.4", optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true, features = ["serde", "wincode"] }
-solana-bincode = { workspace = true }
 solana-bls-signatures = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
@@ -54,7 +51,7 @@ solana-hash = { workspace = true, features = ["copy"] }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
-solana-packet = { workspace = true }
+solana-packet = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-serialize-utils = { workspace = true }
@@ -62,14 +59,13 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
-solana-vote-interface = { workspace = true, features = ["bincode", "wincode"] }
+solana-vote-interface = { workspace = true, features = ["serde", "wincode"] }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
 arbitrary = { workspace = true }
 bencher = { workspace = true }
-bincode = { workspace = true }
 rand = { workspace = true }
 solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
@@ -77,7 +73,7 @@ solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
-solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
+solana-vote-interface = { workspace = true, features = ["dev-context-only-utils"] }
 
 [[bench]]
 name = "vote_account"

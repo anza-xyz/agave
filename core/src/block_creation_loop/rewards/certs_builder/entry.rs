@@ -120,6 +120,7 @@ mod tests {
         super::*,
         agave_votor_messages::{
             consensus_message::{Block, BlockId},
+            stake::NonZeroStake,
             vote::Vote,
             wire::{VotePayloadToSign, get_vote_payload_to_sign},
         },
@@ -134,7 +135,7 @@ mod tests {
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         solana_signer_store::{Decoded, decode},
-        std::{collections::HashMap, num::NonZero},
+        std::collections::HashMap,
     };
 
     pub(crate) fn validate_bitmap(bitmap: &[u8], num_set: usize, max_len: usize) {
@@ -155,8 +156,8 @@ mod tests {
         let serialized = get_vote_payload_to_sign(vote, shred_version);
         let signature = keypairs[rank].sign(&serialized).into();
         let stake = match stakes {
-            None => NonZero::new(123).unwrap(),
-            Some(stakes) => NonZero::new(stakes[rank]).unwrap(),
+            None => NonZeroStake::new(123).unwrap(),
+            Some(stakes) => NonZeroStake::new(stakes[rank]).unwrap(),
         };
         let vote_msg = VoteMessage {
             vote,
@@ -181,7 +182,7 @@ mod tests {
             ranks_and_stakes.iter().map(|(rank, stake)| {
                 (
                     *rank,
-                    NonZero::new(*stake).expect("test stake must be nonzero"),
+                    NonZeroStake::new(*stake).expect("test stake must be nonzero"),
                 )
             }),
             SignatureProjective::identity(),
@@ -300,7 +301,7 @@ mod tests {
         assert_eq!(resp.skip, None);
         let notar = resp.notar.unwrap();
         assert_eq!(notar.slot, slot);
-        assert_eq!(notar.block_id, blockid1.to_hash());
+        assert_eq!(notar.block_id, blockid1);
         validate_bitmap(notar.bitmap(), 3, 5);
     }
 
@@ -333,7 +334,7 @@ mod tests {
 
         let resp = entry.build_certs(slot).unwrap();
         assert!(resp.skip.is_none());
-        assert_eq!(resp.notar.unwrap().block_id, block_id.to_hash());
+        assert_eq!(resp.notar.unwrap().block_id, block_id);
         assert_eq!(resp.validators, notar_validators);
     }
 

@@ -46,7 +46,6 @@ pub(crate) struct ConsumeWorker<Tx> {
 
 impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn new(
-        id: u32,
         exit: Arc<AtomicBool>,
         consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
@@ -59,7 +58,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             consumer,
             consumed_sender,
             shared_leader_state,
-            metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
+            metrics: Arc::new(ConsumeWorkerMetrics::new()),
         }
     }
 
@@ -125,6 +124,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             &work.transactions,
             &work.max_ages,
             &ExecutionFlags {
+                simulate: false,
                 drop_on_failure: false,
                 all_or_nothing: false,
             },
@@ -199,15 +199,11 @@ pub(crate) mod external {
             responses_region::execution_responses_from_iter,
             transaction_ptr::{TransactionPtr, TransactionPtrBatch},
         },
-        agave_transaction_view::{
-            resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
-        },
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         arrayvec::ArrayVec,
         solana_cost_model::cost_model::CostModel,
         solana_runtime::bank::Bank,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         std::num::NonZeroUsize,
     };
 
@@ -221,8 +217,7 @@ pub(crate) mod external {
 
     pub(crate) struct ExternalWorker {
         exit: Arc<AtomicBool>,
-        consumer: Consumer,
-        sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
+        transaction_consumer: Consumer,
         allocator: rts_alloc::Allocator,
 
         shared_leader_state: SharedLeaderState,
@@ -230,6 +225,9 @@ pub(crate) mod external {
     }
 
     type Tx = RuntimeTransaction<ResolvedTransactionView<TransactionPtr>>;
+    type MessageResult = Result<(bool, ExecutionWorkerToPackMessage), ExternalConsumeWorkerError>;
+
+    #[derive(Debug)]
     enum IterationResult {
         ProcessedMessage,
         Idle,
@@ -237,20 +235,17 @@ pub(crate) mod external {
 
     impl ExternalWorker {
         pub fn new(
-            id: u32,
             exit: Arc<AtomicBool>,
-            consumer: Consumer,
-            sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
+            transaction_consumer: Consumer,
             allocator: rts_alloc::Allocator,
             shared_leader_state: SharedLeaderState,
         ) -> Self {
             Self {
                 exit,
-                consumer,
-                sender,
+                transaction_consumer,
                 allocator,
                 shared_leader_state,
-                metrics: Arc::new(ConsumeWorkerMetrics::new(id)),
+                metrics: Arc::new(ConsumeWorkerMetrics::new()),
             }
         }
 
@@ -258,9 +253,10 @@ pub(crate) mod external {
             self.metrics.clone()
         }
 
-        pub fn run(
+        pub fn run_execution_worker(
             mut self,
             mut receiver: shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
+            mut sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
         ) -> Result<(), ExternalConsumeWorkerError> {
             let mut should_drain_executes = false;
             let mut did_work = false;
@@ -268,7 +264,11 @@ pub(crate) mod external {
             let mut sleep_duration = STARTING_SLEEP_DURATION;
 
             while !self.exit.load(Ordering::Relaxed) {
-                match self.iterate(&mut receiver, &mut should_drain_executes)? {
+                match self.iterate_execution(
+                    &mut receiver,
+                    &mut sender,
+                    &mut should_drain_executes,
+                )? {
                     IterationResult::ProcessedMessage => {
                         did_work = true;
                     }
@@ -288,9 +288,10 @@ pub(crate) mod external {
             Ok(())
         }
 
-        fn iterate(
+        fn iterate_execution(
             &mut self,
             receiver: &mut shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
+            sender: &mut shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
             should_drain_executes: &mut bool,
         ) -> Result<IterationResult, ExternalConsumeWorkerError> {
             self.allocator.clean_remote_frees();
@@ -303,25 +304,32 @@ pub(crate) mod external {
             *should_drain_executes = false;
             for message in messages {
                 // If the bank is unavailable, drain executes for the remainder of the batch.
-                *should_drain_executes |= self.process_message(&message, *should_drain_executes)?;
+                let (drain, response) =
+                    self.process_message(&message, *should_drain_executes, false)?;
+                *should_drain_executes |= drain;
+                sender
+                    .try_write(response)
+                    .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
             }
 
             Ok(IterationResult::ProcessedMessage)
         }
 
-        /// Return true if fetching a bank for execution timed out.
+        /// Return whether to drain the rest of the batch and the response message.
         fn process_message(
             &mut self,
             message: &PackToExecutionWorkerMessage,
             should_drain_executes: bool,
-        ) -> Result<bool, ExternalConsumeWorkerError> {
+            simulate: bool,
+        ) -> MessageResult {
             if !Self::validate_message(message) {
-                return self
-                    .return_unprocessed_message(
+                return Ok((
+                    false,
+                    self.return_unprocessed_message(
                         message,
                         agave_scheduler_bindings::processed_codes::INVALID,
-                    )
-                    .map(|()| false);
+                    ),
+                ));
             }
 
             self.metrics
@@ -329,15 +337,16 @@ pub(crate) mod external {
                 .num_messages_processed
                 .fetch_add(1, Ordering::Relaxed);
 
-            self.execute_batch(message, should_drain_executes)
+            self.execute_batch(message, should_drain_executes, simulate)
         }
 
-        /// Return true if fetching a bank for execution timed out.
+        /// Return whether to drain the rest of the batch and the response message.
         fn execute_batch(
             &mut self,
             message: &PackToExecutionWorkerMessage,
             should_drain_executes: bool,
-        ) -> Result<bool, ExternalConsumeWorkerError> {
+            simulate: bool,
+        ) -> MessageResult {
             if should_drain_executes {
                 return self
                     .return_not_included_with_reason(
@@ -345,7 +354,7 @@ pub(crate) mod external {
                         not_included_reasons::BANK_NOT_AVAILABLE,
                         0,
                     )
-                    .map(|()| true);
+                    .map(|response| (true, response));
             }
 
             let Some(leader_state) = active_leader_state(&self.shared_leader_state) else {
@@ -355,19 +364,20 @@ pub(crate) mod external {
                         not_included_reasons::BANK_NOT_AVAILABLE,
                         0,
                     )
-                    .map(|()| true);
+                    .map(|response| (true, response));
             };
 
             let bank = leader_state
                 .working_bank()
                 .expect("active_leader_state should only return an active bank");
             if bank.slot() > message.max_working_slot {
-                return self
-                    .return_unprocessed_message(
+                return Ok((
+                    false,
+                    self.return_unprocessed_message(
                         message,
                         agave_scheduler_bindings::processed_codes::MAX_WORKING_SLOT_EXCEEDED,
-                    )
-                    .map(|()| false);
+                    ),
+                ));
             }
 
             // SAFETY: Assumption that external scheduler does not pass messages with batch regions
@@ -383,23 +393,26 @@ pub(crate) mod external {
 
             // Enforce all or nothing on translation_results.
             let execution_flags = ExecutionFlags {
+                simulate,
                 drop_on_failure: message.flags & execution_message_flags::DROP_ON_FAILURE != 0,
                 all_or_nothing: message.flags & execution_message_flags::ALL_OR_NOTHING != 0,
             };
             if execution_flags.all_or_nothing && translation_results.len() != transactions.len() {
-                self.send_execution_response(
+                let response = self.execution_response(
                     message,
                     Self::all_or_nothing_translate_iterator(&translation_results, bank.slot()),
                 )?;
 
-                return Ok(false);
+                return Ok((false, response));
             }
-            let output = self.consumer.process_and_record_aged_transactions(
-                bank,
-                &transactions,
-                &max_ages,
-                &execution_flags,
-            );
+            let output = self
+                .transaction_consumer
+                .process_and_record_aged_transactions(
+                    bank,
+                    &transactions,
+                    &max_ages,
+                    &execution_flags,
+                );
 
             self.metrics.update_for_consume(&output);
             self.metrics.has_data.store(true, Ordering::Relaxed);
@@ -416,10 +429,10 @@ pub(crate) mod external {
                         not_included_reasons::BANK_NOT_AVAILABLE,
                         bank.slot(),
                     )
-                    .map(|()| true);
+                    .map(|response| (true, response));
             };
 
-            self.send_execution_response(
+            let response = self.execution_response(
                 message,
                 Self::consume_response_iterator(
                     &translation_results,
@@ -430,27 +443,21 @@ pub(crate) mod external {
                 ),
             )?;
 
-            Ok(false)
+            Ok((false, response))
         }
 
-        fn send_execution_response(
-            &mut self,
+        fn execution_response(
+            &self,
             message: &PackToExecutionWorkerMessage,
             iter: impl ExactSizeIterator<Item = ExecutionResponse>,
-        ) -> Result<(), ExternalConsumeWorkerError> {
+        ) -> Result<ExecutionWorkerToPackMessage, ExternalConsumeWorkerError> {
             let responses = execution_responses_from_iter(&self.allocator, iter)
                 .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
-            let response = ExecutionWorkerToPackMessage {
+            Ok(ExecutionWorkerToPackMessage {
                 batch: message.batch,
                 processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                 responses,
-            };
-
-            self.sender
-                .try_write(response)
-                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            Ok(())
+            })
         }
 
         fn all_or_nothing_translate_iterator(
@@ -511,11 +518,11 @@ pub(crate) mod external {
         /// Return all transactions in the batch as not included with the provided
         /// reason.
         fn return_not_included_with_reason(
-            &mut self,
+            &self,
             message: &PackToExecutionWorkerMessage,
             reason: u8,
             execution_slot: u64,
-        ) -> Result<(), ExternalConsumeWorkerError> {
+        ) -> Result<ExecutionWorkerToPackMessage, ExternalConsumeWorkerError> {
             let response_region = execution_responses_from_iter(
                 &self.allocator,
                 (0..message.batch.num_transactions).map(|_| ExecutionResponse {
@@ -527,44 +534,30 @@ pub(crate) mod external {
             )
             .ok_or(ExternalConsumeWorkerError::AllocationFailure)?;
 
-            let response_message = ExecutionWorkerToPackMessage {
+            Ok(ExecutionWorkerToPackMessage {
                 batch: message.batch,
                 processed_code: agave_scheduler_bindings::processed_codes::PROCESSED,
                 responses: response_region,
-            };
-
-            // Should de-allocate the memory, but this is a non-recoverable
-            // error and so it's not needed.
-            self.sender
-                .try_write(response_message)
-                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            Ok(())
+            })
         }
 
         fn return_unprocessed_message(
-            &mut self,
+            &self,
             message: &PackToExecutionWorkerMessage,
             processed_code: u8,
-        ) -> Result<(), ExternalConsumeWorkerError> {
+        ) -> ExecutionWorkerToPackMessage {
             assert_ne!(
                 processed_code,
                 agave_scheduler_bindings::processed_codes::PROCESSED
             );
-            let response = ExecutionWorkerToPackMessage {
+            ExecutionWorkerToPackMessage {
                 batch: message.batch,
                 processed_code,
                 responses: ExecutionResponseRegion {
                     num_transaction_responses: 0,
                     transaction_responses_offset: 0,
                 },
-            };
-
-            self.sender
-                .try_write(response)
-                .map_err(|_| ExternalConsumeWorkerError::SenderDisconnected)?;
-
-            Ok(())
+            }
         }
 
         /// Translate batch of transactions into usable
@@ -576,7 +569,6 @@ pub(crate) mod external {
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
         ) {
-            let sanitize_config = sanitize_config();
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = ArrayVec::new();
@@ -587,7 +579,6 @@ pub(crate) mod external {
                     transaction_ptr,
                     bank,
                     transaction_account_lock_limit,
-                    &sanitize_config,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -605,23 +596,18 @@ pub(crate) mod external {
             transaction_ptr: TransactionPtr,
             bank: &Bank,
             transaction_account_lock_limit: usize,
-            sanitize_config: &SanitizeConfig,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
-            translate_to_runtime_view(
-                transaction_ptr,
-                bank,
-                transaction_account_lock_limit,
-                sanitize_config,
+            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limit).map(
+                |(view, deactivation_slot)| {
+                    (
+                        view,
+                        MaxAge {
+                            sanitized_epoch: bank.epoch(),
+                            alt_invalidation_slot: deactivation_slot,
+                        },
+                    )
+                },
             )
-            .map(|(view, deactivation_slot)| {
-                (
-                    view,
-                    MaxAge {
-                        sanitized_epoch: bank.epoch(),
-                        alt_invalidation_slot: deactivation_slot,
-                    },
-                )
-            })
         }
 
         /// Returns `true` if a message is valid and can be processed.
@@ -682,6 +668,51 @@ pub(crate) mod external {
                 _ => not_included_reasons::SANITIZE_FAILURE,
             }
         }
+
+        pub fn run_simulation_worker(
+            mut self,
+            receiver: shaq::mpmc::Consumer<PackToExecutionWorkerMessage>,
+            sender: shaq::mpmc::Producer<ExecutionWorkerToPackMessage>,
+        ) -> Result<(), ExternalConsumeWorkerError> {
+            while !self.exit.load(Ordering::Relaxed) {
+                match self.iterate_simulation(&receiver, &sender)? {
+                    IterationResult::ProcessedMessage => {}
+                    IterationResult::Idle => std::thread::yield_now(),
+                }
+            }
+            Ok(())
+        }
+
+        fn iterate_simulation(
+            &mut self,
+            receiver: &shaq::mpmc::Consumer<PackToExecutionWorkerMessage>,
+            sender: &shaq::mpmc::Producer<ExecutionWorkerToPackMessage>,
+        ) -> Result<IterationResult, ExternalConsumeWorkerError> {
+            self.allocator.clean_remote_frees();
+            let Some(message) = receiver.try_read() else {
+                return Ok(IterationResult::Idle);
+            };
+            let (_, response) = self.process_message(&message, false, true)?;
+            self.send_simulation_response(sender, response);
+            Ok(IterationResult::ProcessedMessage)
+        }
+
+        fn send_simulation_response(
+            &self,
+            sender: &shaq::mpmc::Producer<ExecutionWorkerToPackMessage>,
+            mut response: ExecutionWorkerToPackMessage,
+        ) {
+            loop {
+                match sender.try_write(response) {
+                    Ok(()) => return,
+                    Err(unsent) => response = unsent,
+                }
+                if self.exit.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::yield_now();
+            }
+        }
     }
 
     #[cfg(test)]
@@ -690,7 +721,10 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
-            agave_scheduler_handshake::{ClientLogon, setup_local_session},
+            agave_scheduler_handshake::{
+                AgaveSimulateWorkerSession, ClientLogon, ClientSimulateWorkerSession,
+                setup_local_session,
+            },
             agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
             crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
@@ -705,7 +739,10 @@ pub(crate) mod external {
             solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
-            std::sync::{RwLock, atomic::AtomicBool},
+            std::{
+                assert_matches,
+                sync::{RwLock, atomic::AtomicBool},
+            },
             test_case::test_case,
         };
 
@@ -727,7 +764,10 @@ pub(crate) mod external {
             shared_leader_state: SharedLeaderState,
             worker: ExternalWorker,
             receiver: shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
+            sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
             should_drain_executes: bool,
+            simulate_workers: Vec<AgaveSimulateWorkerSession>,
+            client_simulate_workers: Option<ClientSimulateWorkerSession>,
         }
 
         impl ExternalTestFrame {
@@ -750,10 +790,12 @@ pub(crate) mod external {
             }
 
             fn iterate(&mut self) -> Result<(), ExternalConsumeWorkerError> {
-                let result = self
-                    .worker
-                    .iterate(&mut self.receiver, &mut self.should_drain_executes)?;
-                assert!(matches!(result, IterationResult::ProcessedMessage));
+                let result = self.worker.iterate_execution(
+                    &mut self.receiver,
+                    &mut self.sender,
+                    &mut self.should_drain_executes,
+                )?;
+                assert_matches!(result, IterationResult::ProcessedMessage);
                 Ok(())
             }
 
@@ -874,15 +916,17 @@ pub(crate) mod external {
             let logon = ClientLogon {
                 worker_count: 1,
                 check_worker_count: 1,
+                simulate_worker_count: 1,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
                 progress_tracker_capacity: 16,
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
-                flags: 0,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
+                pack_to_simulate_worker_capacity: 16,
+                simulate_worker_to_pack_capacity: 16,
             };
             let (mut agave_session, mut client_session) = setup_local_session(logon).unwrap();
             let agave_worker = agave_session.workers.pop().unwrap();
@@ -897,10 +941,8 @@ pub(crate) mod external {
             let exit = Arc::new(AtomicBool::new(false));
 
             let worker = ExternalWorker::new(
-                0,
                 exit.clone(),
                 consumer,
-                agave_worker.worker_to_pack,
                 agave_worker.allocator,
                 shared_leader_state.clone(),
             );
@@ -918,7 +960,10 @@ pub(crate) mod external {
                 shared_leader_state,
                 worker,
                 receiver: agave_worker.pack_to_worker,
+                sender: agave_worker.worker_to_pack,
                 should_drain_executes: false,
+                simulate_workers: agave_session.simulate_workers,
+                client_simulate_workers: client_session.simulate_workers,
             }
         }
 
@@ -961,6 +1006,7 @@ pub(crate) mod external {
             assert!(ExternalWorker::validate_message_flags(
                 execution_message_flags::DROP_ON_FAILURE | execution_message_flags::ALL_OR_NOTHING
             ));
+            assert!(!ExternalWorker::validate_message_flags(1 << 2));
             assert!(!ExternalWorker::validate_message_flags(1 << 15));
         }
 
@@ -980,7 +1026,6 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limit(),
-                        &sanitize_config(),
                     )
                     .ok()
                     .unwrap()
@@ -988,6 +1033,7 @@ pub(crate) mod external {
                 })
                 .collect::<Vec<_>>();
             let execution_flags = ExecutionFlags {
+                simulate: false,
                 drop_on_failure: false,
                 all_or_nothing: false,
             };
@@ -1082,7 +1128,6 @@ pub(crate) mod external {
                 &simple_tx[..],
                 &bank,
                 bank.get_transaction_account_lock_limit(),
-                &sanitize_config(),
             )
             .ok()
             .unwrap()
@@ -1090,6 +1135,7 @@ pub(crate) mod external {
             let commit_details =
                 CommitTransactionDetails::NotCommitted(TransactionError::CommitCancelled);
             let execution_flags = ExecutionFlags {
+                simulate: false,
                 drop_on_failure: false,
                 all_or_nothing,
             };
@@ -1395,6 +1441,162 @@ pub(crate) mod external {
             test_frame.free_batch(batch);
         }
 
+        #[test]
+        fn test_simulation_worker_uses_handshake_queues() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+            let agave_session = test_frame.simulate_workers.pop().unwrap();
+            let client_session = test_frame.client_simulate_workers.take().unwrap();
+            let (record_sender, _record_receiver) = record_channels(false);
+            let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+            let mut worker = ExternalWorker::new(
+                Arc::new(AtomicBool::new(false)),
+                Consumer::new(
+                    Committer::new(None, replay_vote_sender, None),
+                    TransactionRecorder::new(record_sender),
+                    None,
+                ),
+                agave_session.allocator,
+                test_frame.shared_leader_state.clone(),
+            );
+
+            client_session
+                .pack_to_simulate_worker
+                .try_write(PackToExecutionWorkerMessage {
+                    flags: 0,
+                    max_working_slot: test_frame.bank.slot(),
+                    batch: batch.region,
+                })
+                .unwrap();
+            assert_matches!(
+                worker
+                    .iterate_simulation(
+                        &agave_session.pack_to_simulate_worker,
+                        &agave_session.simulate_worker_to_pack,
+                    )
+                    .unwrap(),
+                IterationResult::ProcessedMessage
+            );
+
+            let response = client_session.simulate_worker_to_pack.try_read().unwrap();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_simulation_workers_handle_mpmc_backpressure_without_committing() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+
+            let (request_sender, request_receiver) = shaq::mpmc::pair(16).unwrap();
+            let (response_sender, response_receiver) = shaq::mpmc::pair(1).unwrap();
+            let make_worker = || {
+                let (record_sender, _record_receiver) = record_channels(false);
+                let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+                ExternalWorker::new(
+                    Arc::new(AtomicBool::new(false)),
+                    Consumer::new(
+                        Committer::new(None, replay_vote_sender, None),
+                        TransactionRecorder::new(record_sender),
+                        None,
+                    ),
+                    rts_alloc::Allocator::join_from_existing(&test_frame.allocator).unwrap(),
+                    test_frame.shared_leader_state.clone(),
+                )
+            };
+            let mut first_worker = make_worker();
+            let mut second_worker = make_worker();
+            let second_metrics = second_worker.metrics_handle();
+            let second_receiver = request_receiver.clone();
+            let second_sender = response_sender.clone();
+
+            assert_matches!(
+                first_worker
+                    .iterate_simulation(&request_receiver, &response_sender)
+                    .unwrap(),
+                IterationResult::Idle
+            );
+            for _ in 0..2 {
+                request_sender
+                    .try_write(PackToExecutionWorkerMessage {
+                        flags: 0,
+                        max_working_slot: test_frame.bank.slot(),
+                        batch: batch.region,
+                    })
+                    .unwrap();
+            }
+            assert_matches!(
+                first_worker
+                    .iterate_simulation(&request_receiver, &response_sender)
+                    .unwrap(),
+                IterationResult::ProcessedMessage
+            );
+            let (done_sender, done_receiver) = bounded(1);
+            let second_thread = std::thread::spawn(move || {
+                done_sender
+                    .send(second_worker.iterate_simulation(&second_receiver, &second_sender))
+                    .unwrap();
+            });
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while second_metrics
+                .count_metrics
+                .num_messages_processed
+                .load(Ordering::Relaxed)
+                == 0
+            {
+                assert!(Instant::now() < deadline, "second worker did not start");
+                std::thread::yield_now();
+            }
+            assert!(
+                done_receiver
+                    .recv_timeout(Duration::from_millis(10))
+                    .is_err()
+            );
+            let first_response = response_receiver.try_read().unwrap();
+            assert_matches!(
+                done_receiver
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap()
+                    .unwrap(),
+                IterationResult::ProcessedMessage
+            );
+            second_thread.join().unwrap();
+            let second_response = response_receiver.try_read().unwrap();
+
+            for response in [first_response, second_response] {
+                assert_eq!(response.processed_code, processed_codes::PROCESSED);
+                let responses = test_frame.execution_responses(&response.responses);
+                assert_eq!(responses.len(), 1);
+                assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+                assert!(responses[0].cost_units > 0);
+            }
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
+
+            test_frame.free_batch(batch);
+        }
+
         #[test_case(false; "strict_fee_payer")]
         #[test_case(true; "relaxed_fee_payer")]
         fn test_run_execute_mixed_batch_results(relax_fee_payer_constraint: bool) {
@@ -1439,7 +1641,7 @@ pub(crate) mod external {
             assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
             assert_eq!(
                 responses[1].not_included_reason,
-                not_included_reasons::ACCOUNT_NOT_FOUND
+                not_included_reasons::INVALID_ACCOUNT_FOR_FEE
             );
 
             test_frame.free_batch(batch);
@@ -1574,7 +1776,6 @@ fn backoff(idle_duration: Duration, sleep_duration: &Duration) -> Duration {
 /// since the consume worker thread is sleeping unless there is work to be
 /// done.
 pub(crate) struct ConsumeWorkerMetrics {
-    id: String,
     interval: AtomicInterval,
     has_data: AtomicBool,
 
@@ -1585,20 +1786,19 @@ pub(crate) struct ConsumeWorkerMetrics {
 
 impl ConsumeWorkerMetrics {
     /// Report and reset metrics iff the interval has elapsed and the worker did some work.
-    pub fn maybe_report_and_reset(&self) {
+    pub fn maybe_report_and_reset(&self, id: &str) {
         const REPORT_INTERVAL_MS: u64 = 20;
         if self.interval.should_update(REPORT_INTERVAL_MS)
             && self.has_data.swap(false, Ordering::Relaxed)
         {
-            self.count_metrics.report_and_reset(&self.id);
-            self.timing_metrics.report_and_reset(&self.id);
-            self.error_metrics.report_and_reset(&self.id);
+            self.count_metrics.report_and_reset(id);
+            self.timing_metrics.report_and_reset(id);
+            self.error_metrics.report_and_reset(id);
         }
     }
 
-    fn new(id: u32) -> Self {
+    fn new() -> Self {
         Self {
-            id: id.to_string(),
             interval: AtomicInterval::default(),
             has_data: AtomicBool::new(false),
             count_metrics: ConsumeWorkerCountMetrics::default(),
@@ -2155,7 +2355,6 @@ mod tests {
         let (consume_sender, consume_receiver) = bounded(1024);
         let (consumed_sender, consumed_receiver) = bounded(1024);
         let worker = ConsumeWorker::new(
-            0,
             Arc::new(AtomicBool::new(false)),
             consume_receiver,
             consumer,

@@ -137,6 +137,7 @@ impl EntryNotifierService {
 mod tests {
     use {
         super::*, crate::entry_notifier_interface::EntryNotifier,
+        agave_votor_messages::consensus_message::BlockId,
         solana_entry::block_component::BlockFooterV1, solana_hash::Hash, std::sync::Mutex,
     };
 
@@ -196,7 +197,7 @@ mod tests {
                 update_parent.slot,
                 update_parent.cleared_bank_id,
                 update_parent.parent_slot,
-                update_parent.parent_block_id,
+                update_parent.parent_block_id.to_hash(),
             ));
         }
     }
@@ -213,7 +214,7 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
 
         sender
             .send(EntryNotification::Entry {
@@ -257,7 +258,7 @@ mod tests {
                     index: 3,
                     starting_transaction_index: 7,
                 },
-                TestEvent::UpdateParent(42, BankId::new(9), 40, parent_block_id),
+                TestEvent::UpdateParent(42, BankId::new(9), 40, parent_block_id.to_hash()),
                 TestEvent::BlockFooter {
                     slot: 42,
                     bank_id: BankId::new(9),

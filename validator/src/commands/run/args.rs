@@ -4,18 +4,13 @@ use {
         cli::{DefaultArgs, hash_validator, port_range_validator, port_validator},
         commands::{FromClapArgMatches, Result},
     },
-    agave_snapshots::{SUPPORTED_ARCHIVE_COMPRESSION, SnapshotVersion},
-    bytesize::ByteSize,
     clap::{App, Arg, ArgMatches, values_t},
-    solana_accounts_db::utils::create_and_canonicalize_directory,
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
         input_validators::{
-            is_keypair_or_ask_keyword, is_non_zero, is_parsable, is_pow2, is_pubkey,
-            is_pubkey_or_keypair, is_slot, is_within_range, validate_cpu_ranges,
-            validate_maximum_full_snapshot_archives_to_retain,
-            validate_maximum_incremental_snapshot_archives_to_retain,
+            is_keypair_or_ask_keyword, is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot,
+            is_within_range,
         },
         keypair::SKIP_SEED_PHRASE_VALIDATION_ARG,
     },
@@ -38,12 +33,16 @@ const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
 pub mod account_secondary_indexes;
+pub(super) mod accounts_db_config;
 pub mod blockstore_options;
 pub mod json_rpc_config;
 pub mod pub_sub_config;
 pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
 pub mod send_transaction_config;
+pub(super) mod snapshot_config;
+pub(super) mod tpu_config;
+pub(super) mod xdp_config;
 
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
@@ -75,14 +74,6 @@ impl FromClapArgMatches for RunArgs {
                 clap::ErrorKind::ArgumentNotFound,
             ),
         )?);
-        // Canonicalize ledger path to avoid issues with symlink creation
-        let ledger_path =
-            create_and_canonicalize_directory(ledger_path.as_path()).map_err(|err| {
-                crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
-                    "failed to create and canonicalize ledger path '{}': {err}",
-                    ledger_path.display(),
-                )))
-            })?;
 
         let logfile = matches
             .value_of("logfile")
@@ -263,20 +254,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("snapshots")
-            .long("snapshots")
-            .value_name("DIR")
-            .takes_value(true)
-            .help("Use DIR as the base location for snapshots.")
-            .long_help(
-                "Use DIR as the base location for snapshots. Snapshot archives will use DIR \
-                 unless --full-snapshot-archive-path or --incremental-snapshot-archive-path is \
-                 specified. Additionally, a subdirectory named \"snapshots\" will be created in \
-                 DIR. This subdirectory holds internal files/data that are used when generating \
-                 snapshot archives. [default: --ledger value]",
-            ),
-    )
-    .arg(
         Arg::with_name(use_snapshot_archives_at_startup::cli::NAME)
             .long(use_snapshot_archives_at_startup::cli::LONG_ARG)
             .takes_value(true)
@@ -284,21 +261,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(use_snapshot_archives_at_startup::cli::default_value())
             .help(use_snapshot_archives_at_startup::cli::HELP)
             .long_help(use_snapshot_archives_at_startup::cli::LONG_HELP),
-    )
-    .arg(
-        Arg::with_name("full_snapshot_archive_path")
-            .long("full-snapshot-archive-path")
-            .value_name("DIR")
-            .takes_value(true)
-            .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
-    )
-    .arg(
-        Arg::with_name("incremental_snapshot_archive_path")
-            .long("incremental-snapshot-archive-path")
-            .conflicts_with("no-incremental-snapshots")
-            .value_name("DIR")
-            .takes_value(true)
-            .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
     )
     .arg(
         Arg::with_name("tower")
@@ -386,71 +348,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("no_snapshots")
-            .long("no-snapshots")
-            .takes_value(false)
-            .conflicts_with_all(&[
-                "no_incremental_snapshots",
-                "snapshot_interval_slots",
-                "full_snapshot_interval_slots",
-            ])
-            .help("Disable all snapshot generation"),
-    )
-    .arg(
-        Arg::with_name("snapshot_interval_slots")
-            .long("snapshot-interval-slots")
-            .alias("incremental-snapshot-interval-slots")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.incremental_snapshot_archive_interval_slots)
-            .validator(is_non_zero)
-            .help("Number of slots between generating snapshots")
-            .long_help(
-                "Number of slots between generating snapshots. If incremental snapshots are \
-                 enabled, this sets the incremental snapshot interval. If incremental snapshots \
-                 are disabled, this sets the full snapshot interval. Must be greater than zero.",
-            ),
-    )
-    .arg(
-        Arg::with_name("full_snapshot_interval_slots")
-            .long("full-snapshot-interval-slots")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.full_snapshot_archive_interval_slots)
-            .validator(is_non_zero)
-            .help("Number of slots between generating full snapshots")
-            .long_help(
-                "Number of slots between generating full snapshots. Only used when incremental \
-                 snapshots are enabled. Must be greater than the incremental snapshot interval. \
-                 Must be greater than zero.",
-            ),
-    )
-    .arg(
-        Arg::with_name("maximum_full_snapshots_to_retain")
-            .long("maximum-full-snapshots-to-retain")
-            .alias("maximum-snapshots-to-retain")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.maximum_full_snapshot_archives_to_retain)
-            .validator(validate_maximum_full_snapshot_archives_to_retain)
-            .help(
-                "The maximum number of full snapshot archives to hold on to when purging older \
-                 snapshots.",
-            ),
-    )
-    .arg(
-        Arg::with_name("maximum_incremental_snapshots_to_retain")
-            .long("maximum-incremental-snapshots-to-retain")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .default_value(&default_args.maximum_incremental_snapshot_archives_to_retain)
-            .validator(validate_maximum_incremental_snapshot_archives_to_retain)
-            .help(
-                "The maximum number of incremental snapshot archives to hold on to when purging \
-                 older snapshots.",
-            ),
-    )
-    .arg(
         Arg::with_name("snapshot_packager_niceness_adj")
             .long("snapshot-packager-niceness-adjustment")
             .value_name("ADJUSTMENT")
@@ -528,15 +425,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("no-os-disk-stats-reporting")
             .hidden(hidden_unless_forced())
             .help("Disable reporting of OS disk statistics."),
-    )
-    .arg(
-        Arg::with_name("snapshot_version")
-            .long("snapshot-version")
-            .value_name("SNAPSHOT_VERSION")
-            .validator(is_parsable::<SnapshotVersion>)
-            .takes_value(true)
-            .default_value(default_args.snapshot_version.into())
-            .help("Output snapshot version"),
     )
     .arg(
         Arg::with_name("skip_startup_ledger_verification")
@@ -695,89 +583,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("tpu_max_connections_per_ipaddr_per_minute")
-            .long("tpu-max-connections-per-ipaddr-per-minute")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_connections_per_ipaddr_per_minute)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the rate of the clients connections per IpAddr per minute."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_connections_per_peer")
-            .long("tpu-max-connections-per-peer")
-            .takes_value(true)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help(
-                "Controls the max concurrent connections per IpAddr or staked identity.Overrides \
-                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
-            ),
-    )
-    .arg(
-        Arg::with_name("tpu_max_connections_per_unstaked_peer")
-            .long("tpu-max-connections-per-unstaked-peer")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_connections_per_unstaked_peer)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections per IpAddr for unstaked clients."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_connections_per_staked_peer")
-            .long("tpu-max-connections-per-staked-peer")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_connections_per_staked_peer)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections per staked identity."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_staked_connections")
-            .long("tpu-max-staked-connections")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_staked_connections)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections for TPU from staked nodes."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_unstaked_connections")
-            .long("tpu-max-unstaked-connections")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_unstaked_connections)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections fort TPU from unstaked nodes."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_fwd_staked_connections")
-            .long("tpu-max-fwd-staked-connections")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_fwd_staked_connections)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections for TPU-forward from staked nodes."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_fwd_unstaked_connections")
-            .long("tpu-max-fwd-unstaked-connections")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_fwd_unstaked_connections)
-            .validator(is_parsable::<u32>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
-    )
-    .arg(
-        Arg::with_name("tpu_max_streams_per_ms")
-            .long("tpu-max-streams-per-ms")
-            .takes_value(true)
-            .default_value(&default_args.tpu_max_streams_per_ms)
-            .validator(is_parsable::<usize>)
-            .hidden(hidden_unless_forced())
-            .help("Controls the max number of streams for a TPU service."),
-    )
-    .arg(
         Arg::with_name("num_quic_endpoints")
             .long("num-quic-endpoints")
             .takes_value(true)
@@ -868,29 +673,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Еnable Geyser interface even if no Geyser configs are specified."),
     )
     .arg(
-        Arg::with_name("snapshot_archive_format")
-            .long("snapshot-archive-format")
-            .alias("snapshot-compression") // Legacy name used by Solana v1.5.x and older
-            .possible_values(SUPPORTED_ARCHIVE_COMPRESSION)
-            .default_value(&default_args.snapshot_archive_format)
-            .value_name("ARCHIVE_TYPE")
-            .takes_value(true)
-            .help("Snapshot archive format to use."),
-    )
-    .arg(
-        Arg::with_name("snapshot_zstd_compression_level")
-            .long("snapshot-zstd-compression-level")
-            .default_value(&default_args.snapshot_zstd_compression_level)
-            .value_name("LEVEL")
-            .takes_value(true)
-            .help("The compression level to use when archiving with zstd")
-            .long_help(
-                "The compression level to use when archiving with zstd. Higher compression levels \
-                 generally produce higher compression ratio at the expense of speed and memory. \
-                 See the zstd manpage for more information.",
-            ),
-    )
-    .arg(
         Arg::with_name("poh_pinned_cpu_core")
             .long("poh-pinned-cpu-core")
             .takes_value(true)
@@ -944,103 +726,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_verify_index")
-            .long("accounts-db-verify-index")
-            .help(
-                "Debug option to scan all storages and verify account index slot lists prior to \
-                 clean",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_scan_filter_for_shrinking")
-            .long("accounts-db-scan-filter-for-shrinking")
-            .takes_value(true)
-            .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
-            .help(
-                "Debug option to use different type of filtering for accounts index scan in \
-                 shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is \
-                 the default. \"only-abnormal\" will scan in-memory accounts index only for \
-                 abnormal entries and skip scanning on-disk accounts index by assuming that \
-                 on-disk accounts index contains only normal accounts index entry. \
-                 \"only-abnormal-with-verify\" is similar to \"only-abnormal\", which will scan \
-                 in-memory index for abnormal entries, but will also verify that on-disk account \
-                 entries are indeed normal.",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_account_storage_file_format")
-            .long("accounts-db-account-storage-file-format")
-            .takes_value(true)
-            .possible_values(&["append-vec", "split-experimental"])
-            .default_value("append-vec")
-            .help("Selects the account storage file format")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_ancient_append_vecs")
-            .long("accounts-db-ancient-append-vecs")
-            .value_name("SLOT-OFFSET")
-            .validator(is_parsable::<i64>)
-            .takes_value(true)
-            .help(
-                "AppendVecs that are older than (slots_per_epoch - SLOT-OFFSET) are squashed \
-                 together.",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_ancient_storage_ideal_size")
-            .long("accounts-db-ancient-storage-ideal-size")
-            .value_name("BYTES")
-            .validator(is_parsable::<u64>)
-            .takes_value(true)
-            .help("The smallest size of ideal ancient storage.")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_max_ancient_storages")
-            .long("accounts-db-max-ancient-storages")
-            .value_name("USIZE")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help("The number of ancient storages the ancient slot combining should converge to.")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_write_cache_limit")
-            .long("accounts-db-write-cache-limit")
-            .value_name("BYTES")
-            .validator(is_parsable::<ByteSize>)
-            .takes_value(true)
-            .help("How large the write cache for account data can become, in bytes")
-            .long_help(
-                "How large the write cache for account data can become, in bytes. If this is \
-                 exceeded, the write cache is flushed more aggressively. Accepts SI and IEC \
-                 prefixes, e.g. 17.1GB or 18Gi.",
-            ),
-    )
-    .arg(
-        Arg::with_name("accounts_db_read_cache_limit")
-            .long("accounts-db-read-cache-limit")
-            .value_name("LOW,HIGH")
-            .takes_value(true)
-            .min_values(2)
-            .max_values(2)
-            .multiple(false)
-            .require_delimiter(true)
-            .validator(is_parsable::<ByteSize>)
-            .help("How large the read cache for account data can become, in bytes")
-            .long_help(
-                "How large the read cache for account data can become, in bytes. The values will \
-                 be the low and high watermarks for the cache. When the cache exceeds the high \
-                 watermark, entries will be evicted until the size reaches the low watermark. \
-                 Accepts SI and IEC prefixes, e.g. 8.1GB,8.3GiB. LOW must be <= HIGH.",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("no_accounts_db_snapshots_direct_io")
             .long("no-accounts-db-snapshots-direct-io")
             .help("Disable direct I/O use for accounts-db snapshot operations")
@@ -1049,90 +734,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  processsing. Direct I/O can improve performance by bypassing OS page cache, but \
                  requires the file systems hosting snapshots and accounts-db directories to \
                  support files opened with the O_DIRECT flag.",
-            ),
-    )
-    .arg(
-        Arg::with_name("accounts_index_bins")
-            .long("accounts-index-bins")
-            .value_name("BINS")
-            .validator(is_pow2)
-            .takes_value(true)
-            .help("Number of bins to divide the accounts index into"),
-    )
-    .arg(
-        Arg::with_name("accounts_index_limit")
-            .long("accounts-index-limit")
-            .value_name("VALUE")
-            .takes_value(true)
-            .possible_values(&[
-                "minimal",
-                "25GB",
-                "50GB",
-                "100GB",
-                "200GB",
-                "400GB",
-                "800GB",
-                "unlimited",
-            ])
-            .default_value("unlimited")
-            .help("Sets the memory limit for the accounts index")
-            .long_help(
-                "Sets the memory limit for the accounts index. The size options will limit the \
-                 accounts index memory to the specified value. E.g. \"50GB\" means the accounts \
-                 index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
-                 accounts index in memory. All index entries that are not in memory are kept in \
-                 the disk-backed index. The disk-backed index has lower performance; prefer \
-                 higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
-            ),
-    )
-    .arg(
-        Arg::with_name("accounts_index_initial_accounts_count")
-            .long("accounts-index-initial-accounts-count")
-            .value_name("NUMBER")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help("Pre-allocate the accounts index, assuming this many accounts")
-            .long_help(
-                "Pre-allocate the accounts index, assuming this many accounts. Overrides the \
-                 account count recorded in the local snapshot directory, which is otherwise used \
-                 when starting from local snapshot state rather than a snapshot archive.",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_index_path")
-            .long("accounts-index-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .multiple(true)
-            .help(
-                "Persistent accounts-index location. May be specified multiple times. [default: \
-                 <LEDGER>/accounts_index]",
-            ),
-    )
-    .arg(
-        Arg::with_name("accounts_shrink_optimize_total_space")
-            .long("accounts-shrink-optimize-total-space")
-            .takes_value(true)
-            .value_name("BOOLEAN")
-            .default_value(&default_args.accounts_shrink_optimize_total_space)
-            .help(
-                "When this is set to true, the system will shrink the most sparse accounts and \
-                 when the overall shrink ratio is above the specified accounts-shrink-ratio, the \
-                 shrink will stop and it will skip all other less sparse accounts.",
-            ),
-    )
-    .arg(
-        Arg::with_name("accounts_shrink_ratio")
-            .long("accounts-shrink-ratio")
-            .takes_value(true)
-            .value_name("RATIO")
-            .default_value(&default_args.accounts_shrink_ratio)
-            .help(
-                "Specifies the shrink ratio for the accounts to be shrunk. The shrink ratio is \
-                 defined as the ratio of the bytes alive over the  total bytes used. If the \
-                 account's shrink ratio is less than this ratio it becomes a candidate for \
-                 shrinking. The value must between 0. and 1.0 inclusive.",
             ),
     )
     .arg(
@@ -1244,54 +845,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(|s| is_within_range(s, 1..))
             .help(
                 "Number of jemalloc arenas for replay. solReplayStage uses arena 0 and unified \
-                 scheduler handler threads use the arenas in round-robin order",
+                 scheduler handler threads use the arenas in round-robin order. Must be at most \
+                 the unified scheduler handler thread count plus one",
             ),
-    )
-    .arg(
-        Arg::with_name("no_xdp")
-            .long("no-xdp")
-            .takes_value(false)
-            .conflicts_with("no_xdp_zero_copy")
-            .help("Disable XDP transmit and fall back to UDP sockets"),
-    )
-    .arg(
-        Arg::with_name("xdp_interface")
-            .long("xdp-interface")
-            .takes_value(true)
-            .value_name("INTERFACE")
-            .conflicts_with("no_xdp")
-            .help(
-                "Network interface to use for XDP transmit. Auto-detected from default route if \
-                 not specified",
-            ),
-    )
-    .arg(
-        Arg::with_name("xdp_cpu_cores")
-            .long("xdp-cpu-cores")
-            .takes_value(true)
-            .value_name("CPU_LIST")
-            .conflicts_with("no_xdp")
-            .validator(|value| validate_cpu_ranges(value, "--xdp-cpu-cores"))
-            .help(
-                "CPU cores to reserve for XDP transmit (e.g. \"2-4,7\"). Defaults to 1 \
-                 auto-selected core",
-            ),
-    )
-    .arg(
-        Arg::with_name("xdp_zero_copy")
-            .long("xdp-zero-copy")
-            .takes_value(false)
-            .conflicts_with("no_xdp")
-            .conflicts_with("no_xdp_zero_copy")
-            .help("Enable XDP zero copy mode. Requires hardware and driver support"),
-    )
-    .arg(
-        Arg::with_name("no_xdp_zero_copy")
-            .long("no-xdp-zero-copy")
-            .takes_value(false)
-            .conflicts_with("xdp_zero_copy")
-            .conflicts_with("no_xdp")
-            .help("Use XDP copy mode"),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
@@ -1299,6 +855,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .args(&send_transaction_config::args())
     .args(&rpc_bootstrap_config::args())
     .args(&blockstore_options::args())
+    .args(&accounts_db_config::args(default_args))
+    .args(&snapshot_config::args(default_args))
+    .args(&tpu_config::args(default_args))
+    .args(&xdp_config::args())
 }
 
 fn validators_set(
@@ -1331,18 +891,16 @@ mod tests {
     use {
         super::*,
         crate::cli::thread_args::thread_args,
-        scopeguard::defer,
         std::{
-            fs,
             net::{IpAddr, Ipv4Addr},
-            path::{PathBuf, absolute},
+            path::PathBuf,
         },
     };
 
     impl Default for RunArgs {
         fn default() -> Self {
             let identity_keypair = Keypair::new();
-            let ledger_path = absolute(PathBuf::from("ledger")).unwrap();
+            let ledger_path = PathBuf::from("ledger");
             let logfile =
                 PathBuf::from(format!("agave-validator-{}.log", identity_keypair.pubkey()));
             let entrypoints = vec![];
@@ -1490,88 +1048,18 @@ mod tests {
 
     #[test]
     fn verify_args_struct_by_command_run_with_ledger_path() {
-        // nonexistent absolute ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let tmp_dir = fs::canonicalize(tempfile::tempdir().unwrap()).unwrap();
-            let ledger_path = tmp_dir.join("nonexistent_ledger_path");
-            assert!(!fs::exists(&ledger_path).unwrap());
-
-            let expected_args = RunArgs {
-                ledger_path: ledger_path.clone(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
-
-        // existing absolute ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let tmp_dir = tempfile::tempdir().unwrap();
-            let ledger_path = tmp_dir.path().join("existing_ledger_path");
-            fs::create_dir_all(&ledger_path).unwrap();
-            let ledger_path = fs::canonicalize(ledger_path).unwrap();
-            assert!(fs::exists(ledger_path.as_path()).unwrap());
-
-            let expected_args = RunArgs {
-                ledger_path: ledger_path.clone(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
-
-        // nonexistent relative ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let ledger_path = PathBuf::from("nonexistent_ledger_path");
-            assert!(!fs::exists(&ledger_path).unwrap());
-            defer! {
-                fs::remove_dir_all(&ledger_path).unwrap()
-            };
-
-            let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
-
-        // existing relative ledger path
-        {
-            let default_run_args = RunArgs::default();
-            let ledger_path = PathBuf::from("existing_ledger_path");
-            fs::create_dir_all(&ledger_path).unwrap();
-            assert!(fs::exists(&ledger_path).unwrap());
-            defer! {
-                fs::remove_dir_all(&ledger_path).unwrap()
-            };
-
-            let expected_args = RunArgs {
-                ledger_path: absolute(&ledger_path).unwrap(),
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--ledger", ledger_path.to_str().unwrap()],
-                expected_args,
-            );
-            assert!(fs::exists(&ledger_path).unwrap());
-        }
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let ledger_path = tmp_dir.path().join("ledger");
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            ledger_path: ledger_path.clone(),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--ledger", ledger_path.to_str().unwrap()],
+            expected_args,
+        );
     }
 
     #[test]
