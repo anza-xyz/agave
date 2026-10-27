@@ -97,6 +97,25 @@ fn load_blockstore(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -> Arc<Bank
     bank_forks.read().unwrap().working_bank()
 }
 
+fn append_program_accounts(
+    transaction_accounts: &mut Vec<(Pubkey, AccountSharedData)>,
+    loader_id: Pubkey,
+    program_id: Pubkey,
+    epoch_schedule_account: AccountSharedData,
+) -> IndexOfAccount {
+    transaction_accounts.push((
+        loader_id,
+        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+    ));
+    let program_index = transaction_accounts.len().try_into().unwrap();
+    transaction_accounts.push((
+        program_id, // ID of the loaded program. It can modify accounts with the same owner key
+        AccountSharedData::new(0, 0, &loader_id),
+    ));
+    transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
+    program_index
+}
+
 pub trait ProgramSubCommand {
     fn program_subcommand(self) -> Self;
 }
@@ -453,15 +472,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             input.instruction_data
         }
     };
-    let program_index: u16 = instruction_accounts.len().try_into().unwrap();
-    transaction_accounts.push((
-        loader_id,
-        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
-    ));
-    transaction_accounts.push((
-        program_id, // ID of the loaded program. It can modify accounts with the same owner key
-        AccountSharedData::new(0, 0, &loader_id),
-    ));
     let epoch_schedule_account = AccountSharedData::new_data_with_space(
         1,
         bank.epoch_schedule(),
@@ -469,7 +479,12 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         &sysvar::id(),
     )
     .unwrap();
-    transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
+    let program_index = append_program_accounts(
+        &mut transaction_accounts,
+        loader_id,
+        program_id,
+        epoch_schedule_account,
+    );
     with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
     // Adding `DELAY_VISIBILITY_SLOT_OFFSET` to slots to accommodate for delay visibility of the program
@@ -488,7 +503,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     invoke_context
         .transaction_context
         .configure_top_level_instruction_for_tests(
-            program_index.saturating_add(1),
+            program_index,
             instruction_accounts,
             instruction_data,
         )
@@ -629,4 +644,53 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     };
     let output_format = OutputFormat::from_matches(matches, "output_format", false);
     println!("{}", output_format.formatted_string(&output));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn program_account_index_with_duplicate_accounts() {
+        let duplicate_account_key = Pubkey::new_unique();
+        let program_id = Pubkey::new_unique();
+        let loader_id = bpf_loader_upgradeable::id();
+        let mut transaction_accounts = vec![(
+            duplicate_account_key,
+            AccountSharedData::new(0, 0, &Pubkey::new_unique()),
+        )];
+        let instruction_accounts = vec![
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(0, false, true),
+        ];
+        let epoch_schedule_account = AccountSharedData::new(0, 0, &sysvar::id());
+
+        // Duplicate input accounts are deduplicated into a single transaction
+        // account, so the instruction account count differs from the number of
+        // transaction accounts preceding the program account.
+        assert_ne!(transaction_accounts.len(), instruction_accounts.len());
+
+        let program_index = append_program_accounts(
+            &mut transaction_accounts,
+            loader_id,
+            program_id,
+            epoch_schedule_account,
+        );
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(program_index, instruction_accounts, vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+
+        assert_eq!(
+            *invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap()
+                .get_program_key()
+                .unwrap(),
+            program_id
+        );
+    }
 }
