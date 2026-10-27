@@ -123,6 +123,10 @@ pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 /// candidates for shrinking.
 const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
 
+/// Flushed accounts with at least this much data are stored in the read cache, rather than only
+/// dropped from it: reading one back from storage copies megabytes
+const MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH: usize = 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanAccountStorageData {
     /// callback for accounts in storage will not include `data`
@@ -4257,11 +4261,19 @@ impl AccountsDb {
         let update_index_us = update_index_time.end_as_us();
 
         // Drop the read cache entry for every account written to storage. The read cached version
-        // stale as it was superseded by the new version in storage
+        // stale as it was superseded by the new version in storage. Large accounts are replaced
+        // by the version just written instead.
         let flush_read_cache_time = Measure::start("flush_read_cache");
         (0..accounts.len()).for_each(|index| {
-            self.read_only_accounts_cache
-                .remove_assume_not_present(accounts.pubkey(index));
+            let pubkey = accounts.pubkey(index);
+            let stored = accounts.data_len(index) >= MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH
+                && accounts.account(index, |account| {
+                    self.store_in_read_cache_if_newest(pubkey, slot, &account.take_account())
+                });
+            if !stored {
+                self.read_only_accounts_cache
+                    .remove_assume_not_present(pubkey);
+            }
         });
         let flush_read_cache_us = flush_read_cache_time.end_as_us();
 
