@@ -2627,16 +2627,24 @@ impl Blockstore {
         // So, all coding shreds in a given FEC block will have the same set index
         if !is_trusted {
             if index_meta.coding().contains(shred_index) {
-                self.check_existing_shred_consistency(
-                    just_inserted_shreds,
-                    slot,
-                    BlockLocation::Original,
-                    merkle_root_metas
-                        .get(&(BlockLocation::Original, erasure_set))
-                        .map(WorkingEntry::as_ref),
-                    &shred,
-                    duplicate_shreds,
-                );
+                if let Some(merkle_root_meta) =
+                    merkle_root_metas.get(&(BlockLocation::Original, erasure_set))
+                {
+                    self.check_existing_shred_consistency(
+                        just_inserted_shreds,
+                        slot,
+                        BlockLocation::Original,
+                        merkle_root_meta.as_ref(),
+                        &shred,
+                        duplicate_shreds,
+                    );
+                } else {
+                    error!(
+                        "Merkle root meta for {erasure_set:?} is missing from blockstore although \
+                         shred {:?} is present. Skipping the duplicate check",
+                        shred.id(),
+                    );
+                }
                 return Err(InsertCodingShredError::Exists);
             }
 
@@ -2883,16 +2891,22 @@ impl Blockstore {
 
         if !is_trusted {
             if Self::is_data_shred_present(&shred, slot_meta, index_meta.data()) {
-                self.check_existing_shred_consistency(
-                    just_inserted_shreds,
-                    slot,
-                    location,
-                    merkle_root_metas
-                        .get(&(location, erasure_set))
-                        .map(WorkingEntry::as_ref),
-                    &shred,
-                    duplicate_shreds,
-                );
+                if let Some(merkle_root_meta) = merkle_root_metas.get(&(location, erasure_set)) {
+                    self.check_existing_shred_consistency(
+                        just_inserted_shreds,
+                        slot,
+                        location,
+                        merkle_root_meta.as_ref(),
+                        &shred,
+                        duplicate_shreds,
+                    );
+                } else {
+                    error!(
+                        "Merkle root meta for {erasure_set:?} at {location:?} is missing from \
+                         blockstore although shred {:?} is present. Skipping the duplicate check",
+                        shred.id(),
+                    );
+                }
                 return Err(InsertDataShredError::Exists);
             }
 
@@ -3132,7 +3146,7 @@ impl Blockstore {
     }
 
     /// Checks an untrusted `shred` whose index is already occupied against the stored one.
-    /// A difference in Merkle root or leader signature is treated as equivocation.
+    /// A difference in Merkle root or payload is treated as equivocation.
     ///
     /// The duplicate proof is stored here, but the slot is not marked dead: the caller
     /// returns `Exists`, and `window_service` marks the slot dead after the write batch
@@ -3142,22 +3156,20 @@ impl Blockstore {
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         slot: Slot,
         location: BlockLocation,
-        merkle_root_meta: Option<&MerkleRootMeta>,
+        merkle_root_meta: &MerkleRootMeta,
         shred: &Shred,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
     ) {
         // The FEC set is fixed by the shred index, so a shred with a different
         // Merkle root than its FEC set is a duplicate.
-        if let Some(merkle_root_meta) = merkle_root_meta
-            && !self.check_merkle_root_consistency(
-                just_inserted_shreds,
-                slot,
-                location,
-                merkle_root_meta,
-                shred,
-                duplicate_shreds,
-            )
-        {
+        if !self.check_merkle_root_consistency(
+            just_inserted_shreds,
+            slot,
+            location,
+            merkle_root_meta,
+            shred,
+            duplicate_shreds,
+        ) {
             return;
         }
         if self.has_duplicate_shreds_in_slot(slot) {
