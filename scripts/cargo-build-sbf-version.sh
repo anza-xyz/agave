@@ -1,5 +1,5 @@
 # populate this on the stable branch
-cargoBuildSbfVersion=
+cargoBuildSbfVersion=4.5.0
 
 maybeCargoBuildSbfVersionArg=
 if [[ -n "$cargoBuildSbfVersion" ]]; then
