@@ -4,8 +4,11 @@ use qualifier_attr::qualifiers;
 use std::collections::HashSet;
 use {
     crate::{
-        bls_sigverifier::BAN_TIMEOUT, sig_verified_messages::VoteAggregate,
-        stats::VoteVerificationStats, verified_batch::VerifiedBatch,
+        bls_sigverifier::BAN_TIMEOUT,
+        sig_verified_messages::VoteAggregate,
+        stats::VoteVerificationStats,
+        thread_pool::{MyWorkerPool, do_verify_individual_votes},
+        verified_batch::VerifiedBatch,
     },
     agave_votor_messages::{
         consensus_message::VoteMessage, stake::NonZeroStake,
@@ -15,10 +18,7 @@ use {
     log::info,
     rayon::{
         ThreadPool, current_thread_index,
-        iter::{
-            Either, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-            ParallelIterator,
-        },
+        iter::{Either, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
     solana_bls_signatures::{
         BlsError, HashedMessage, PreparedHashedMessage, PubkeyProjective, SignatureProjective,
@@ -28,6 +28,7 @@ use {
     },
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
+    std::sync::Arc,
 };
 
 /// A batch of votes to verify.
@@ -70,6 +71,7 @@ impl UnverifiedBatch {
         &mut self,
         max_validators: usize,
         ban_sender: &BanSender,
+        worker_pool: &Arc<MyWorkerPool>,
         thread_pool: &ThreadPool,
     ) -> (Option<VerifiedBatch>, VoteVerificationStats) {
         let mut stats = VoteVerificationStats::default();
@@ -140,10 +142,10 @@ impl UnverifiedBatch {
                     measure_us!(verify_individual_votes(
                         Vote::from(self.vote_payload_to_sign),
                         max_validators,
-                        &self.batch,
+                        &mut self.batch,
                         sender_vote_account_pubkeys,
                         &hashed_msg,
-                        thread_pool
+                        worker_pool,
                     ));
                 if let Some(b) = &verified_batch {
                     stats.num_individual_verified += b.len();
@@ -257,7 +259,6 @@ fn aggregate_signatures(votes: &[UnverifiedVotePayload]) -> Result<SignatureProj
     SignatureProjective::par_aggregate(signatures)
 }
 
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn aggregate_pubkeys_by_payload(
     votes: &[UnverifiedVotePayload],
 ) -> Result<PopVerified<PubkeyProjective>, BlsError> {
@@ -273,49 +274,22 @@ fn aggregate_pubkeys_by_payload(
 /// Returns:
 /// - `Vec<VotePayload>`: votes that passed verification.
 /// - `Vec<Pubkey>`: senders' identity pubkeys for votes that failed verification.
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn verify_individual_votes(
     vote: Vote,
     max_validators: usize,
-    unverified_votes: &[UnverifiedVotePayload],
+    unverified_votes: &mut Vec<UnverifiedVotePayload>,
     sender_vote_account_pubkeys: Vec<Pubkey>,
     hashed_msg: &HashedMessage,
-    thread_pool: &ThreadPool,
+    worker_pool: &Arc<MyWorkerPool>,
 ) -> (Option<VerifiedBatch>, Vec<(Pubkey, BlsError)>) {
     let prepared_msg = PreparedHashedMessage::from_hashed_message(hashed_msg);
-    let (aggregates, sender_vote_account_pubkeys, failed) = thread_pool.install(|| {
-        unverified_votes
-            .into_par_iter()
-            .zip(sender_vote_account_pubkeys)
-            .fold(
-                || (vec![], vec![], vec![]),
-                |(mut verified, mut sender_vote_account_pubkeys, mut failed),
-                 (unverified_vote, sender_vote_account_pubkey)| {
-                    let sender_identity_pubkey = unverified_vote.sender_identity_pubkey;
-                    match unverified_vote.verify(max_validators, Either::Right(&prepared_msg)) {
-                        Ok(aggregate) => {
-                            verified.push(aggregate);
-                            sender_vote_account_pubkeys.push(sender_vote_account_pubkey);
-                        }
-                        Err(e) => failed.push((sender_identity_pubkey, e)),
-                    }
-                    (verified, sender_vote_account_pubkeys, failed)
-                },
-            )
-            .reduce(
-                || (vec![], vec![], vec![]),
-                |mut left, mut right| {
-                    left.0.append(&mut right.0);
-                    left.1.append(&mut right.1);
-                    left.2.append(&mut right.2);
-                    left
-                },
-            )
-    });
-    (
-        (!aggregates.is_empty())
-            .then(|| VerifiedBatch::new(vote, aggregates, sender_vote_account_pubkeys)),
-        failed,
+    do_verify_individual_votes(
+        worker_pool,
+        vote,
+        prepared_msg,
+        max_validators,
+        unverified_votes,
+        sender_vote_account_pubkeys,
     )
 }
 
@@ -331,7 +305,7 @@ pub(super) struct UnverifiedVotePayload {
 }
 
 impl UnverifiedVotePayload {
-    fn verify(
+    pub(super) fn verify(
         &self,
         max_validators: usize,
         msg: Either<&[u8], &PreparedHashedMessage>,

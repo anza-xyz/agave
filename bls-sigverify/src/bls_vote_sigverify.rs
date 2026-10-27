@@ -3,19 +3,15 @@ use {
         bls_sigverifier::SigVerifierChannels,
         bls_vote_sigverify::batch::Batch,
         errors::SigVerifyVoteError,
-        stats::{SigVerifyVoteStats, VoteSenderStats, VoteVerificationStats},
+        stats::{SigVerifyVoteStats, VoteSenderStats},
+        thread_pool::{MyWorkerPool, verify_batches},
     },
     agave_votor_messages::wire::VotePayloadToSign,
-    agave_votor_transport::endpoint::BanSender,
-    rayon::{
-        ThreadPool,
-        iter::{IntoParallelRefMutIterator, ParallelIterator},
-    },
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::{collections::HashMap, num::Saturating},
+    std::{collections::HashMap, sync::Arc},
 };
 
 pub(crate) mod batch;
@@ -29,8 +25,7 @@ pub(super) fn verify_and_send_votes(
     root_bank: &Bank,
     my_pubkey: &Pubkey,
     leader_schedule: &LeaderScheduleCache,
-    ban_sender: &BanSender,
-    thread_pool: &ThreadPool,
+    worker_pool: &Arc<MyWorkerPool>,
     channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
     let mut measure = Measure::start("verify_and_send_votes");
@@ -42,28 +37,7 @@ pub(super) fn verify_and_send_votes(
         .distinct_votes_stats
         .add_sample(unverified_votes.len() as u64);
 
-    let (votes_to_verify, vote_verification_stats) = thread_pool.install(|| {
-        unverified_votes
-            .par_iter_mut()
-            .fold(
-                || (Saturating(0), VoteVerificationStats::default()),
-                |(mut total_votes_to_verify, mut vote_verification_stats), (_, batch)| {
-                    let (votes_to_verify, stats) = batch.verify(ban_sender, thread_pool);
-                    total_votes_to_verify += votes_to_verify;
-                    vote_verification_stats.merge(stats);
-                    (total_votes_to_verify, vote_verification_stats)
-                },
-            )
-            .reduce(
-                || (Saturating(0), VoteVerificationStats::default()),
-                |mut left, right| {
-                    left.0 += right.0;
-                    left.1.merge(right.1);
-                    left
-                },
-            )
-    });
-
+    let (votes_to_verify, vote_verification_stats) = verify_batches(worker_pool, unverified_votes);
     stats.votes_to_sig_verify += votes_to_verify;
     stats.vote_verification_stats.merge(vote_verification_stats);
     let mut sender_stats = VoteSenderStats::default();

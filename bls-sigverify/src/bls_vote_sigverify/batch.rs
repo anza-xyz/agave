@@ -3,6 +3,7 @@ use {
         bls_sigverifier::SigVerifierChannels,
         errors::SigVerifyVoteError,
         stats::{VoteSenderStats, VoteVerificationStats},
+        thread_pool::MyWorkerPool,
         unverified_votes_batch::{UnverifiedBatch, UnverifiedVotePayload},
         verified_batch::VerifiedBatch,
     },
@@ -49,13 +50,14 @@ impl Batch {
     }
 
     #[must_use]
-    pub(super) fn verify(
+    pub(crate) fn verify(
         &mut self,
         ban_sender: &BanSender,
+        worker_pool: &Arc<MyWorkerPool>,
         thread_pool: &ThreadPool,
     ) -> (usize, VoteVerificationStats) {
         self.batch_state
-            .verify(self.rank_map.len(), ban_sender, thread_pool)
+            .verify(self.rank_map.len(), ban_sender, worker_pool, thread_pool)
     }
 
     pub(super) fn process(
@@ -96,13 +98,14 @@ impl BatchState {
         &mut self,
         max_validators: usize,
         ban_sender: &BanSender,
+        worker_pool: &Arc<MyWorkerPool>,
         thread_pool: &ThreadPool,
     ) -> (usize, VoteVerificationStats) {
         match self {
             Self::Unverified(unverified_batch) => {
                 let num_votes_to_sigverify = unverified_batch.len();
                 let (verified_batch, stats) =
-                    unverified_batch.verify(max_validators, ban_sender, thread_pool);
+                    unverified_batch.verify(max_validators, ban_sender, worker_pool, thread_pool);
                 *self = Self::Verified(verified_batch);
                 (num_votes_to_sigverify, stats)
             }

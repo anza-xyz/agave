@@ -7,21 +7,17 @@ use {
     },
 };
 
-pub(crate) trait WorkerJob: Send + 'static {
+pub trait WorkerJob: Send + 'static {
     fn run(self);
 }
 
-pub(crate) struct WorkerPool<J: WorkerJob> {
+pub struct WorkerPool<J: WorkerJob> {
     job_sender: Sender<J>,
     worker_handles: Vec<JoinHandle<()>>,
 }
 
 impl<J: WorkerJob> WorkerPool<J> {
-    pub(crate) fn new(
-        thread_name_prefix: &str,
-        num_workers: usize,
-        job_queue_capacity: usize,
-    ) -> Self {
+    pub fn new(thread_name_prefix: &str, num_workers: usize, job_queue_capacity: usize) -> Self {
         assert_ne!(num_workers, 0, "worker pool must have at least one worker");
         let (job_sender, job_receiver) = bounded::<J>(job_queue_capacity);
         let worker_handles = (0..num_workers)
@@ -44,13 +40,13 @@ impl<J: WorkerJob> WorkerPool<J> {
         }
     }
 
-    pub(crate) fn send(&self, job: J) {
+    pub fn send(&self, job: J) {
         self.job_sender
             .send(job)
             .expect("worker threads exited unexpectedly");
     }
 
-    pub(crate) fn num_workers(&self) -> usize {
+    pub fn num_workers(&self) -> usize {
         self.worker_handles.len()
     }
 }

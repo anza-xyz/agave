@@ -67,9 +67,5 @@ solana-perf = { path = "../perf", features = ["agave-unstable-api"] }
 solana-signer = { workspace = true }
 tokio = { workspace = true }
 
-[[bench]]
-name = "bls_vote_sigverify"
-harness = false
-
 [lints]
 workspace = true
