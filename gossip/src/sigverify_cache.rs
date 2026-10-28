@@ -57,7 +57,7 @@ impl VerifiedCrdsCache {
 /// capacity. Insert only after the signature verifies, so the cache can't be
 /// seeded with arbitrary pubkeys to evict useful entries.
 pub(crate) struct VerifyingKeyCache {
-    cache: RwLock<LruCache<Pubkey, ed25519_dalek::VerifyingKey>>,
+    cache: RwLock<LruCache<Pubkey, solana_ed25519::ed_sigs::VerificationKey>>,
 }
 
 impl VerifyingKeyCache {
@@ -67,12 +67,12 @@ impl VerifyingKeyCache {
         }
     }
 
-    pub(crate) fn get(&self, pubkey: &Pubkey) -> Option<ed25519_dalek::VerifyingKey> {
+    pub(crate) fn get(&self, pubkey: &Pubkey) -> Option<solana_ed25519::ed_sigs::VerificationKey> {
         self.cache.read().unwrap().get(pubkey).copied()
     }
 
     /// Insert only after a signature against `vk` has verified.
-    pub(crate) fn insert(&self, pubkey: Pubkey, vk: ed25519_dalek::VerifyingKey) {
+    pub(crate) fn insert(&self, pubkey: Pubkey, vk: solana_ed25519::ed_sigs::VerificationKey) {
         self.cache.write().unwrap().put(pubkey, vk);
     }
 }
