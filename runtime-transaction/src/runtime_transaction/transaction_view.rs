@@ -93,7 +93,6 @@ where
         precompile_signature_details.num_ed25519_instruction_signatures,
         precompile_signature_details.num_secp256r1_instruction_signatures,
     );
-    // The txv1 inline configuration limits were validated above.
     let versioned_transaction_config = VersionedTransactionConfiguration::try_from_view_parts(
         transaction.transaction_config(),
         transaction.program_instructions_iter(),

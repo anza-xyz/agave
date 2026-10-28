@@ -133,6 +133,8 @@ impl VersionedTransactionConfiguration {
         }
     }
 
+    /// Does not validate the inline v1 config; its heap size is checked and its
+    /// remaining limits are clamped on conversion into `TransactionConfiguration`.
     pub(crate) fn try_from_view_parts<'a>(
         transaction_config: Option<TransactionConfigView<'_>>,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
