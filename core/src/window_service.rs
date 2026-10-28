@@ -2,6 +2,8 @@
 //!   blockstore and retransmitting where required
 //!
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         completed_data_sets_service::CompletedDataSetsSender,
@@ -177,6 +179,7 @@ impl WindowServiceChannels {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct WindowService {
     t_insert: JoinHandle<()>,
     t_check_duplicate: JoinHandle<()>,
@@ -274,6 +277,7 @@ impl WindowService {
             .unwrap()
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn start_window_insert_thread(
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
