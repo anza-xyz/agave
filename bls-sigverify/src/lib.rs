@@ -11,6 +11,7 @@ mod rank_map_cache;
 pub mod rewards;
 pub mod sig_verified_messages;
 pub mod stats;
+mod thread_pool;
 pub mod unverified_votes_batch;
 mod utils;
 pub mod verified_batch;

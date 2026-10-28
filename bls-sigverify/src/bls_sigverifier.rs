@@ -12,6 +12,7 @@ use {
         rewards::{RewardInput, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
+        thread_pool::MyWorkerPool,
         unverified_votes_batch::UnverifiedVotePayload,
         vote_pool::{VotePool, VotePoolError},
     },
@@ -150,7 +151,8 @@ struct SigVerifier {
     cluster_info: Arc<ClusterInfo>,
     leader_schedule: Arc<LeaderScheduleCache>,
     /// thread pool to use for all parallel tasks
-    thread_pool: ThreadPool,
+    thread_pool: Arc<ThreadPool>,
+    worker_pool: Arc<MyWorkerPool>,
     generated_cert_types: Arc<GeneratedCertTypes>,
     vote_pool: VotePool,
     rank_map_cache: RankMapCache,
@@ -168,12 +170,20 @@ impl SigVerifier {
             num_threads,
             generated_cert_types,
         } = context;
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .thread_name(|i| format!("solSigVerBLS{i:02}"))
-            .build()
-            .unwrap();
+        let thread_pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .thread_name(|i| format!("solSigVerBLS{i:02}"))
+                .build()
+                .unwrap(),
+        );
         Self {
+            worker_pool: Arc::new(MyWorkerPool::new(
+                num_threads,
+                1024,
+                ban_sender.clone(),
+                thread_pool.clone(),
+            )),
             migration_status,
             ban_sender,
             channels,
@@ -260,8 +270,7 @@ impl SigVerifier {
                     &root_bank,
                     my_pubkey,
                     &self.leader_schedule,
-                    &self.ban_sender,
-                    &self.thread_pool,
+                    &self.worker_pool,
                     &self.channels,
                 )
             },
