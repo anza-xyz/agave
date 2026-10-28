@@ -108,6 +108,7 @@ impl Bank {
     //   - If not, check whether the transaction is structurally valid as a nonce transaction.
     //     This depends on neither account state nor ALT resolution. The nonce must be requested
     //     writable; SVM itself checks the nonce is actually writable after write-lock demotion.
+    //     With SIMD-0602, it is an error if the nonce address is also included as a program ID.
     //     Then, load the nonce account and provisionally validate the nonce can be advanced.
     //   - If neither condition holds, reject the transaction.
     // * Check if the transaction message hash is present in the StatusCache.
@@ -127,6 +128,8 @@ impl Bank {
         let check_results: Vec<TransactionCheckResult> = {
             let hash_queue = self.blockhash_queue.read().unwrap();
             let next_durable_nonce = hash_queue.next_durable_nonce();
+            let disallow_nonce_as_program_id =
+                self.feature_set.snapshot().disallow_nonce_as_program_id;
 
             txs.iter()
                 .zip(lock_results)
@@ -144,11 +147,13 @@ impl Bank {
                         ));
                     }
 
-                    if let Some(nonce_address) =
-                        self.check_nonce_semantics(tx, &next_durable_nonce, strict_nonce_checks)
-                        && self
-                            .check_nonce_account(tx, nonce_address, strict_nonce_checks)
-                            .is_some()
+                    if let Some(nonce_address) = self.check_nonce_semantics(
+                        tx,
+                        &next_durable_nonce,
+                        strict_nonce_checks || disallow_nonce_as_program_id,
+                    ) && self
+                        .check_nonce_account(tx, nonce_address, strict_nonce_checks)
+                        .is_some()
                     {
                         return Ok(CheckedTransactionDetails::new(
                             Some(nonce_address),
@@ -346,10 +351,12 @@ mod tests {
             program as system_program,
         },
         solana_transaction::{
+            Transaction,
             sanitized::{MessageHash, SanitizedTransaction},
             versioned::{TransactionVersion, VersionedTransaction},
         },
         std::collections::HashSet,
+        test_case::test_case,
     };
 
     #[test]
@@ -562,6 +569,51 @@ mod tests {
             bank.check_nonce_semantics(&message, &bank.next_durable_nonce(), false)
                 .is_none()
         );
+    }
+
+    #[test_case(false; "legacy")]
+    #[test_case(true; "SIMD-0602")]
+    fn test_check_nonce_as_program_id(disallow_nonce_as_program_id: bool) {
+        let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
+            10_000_000,
+            |genesis_config| {
+                if !disallow_nonce_as_program_id {
+                    genesis_config
+                        .accounts
+                        .remove(&agave_feature_set::disallow_nonce_as_program_id::id())
+                        .unwrap();
+                }
+            },
+            5_000_000,
+            250_000,
+            None,
+        )
+        .unwrap();
+        let custodian_pubkey = custodian_keypair.pubkey();
+        let nonce_pubkey = nonce_keypair.pubkey();
+
+        let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
+        let tx =
+            RuntimeTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
+                &[
+                    system_instruction::advance_nonce_account(&nonce_pubkey, &nonce_pubkey),
+                    Instruction::new_with_bytes(nonce_pubkey, &[], vec![]),
+                ],
+                Some(&custodian_pubkey),
+                &[&custodian_keypair, &nonce_keypair],
+                nonce_hash,
+            ));
+        let txs = vec![tx];
+        let lock_results = vec![Ok(())];
+
+        let filtered = check_transactions_for_tests(&bank, &txs, &lock_results);
+
+        let expected = if disallow_nonce_as_program_id {
+            Err(TransactionError::BlockhashNotFound)
+        } else {
+            Ok(())
+        };
+        assert_eq!(filtered, [expected]);
     }
 
     #[test]

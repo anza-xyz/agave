@@ -3464,7 +3464,10 @@ impl Bank {
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
         .or_else(|| {
-            let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
+            let nonce_address = SVMStaticMessage::get_durable_nonce(
+                message,
+                self.feature_set.snapshot().disallow_nonce_as_program_id,
+            )?;
             let nonce_account = self.get_account(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())

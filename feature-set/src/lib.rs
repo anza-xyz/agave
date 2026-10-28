@@ -79,6 +79,7 @@ pub struct FeatureSnapshot {
     pub pass_input_metadata_in_vm_r3_r5: bool,
     pub secp256r1_syscall_enabled: bool,
     pub single_program_runtime_environment: bool,
+    pub disallow_nonce_as_program_id: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -179,6 +180,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
             secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
             single_program_runtime_environment: is_active(&single_program_runtime_environment::ID),
+            disallow_nonce_as_program_id: is_active(&disallow_nonce_as_program_id::ID),
         }
     }
 }
@@ -1553,6 +1555,10 @@ pub mod single_program_runtime_environment {
     solana_pubkey::declare_id!("Hh4mTuC2AVFALH78RjiL8Rih1CcLxXpm4ehXCJNsUei1");
 }
 
+pub mod disallow_nonce_as_program_id {
+    solana_pubkey::declare_id!("BadNcMPPh9X6ikRHp8Wcz352YRhdSjawVj2bVHNNjDqQ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2666,6 +2672,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             single_program_runtime_environment::id(),
             "SIMD-0688: Single Program Runtime Environment",
+        ),
+        (
+            disallow_nonce_as_program_id::id(),
+            "SIMD-0602: Disallow Nonce Account as Program ID",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
