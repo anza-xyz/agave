@@ -1291,7 +1291,10 @@ pub async fn process_program_subcommand(
 fn get_default_program_keypair(program_location: &Option<String>) -> Result<Keypair, CliError> {
     let Some(program_location) = program_location else {
         return Err(CliError::BadParameter(
-            "Program id keypair not provided".to_string(),
+            "Keypair could not be found because program location was not provided. Either provide \
+             a program location or use either one of --program-id <ADDRESS>, --program-id \
+             <KEYPAIR_JSON>, or --generate-ephemeral-program-id"
+                .to_string(),
         ));
     };
     let mut keypair_file = PathBuf::from(program_location);
@@ -1306,8 +1309,8 @@ fn get_default_program_keypair(program_location: &Option<String>) -> Result<Keyp
 
     read_keypair_file(&keypair_file).map_err(|err| {
         CliError::BadParameter(format!(
-            "Program id keypair not found at {}: {err}. Use --program-id or \
-             --generate-ephemeral-program-id",
+            "Program id keypair not found at {}: {err}. Use either one of --program-id <ADDRESS>, \
+             --program-id <KEYPAIR_JSON>, or --generate-ephemeral-program-id",
             keypair_file.display()
         ))
     })
