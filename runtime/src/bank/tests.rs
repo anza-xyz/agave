@@ -5537,6 +5537,9 @@ fn test_bank_hash_consistency(deprecate_rent_exemption_threshold: bool) {
 
 /// Tests determinism of a bank hash across snapshot restores and epoch
 /// boundaries.
+///
+/// The genesis config includes all feature accounts, so adding or rekeying a
+/// feature requires updating the expected hash.
 #[test]
 fn test_bank_hash_deterministic_with_stakes_cache() {
     const NUM_VALIDATORS: usize = 128;
@@ -5826,7 +5829,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "7a8DqBCzW6im48e6PTUL1qmFh1X3FdNa3eRncz98CqQ8",
+        "CF265L3DFX4ubtPr1ck5bb2ZVRcZv4FwiBbi6k8R7EqW",
     );
 }
 
