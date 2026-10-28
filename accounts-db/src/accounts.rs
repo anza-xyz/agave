@@ -1479,9 +1479,9 @@ mod tests {
     fn test_calc_scan_result_size() {
         for len in 0..3 {
             assert_eq!(
-                Accounts::calc_scan_result_size(&AccountSharedData::new(
+                Accounts::calc_scan_result_size(&AccountSharedData::new_with_data(
                     0,
-                    len,
+                    vec![0; len],
                     &Pubkey::default()
                 )),
                 zero_len_account_size() + len
@@ -1503,12 +1503,12 @@ mod tests {
         for (account, byte_limit_for_scan, result) in [
             (AccountSharedData::default(), zero_len_account_size(), false),
             (
-                AccountSharedData::new(0, 1, &Pubkey::default()),
+                AccountSharedData::new_with_data(0, vec![0; 1], &Pubkey::default()),
                 zero_len_account_size(),
                 true,
             ),
             (
-                AccountSharedData::new(0, 2, &Pubkey::default()),
+                AccountSharedData::new_with_data(0, vec![0; 2], &Pubkey::default()),
                 zero_len_account_size() + 3,
                 false,
             ),

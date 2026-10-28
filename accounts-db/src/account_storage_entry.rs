@@ -377,7 +377,7 @@ mod tests {
         let accounts: Vec<_> = iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 10, &Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default()),
             )
         })
         .take(5)

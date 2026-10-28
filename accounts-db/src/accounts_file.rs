@@ -519,11 +519,19 @@ mod tests {
             (Pubkey::new_unique(), AccountSharedData::new(0, 0, &owner)),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(33, 10_000, &owner),
+                AccountSharedData::new_with_data(
+                    33,
+                    rand::random_iter().take(10_000).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(44, 222, &owner),
+                AccountSharedData::new_with_data(
+                    44,
+                    rand::random_iter().take(222).collect(),
+                    &owner,
+                ),
             ),
         ];
         let dummy_slot = 12; // value isn't used
