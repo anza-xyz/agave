@@ -1,10 +1,9 @@
 use {
-    super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
+    super::RuntimeTransaction,
     crate::{
         instruction_meta::InstructionMeta,
         transaction_meta::{
-            CachedTransactionMeta, TransactionConfiguration, TransactionMeta,
-            VersionedTransactionConfiguration,
+            CachedTransactionMeta, TransactionMeta, VersionedTransactionConfiguration,
         },
         transaction_with_meta::{StaticTransactionWithMeta, TransactionWithMeta},
     },
@@ -19,7 +18,6 @@ use {
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
         v1,
     },
-    solana_program_entrypoint::HEAP_LENGTH,
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
@@ -95,24 +93,11 @@ where
         precompile_signature_details.num_ed25519_instruction_signatures,
         precompile_signature_details.num_secp256r1_instruction_signatures,
     );
-    let versioned_transaction_config =
-        if let Some(transaction_config_view) = transaction.transaction_config() {
-            // Only txv1 has inline configuration; its limits were validated above.
-            VersionedTransactionConfiguration::V1(TransactionConfiguration {
-                priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
-                compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
-                loaded_accounts_data_size_limit: transaction_config_view
-                    .loaded_accounts_data_size_limit()
-                    .unwrap_or(0),
-                updated_heap_bytes: transaction_config_view
-                    .requested_heap_size()
-                    .unwrap_or(HEAP_LENGTH as u32),
-            })
-        } else {
-            VersionedTransactionConfiguration::LegacyAndV0(
-                ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?,
-            )
-        };
+    // The txv1 inline configuration limits were validated above.
+    let versioned_transaction_config = VersionedTransactionConfiguration::try_from_view_parts(
+        transaction.transaction_config(),
+        transaction.program_instructions_iter(),
+    )?;
 
     Ok(CachedTransactionMeta {
         message_hash,
