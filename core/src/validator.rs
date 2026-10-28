@@ -3373,8 +3373,11 @@ mod tests {
             node_pubkey: identity,
             ..VoteStateV4::default()
         };
-        let mut vote_account =
-            AccountSharedData::new(1, VoteStateV4::size_of(), &solana_vote_program::id());
+        let mut vote_account = AccountSharedData::new_with_data(
+            1,
+            vec![0; VoteStateV4::size_of()],
+            &solana_vote_program::id(),
+        );
         vote_account
             .set_state(&VoteStateVersions::new_v4(vote_state.clone()))
             .unwrap();
