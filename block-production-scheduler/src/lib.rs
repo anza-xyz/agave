@@ -68,6 +68,9 @@ struct Scheduler {
     progress_receiver: shaq::spsc::Consumer<ProgressMessage>,
     check_sender: shaq::mpmc::Producer<PackToCheckWorkerMessage>,
     outstanding_check_packets: usize,
+    outstanding_check_batches: usize,
+    /// Minimum response queue capacity requested during the handshake.
+    check_response_capacity: usize,
     transactions: TransactionContainer<TransactionState>,
     scheduling_scratch: SchedulerScratch,
     reserved_account_keys: HashSet<Pubkey, PubkeyHasherBuilder>,
@@ -83,6 +86,7 @@ struct Scheduler {
 impl Scheduler {
     fn new(
         session: ClientSession,
+        check_response_capacity: usize,
         transaction_state_capacity: usize,
         execution_margin: Duration,
         max_cost_units_per_worker: u64,
@@ -115,6 +119,8 @@ impl Scheduler {
             progress_receiver: progress_tracker,
             check_sender: pack_to_check_worker,
             outstanding_check_packets: 0,
+            outstanding_check_batches: 0,
+            check_response_capacity,
             transactions: TransactionContainer::with_capacity(transaction_state_capacity),
             scheduling_scratch: SchedulerScratch::new(transaction_state_capacity),
             reserved_account_keys: ReservedAccountKeys::default().active.into_iter().collect(),
@@ -196,7 +202,12 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
     while !exit.load(Ordering::Relaxed) {
         if let Some(session) = try_connect(&config)? {
             info!("Connected to Agave at {}", config.ipc_path.display());
-            return run_session(session, config.scheduler, exit);
+            return run_session(
+                session,
+                config.scheduler,
+                config.session.check_worker_to_pack_capacity,
+                exit,
+            );
         }
         thread::sleep(CONNECTION_RETRY_INTERVAL);
     }
@@ -208,11 +219,13 @@ pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError
 pub fn run_session(
     session: ClientSession,
     config: SchedulerConfig,
+    check_response_capacity: usize,
     exit: &AtomicBool,
 ) -> Result<(), ClientHandshakeError> {
     let worker_count = session.workers.len();
     let mut scheduler = Scheduler::new(
         session,
+        check_response_capacity,
         config.transaction_state_capacity,
         config.execution_margin,
         config.max_cost_units_per_worker,

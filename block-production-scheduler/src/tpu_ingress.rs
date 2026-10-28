@@ -51,7 +51,12 @@ impl Scheduler {
             };
             (transaction, metadata)
         });
-        'batches: while accept_packets && transactions.len() != 0 {
+        // Stop dispatching when every possible response has a reserved queue slot.
+        // Still drain the TPU batch below so ingress does not fall behind.
+        'batches: while accept_packets
+            && self.outstanding_check_batches < self.check_response_capacity
+            && transactions.len() != 0
+        {
             let Some(mut batch) = CheckBatch::allocate(&self.allocator) else {
                 break;
             };
@@ -64,6 +69,7 @@ impl Scheduler {
                 break;
             };
             self.outstanding_check_packets = self.outstanding_check_packets.saturating_add(count);
+            self.outstanding_check_batches = self.outstanding_check_batches.wrapping_add(1);
             sent_packets = sent_packets.saturating_add(count);
         }
         transactions.for_each(drop);
@@ -143,8 +149,11 @@ impl Drop for CheckBatch<'_> {
 mod tests {
     use {
         super::*,
-        crate::tests::setup,
-        agave_scheduler_bindings::{SharableTransactionRegion, TpuToPackMessage},
+        crate::tests::{setup, setup_with_capacities},
+        agave_scheduler_bindings::{
+            CheckResponseRegion, CheckWorkerToPackMessage, SharableTransactionRegion,
+            TpuToPackMessage, processed_codes,
+        },
         agave_scheduler_handshake::AgaveSession,
         std::time::Instant,
     };
@@ -202,6 +211,68 @@ mod tests {
             assert_eq!(received, TOTAL.saturating_sub(start).min(limit));
         }
         assert_eq!(scheduler.outstanding_check_packets, TOTAL);
+        assert_eq!(scheduler.allocator.outstanding_allocation_bytes(), 0);
+    }
+
+    #[test]
+    fn ingress_drops_packets_when_check_response_capacity_is_full() {
+        let (mut scheduler, mut agave) = setup_with_capacities(4, 2, 1, 2, 2);
+        enqueue(&scheduler, &mut agave, 3 * MAX_PACKETS_PER_CHECK_BATCH);
+
+        scheduler.handle_tpu_ingress();
+        assert_eq!(scheduler.outstanding_check_batches, 2);
+        assert_eq!(
+            scheduler.leader_slot_metrics.received_packets,
+            3 * MAX_PACKETS_PER_CHECK_BATCH
+        );
+        assert_eq!(
+            scheduler.leader_slot_metrics.dropped_transactions,
+            MAX_PACKETS_PER_CHECK_BATCH
+        );
+        assert!(scheduler.tpu_receiver.try_read().is_none());
+
+        let first = agave.check_workers[0]
+            .pack_to_check_worker
+            .try_read()
+            .unwrap();
+        agave.check_workers[0]
+            .check_worker_to_pack
+            .try_write(CheckWorkerToPackMessage {
+                batch: first.batch,
+                processed_code: processed_codes::INVALID,
+                responses: CheckResponseRegion {
+                    num_transaction_responses: 0,
+                    transaction_responses_offset: 0,
+                },
+            })
+            .unwrap();
+        scheduler.handle_check_worker_responses();
+        assert_eq!(scheduler.outstanding_check_batches, 1);
+
+        enqueue(&scheduler, &mut agave, MAX_PACKETS_PER_CHECK_BATCH);
+        scheduler.handle_tpu_ingress();
+        assert_eq!(scheduler.outstanding_check_batches, 2);
+        assert_eq!(
+            scheduler.leader_slot_metrics.received_packets,
+            4 * MAX_PACKETS_PER_CHECK_BATCH
+        );
+        assert_eq!(
+            scheduler.leader_slot_metrics.dropped_transactions,
+            2 * MAX_PACKETS_PER_CHECK_BATCH
+        );
+        assert!(scheduler.tpu_receiver.try_read().is_none());
+
+        while let Some(message) = agave.check_workers[0].pack_to_check_worker.try_read() {
+            // SAFETY: no worker runs in this test, and this test owns the remaining batches.
+            let batch = unsafe {
+                RawCheckBatch::from_sharable_transaction_batch_region(
+                    &message.batch,
+                    &scheduler.allocator,
+                )
+            };
+            // SAFETY: this test exclusively owns each batch and its transactions.
+            unsafe { batch.free_with_transactions() };
+        }
         assert_eq!(scheduler.allocator.outstanding_allocation_bytes(), 0);
     }
 
@@ -272,7 +343,7 @@ mod tests {
         const UNSENT_PACKETS: usize = 2 * MAX_PACKETS_PER_CHECK_BATCH + 1;
         const TOTAL_PACKETS: usize = EXPECTED_SENT_PACKETS + UNSENT_PACKETS;
 
-        let (mut scheduler, mut agave) = setup(AVAILABLE_BATCH_SLOTS);
+        let (mut scheduler, mut agave) = setup_with_capacities(AVAILABLE_BATCH_SLOTS, 8, 1, 2, 2);
         scheduler.handle_leader_slot_metrics();
         let placeholder = PackToCheckWorkerMessage {
             batch: agave_scheduler_bindings::SharableTransactionBatchRegion {

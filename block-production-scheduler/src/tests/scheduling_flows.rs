@@ -176,6 +176,7 @@ fn reply_execution(
 fn assert_finished(scheduler: &Scheduler, agave: &mut AgaveSession) {
     assert_eq!(scheduler.transactions.len(), 0);
     assert_eq!(scheduler.outstanding_check_packets, 0);
+    assert_eq!(scheduler.outstanding_check_batches, 0);
     assert!(scheduler.in_flight.is_empty());
     assert!(scheduler.deferred_execution.is_empty());
     assert_eq!(scheduler.allocator.outstanding_allocation_bytes(), 0);

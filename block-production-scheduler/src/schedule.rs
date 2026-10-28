@@ -112,13 +112,20 @@ fn allowed_workers(
     let mut allowed_workers = ThreadSet::any(workers.len());
     for (worker, session) in workers.iter().enumerate() {
         let load = in_flight.worker_load(worker);
-        if load.batches >= session.pack_to_worker.capacity()
+        if load.batches >= max_outstanding_batches(session)
             || load.cost_units >= max_cost_units_per_worker
         {
             allowed_workers.remove(worker);
         }
     }
     allowed_workers
+}
+
+fn max_outstanding_batches(worker: &ClientWorkerSession) -> usize {
+    worker
+        .pack_to_worker
+        .capacity()
+        .min(worker.worker_to_pack.capacity())
 }
 
 fn select_worker(eligible: ThreadSet, batches: &ExecutionBatches<'_>) -> ThreadId {
@@ -287,7 +294,7 @@ impl<'a> ExecutionBatches<'a> {
 
     fn worker_at_capacity(&self, worker: ThreadId) -> bool {
         let load = self.in_flight.worker_load(worker);
-        let queue_at_capacity = load.batches >= self.workers[worker].pack_to_worker.capacity();
+        let queue_at_capacity = load.batches >= max_outstanding_batches(&self.workers[worker]);
         let cost_at_capacity = load
             .cost_units
             .saturating_add(self.pending_worker_batches[worker].cost_units)
@@ -346,7 +353,7 @@ impl<'a> ExecutionBatches<'a> {
 mod tests {
     use {
         super::*,
-        crate::tests::{insert, setup_with_workers},
+        crate::tests::{insert, setup_with_capacities, setup_with_workers},
         agave_scheduler_handshake::AgaveSession,
         core::time::Duration,
         solana_pubkey::Pubkey,
@@ -442,6 +449,37 @@ mod tests {
             assert!(agave.workers[0].pack_to_worker.try_read().is_none());
             assert!(agave.workers[1].pack_to_worker.try_read().is_none());
         }
+    }
+
+    #[test]
+    fn execution_response_capacity_limits_outstanding_batches() {
+        let (mut scheduler, mut agave) = setup_with_capacities(2, 2, 1, 65_536, 1);
+        scheduler.state = SchedulerState::LeaderReady {
+            slot: 100,
+            remaining_cost_units: 1_000,
+            slot_start: Instant::now(),
+            slot_duration: Duration::from_millis(400),
+        };
+        scheduler.handle_slot_change();
+        scheduler.max_cost_units_per_batch = 1;
+        let request_capacity = scheduler.workers[0].pack_to_worker.capacity();
+        let response_capacity = scheduler.workers[0].worker_to_pack.capacity();
+        assert!(request_capacity > response_capacity);
+        for _ in 0..response_capacity - 1 {
+            scheduler.in_flight.track_batch(0, 0, 0);
+        }
+        let first = insert(&mut scheduler, 2, 10, &[1]);
+        let second = insert(&mut scheduler, 1, 10, &[2]);
+
+        scheduler.schedule(1_000);
+
+        assert_eq!(
+            scheduler.in_flight.worker_load(0).batches,
+            response_capacity
+        );
+        assert_eq!(scheduler.transactions.pop_highest(), Some(second));
+        assert_batch(&mut scheduler, &mut agave, 0, &[first]);
+        assert!(agave.workers[0].pack_to_worker.try_read().is_none());
     }
 
     #[test]

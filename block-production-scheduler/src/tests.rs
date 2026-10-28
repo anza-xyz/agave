@@ -52,6 +52,16 @@ pub(super) fn setup_with_workers(
     check_capacity: usize,
     worker_count: usize,
 ) -> (Scheduler, AgaveSession) {
+    setup_with_capacities(check_capacity, check_capacity, worker_count, 2, 2)
+}
+
+pub(super) fn setup_with_capacities(
+    check_capacity: usize,
+    check_response_capacity: usize,
+    worker_count: usize,
+    execution_request_capacity: usize,
+    execution_response_capacity: usize,
+) -> (Scheduler, AgaveSession) {
     let (agave, client) = setup_local_session(ClientLogon {
         worker_count,
         check_worker_count: 1,
@@ -64,16 +74,17 @@ pub(super) fn setup_with_workers(
             .saturating_add(1)
             .next_power_of_two(),
         progress_tracker_capacity: 2,
-        pack_to_worker_capacity: 2,
-        worker_to_pack_capacity: 2,
+        pack_to_worker_capacity: execution_request_capacity,
+        worker_to_pack_capacity: execution_response_capacity,
         pack_to_check_worker_capacity: check_capacity,
-        check_worker_to_pack_capacity: check_capacity,
+        check_worker_to_pack_capacity: check_response_capacity,
         pack_to_simulate_worker_capacity: 0,
         simulate_worker_to_pack_capacity: 0,
     })
     .unwrap();
     let mut scheduler = Scheduler::new(
         client,
+        check_response_capacity,
         512,
         Duration::from_millis(10),
         1_000_000,

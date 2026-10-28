@@ -723,9 +723,12 @@ mod external {
                 Builder::new()
                     .name("solBlockProdSched".to_string())
                     .spawn(move || {
-                        if let Err(err) =
-                            agave_block_production_scheduler::run_session(client, config, &exit)
-                        {
+                        if let Err(err) = agave_block_production_scheduler::run_session(
+                            client,
+                            config,
+                            session_config.check_worker_to_pack_capacity,
+                            &exit,
+                        ) {
                             error!("Block production scheduler error: {err}");
                         }
                     })

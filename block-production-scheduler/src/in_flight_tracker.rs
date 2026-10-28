@@ -42,16 +42,22 @@ impl InFlightTracker {
     /// including when execution failed. Actual costs are accounted for separately for pacing.
     ///
     /// # Panics
-    /// Panics if `worker` is outside the configured worker range. In debug builds, also panics
-    /// if no batch is outstanding or the completed transaction count or cost exceeds the load.
+    /// Panics if `worker` is outside the configured worker range, no batch is outstanding,
+    /// or the completed transaction count or cost exceeds the load.
     pub(crate) fn complete_batch(&mut self, worker: usize, transactions: usize, cost_units: u64) {
         let load = &mut self.workers[worker];
-        debug_assert!(load.batches > 0);
-        debug_assert!(load.transactions >= transactions);
-        debug_assert!(load.cost_units >= cost_units);
-        load.batches = load.batches.wrapping_sub(1);
-        load.transactions = load.transactions.wrapping_sub(transactions);
-        load.cost_units = load.cost_units.wrapping_sub(cost_units);
+        load.batches = load
+            .batches
+            .checked_sub(1)
+            .expect("execution response must have an outstanding batch");
+        load.transactions = load
+            .transactions
+            .checked_sub(transactions)
+            .expect("completed transaction count must not exceed worker load");
+        load.cost_units = load
+            .cost_units
+            .checked_sub(cost_units)
+            .expect("completed cost must not exceed worker load");
     }
 }
 
