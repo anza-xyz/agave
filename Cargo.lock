@@ -73,12 +73,14 @@ dependencies = [
 name = "agave-block-production-scheduler"
 version = "4.5.0-alpha.4"
 dependencies = [
+ "agave-logger",
  "agave-reserved-account-keys",
  "agave-scheduler-bindings",
  "agave-scheduler-handshake",
  "agave-scheduling-utils",
  "agave-transaction-view",
  "clap 2.33.3",
+ "log",
  "rts-alloc",
  "serde",
  "shaq",
@@ -87,6 +89,7 @@ dependencies = [
  "solana-clock",
  "solana-hash",
  "solana-message",
+ "solana-metrics",
  "solana-pubkey 4.4.0",
  "solana-signature",
  "solana-svm-transaction",

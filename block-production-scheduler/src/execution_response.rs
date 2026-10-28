@@ -41,6 +41,7 @@ impl Scheduler {
         };
         let mut estimated_cost = 0u64;
         let mut actual_cost = 0u64;
+        let mut dropped = 0usize;
         if message.processed_code == processed_codes::PROCESSED {
             assert_eq!(
                 usize::from(message.responses.num_transaction_responses),
@@ -55,13 +56,20 @@ impl Scheduler {
                 )
             };
             for ((_, id), response) in batch.iter().zip(responses.iter()) {
+                let action = ExecutionResponseAction::from_response(response);
                 if response.not_included_reason == not_included_reasons::NONE {
                     actual_cost = actual_cost.saturating_add(response.cost_units);
+                    self.leader_slot_metrics.completed_transactions = self
+                        .leader_slot_metrics
+                        .completed_transactions
+                        .saturating_add(1);
+                } else if matches!(action, ExecutionResponseAction::Release) {
+                    dropped = dropped.saturating_add(1);
                 }
                 estimated_cost = estimated_cost.saturating_add(complete_transaction(
                     id,
                     worker,
-                    ExecutionResponseAction::from_response(response),
+                    action,
                     &mut self.transactions,
                     &mut self.account_locks,
                     &mut self.deferred_execution,
@@ -73,6 +81,9 @@ impl Scheduler {
         } else {
             // Unprocessed messages have an undefined response region.
             let action = ExecutionResponseAction::from_processed_code(message.processed_code);
+            if matches!(action, ExecutionResponseAction::Release) {
+                dropped = dropped.saturating_add(batch.len());
+            }
             for (_, id) in batch.iter() {
                 estimated_cost = estimated_cost.saturating_add(complete_transaction(
                     id,
@@ -87,6 +98,10 @@ impl Scheduler {
         }
         self.in_flight
             .complete_batch(worker, batch.len(), estimated_cost);
+        self.leader_slot_metrics.dropped_transactions = self
+            .leader_slot_metrics
+            .dropped_transactions
+            .saturating_add(dropped);
         self.scheduled_cost = self
             .scheduled_cost
             .saturating_sub(estimated_cost)

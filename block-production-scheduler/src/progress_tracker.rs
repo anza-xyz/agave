@@ -1,6 +1,7 @@
 use {
     agave_scheduler_bindings::{LEADER_READY, LEADER_STARTING, NOT_LEADER, ProgressMessage},
     core::{num::NonZeroUsize, time::Duration},
+    log::info,
     solana_clock::Slot,
     std::time::Instant,
 };
@@ -26,6 +27,13 @@ pub(crate) enum SchedulerState {
 }
 
 impl SchedulerState {
+    pub(crate) fn leader_slot(&self) -> Option<Slot> {
+        match self {
+            Self::NotLeader { .. } => None,
+            Self::LeaderStarting { slot } | Self::LeaderReady { slot, .. } => Some(*slot),
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self::NotLeader {
             current_slot: 0,
@@ -42,7 +50,7 @@ impl SchedulerState {
                 .checked_div(100)
                 .unwrap();
             let now = Instant::now();
-            *self = match progress.leader_state {
+            let state = match progress.leader_state {
                 NOT_LEADER => Self::NotLeader {
                     current_slot: progress.current_slot,
                     next_leader_slot: progress.next_leader_slot,
@@ -58,6 +66,15 @@ impl SchedulerState {
                 },
                 state => panic!("unknown leader state: {state}"),
             };
+            let previous = match self {
+                Self::NotLeader { current_slot, .. } => (*current_slot, NOT_LEADER),
+                Self::LeaderStarting { slot } => (*slot, LEADER_STARTING),
+                Self::LeaderReady { slot, .. } => (*slot, LEADER_READY),
+            };
+            if previous != (progress.current_slot, progress.leader_state) {
+                info!("Scheduler state: {state:?}");
+            }
+            *self = state;
         }
     }
 }

@@ -1110,7 +1110,12 @@ mod tests {
             transaction_recorder,
             poh_service,
             entry_receiver,
-        ) = create_test_recorder(bank, blockstore, None, None);
+        ) = create_test_recorder(
+            bank,
+            blockstore,
+            Some(genesis_config.poh_config.clone()),
+            None,
+        );
         let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(

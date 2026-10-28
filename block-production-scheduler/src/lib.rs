@@ -4,8 +4,8 @@
 use {
     crate::{
         check_response::TransactionState, in_flight_tracker::InFlightTracker,
-        progress_tracker::SchedulerState, schedule::SchedulerScratch,
-        transaction_container::TransactionContainer,
+        leader_slot_metrics::LeaderSlotMetrics, progress_tracker::SchedulerState,
+        schedule::SchedulerScratch, transaction_container::TransactionContainer,
     },
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_scheduler_bindings::{
@@ -21,6 +21,7 @@ use {
         sync::atomic::{AtomicBool, Ordering},
         time::Duration,
     },
+    log::{debug, info},
     rts_alloc::Allocator,
     solana_clock::Slot,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
@@ -33,6 +34,7 @@ mod check_response;
 mod config;
 mod execution_response;
 mod in_flight_tracker;
+mod leader_slot_metrics;
 mod progress_tracker;
 mod resolved_transaction;
 mod schedule;
@@ -53,6 +55,7 @@ pub use config::{Config, SchedulerConfig, SessionConfig};
 
 struct Scheduler {
     state: SchedulerState,
+    leader_slot_metrics: LeaderSlotMetrics,
     scheduling_slot: Option<Slot>,
     cost_pacer: Option<CostPacer>,
     /// Estimated CUs dispatched in the current scheduling slot, used for pacing.
@@ -101,6 +104,7 @@ impl Scheduler {
 
         Ok(Self {
             state: SchedulerState::new(),
+            leader_slot_metrics: LeaderSlotMetrics::default(),
             scheduling_slot: None,
             cost_pacer: None,
             scheduled_cost: 0,
@@ -127,6 +131,7 @@ impl Scheduler {
     fn run_iteration(&mut self) {
         self.handle_leader_progress();
         self.handle_execution_worker_responses();
+        self.handle_leader_slot_metrics();
         self.handle_slot_change();
         self.handle_check_worker_responses();
         self.handle_tpu_ingress();
@@ -187,12 +192,15 @@ impl Scheduler {
 /// The exit flag cannot interrupt an in-progress handshake. The timeout has the syscall-level
 /// semantics of [`client::connect`], rather than imposing a deadline on the entire handshake.
 pub fn run(config: Config, exit: &AtomicBool) -> Result<(), ClientHandshakeError> {
+    info!("Waiting for Agave at {}", config.ipc_path.display());
     while !exit.load(Ordering::Relaxed) {
         if let Some(session) = try_connect(&config)? {
+            info!("Connected to Agave at {}", config.ipc_path.display());
             return run_session(session, config.scheduler, exit);
         }
         thread::sleep(CONNECTION_RETRY_INTERVAL);
     }
+    info!("Scheduler stopped while waiting for Agave");
     Ok(())
 }
 
@@ -202,6 +210,7 @@ pub fn run_session(
     config: SchedulerConfig,
     exit: &AtomicBool,
 ) -> Result<(), ClientHandshakeError> {
+    let worker_count = session.workers.len();
     let mut scheduler = Scheduler::new(
         session,
         config.transaction_state_capacity,
@@ -211,9 +220,12 @@ pub fn run_session(
         config.target_entry_bytes_per_batch,
     )?;
 
+    info!("Scheduler running with {worker_count} execution workers");
     while !exit.load(Ordering::Relaxed) {
         scheduler.run_iteration();
     }
+    scheduler.leader_slot_metrics.report();
+    info!("Scheduler stopped");
     Ok(())
 }
 
@@ -239,6 +251,7 @@ fn try_connect(config: &Config) -> Result<Option<ClientSession>, ClientHandshake
                 ErrorKind::NotFound | ErrorKind::ConnectionRefused
             ) =>
         {
+            debug!("Agave is not available yet: {error}");
             Ok(None)
         }
         Err(error) => Err(error),

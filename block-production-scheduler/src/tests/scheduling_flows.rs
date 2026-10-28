@@ -227,6 +227,13 @@ fn balances_workers_and_releases_conflicting_accounts_on_completion() {
     reply_execution(&mut agave, 0, unblocked, &[not_included_reasons::NONE]);
     scheduler.run_iteration();
     assert_eq!(scheduler.scheduled_cost, 4 * ACTUAL_COST);
+    let metrics = &scheduler.leader_slot_metrics;
+    assert_eq!(metrics.starting_transactions, 0);
+    assert_eq!(metrics.received_packets, 4);
+    assert_eq!(metrics.buffered_transactions, 4);
+    assert_eq!(metrics.dropped_transactions, 0);
+    assert_eq!(metrics.scheduled_transactions, 4);
+    assert_eq!(metrics.completed_transactions, 4);
     assert_finished(&scheduler, &mut agave);
 }
 
@@ -284,6 +291,10 @@ fn retries_immediately_or_on_slot_roll_without_mixing_slot_costs() {
     );
     scheduler.run_iteration();
     let retry = receive_execution(&mut agave, 0, 100, &[immediate]);
+    let metrics = &scheduler.leader_slot_metrics;
+    assert_eq!(metrics.scheduled_transactions, 4);
+    assert_eq!(metrics.completed_transactions, 0);
+    assert_eq!(metrics.dropped_transactions, 1);
     assert_eq!(scheduler.transactions.len(), 2);
     assert_eq!(scheduler.deferred_execution.len(), 1);
     assert_eq!(scheduler.scheduled_cost, ESTIMATED_COST);
@@ -291,6 +302,7 @@ fn retries_immediately_or_on_slot_roll_without_mixing_slot_costs() {
     leader_ready(&mut agave, 101);
     scheduler.run_iteration();
     assert_eq!(scheduler.scheduling_slot, Some(100));
+    assert_eq!(scheduler.leader_slot_metrics.slot, Some(100));
     assert!(agave.workers[0].pack_to_worker.try_read().is_none());
     reply_execution(&mut agave, 0, retry, &[not_included_reasons::NONE]);
     scheduler.run_iteration();
@@ -298,9 +310,19 @@ fn retries_immediately_or_on_slot_roll_without_mixing_slot_costs() {
     assert_eq!(scheduler.scheduling_slot, Some(101));
     assert_eq!(scheduler.scheduled_cost, ESTIMATED_COST);
     assert!(scheduler.deferred_execution.is_empty());
+    let metrics = &scheduler.leader_slot_metrics;
+    assert_eq!(metrics.slot, Some(101));
+    assert_eq!(metrics.starting_transactions, 1);
+    assert_eq!(metrics.completed_transactions, 0);
     reply_execution(&mut agave, 0, retry, &[not_included_reasons::NONE]);
     scheduler.run_iteration();
     assert_eq!(scheduler.scheduled_cost, ACTUAL_COST);
+    let metrics = &scheduler.leader_slot_metrics;
+    assert_eq!(metrics.received_packets, 0);
+    assert_eq!(metrics.buffered_transactions, 0);
+    assert_eq!(metrics.dropped_transactions, 0);
+    assert_eq!(metrics.scheduled_transactions, 1);
+    assert_eq!(metrics.completed_transactions, 1);
     assert_finished(&scheduler, &mut agave);
 }
 

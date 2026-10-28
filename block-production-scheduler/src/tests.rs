@@ -20,6 +20,7 @@ mod scheduling_flows;
 fn config(path: &Path) -> Config {
     Config {
         ipc_path: path.to_path_buf(),
+        log_file: None,
         session: SessionConfig {
             handshake_timeout: Duration::from_secs(1),
             worker_count: 2,
@@ -156,6 +157,7 @@ pub(super) fn insert(
 #[test]
 fn config_uses_shared_defaults_and_overrides() {
     let config = Config::from_toml("ipc_path = '/ledger/scheduler_bindings.ipc'").unwrap();
+    assert!(config.log_file.is_none());
     let session = SessionConfig::default();
     let scheduler = SchedulerConfig::default();
     assert_eq!(config.session.worker_count, session.worker_count);
@@ -169,6 +171,7 @@ fn config_uses_shared_defaults_and_overrides() {
     let config = Config::from_toml(
         r"
 ipc_path = '/ledger/scheduler_bindings.ipc'
+log_file = '/logs/scheduler.log'
 [session]
 worker_count = 2
 handshake_timeout_ms = 250
@@ -177,6 +180,10 @@ execution_margin_ms = 5
 ",
     )
     .unwrap();
+    assert_eq!(
+        config.log_file.as_deref(),
+        Some(Path::new("/logs/scheduler.log"))
+    );
     assert_eq!(config.session.worker_count, 2);
     assert_eq!(config.session.handshake_timeout, Duration::from_millis(250));
     assert_eq!(config.scheduler.execution_margin, Duration::from_millis(5));

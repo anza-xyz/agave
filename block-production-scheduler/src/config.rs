@@ -13,6 +13,8 @@ const DEFAULT_CONFIG_TOML: &str = include_str!("../default.toml");
 pub struct Config {
     /// Path to Agave's scheduler handshake socket; required in the user's TOML file.
     pub ipc_path: PathBuf,
+    /// Log file for the standalone binary. Omit to log to stderr.
+    pub log_file: Option<PathBuf>,
     pub session: SessionConfig,
     pub scheduler: SchedulerConfig,
 }
