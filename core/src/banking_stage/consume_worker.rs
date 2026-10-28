@@ -192,7 +192,7 @@ pub(crate) mod external {
         agave_scheduler_bindings::{
             ExecutionResponseRegion, ExecutionWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
             PackToExecutionWorkerMessage, execution_message_flags,
-            worker_message_types::{ExecutionResponse, not_included_reasons},
+            worker_message_types::{ExecutionResponse, execution_statuses, not_included_reasons},
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
@@ -472,6 +472,7 @@ pub(crate) mod external {
                         Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         Err(err) => Self::reason_from_packet_handling_error(err),
                     },
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 })
@@ -509,6 +510,7 @@ pub(crate) mod external {
                     Err(err) => ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: Self::reason_from_packet_handling_error(err),
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
@@ -528,6 +530,7 @@ pub(crate) mod external {
                 (0..message.batch.num_transactions).map(|_| ExecutionResponse {
                     execution_slot,
                     not_included_reason: reason,
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 }),
@@ -635,10 +638,15 @@ pub(crate) mod external {
                     compute_units,
                     loaded_accounts_data_size,
                     fee_payer_post_balance,
-                    ..
+                    result,
                 } => ExecutionResponse {
                     execution_slot: bank.slot(),
                     not_included_reason: not_included_reasons::NONE,
+                    execution_status: if result.is_ok() {
+                        execution_statuses::SUCCESS
+                    } else {
+                        execution_statuses::FAILED
+                    },
                     cost_units: CostModel::calculate_cost_for_executed_transaction(
                         tx,
                         *compute_units,
@@ -654,6 +662,7 @@ pub(crate) mod external {
                         transaction_error,
                         execution_flags.all_or_nothing,
                     ),
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 },
@@ -1077,24 +1086,28 @@ pub(crate) mod external {
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
+                        execution_status: execution_statuses::FAILED,
                         cost_units: 1337,
                         fee_payer_balance: 1_000_000,
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
+                        execution_status: execution_statuses::SUCCESS,
                         cost_units: 1341,
                         fee_payer_balance: 2_000_000,
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::INSUFFICIENT_FUNDS_FOR_FEE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     }
@@ -1167,18 +1180,21 @@ pub(crate) mod external {
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
