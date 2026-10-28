@@ -247,6 +247,16 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=2.1.2
   # Agave Ok:  wasm32 only; Agave does not build for wasm32.
   --ignore RUSTSEC-2026-0410
+
+  # Crate:     pulldown-cmark
+  # Version:   0.13.1
+  # Title:     Exponential event growth with `ENABLE_WIKILINKS`
+  # Date:      2026-10-18
+  # ID:        RUSTSEC-2026-0414
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0414
+  # Solution:  Upgrade to >=0.13.5
+  # Agave Ok:  build-time only; prost-build parses comments in Agave's own .proto files.
+  --ignore RUSTSEC-2026-0414
 )
 
 xtask_cargo_audit_extra_args=(
