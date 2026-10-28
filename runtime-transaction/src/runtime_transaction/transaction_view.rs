@@ -75,7 +75,9 @@ where
         transaction,
         transaction.data().len() as u64,
     )?;
-    crate::transaction_limits::validate_transaction_config_view(transaction)?;
+    if let Some(config) = transaction.transaction_config() {
+        crate::transaction_limits::validate_transaction_config_view(&config)?;
+    }
 
     let message_hash = match message_hash {
         MessageHash::Precomputed(hash) => hash,
