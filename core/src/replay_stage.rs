@@ -761,6 +761,9 @@ pub(crate) fn notify_block_metadata(
     bank: &Bank,
     entry_count: u64,
 ) {
+    if !block_metadata_notifier.block_metadata_notifications_enabled() {
+        return;
+    }
     let parent_blockhash = bank
         .parent()
         .map(|bank| bank.last_blockhash())
