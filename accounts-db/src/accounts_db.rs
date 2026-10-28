@@ -5312,15 +5312,7 @@ impl AccountsDb {
     }
 
     pub fn add_root_for_tests(&self, slot: Slot) -> AccountsAddRootTiming {
-        let bank_id = BankId::new(slot);
-        // Test stores cache a slot under `BankId::new(slot)`; any other id would skip this root
-        assert!(
-            self.accounts_cache
-                .bank_id(slot)
-                .is_none_or(|cached_bank_id| cached_bank_id == bank_id),
-            "slot {slot} is cached under a different bank id"
-        );
-        self.add_root(bank_id)
+        self.add_root(BankId::new(slot))
     }
 
     /// Returns `slot`'s cache, stored under the `BankId::new(slot)` test convention

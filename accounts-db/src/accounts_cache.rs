@@ -3,7 +3,7 @@ use {
     dashmap::{DashMap, mapref::entry::Entry},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
-    solana_nohash_hasher::{BuildNoHashHasher, IntMap},
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_pubkey::Pubkey,
     std::{
         collections::BTreeMap,
@@ -240,8 +240,6 @@ impl AccountsCacheIndex {
 #[derive(Debug, Default)]
 pub struct AccountsCache {
     cache: DashMap<BankId, Arc<SlotCache>, BuildNoHashHasher<BankId>>,
-    /// Maps a slot to the id of the bank that stored accounts at it
-    bank_ids: RwLock<IntMap<Slot, BankId>>,
     // Index to find which banks a pubkey is stored in, to speed up lookups in load_latest
     index: AccountsCacheIndex,
     // Rooted banks that still have accounts in the write cache, and the slot each stored at. A
@@ -300,16 +298,6 @@ impl AccountsCache {
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
         let slot_cache = self.bank_cache(bank_id).unwrap_or_else(|| {
-            let slot_bank_id = *self
-                .bank_ids
-                .write()
-                .unwrap()
-                .entry(slot)
-                .or_insert(bank_id);
-            debug_assert_eq!(
-                slot_bank_id, bank_id,
-                "slot {slot} already holds accounts stored by another bank"
-            );
             // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
             // which is dropped after this block ends, minimizing time held by the lock.
             // However, we still want to persist the reference to the `SlotStores` behind
@@ -344,17 +332,11 @@ impl AccountsCache {
         let slot_cache = {
             // Held across the cache removal so a concurrent `add_root` can't re-track this bank
             let mut unflushed_roots = self.unflushed_roots.write().unwrap();
-            // Held across the cache removal so a concurrent `store` can't map the slot in between
-            let mut bank_ids = self.bank_ids.write().unwrap();
             // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
             unflushed_roots.remove(&bank_id);
-            let slot_cache = self
-                .cache
+            self.cache
                 .remove(&bank_id)
-                .map(|(_, slot_cache)| slot_cache)?;
-            let removed_bank_id = bank_ids.remove(&slot_cache.slot);
-            debug_assert_eq!(removed_bank_id, Some(bank_id));
-            slot_cache
+                .map(|(_, slot_cache)| slot_cache)?
         };
 
         Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
@@ -410,22 +392,11 @@ impl AccountsCache {
         None
     }
 
-    /// Returns the cache of the bank that stored accounts at `slot`
-    pub fn slot_cache(&self, slot: Slot) -> Option<Arc<SlotCache>> {
-        let bank_id = self.bank_id(slot)?;
-        self.bank_cache(bank_id)
-    }
-
     /// Returns `bank_id`'s cache
     pub fn bank_cache(&self, bank_id: BankId) -> Option<Arc<SlotCache>> {
         self.cache
             .get(&bank_id)
             .map(|result| result.value().clone())
-    }
-
-    /// Returns the id of the bank that stored accounts at `slot`
-    pub fn bank_id(&self, slot: Slot) -> Option<BankId> {
-        self.bank_ids.read().unwrap().get(&slot).copied()
     }
 
     /// A root without a slot cache is not tracked; nothing stores into a slot once it is rooted
@@ -521,10 +492,6 @@ mod tests {
                 }
                 !should_remove
             });
-            self.bank_ids
-                .write()
-                .unwrap()
-                .retain(|slot, _bank_id| *slot > max_root);
             removed_slots
         }
     }
@@ -560,7 +527,7 @@ mod tests {
             &pubkey,
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
-        let slot_cache = cache.slot_cache(slot).unwrap();
+        let slot_cache = cache.bank_cache(BankId::new(slot)).unwrap();
         assert_eq!(slot_cache.len(), 1);
 
         cache.store(
