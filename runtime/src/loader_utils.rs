@@ -243,7 +243,7 @@ pub fn load_upgradeable_program_and_advance_slot(
         .advance_slot(
             1,
             bank_forks,
-            SlotLeaders::new_unchecked(SlotLeader::default(), SlotLeader::default()),
+            SlotLeaders::new(SlotLeader::default(), SlotLeader::default()),
         )
         .expect("Failed to advance the slot");
 
@@ -251,7 +251,7 @@ pub fn load_upgradeable_program_and_advance_slot(
         .advance_slot(
             1,
             bank_forks,
-            SlotLeaders::new_unchecked(SlotLeader::default(), SlotLeader::default()),
+            SlotLeaders::new(SlotLeader::default(), SlotLeader::default()),
         )
         .expect("Failed to advance the slot");
 

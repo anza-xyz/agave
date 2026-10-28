@@ -94,11 +94,30 @@ impl LeaderScheduleCache {
     }
 
     /// Returns the leader of `slot` together with the leader of `slot + 1`,
-    /// for creating the bank at `slot`. The next leader may belong to the
-    /// following epoch. With a `bank`, that epoch's schedule is always
-    /// computable, since the bank holds stakes up to its leader schedule epoch.
+    /// for creating the bank at `slot`.
+    ///
+    /// On the last slot of an epoch the next leader belongs to the following
+    /// epoch, which may be past `max_epoch` if the root lags behind `bank`.
+    /// `bank` still holds stakes up to its leader schedule epoch, so the next
+    /// leader is then read from those stakes instead.
     pub fn slot_leaders_at(&self, slot: Slot, bank: Option<&Bank>) -> Option<SlotLeaders> {
-        SlotLeaders::try_new(slot, |slot| self.slot_leader_at(slot, bank))
+        let cur_leader = self.slot_leader_at(slot, bank)?;
+        let next_slot = slot.saturating_add(1);
+        let next_leader = self
+            .slot_leader_at(next_slot, bank)
+            .or_else(|| self.slot_leader_at_from_bank(next_slot, bank?))?;
+        Some(SlotLeaders::new(cur_leader, next_leader))
+    }
+
+    /// Computes the leader of `slot` from `bank`'s stakes without caching the
+    /// schedule, since a schedule past `max_epoch` may differ between forks.
+    fn slot_leader_at_from_bank(&self, slot: Slot, bank: &Bank) -> Option<SlotLeader> {
+        let (epoch, slot_index) = bank.get_epoch_and_slot_index(slot);
+        if let Some(ref fixed_schedule) = self.fixed_schedule {
+            return Some(fixed_schedule.leader_schedule[slot_index]);
+        }
+        leader_schedule_utils::leader_schedule(epoch, bank)
+            .map(|leader_schedule| leader_schedule[slot_index])
     }
 
     /// Returns the (next slot, last slot) consecutive range of slots after
@@ -631,6 +650,39 @@ mod tests {
         let bank = Bank::new_from_parent(bank, leaders, last_slot);
         assert_eq!(bank.leader(), leaders.cur_leader());
         assert_eq!(bank.next_leader(), leaders.next_leader());
+    }
+
+    #[test]
+    fn test_slot_leaders_at_root_behind_parent_epoch() {
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let cache = LeaderScheduleCache::new_from_bank(&bank0);
+        assert_eq!(cache.max_epoch.load(Ordering::Acquire), 1);
+
+        // The parent is in epoch 1 while the root is still in epoch 0.
+        let parent = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank0,
+            SlotLeaders::new_for_tests(SlotLeader::new_unique()),
+            94,
+        );
+
+        // The child is the last slot of epoch 1, so its next leader is in
+        // epoch 2, past what the root confirms.
+        let slot = 95;
+        assert_eq!(parent.epoch_schedule().get_last_slot_in_epoch(1), slot);
+        assert!(cache.slot_leader_at(slot + 1, Some(&parent)).is_none());
+
+        let leaders = cache.slot_leaders_at(slot, Some(&parent)).unwrap();
+        assert_eq!(
+            Some(*leaders.cur_leader()),
+            cache.slot_leader_at(slot, Some(&parent))
+        );
+        let epoch_2_schedule = leader_schedule_utils::leader_schedule(2, &parent).unwrap();
+        assert_eq!(*leaders.next_leader(), epoch_2_schedule[0]);
+
+        // The schedule of the unconfirmed epoch is not cached.
+        assert!(cache.get_epoch_leader_schedule(2).is_none());
     }
 
     #[test]

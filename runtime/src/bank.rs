@@ -2271,7 +2271,7 @@ impl Bank {
                 let genesis_leader = stakes
                     .highest_staked_node()
                     .expect("genesis snapshot should contain at least one staked vote account");
-                SlotLeaders::new_unchecked(genesis_leader, *leaders.next_leader())
+                SlotLeaders::new(genesis_leader, *leaders.next_leader())
             } else {
                 leaders
             }
@@ -2451,14 +2451,17 @@ impl Bank {
 
         // Both slots usually share an epoch, so keep the last schedule built.
         let mut schedule = None;
-        SlotLeaders::try_new(slot, |slot| {
+        let mut leader_at = |slot: Slot| {
             let (epoch, slot_index) = epoch_schedule.get_epoch_and_slot_index(slot);
             if !matches!(schedule, Some((cached_epoch, _)) if cached_epoch == epoch) {
                 schedule = Some((epoch, leader_schedule(epoch)?));
             }
             let (_, schedule) = schedule.as_ref()?;
             Some(schedule.get_slot_leader_at_index(slot_index as usize))
-        })
+        };
+        let cur_leader = leader_at(slot)?;
+        let next_leader = leader_at(slot.saturating_add(1))?;
+        Some(SlotLeaders::new(cur_leader, next_leader))
     }
 
     /// Return subset of bank fields representing serializable state

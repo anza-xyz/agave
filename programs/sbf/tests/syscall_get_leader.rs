@@ -42,7 +42,7 @@ fn test_syscall_get_leader() {
 
     // The leaders arrive with the bank, the way the block creation loop and
     // replay stage supply them from the leader schedule cache.
-    let leaders = SlotLeaders::new_unchecked(SlotLeader::new_unique(), SlotLeader::new_unique());
+    let leaders = SlotLeaders::new(SlotLeader::new_unique(), SlotLeader::new_unique());
     let mut bank_client = BankClient::new_shared(bank);
     let bank = bank_client.advance_slot(1, &bank_forks, leaders).unwrap();
     bank.freeze();

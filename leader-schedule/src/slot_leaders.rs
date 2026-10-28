@@ -1,4 +1,4 @@
-use {crate::SlotLeader, solana_clock::Slot};
+use crate::SlotLeader;
 
 /// The leader of a slot together with the leader of the slot after it, as
 /// resolved from the leader schedule by whoever creates the bank for that slot.
@@ -12,23 +12,10 @@ pub struct SlotLeaders {
 }
 
 impl SlotLeaders {
-    /// Looks up the leaders of `slot` and `slot + 1` with `leader_at`, so the
-    /// pair always matches the schedule it was read from. Returns `None` if
-    /// either slot has no leader.
-    pub fn try_new(
-        slot: Slot,
-        mut leader_at: impl FnMut(Slot) -> Option<SlotLeader>,
-    ) -> Option<Self> {
-        Some(Self {
-            cur_leader: leader_at(slot)?,
-            next_leader: leader_at(slot.saturating_add(1))?,
-        })
-    }
-
-    /// Pairs leaders that were not read from a leader schedule, such as the
-    /// genesis leader or a warp target past what epoch stakes cover. Prefer
-    /// [`Self::try_new`].
-    pub fn new_unchecked(cur_leader: SlotLeader, next_leader: SlotLeader) -> Self {
+    /// Pairs the leader of a slot with the leader of the slot after it. Callers
+    /// creating a bank from the leader schedule should get the pair from
+    /// `LeaderScheduleCache::slot_leaders_at`.
+    pub fn new(cur_leader: SlotLeader, next_leader: SlotLeader) -> Self {
         Self {
             cur_leader,
             next_leader,
@@ -39,7 +26,7 @@ impl SlotLeaders {
     /// leader.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests(leader: SlotLeader) -> Self {
-        Self::new_unchecked(leader, leader)
+        Self::new(leader, leader)
     }
 
     /// The leader of the slot.

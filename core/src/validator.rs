@@ -2830,7 +2830,7 @@ fn maybe_warp_slot(
         // stakes cover, so there is no schedule to read the leaders from.
         let warp_bank = Bank::warp_from_parent(
             root_bank,
-            SlotLeaders::new_unchecked(SlotLeader::default(), SlotLeader::default()),
+            SlotLeaders::new(SlotLeader::default(), SlotLeader::default()),
             warp_slot,
         );
 
