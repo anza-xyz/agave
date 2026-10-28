@@ -4158,7 +4158,7 @@ pub mod tests {
         let mut hash = bank.last_blockhash();
 
         let present_account_key = Keypair::new();
-        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let entries: Vec<_> = (0..NUM_TRANSFERS)
@@ -4604,7 +4604,7 @@ pub mod tests {
         }
 
         let present_account_key = Keypair::new();
-        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let mut i = 0;
@@ -5038,9 +5038,9 @@ pub mod tests {
                 .map(|(root, stake)| {
                     let mut vote_state = VoteStateV4::default();
                     vote_state.root_slot = Some(root);
-                    let mut vote_account = AccountSharedData::new(
+                    let mut vote_account = AccountSharedData::new_with_data(
                         1,
-                        VoteStateV4::size_of(),
+                        vec![0; VoteStateV4::size_of()],
                         &solana_vote_program::id(),
                     );
                     let versioned = VoteStateVersions::new_v4(vote_state);
