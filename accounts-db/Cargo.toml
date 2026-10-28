@@ -43,10 +43,12 @@ stable-abi = [
 
 [dependencies]
 agave-fs = { workspace = true }
+agave-memory = { workspace = true }
 ahash = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+hashbrown = { workspace = true, features = ["allocator-api2", "inline-more"] }
 itertools = { workspace = true }
 log = { workspace = true }
 modular-bitfield = { workspace = true }

@@ -298,6 +298,7 @@ futures-util = "0.3.34"
 gag = "1.0.0"
 gethostname = "1.1.0"
 goauth = "0.17.0"
+hashbrown = { version = "0.17.0", default-features = false }
 hex = "0.4.3"
 hidapi = { version = "2.6.7", default-features = false }
 histogram = "0.6.9"
