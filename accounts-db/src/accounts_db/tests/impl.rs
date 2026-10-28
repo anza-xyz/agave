@@ -3673,6 +3673,59 @@ fn test_read_only_accounts_cache_skips_zero_lamport() {
 }
 
 #[test]
+fn test_flush_stores_large_accounts_in_read_cache() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+
+    let large_key = Pubkey::new_unique();
+    let small_key = Pubkey::new_unique();
+    let large_account =
+        AccountSharedData::new(1, MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH, &Pubkey::default());
+    let small_account = AccountSharedData::new(
+        1,
+        MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH - 1,
+        &Pubkey::default(),
+    );
+    db.store_for_tests((
+        1,
+        &[(&large_key, &large_account), (&small_key, &small_account)][..],
+    ));
+    db.add_root_and_flush_write_cache(1);
+
+    // Only the large account is stored in the read cache by flush
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+    assert_eq!(
+        db.read_only_accounts_cache.load(&large_key, |_| true),
+        Some((large_account, 1))
+    );
+
+    // Load the small account into the read cache
+    db.do_load_for_tests(&Ancestors::default(), &small_key)
+        .unwrap();
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 2);
+
+    // Flushing new versions replaces the large account's read cache entry; smaller accounts are
+    // dropped
+    let large_account =
+        AccountSharedData::new(2, MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH, &Pubkey::default());
+    let small_account = AccountSharedData::new(
+        2,
+        MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH - 1,
+        &Pubkey::default(),
+    );
+    db.store_for_tests((
+        2,
+        &[(&large_key, &large_account), (&small_key, &small_account)][..],
+    ));
+    db.add_root_and_flush_write_cache(2);
+
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+    assert_eq!(
+        db.read_only_accounts_cache.load(&large_key, |_| true),
+        Some((large_account, 2))
+    );
+}
+
+#[test]
 fn test_load_with_read_only_accounts_cache() {
     let db = Arc::new(AccountsDb::new_for_tests_with_config(
         Vec::new(),

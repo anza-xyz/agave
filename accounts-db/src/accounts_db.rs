@@ -121,6 +121,10 @@ pub const TOTAL_IO_URING_BUFFERS_SIZE_LIMIT: usize = 2_000_000_000;
 /// candidates for shrinking.
 const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
 
+/// Flushed accounts with at least this much data are stored in the read cache, rather than only
+/// dropped from it: reading one back from storage copies megabytes
+const MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH: usize = 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanAccountStorageData {
     /// callback for accounts in storage will not include `data`
@@ -2769,25 +2773,38 @@ impl AccountsDb {
             && populate_read_cache == PopulateReadCache::True
             && !account.is_zero_lamport()
         {
-            // Store only while `slot` is the newest version in the index, under the entry's lock;
-            // the read cache removals in `store_accounts_for_flush`, `store_accounts_for_squash`
-            // and `purge_slots_for_snapshot_minimizer` rely on this.
-            self.accounts_index.get_and_then(pubkey, |entry| {
-                if let Some(entry) = entry {
-                    let slot_list = entry.slot_list_read_lock();
-                    if self
-                        .accounts_index
-                        .latest_slot(None, &slot_list, None)
-                        .is_some_and(|newest| slot_list[newest].0 == slot)
-                    {
-                        self.read_only_accounts_cache
-                            .store(*pubkey, slot, account.clone());
-                    }
-                }
-                (false, ())
-            });
+            self.store_in_read_cache_if_newest(pubkey, slot, account);
         }
         maybe_account.map(|account| (account, slot))
+    }
+
+    /// Stores `account` in the read cache if `slot` is the newest version of `pubkey` in the
+    /// index. Returns whether it was stored.
+    fn store_in_read_cache_if_newest(
+        &self,
+        pubkey: &Pubkey,
+        slot: Slot,
+        account: &AccountSharedData,
+    ) -> bool {
+        // Store only while `slot` is the newest version in the index, under the entry's lock;
+        // the read cache removals in `store_accounts_for_flush`, `store_accounts_for_squash`
+        // and `purge_slots_for_snapshot_minimizer` rely on this.
+        self.accounts_index.get_and_then(pubkey, |entry| {
+            let mut stored = false;
+            if let Some(entry) = entry {
+                let slot_list = entry.slot_list_read_lock();
+                if self
+                    .accounts_index
+                    .latest_slot(None, &slot_list, None)
+                    .is_some_and(|newest| slot_list[newest].0 == slot)
+                {
+                    self.read_only_accounts_cache
+                        .store(*pubkey, slot, account.clone());
+                    stored = true;
+                }
+            }
+            (false, stored)
+        })
     }
 
     #[cfg_attr(test, qualifiers(pub(crate)))]
@@ -4219,12 +4236,20 @@ impl AccountsDb {
         let reclaims = self.update_index_for_flush(&infos, &accounts, reclaim_handling);
         let update_index_us = update_index_time.end_as_us();
 
-        // Drop the read cache entry for every account written to storage. The read cached version
-        // stale as it was superseded by the new version in storage
+        // Every account written to storage supersedes its read cache entry. Entries of large
+        // accounts are replaced with the version just written; entries of small accounts are
+        // dropped.
         let flush_read_cache_time = Measure::start("flush_read_cache");
         (0..accounts.len()).for_each(|index| {
-            self.read_only_accounts_cache
-                .remove_assume_not_present(accounts.pubkey(index));
+            let pubkey = accounts.pubkey(index);
+            let stored = accounts.data_len(index) >= MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH
+                && accounts.account(index, |account| {
+                    self.store_in_read_cache_if_newest(pubkey, slot, &account.take_account())
+                });
+            if !stored {
+                self.read_only_accounts_cache
+                    .remove_assume_not_present(pubkey);
+            }
         });
         let flush_read_cache_us = flush_read_cache_time.end_as_us();
 
