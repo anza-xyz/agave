@@ -914,7 +914,7 @@ dependencies = [
  "ark-poly",
  "ark-serialize",
  "ark-std",
- "educe 0.6.0",
+ "educe",
  "fnv",
  "hashbrown 0.15.1",
  "itertools 0.13.0",
@@ -936,7 +936,7 @@ dependencies = [
  "ark-std",
  "arrayvec",
  "digest 0.10.7",
- "educe 0.6.0",
+ "educe",
  "itertools 0.13.0",
  "num-bigint",
  "num-traits",
@@ -977,7 +977,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "ark-std",
- "educe 0.6.0",
+ "educe",
  "fnv",
  "hashbrown 0.15.1",
 ]
@@ -2694,18 +2694,6 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "educe"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4bd92664bf78c4d3dba9b7cdafce6fa15b13ed3ed16175218196942e99168a8"
-dependencies = [
- "enum-ordinalize",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -7271,7 +7259,6 @@ dependencies = [
  "tarpc",
  "thiserror 2.0.21",
  "tokio",
- "tokio-serde",
  "wincode",
 ]
 
@@ -12274,12 +12261,10 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "pin-project",
  "rand 0.10.2",
- "serde",
  "static_assertions",
  "tarpc-plugins",
  "thiserror 2.0.21",
  "tokio",
- "tokio-serde",
  "tokio-util 0.7.19",
  "tracing",
  "tracing-opentelemetry",
@@ -12572,22 +12557,6 @@ checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
 dependencies = [
  "rustls",
  "tokio",
-]
-
-[[package]]
-name = "tokio-serde"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caf600e7036b17782571dd44fa0a5cea3c82f60db5137f774a325a76a0d6852b"
-dependencies = [
- "bincode",
- "bytes",
- "educe 0.5.11",
- "futures-core",
- "futures-sink",
- "pin-project",
- "serde",
- "serde_json",
 ]
 
 [[package]]
