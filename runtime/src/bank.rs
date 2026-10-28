@@ -1333,6 +1333,10 @@ impl Bank {
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut bank = Self::default_with_bank_rc(BankRc::new(accounts));
+        bank.rc
+            .accounts
+            .accounts_db
+            .notify_bank_creation(bank.slot(), None, bank.bank_id());
         bank.ancestors = Ancestors::from(vec![(bank.slot(), bank.bank_id())]);
         bank.compute_budget = runtime_config.compute_budget;
         bank.store_transaction_signatures_in_status_cache =
@@ -1452,6 +1456,9 @@ impl Bank {
         );
 
         let bank_id = rc.bank_id_generator.next();
+        rc.accounts
+            .accounts_db
+            .notify_bank_creation(slot, Some(parent.slot()), bank_id);
         let (blockhash_queue, blockhash_queue_time_us) =
             measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
 
@@ -2127,6 +2134,11 @@ impl Bank {
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let bank_id = bank_rc.bank_id_generator.next();
+        bank_rc.accounts.accounts_db.notify_bank_creation(
+            slot,
+            (slot != 0).then_some(fields.parent_slot),
+            bank_id,
+        );
         let ancestors = Ancestors::from(vec![(slot, bank_id)]);
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.

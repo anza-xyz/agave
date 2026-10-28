@@ -7,6 +7,12 @@ use {
 };
 
 impl AccountsDb {
+    pub fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        if let Some(notifier) = &self.accounts_update_notifier {
+            notifier.notify_bank_creation(slot, parent, bank_id);
+        }
+    }
+
     pub fn notify_account_at_accounts_update(
         &self,
         slot: Slot,
@@ -181,6 +187,10 @@ mod tests {
         let notifier = Arc::new(GeyserTestPlugin::default());
         let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        // Legacy notifiers keep receiving accounts without implementing bank creation.
+        accounts_db.notify_bank_creation(0, None, BankId::new(100));
+        assert!(notifier.accounts_notified.is_empty());
+        assert!(!notifier.is_startup_done.load(Ordering::Relaxed));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.

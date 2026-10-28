@@ -994,9 +994,11 @@ impl AccountsDb {
         &self.bank_hash_details_dir
     }
 
-    /// Returns true if there is an accounts update notifier.
+    /// Returns true if the notifier needs runtime account updates.
     pub fn has_accounts_update_notifier(&self) -> bool {
-        self.accounts_update_notifier.is_some()
+        self.accounts_update_notifier
+            .as_ref()
+            .is_some_and(|notifier| notifier.account_notifications_enabled())
     }
 
     fn next_id(&self) -> AccountsFileId {
