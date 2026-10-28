@@ -3093,51 +3093,6 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_inflation_reward(addresses, epoch))
     }
 
-    /// Returns the inflation reward for a list of addresses for an epoch, with
-    /// additional configuration options.
-    ///
-    /// # RPC Reference
-    ///
-    /// This method corresponds directly to the [`getInflationReward`] RPC method.
-    ///
-    /// [`getInflationReward`]: https://solana.com/docs/rpc/http/getinflationreward
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use solana_commitment_config::CommitmentConfig;
-    /// # use solana_rpc_client_api::{
-    /// #     client_error::Error,
-    /// #     config::RpcEpochConfig,
-    /// # };
-    /// # use solana_rpc_client::rpc_client::RpcClient;
-    /// # use solana_keypair::Keypair;
-    /// # use solana_signer::Signer;
-    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
-    /// # let epoch_info = rpc_client.get_epoch_info()?;
-    /// # let epoch = epoch_info.epoch;
-    /// # let alice = Keypair::new();
-    /// # let bob = Keypair::new();
-    /// let addresses = vec![alice.pubkey(), bob.pubkey()];
-    /// let config = RpcEpochConfig {
-    ///     epoch: Some(epoch),
-    ///     commitment: Some(CommitmentConfig::processed()),
-    ///     ..Default::default()
-    /// };
-    /// let inflation_reward = rpc_client.get_inflation_reward_with_config(
-    ///     &addresses,
-    ///     config,
-    /// )?;
-    /// # Ok::<(), Error>(())
-    /// ```
-    pub fn get_inflation_reward_with_config(
-        &self,
-        addresses: &[Pubkey],
-        config: RpcEpochConfig,
-    ) -> ClientResult<Vec<Option<RpcInflationReward>>> {
-        self.invoke((self.rpc_client.as_ref()).get_inflation_reward_with_config(addresses, config))
-    }
-
     /// Returns the current solana version running on the node.
     ///
     /// # RPC Reference

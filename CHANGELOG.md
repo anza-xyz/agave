@@ -36,11 +36,10 @@ Release channels have their own copy of this changelog:
   `--full-rpc-api`.
 * `getFeeForMessage` no longer returns `null` when the message's recent blockhash has expired or
   its durable nonce is invalid. The fee does not depend on either, so it is now returned.
-* `getInflationReward` supports a new `separateBlockReward` boolean argument, which provides
-  the block rewards for stake accounts as a separate `blockRewardAmount` field in the response.
-  If block revenue sharing is not enabled in the epoch, the field will always be `null`. The
-  `amount` field will always contain both inflation and block rewards. To calculate inflation
-  rewards, use the `separateBlockReward` argument, then calculate `amount - blockRewardAmount`.
+* `getInflationReward` provides the block rewards for stake accounts as a separate
+  `blockRewardAmount` field in the response, if block revenue sharing is enabled in the epoch.
+  Otherwise, the field is present with a value of `null`. The `amount` field always contains
+  both inflation and block rewards. To get inflation rewards, calculate `amount - blockRewardAmount`.
 * `getBlock` returns block revenue rewards as separate entries in the `rewards` field. This
   means a single stake account has two separate reward entries in a block if it received
   block rewards and inflation rewards. The new entries can only appear when block revenue

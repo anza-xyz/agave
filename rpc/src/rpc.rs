@@ -690,7 +690,7 @@ impl JsonRpcRequestProcessor {
         epoch: Epoch,
         slot: Slot,
         reward: &Reward,
-        separate_block_rewards: bool,
+        block_rewards_enabled: bool,
     ) {
         let reward_response = reward_response.get_or_insert(RpcInflationReward {
             epoch,
@@ -699,10 +699,12 @@ impl JsonRpcRequestProcessor {
             post_balance: reward.post_balance,
             commission: reward.commission,
             commission_bps: reward.commission_bps,
-            block_reward_amount: separate_block_rewards.then_some(0),
+            block_reward_amount: (block_rewards_enabled
+                && reward.reward_type.is_some_and(Self::is_stake_reward))
+            .then_some(0),
         });
         let amount = reward.lamports.unsigned_abs();
-        let block_reward_amount = (separate_block_rewards
+        let block_reward_amount = (block_rewards_enabled
             && reward
                 .reward_type
                 .is_some_and(|reward_type| reward_type == RewardType::BlockRevenueSharing))
@@ -795,13 +797,10 @@ impl JsonRpcRequestProcessor {
 
         // The activated slot represents the first slot in the epoch, but we
         // want the first full epoch with the feature enabled.
-        let epoch_has_block_rewards = bank
+        let block_rewards_enabled = bank
             .feature_set
             .activated_slot(&agave_feature_set::block_revenue_sharing::id())
             .is_some_and(|activated_slot| activated_slot < first_slot_in_epoch);
-
-        // Only separate if the epoch has block rewards, otherwise write null
-        let separate_block_reward = config.separate_block_reward && epoch_has_block_rewards;
 
         let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
 
@@ -829,7 +828,7 @@ impl JsonRpcRequestProcessor {
                             epoch,
                             first_confirmed_block_in_epoch,
                             reward,
-                            separate_block_reward,
+                            block_rewards_enabled,
                         );
                     }
                 }
@@ -918,7 +917,7 @@ impl JsonRpcRequestProcessor {
                                     epoch,
                                     slot,
                                     reward,
-                                    separate_block_reward,
+                                    block_rewards_enabled,
                                 );
                             }
                         }
@@ -6153,6 +6152,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_inflation_reward_success() {
         let rpc = RpcHandler::start();
+        let vote_address = Pubkey::new_unique();
         let stake_only_address = Pubkey::new_unique();
         let block_only_address = Pubkey::new_unique();
         let stake_and_block_receiver_address = Pubkey::new_unique();
@@ -6210,12 +6210,19 @@ pub mod tests {
             commission_bps: None,
         });
 
-        // write out number of partitions first
+        // write out number of partitions and vote rewards first
         rpc.blockstore
             .write_rewards(
                 first_slot_of_epoch,
                 RewardsAndNumPartitions {
-                    rewards: vec![],
+                    rewards: vec![Reward {
+                        pubkey: vote_address.to_string(),
+                        lamports: 10,
+                        post_balance: 11,
+                        reward_type: Some(RewardType::Voting),
+                        commission: None,
+                        commission_bps: None,
+                    }],
                     num_partitions: Some(num_partitions as u64),
                 },
             )
@@ -6258,58 +6265,11 @@ pub mod tests {
             stake_and_block_receiver_address.to_string(),
             not_found_address.to_string(),
             stake_and_block_receiver_address.to_string(), // test repeated address
+            vote_address.to_string(),
         ];
 
         // Normal request
         let request = create_test_request("getInflationReward", Some(json!([addresses])));
-        let result: Vec<Option<RpcInflationReward>> =
-            parse_success_result(rpc.handle_request_sync(request));
-        assert_eq!(
-            result[0],
-            Some(RpcInflationReward {
-                epoch: 0,
-                effective_slot: first_slot_of_epoch + 1 + stake_only_partition as u64,
-                amount: 1,
-                post_balance: 2,
-                commission: None,
-                commission_bps: None,
-                block_reward_amount: None,
-            })
-        );
-        assert_eq!(
-            result[1],
-            Some(RpcInflationReward {
-                epoch: 0,
-                effective_slot: first_slot_of_epoch + 1 + block_only_partition as u64,
-                amount: 3,
-                post_balance: 4,
-                commission: None,
-                commission_bps: None,
-                block_reward_amount: None,
-            })
-        );
-        assert_eq!(
-            result[2],
-            Some(RpcInflationReward {
-                epoch: 0,
-                effective_slot: first_slot_of_epoch + 1 + stake_and_block_partition as u64,
-                amount: 12,
-                post_balance: 6,
-                commission: None,
-                commission_bps: None,
-                block_reward_amount: None,
-            })
-        );
-        assert_eq!(result[2], result[4]);
-        assert_eq!(result[3], None);
-
-        // Split out block rewards
-        let request = create_test_request(
-            "getInflationReward",
-            Some(json!([addresses, {
-                "separateBlockReward": true
-            }])),
-        );
         let result: Vec<Option<RpcInflationReward>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert_eq!(
@@ -6331,9 +6291,9 @@ pub mod tests {
                 effective_slot: first_slot_of_epoch + 1 + block_only_partition as u64,
                 amount: 3,
                 post_balance: 4,
-                block_reward_amount: Some(3),
                 commission: None,
                 commission_bps: None,
+                block_reward_amount: Some(3),
             })
         );
         assert_eq!(
@@ -6343,13 +6303,25 @@ pub mod tests {
                 effective_slot: first_slot_of_epoch + 1 + stake_and_block_partition as u64,
                 amount: 12,
                 post_balance: 6,
-                block_reward_amount: Some(7),
                 commission: None,
                 commission_bps: None,
+                block_reward_amount: Some(7),
             })
         );
         assert_eq!(result[2], result[4]);
         assert_eq!(result[3], None);
+        assert_eq!(
+            result[5],
+            Some(RpcInflationReward {
+                epoch: 0,
+                effective_slot: first_slot_of_epoch,
+                amount: 10,
+                post_balance: 11,
+                commission: None,
+                commission_bps: None,
+                block_reward_amount: None,
+            })
+        );
     }
 
     #[test]

@@ -562,7 +562,6 @@ pub struct RpcInflationReward {
     pub commission: Option<u8>, // Vote account commission when the reward was credited
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commission_bps: Option<u16>, // Vote account commission in basis points (SIMD-0291)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reward_amount: Option<u64>, // lamports
 }
 
