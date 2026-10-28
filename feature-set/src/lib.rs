@@ -1525,7 +1525,7 @@ pub mod relax_fee_payer_constraint {
 }
 
 pub mod double_disinflation_rate {
-    solana_pubkey::declare_id!("55oikhjJ2LUi1xdgJ17ueRyHFURZEw32asT3iAKfh7gg");
+    solana_pubkey::declare_id!("ddibiks7RHZR69QXYMCmk4EZNt6WckspTqEEWv6cS38");
     /// Taper (yearly disinflation rate) applied from activation onward.
     pub const TAPER: f64 = 0.30;
 }
