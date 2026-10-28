@@ -1355,6 +1355,161 @@ fn test_cmr_mismatch_hard_dead() {
 }
 
 #[test]
+fn test_bank_hash_mismatch_hard_dead() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    let slot = 1;
+    let parent_bank = bank_forks.read().unwrap().root_bank();
+    let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
+    bank.fill_bank_with_ticks_for_tests();
+    bank.set_expected_bank_hash(Hash::new_unique());
+    bank_forks.write().unwrap().insert(bank);
+    let bank = bank_forks.read().unwrap().get(slot).unwrap();
+    blockstore.insert_shreds_for_bank(bank.clone());
+    assert!(bank.is_complete());
+    progress.insert(
+        slot,
+        ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None),
+    );
+
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let mut context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore.clone(),
+        replay_vote_sender,
+    );
+    context.migration_status = Arc::new(post_migration_status_for_tests());
+    assert!(
+        blockstore
+            .get_block_id(slot, &context.migration_status)
+            .unwrap()
+            .is_some()
+    );
+    let dead_slots = Arc::new(Mutex::new(HashSet::new()));
+    context.slot_status_notifier = Some(Arc::new(RwLock::new(SlotStatusNotifierForTest::new(
+        dead_slots.clone(),
+    ))));
+
+    let frozen_slots = ReplayStage::process_replay_results(
+        &context,
+        &mut progress,
+        &mut Vec::new(),
+        &mut LatestValidatorVotesForFrozenBanks::default(),
+        None,
+        &[ReplaySlotFromBlockstore {
+            is_slot_dead: false,
+            bank_slot: slot,
+            replay_result: Some(Ok(0)),
+        }],
+        &Pubkey::new_unique(),
+    )
+    .unwrap();
+
+    assert!(frozen_slots.is_empty());
+    assert!(blockstore.is_dead(slot));
+    assert_eq!(progress.dead_reason(slot), Some(&DeadSlotReason::Hard));
+    assert_eq!(*dead_slots.lock().unwrap(), HashSet::from([slot]));
+    assert_eq!(
+        replay_vote_receiver.try_iter().collect::<Vec<_>>(),
+        vec![
+            ReplayVoteMessage::BankComplete {
+                replay_bank_id: bank.bank_id(),
+                replay_slot: slot,
+            },
+            ReplayVoteMessage::InvalidBank {
+                replay_bank_id: bank.bank_id(),
+                replay_slot: slot,
+            },
+        ]
+    );
+}
+
+#[test_case(false; "missing_marker")]
+#[test_case(true; "already_dead")]
+fn test_unusable_update_parent_hard_dead(already_dead: bool) {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    let slot = 4;
+    let parent_block_id = BlockId::new_unique();
+    if already_dead {
+        insert_update_parent_slot(&blockstore, slot, 3, 0, parent_block_id, 32);
+        blockstore.set_dead_slot(slot).unwrap();
+    }
+    let parent_bank = bank_forks.read().unwrap().root_bank();
+    let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
+    bank_forks.write().unwrap().insert(bank);
+    let bank = bank_forks.read().unwrap().get(slot).unwrap();
+    progress.insert(
+        slot,
+        ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None),
+    );
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let mut context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore.clone(),
+        replay_vote_sender,
+    );
+    context.migration_status = Arc::new(post_migration_status_for_tests());
+    let (entry_notification_sender, entry_notification_receiver) = bounded(1);
+    context.entry_notification_sender = Some(entry_notification_sender);
+    let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
+        new_parent_slot: 0,
+        new_parent_block_id: parent_block_id,
+    });
+    let frozen_slots = ReplayStage::process_replay_results(
+        &context,
+        &mut progress,
+        &mut Vec::new(),
+        &mut LatestValidatorVotesForFrozenBanks::default(),
+        None,
+        &[ReplaySlotFromBlockstore {
+            is_slot_dead: false,
+            bank_slot: slot,
+            replay_result: Some(Err(BlockstoreProcessorError::BlockComponentProcessor(
+                BlockComponentProcessorError::AbandonedBank(update_parent),
+            ))),
+        }],
+        &Pubkey::new_unique(),
+    )
+    .unwrap();
+
+    assert!(frozen_slots.is_empty());
+    assert!(blockstore.is_dead(slot));
+    assert_eq!(progress.dead_reason(slot), Some(&DeadSlotReason::Hard));
+    assert!(Arc::ptr_eq(
+        &bank,
+        &bank_forks.read().unwrap().get(slot).unwrap()
+    ));
+    assert_eq!(
+        replay_vote_receiver.try_recv(),
+        Ok(ReplayVoteMessage::InvalidBank {
+            replay_bank_id: bank.bank_id(),
+            replay_slot: slot,
+        })
+    );
+    assert!(replay_vote_receiver.try_recv().is_err());
+    assert!(entry_notification_receiver.try_recv().is_err());
+}
+
+#[test]
 fn test_alpenglow_migration_transition_does_not_mark_bank_dead() {
     let ReplayBlockstoreComponents {
         blockstore,
