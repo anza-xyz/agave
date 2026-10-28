@@ -94,7 +94,7 @@ fn process_instruction<'a>(
                 let instruction = system_instruction::create_account(
                     accounts[FROM_INDEX].key,
                     accounts[DERIVED_KEY1_INDEX].key,
-                    42,
+                    CREATE_ACCOUNT_LAMPORTS,
                     MAX_PERMITTED_DATA_INCREASE as u64,
                     program_id,
                 );
@@ -106,11 +106,11 @@ fn process_instruction<'a>(
 
                 assert_eq!(
                     accounts[FROM_INDEX].lamports(),
-                    from_lamports.saturating_sub(42)
+                    from_lamports.saturating_sub(CREATE_ACCOUNT_LAMPORTS)
                 );
                 assert_eq!(
                     accounts[DERIVED_KEY1_INDEX].lamports(),
-                    to_lamports.saturating_add(42)
+                    to_lamports.saturating_add(CREATE_ACCOUNT_LAMPORTS)
                 );
                 assert_eq!(program_id, accounts[DERIVED_KEY1_INDEX].owner);
                 assert_eq!(
@@ -388,11 +388,11 @@ fn process_instruction<'a>(
 
                 assert_eq!(
                     accounts[FROM_INDEX].lamports(),
-                    from_lamports.saturating_sub(1)
+                    from_lamports.saturating_sub(CREATE_ACCOUNT_LAMPORTS)
                 );
                 assert_eq!(
                     accounts[DERIVED_KEY2_INDEX].lamports(),
-                    to_lamports.saturating_add(1)
+                    to_lamports.saturating_add(CREATE_ACCOUNT_LAMPORTS)
                 );
                 let data = accounts[DERIVED_KEY2_INDEX].try_borrow_mut_data()?;
                 assert_eq!(data[0], 0x0e);
@@ -561,7 +561,7 @@ fn process_instruction<'a>(
             let instruction = system_instruction::create_account(
                 accounts[FROM_INDEX].key,
                 accounts[DERIVED_KEY1_INDEX].key,
-                42,
+                CREATE_ACCOUNT_LAMPORTS,
                 MAX_PERMITTED_DATA_INCREASE as u64,
                 program_id,
             );
