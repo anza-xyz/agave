@@ -479,17 +479,21 @@ impl Stakes<StakeAccount> {
                                 &self.stake_history,
                                 new_rate_activation_epoch,
                             );
-                            // A delegation with neither effective nor activating
-                            // stake can never contribute stake again, so it can
-                            // be dropped from the cache.
                             if remove_inactive_stakes
                                 && activation_status.effective == 0
                                 && activation_status.activating == 0
                             {
+                                // A delegation with neither effective nor activating
+                                // stake can never contribute stake again, so it can
+                                // be dropped from the cache.
                                 inert_stake_delegations.push(**stake_pubkey);
+                            } else {
+                                // Add effective stake for rewards processing. We add
+                                // 0 for an activating stake; this is correct, to identify
+                                // unstaked vote accounts that will have stake next epoch.
+                                *delegated_stakes.entry(delegation.voter_pubkey).or_default() +=
+                                    activation_status.effective;
                             }
-                            *delegated_stakes.entry(delegation.voter_pubkey).or_default() +=
-                                activation_status.effective;
                             (acc + activation_status, delegated_stakes, inert_stake_delegations)
                         },
                     )
