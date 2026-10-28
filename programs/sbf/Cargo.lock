@@ -7964,6 +7964,7 @@ name = "solana-rpc"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-feature-set",
+ "agave-math-utils",
  "agave-snapshots",
  "agave-votor-messages",
  "base64 0.23.1",

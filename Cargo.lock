@@ -9904,6 +9904,7 @@ name = "solana-rpc"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-feature-set",
+ "agave-math-utils",
  "agave-reserved-account-keys",
  "agave-snapshots",
  "agave-votor-messages",
@@ -9942,6 +9943,7 @@ dependencies = [
  "solana-epoch-rewards-hasher",
  "solana-epoch-schedule",
  "solana-faucet",
+ "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-genesis-config",

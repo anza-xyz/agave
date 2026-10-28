@@ -939,6 +939,18 @@ impl JsonRpcRequestProcessor {
     pub fn get_inflation_rate(&self) -> RpcInflationRate {
         let bank = self.bank(None);
         let epoch = bank.epoch();
+        if bank.feature_set.snapshot().remove_runtime_float_ops {
+            let rate = bank
+                .integer_inflation_rate()
+                .expect("inflation rate calculation failed") as f64
+                / agave_math_utils::inflation::RATE_SCALE as f64;
+            return RpcInflationRate {
+                total: rate,
+                validator: rate,
+                foundation: 0.0,
+                epoch,
+            };
+        }
         let inflation = bank.inflation();
         let slot_in_year = bank.slot_in_year_for_inflation();
 
@@ -5969,9 +5981,20 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_get_inflation() {
-        let rpc = RpcHandler::start();
+    #[test_case(false; "remove_runtime_float_ops_inactive")]
+    #[test_case(true; "remove_runtime_float_ops_active")]
+    fn test_rpc_get_inflation(remove_runtime_float_ops: bool) {
+        let mut genesis = create_genesis_config(TEST_MINT_LAMPORTS);
+        genesis.genesis_config.inflation.initial = 0.15;
+        genesis.genesis_config.inflation.foundation = 0.05;
+        genesis.genesis_config.inflation.foundation_term = 7.0;
+        if !remove_runtime_float_ops {
+            genesis
+                .genesis_config
+                .accounts
+                .remove(&agave_feature_set::remove_runtime_float_ops::id());
+        }
+        let rpc = RpcHandler::start_with_config_and_genesis(JsonRpcConfig::default(), genesis);
         let bank = rpc.working_bank();
         let request = create_test_request("getInflationGovernor", None);
         let result: RpcInflationGovernor = parse_success_result(rpc.handle_request_sync(request));
@@ -5984,13 +6007,89 @@ pub mod tests {
         let inflation = bank.inflation();
         let epoch = bank.epoch();
         let slot_in_year = bank.slot_in_year_for_inflation();
-        let expected = RpcInflationRate {
-            total: inflation.total(slot_in_year),
-            validator: inflation.validator(slot_in_year),
-            foundation: inflation.foundation(slot_in_year),
-            epoch,
+        let expected = if remove_runtime_float_ops {
+            RpcInflationRate {
+                total: 0.08,
+                validator: 0.08,
+                foundation: 0.0,
+                epoch,
+            }
+        } else {
+            RpcInflationRate {
+                total: inflation.total(slot_in_year),
+                validator: inflation.validator(slot_in_year),
+                foundation: inflation.foundation(slot_in_year),
+                epoch,
+            }
         };
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_inflation_rate_double_disinflation_anchor() {
+        use {
+            agave_math_utils::inflation::{RATE_SCALE, decayed_rate},
+            solana_feature_gate_interface::{self as feature, Feature},
+            solana_runtime::genesis_utils::deactivate_features,
+        };
+
+        let mut genesis = create_genesis_config(TEST_MINT_LAMPORTS);
+        let slots_per_epoch = TEST_SLOTS_PER_EPOCH;
+        genesis.genesis_config.epoch_schedule =
+            EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+        let double_disinflation = agave_feature_set::double_disinflation_rate::id();
+        let mut inactive_features = solana_runtime::slot_params::slot_time_feature_ids().to_vec();
+        inactive_features.push(double_disinflation);
+        deactivate_features(&mut genesis.genesis_config, &inactive_features);
+        let meta = JsonRpcRequestProcessor::new_from_bank(
+            Bank::new_for_tests(&genesis.genesis_config),
+            SocketAddrSpace::Unspecified,
+        );
+        let mut bank = meta.bank(None);
+        let ns_per_slot = bank.ns_per_slot_at_slot(0);
+        let initial_rate = 80_000_000_000_000;
+        let anchor = decayed_rate(initial_rate, 15, 100, ns_per_slot, 2 * slots_per_epoch)
+            .unwrap()
+            .max(15_000_000_000_000);
+
+        for epoch in 1..=3 {
+            let slot = epoch * slots_per_epoch;
+            let next = Bank::new_from_parent(bank, SlotLeader::default(), slot);
+            if epoch == 1 {
+                next.store_account(
+                    &double_disinflation,
+                    &feature::create_account(
+                        &Feature { activated_at: None },
+                        next.get_minimum_balance_for_rent_exemption(Feature::size_of()),
+                    ),
+                );
+            }
+            let expected_rate = match epoch {
+                1 => decayed_rate(initial_rate, 15, 100, ns_per_slot, slots_per_epoch).unwrap(),
+                2 => anchor,
+                3 => decayed_rate(anchor, 30, 100, ns_per_slot, slots_per_epoch).unwrap(),
+                _ => unreachable!(),
+            } as f64
+                / RATE_SCALE as f64;
+            {
+                let mut forks = meta.bank_forks.write().unwrap();
+                bank = forks.insert(next).clone_without_scheduler();
+                forks.set_root(slot, None, None);
+            }
+            meta.block_commitment_cache
+                .write()
+                .unwrap()
+                .set_highest_super_majority_root(slot);
+            assert_eq!(
+                meta.get_inflation_rate(),
+                RpcInflationRate {
+                    total: expected_rate,
+                    validator: expected_rate,
+                    foundation: 0.0,
+                    epoch,
+                },
+            );
+        }
     }
 
     #[test]

@@ -3124,7 +3124,7 @@ impl Bank {
     /// at the start of this bank's epoch, scaled by `inflation::RATE_SCALE` and
     /// clamped to `TERMINAL_RATE`.
     /// Returns `None` if a slot range or fixed-point calculation is invalid.
-    fn integer_inflation_rate(&self) -> Option<u64> {
+    pub fn integer_inflation_rate(&self) -> Option<u64> {
         let start_slot = self.inflation_start_slot_aligned_to_rewards();
         let end_slot = self.epoch_schedule().get_first_slot_in_epoch(self.epoch());
         if let Some(double_disinflation_activation_slot) = self
