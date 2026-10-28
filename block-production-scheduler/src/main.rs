@@ -10,6 +10,10 @@ use {
     std::{fs, path::Path, process, sync::Arc},
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 fn main() {
     agave_logger::setup_with_default_filter();
     let matches = App::new(env!("CARGO_PKG_NAME"))

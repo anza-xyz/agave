@@ -31,6 +31,7 @@ agave-scheduler-handshake = { workspace = true }
 agave-scheduling-utils = { workspace = true }
 agave-transaction-view = { workspace = true }
 clap = { workspace = true }
+jemallocator = { workspace = true }
 log = { workspace = true }
 rts-alloc = { workspace = true }
 serde = { workspace = true }
