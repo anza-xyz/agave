@@ -15,7 +15,6 @@ use {
     },
     solana_runtime::bank::Bank,
     solana_signer::Signer,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_system_transaction as system_transaction,
     std::{
         collections::{BTreeMap, HashSet},
@@ -42,9 +41,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
         SlotLeader::default(),
         warp_slot,
     ));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
-        dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
     )

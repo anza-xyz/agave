@@ -17,7 +17,6 @@ use {
     },
     solana_perf::test_tx,
     solana_runtime::bank::Bank,
-    solana_streamer::evicting_sender::EvictingSender,
     std::{hint::black_box, sync::Arc, time::Duration},
 };
 
@@ -27,9 +26,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
     genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     ShredRecoveryContext::new(
-        dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
     )

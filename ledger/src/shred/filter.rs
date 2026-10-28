@@ -14,7 +14,6 @@ use {
     solana_perf::packet::BytesPacket,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         sync::{
             Arc,
@@ -504,23 +503,14 @@ fn check_last_data_shred_index(index: u32) -> bool {
 
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
-    /// Sender to retransmit the recovered shreds
-    retransmit_sender: EvictingSender<Vec<Payload>>,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
 }
 
 impl ShredRecoveryContext {
-    pub fn new(
-        retransmit_sender: EvictingSender<Vec<Payload>>,
-        root_bank: Arc<Bank>,
-        shred_version: u16,
-    ) -> Self {
+    pub fn new(root_bank: Arc<Bank>, shred_version: u16) -> Self {
         let shred_filter_ctx = ShredFilterContext::new(root_bank, shred_version);
-        Self {
-            retransmit_sender,
-            shred_filter_ctx,
-        }
+        Self { shred_filter_ctx }
     }
 
     /// Periodically (no more than once per slot) update the context used for filtering
@@ -617,13 +607,6 @@ impl ShredRecoveryContext {
             }
         }
         invalid_shreds_found
-    }
-
-    /// Send recovered shreds for retransmit
-    pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
-        if !recovered_shreds.is_empty() {
-            let _ = self.retransmit_sender.try_send(recovered_shreds);
-        }
     }
 
     /// Apply filtering rules to recovered shreds.
@@ -890,9 +873,7 @@ mod tests {
         // Feed recovery only coding shreds. Without the custom limit below, this
         // is enough parity to recover the missing data shreds.
         let max_code_shreds_per_slot = coding_shreds[0].index();
-        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
-        let mut shred_recovery_context =
-            ShredRecoveryContext::new(dummy_retransmit_sender, new_test_bank(0), shred_version);
+        let mut shred_recovery_context = ShredRecoveryContext::new(new_test_bank(0), shred_version);
         shred_recovery_context
             .shred_filter_ctx
             .set_shred_limits_for_tests(ShredLimits::new(
