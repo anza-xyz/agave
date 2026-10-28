@@ -28,11 +28,7 @@ use {
     solana_gossip::gossip_service::discover_validators,
     solana_keypair::Keypair,
     solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
-    solana_ledger::{
-        blockstore::Blockstore,
-        blockstore_options::{AccessType, BlockstoreOptions},
-        shred::filter::{TurbineMode, TurbineModeKind},
-    },
+    solana_ledger::shred::filter::{TurbineMode, TurbineModeKind},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_pubkey::Pubkey,
@@ -43,7 +39,7 @@ use {
         fs, iter,
         net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{Arc, atomic::AtomicBool},
         thread::sleep,
         time::Duration,
@@ -84,31 +80,6 @@ impl From<&ValidatorKeys> for SlotLeader {
             vote_address: validator_keys.vote_keypair.pubkey(),
         }
     }
-}
-pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
-    Blockstore::open_with_options(
-        ledger_path,
-        BlockstoreOptions {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
-            ..BlockstoreOptions::default()
-        },
-    )
-    // Fall back on ReadOnly if Primary fails; Primary will fail if
-    // a handle to Blockstore is being held somewhere else
-    .unwrap_or_else(|_| {
-        Blockstore::open_with_options(
-            ledger_path,
-            BlockstoreOptions {
-                access_type: AccessType::ReadOnly,
-                recovery_mode: None,
-                ..BlockstoreOptions::default()
-            },
-        )
-        .unwrap_or_else(|e| {
-            panic!("Failed to open ledger at {ledger_path:?}, err: {e}");
-        })
-    })
 }
 
 fn create_custom_leader_schedule(

@@ -1025,8 +1025,6 @@ impl Tower {
             // To be specific, the replay stage is tricked into a false perception where
             // last_vote_ancestors is AVAILABLE for descendant-of-`switch_slot`,  stale, and
             // stray slots (which should always be empty_ancestors).
-            //
-            // This is covered by test_future_tower_* in local_cluster
             SwitchForkDecision::FailedSwitchThreshold(0, total_stake)
         };
 
