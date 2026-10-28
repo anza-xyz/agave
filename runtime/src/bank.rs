@@ -650,8 +650,6 @@ impl PartialEq for Bank {
         if std::ptr::eq(self, other) {
             return true;
         }
-        // Suppress rustfmt until https://github.com/rust-lang/rustfmt/issues/5920 is fixed ...
-        #[rustfmt::skip]
         let Self {
             rc: _,
             status_cache: _,
