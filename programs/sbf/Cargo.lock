@@ -8841,7 +8841,7 @@ version = "4.5.0-alpha.4"
 
 [[package]]
 name = "solana-sbf-rust-invoke-v2-fail"
-version = "4.5.0-alpha.2"
+version = "4.5.0-alpha.4"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall 3.0.0",
@@ -8852,7 +8852,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-invoke-v2-ok"
-version = "4.5.0-alpha.2"
+version = "4.5.0-alpha.4"
 dependencies = [
  "solana-account-info",
  "solana-define-syscall 3.0.0",
