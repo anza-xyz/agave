@@ -527,6 +527,23 @@ impl Crds {
         })
     }
 
+    /// Returns the exclusive upper bound for a scan of the current entries.
+    pub(crate) fn cursor(&self) -> Cursor {
+        self.cursor
+    }
+
+    /// Returns entries before `end`, together with the cursor after each entry.
+    /// The caller can stage a batch without committing unconsumed entries.
+    pub(crate) fn get_entries_until(
+        &self,
+        cursor: Cursor,
+        end: Cursor,
+    ) -> impl Iterator<Item = (Cursor, &CrdsValue)> {
+        self.entries
+            .range(cursor.ordinal()..end.ordinal())
+            .map(|(&ordinal, &index)| (Cursor(ordinal + 1), &self.table.index(index).value))
+    }
+
     /// Returns true if the table has any values from the pubkey.
     pub(crate) fn has_records(&self, pubkey: &Pubkey) -> bool {
         self.records.contains_key(pubkey)
