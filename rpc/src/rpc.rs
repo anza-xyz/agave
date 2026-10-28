@@ -699,17 +699,14 @@ impl JsonRpcRequestProcessor {
             post_balance: reward.post_balance,
             commission: reward.commission,
             commission_bps: reward.commission_bps,
-            block_reward_amount: None,
+            block_reward_amount: separate_block_rewards.then_some(0),
         });
-        let (amount, block_reward_amount) = if separate_block_rewards
+        let amount = reward.lamports.unsigned_abs();
+        let block_reward_amount = (separate_block_rewards
             && reward
                 .reward_type
-                .is_some_and(|reward_type| reward_type == RewardType::BlockRevenueSharing)
-        {
-            (0, Some(reward.lamports.unsigned_abs()))
-        } else {
-            (reward.lamports.unsigned_abs(), None)
-        };
+                .is_some_and(|reward_type| reward_type == RewardType::BlockRevenueSharing))
+        .then_some(amount);
         reward_response.amount = reward_response.amount.saturating_add(amount);
         // Merge two options, summing if they're both `Some(...)`, or just
         // taking one of them, or `None` if they're both `None`
@@ -738,7 +735,6 @@ impl JsonRpcRequestProcessor {
                 .get_epoch(self.get_slot(context_config)?)
                 .saturating_sub(1),
         };
-        let separate_block_reward = config.separate_block_reward;
 
         // Rewards for this epoch are found in the first confirmed block of the next epoch
         let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch.saturating_add(1));
@@ -796,6 +792,16 @@ impl JsonRpcRequestProcessor {
             }
             .into());
         }
+
+        // The activated slot represents the first slot in the epoch, but we
+        // want the first full epoch with the feature enabled.
+        let epoch_has_block_rewards = bank
+            .feature_set
+            .activated_slot(&agave_feature_set::block_revenue_sharing::id())
+            .is_some_and(|activated_slot| activated_slot < first_slot_in_epoch);
+
+        // Only separate if the epoch has block rewards, otherwise write null
+        let separate_block_reward = config.separate_block_reward && epoch_has_block_rewards;
 
         let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
 
@@ -6315,7 +6321,7 @@ pub mod tests {
                 post_balance: 2,
                 commission: None,
                 commission_bps: None,
-                block_reward_amount: None,
+                block_reward_amount: Some(0),
             })
         );
         assert_eq!(
@@ -6323,7 +6329,7 @@ pub mod tests {
             Some(RpcInflationReward {
                 epoch: 0,
                 effective_slot: first_slot_of_epoch + 1 + block_only_partition as u64,
-                amount: 0,
+                amount: 3,
                 post_balance: 4,
                 block_reward_amount: Some(3),
                 commission: None,
@@ -6335,7 +6341,7 @@ pub mod tests {
             Some(RpcInflationReward {
                 epoch: 0,
                 effective_slot: first_slot_of_epoch + 1 + stake_and_block_partition as u64,
-                amount: 5,
+                amount: 12,
                 post_balance: 6,
                 block_reward_amount: Some(7),
                 commission: None,
