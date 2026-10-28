@@ -83,6 +83,7 @@ pub struct FeatureSnapshot {
     pub loader_v3_remove_extend_program: bool,
     pub remove_runtime_float_ops: bool,
     pub replace_ata_with_p_ata: bool,
+    pub increase_tx_v1_account_lock_limit: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -189,6 +190,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
             remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
             replace_ata_with_p_ata: is_active(&replace_ata_with_p_ata::ID),
+            increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
         }
     }
 }
@@ -1599,6 +1601,10 @@ pub mod replace_ata_with_p_ata {
     ]);
 }
 
+pub mod increase_tx_v1_account_lock_limit {
+    solana_pubkey::declare_id!("8ZVMrzG6pPBREHMbHNyrErKJsXA7b1vg9e1iycSooCeY");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2732,6 +2738,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             replace_ata_with_p_ata::id(),
             "SIMD-0567: CU-optimized ATA program",
+        ),
+        (
+            increase_tx_v1_account_lock_limit::id(),
+            "Increase transaction v1 account lock limit to 96",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

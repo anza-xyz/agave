@@ -5119,12 +5119,12 @@ fn test_duplicate_account_key() {
     assert_eq!(result, Err(TransactionError::AccountLoadedTwice));
 }
 
-#[test_case(None, 64; "default")]
-#[test_case(Some(32), 32; "lower runtime override")]
-#[test_case(Some(128), 128; "higher runtime override")]
-fn test_transaction_account_lock_limit(configured_limit: Option<usize>, expected_limit: usize) {
+#[test_matrix([false, true], [None, Some(32), Some(128)])]
+fn test_transaction_account_lock_limit(feature_active: bool, configured_limit: Option<usize>) {
+    let expected_limit = configured_limit.unwrap_or(64);
+    let expected_v1_limit = configured_limit.unwrap_or(if feature_active { 96 } else { 64 });
     let (genesis_config, _) = create_genesis_config(500);
-    let bank = Bank::new_from_genesis(
+    let mut bank = Bank::new_from_genesis(
         &genesis_config,
         Arc::new(RuntimeConfig {
             transaction_account_lock_limit: configured_limit,
@@ -5139,16 +5139,21 @@ fn test_transaction_account_lock_limit(configured_limit: Option<usize>, expected
         None,
         None,
     );
+    if feature_active {
+        bank.activate_feature(&feature_set::increase_tx_v1_account_lock_limit::id());
+    } else {
+        bank.deactivate_feature(&feature_set::increase_tx_v1_account_lock_limit::id());
+    }
     let limits = bank.get_transaction_account_lock_limits();
     assert_eq!(limits.legacy, expected_limit);
     assert_eq!(limits.v0, expected_limit);
-    assert_eq!(limits.v1, expected_limit);
+    assert_eq!(limits.v1, expected_v1_limit);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let child = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
     let limits = child.get_transaction_account_lock_limits();
     assert_eq!(limits.legacy, expected_limit);
     assert_eq!(limits.v0, expected_limit);
-    assert_eq!(limits.v1, expected_limit);
+    assert_eq!(limits.v1, expected_v1_limit);
 }
 
 #[test]
@@ -5890,7 +5895,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "JAbFNn23jGyaiMM6owjaJaQT8L2EosPWeBzdvoWHD9kx",
+        "Fw7QWaga9yHBQuHfi4cZN6f4ZWGNnp3VtVpnkQi74HAf",
     );
 }
 

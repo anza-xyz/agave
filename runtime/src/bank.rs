@@ -3853,7 +3853,17 @@ impl Bank {
         TransactionAccountLockLimits {
             legacy: limit,
             v0: limit,
-            v1: limit,
+            v1: self.transaction_account_lock_limit.unwrap_or_else(|| {
+                if self
+                    .feature_set
+                    .snapshot()
+                    .increase_tx_v1_account_lock_limit
+                {
+                    96
+                } else {
+                    DEFAULT_TX_ACCOUNT_LOCKS
+                }
+            }),
         }
     }
 
