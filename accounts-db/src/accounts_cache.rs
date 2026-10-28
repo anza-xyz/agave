@@ -352,6 +352,28 @@ impl AccountsCache {
         Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
     }
 
+    /// Removes `bank_id`'s cache and returns the set of pubkeys removed from the index.
+    #[must_use]
+    pub fn remove_bank(&self, bank_id: BankId) -> Option<Vec<Pubkey>> {
+        let slot_cache = {
+            // Held across the cache removal so a concurrent `add_root` can't re-track this bank
+            let mut unflushed_roots = self.unflushed_roots.write().unwrap();
+            // Held across the cache removal so a concurrent `store` can't map the slot in between
+            let mut bank_ids = self.bank_ids.write().unwrap();
+            // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
+            unflushed_roots.remove(&bank_id);
+            let slot_cache = self
+                .cache
+                .remove(&bank_id)
+                .map(|(_, slot_cache)| slot_cache)?;
+            let removed_bank_id = bank_ids.remove(&slot_cache.slot);
+            debug_assert_eq!(removed_bank_id, Some(bank_id));
+            slot_cache
+        };
+
+        Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
+    }
+
     /// Finds the newest write-cache entry for `pubkey` visible from `ancestors`. Searches
     /// ancestors first (highest to lowest), then roots (highest to lowest). Ancestors are
     /// checked exhaustively before roots, so a lower-slot ancestor wins over a higher-slot
@@ -439,7 +461,12 @@ impl AccountsCache {
     /// Returns whether `slot` is a root that has been added but not yet flushed to storage.
     pub fn contains_unflushed_root(&self, slot: Slot) -> bool {
         self.bank_id(slot)
-            .is_some_and(|bank_id| self.unflushed_roots.read().unwrap().contains_key(&bank_id))
+            .is_some_and(|bank_id| self.contains_unflushed_bank(bank_id))
+    }
+
+    /// Returns whether `bank_id` is a root that has been added but not yet flushed to storage.
+    pub fn contains_unflushed_bank(&self, bank_id: BankId) -> bool {
+        self.unflushed_roots.read().unwrap().contains_key(&bank_id)
     }
 
     /// Returns the unflushed roots up to and including `max_root` (or all roots if `None`). The

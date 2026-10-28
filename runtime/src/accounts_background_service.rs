@@ -376,8 +376,8 @@ impl PrunedBanksRequestHandler {
         // Banks for the same slot are purged sequentially
         let accounts_db = bank.rc.accounts.accounts_db.as_ref();
         grouped_banks_to_purge.into_iter().for_each(|group| {
-            group.iter().for_each(|(slot, bank_id)| {
-                accounts_db.purge_slot(*slot, *bank_id, true);
+            group.iter().for_each(|(_, bank_id)| {
+                accounts_db.purge_slot(*bank_id, true);
             })
         });
         num_banks_to_purge

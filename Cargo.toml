@@ -356,7 +356,6 @@ reed-solomon-erasure = "6.0.0"
 regex = "1.13.1"
 reqwest = { version = "0.12.28", default-features = false }
 reqwest-middleware = "0.4.2"
-rolling-file = "0.2.0"
 rpassword = "7.5.4"
 rts-alloc = { version = "5.1.0" }
 rusb = "0.9"
@@ -389,7 +388,6 @@ solana-banks-client = { path = "banks-client", version = "=4.5.0-alpha.4", featu
 solana-banks-interface = { path = "banks-interface", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-banks-server = { path = "banks-server", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-big-mod-exp = "4.0.0"
-solana-bincode = "4.0.0"
 solana-blake3-hasher = "3.1.0"
 solana-bloom = { path = "bloom", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-bls-signatures = { version = "4.0.1", features = ["serde"] }
@@ -533,7 +531,7 @@ solana-svm-timings = { path = "svm-timings", version = "=4.5.0-alpha.4", feature
 solana-svm-transaction = "8.0.0"
 solana-svm-type-overrides = { path = "svm-type-overrides", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-syscalls = { path = "syscalls", version = "=4.5.0-alpha.4", default-features = false, features = ["agave-unstable-api"] }
-solana-system-interface = { version = "3.3.0", features = ["alloc", "bincode", "serde", "wincode"] }
+solana-system-interface = { version = "3.3.0", features = ["alloc", "serde", "wincode"] }
 solana-system-program = { path = "programs/system", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-system-transaction = "6.0.0"
 solana-sysvar = "5.0.0"
@@ -596,7 +594,7 @@ trees = "0.4.2"
 trezor-client = { version = "0.1.6", default-features = false, features = ["solana"] }
 tungstenite = "0.28.0"
 ur-parse-lib = { version = "1.0.9", default-features = false, features = ["std"] }
-ur-registry = { version = "1.0.8", default-features = false, features = ["std"] }
+ur-registry = { version = "1.0.9", default-features = false, features = ["std"] }
 uriparse = "0.6.4"
 url = "2.5.8"
 winapi = "0.3.8"

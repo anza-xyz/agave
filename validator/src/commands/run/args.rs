@@ -14,10 +14,7 @@ use {
         },
         keypair::SKIP_SEED_PHRASE_VALIDATION_ARG,
     },
-    solana_core::{
-        banking_trace::DirByteLimit,
-        validator::{BlockProductionMethod, BlockVerificationMethod},
-    },
+    solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_net_utils::SocketAddrSpace,
@@ -751,21 +748,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(is_parsable::<usize>)
             .value_name("BYTES")
             .help("Maximum number of bytes written to the program log before truncation"),
-    )
-    .arg(
-        Arg::with_name("banking_trace_dir_byte_limit")
-            // expose friendly alternative name to cli than internal
-            // implementation-oriented one
-            .long("enable-banking-trace")
-            .value_name("BYTES")
-            .validator(is_parsable::<DirByteLimit>)
-            .takes_value(true)
-            .default_value(&default_args.banking_trace_dir_byte_limit)
-            .help(
-                "Enables the banking trace that writes trace files for simulate-leader-blocks, \
-                 retaining up to the specified total bytes in the ledger. Banking trace is \
-                 disabled by default.",
-            ),
     )
     .arg(
         Arg::with_name("no_delay_leader_block_for_pending_fork")

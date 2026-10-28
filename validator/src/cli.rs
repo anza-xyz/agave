@@ -173,6 +173,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("No-op; AccountsDb no longer uses a foreground thread pool"),
     );
     add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("banking_trace_dir_byte_limit")
+            .long("enable-banking-trace")
+            .value_name("BYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help("No-op; banking trace has been removed"),
+        usage_warning: "Banking trace has been removed.",
+    );
+    add_arg!(
         // deprecated in v4.3.0
         Arg::with_name("disable_banking_trace")
             .long("disable-banking-trace")
@@ -320,7 +330,6 @@ pub struct DefaultArgs {
     pub num_quic_endpoints: String,
     pub num_votor_endpoints: String,
 
-    pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
 
     pub thread_args: DefaultThreadArgs,
@@ -372,7 +381,6 @@ impl DefaultArgs {
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             num_votor_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS.to_string(),
-            banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
             thread_args: DefaultThreadArgs::default(),

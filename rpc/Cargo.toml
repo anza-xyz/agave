@@ -116,7 +116,7 @@ serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
-solana-client = { workspace = true }
+solana-client = { path = "../client" }
 solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }

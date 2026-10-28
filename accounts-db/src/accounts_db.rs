@@ -93,7 +93,7 @@ use {
         collections::{BTreeSet, HashSet, VecDeque},
         io, iter, mem,
         num::Saturating,
-        ops::RangeBounds,
+        ops::{ControlFlow, RangeBounds},
         path::{Path, PathBuf},
         sync::{
             Arc, Mutex, RwLock,
@@ -1884,6 +1884,7 @@ impl AccountsDb {
                     pubkey: *account.pubkey(),
                     data_len: account.data_len as u64,
                 });
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
 
@@ -2050,20 +2051,6 @@ impl AccountsDb {
     /// Shrinks `store` by rewriting the alive accounts to a new storage
     fn shrink_storage(&self, store: Arc<AccountStorageEntry>) {
         let slot = store.slot();
-        if self.accounts_cache.contains(slot) {
-            // It is not correct to shrink a slot while it is in the write cache until flush is complete and the slot is removed from the write cache.
-            // There can exist a window after a slot is made a root and before the write cache flushing for that slot begins and then completes.
-            // There can also exist a window after a slot is being flushed from the write cache until the index is updated and the slot is removed from the write cache.
-            // During the second window, once an append vec has been created for the slot, it could be possible to try to shrink that slot.
-            // Shrink no-ops before this function if there is no store for the slot (notice this function requires 'store' to be passed).
-            // So, if we enter this function but the slot is still in the write cache, reasonable behavior is to skip shrinking this slot.
-            // Flush will ONLY write alive accounts to the append vec, which is what shrink does anyway.
-            // Flush then adds the slot to 'uncleaned_roots', which causes clean to take a look at the slot.
-            // Clean causes us to mark accounts as dead, which causes shrink to later take a look at the slot.
-            // This could be an assert, but it could lead to intermittency in tests.
-            // It is 'correct' to ignore calls to shrink when a slot is still in the write cache.
-            return;
-        }
         let mut unique_accounts =
             self.get_unique_accounts_from_storage_for_shrink(&store, &self.shrink_stats);
         debug!("do_shrink_slot_store: slot: {slot}");
@@ -2851,7 +2838,7 @@ impl AccountsDb {
     /// * `is_serialized_with_abs` - indicates whether this call runs sequentially
     ///   with all other accounts_db relevant calls, such as shrinking, purging etc.,
     ///   in accounts background service.
-    pub fn purge_slot(&self, slot: Slot, bank_id: BankId, is_serialized_with_abs: bool) {
+    pub fn purge_slot(&self, bank_id: BankId, is_serialized_with_abs: bool) {
         if self.is_bank_drop_callback_enabled.load(Ordering::Acquire) && !is_serialized_with_abs {
             panic!(
                 "bad drop callpath detected; Bank::drop() must run serially with other logic in \
@@ -2874,27 +2861,27 @@ impl AccountsDb {
             return;
         }
 
-        self.purge_slots(std::iter::once(&slot));
+        self.purge_slots(std::iter::once(bank_id));
     }
 
-    /// Purges each slot in `removed_slots` from the write cache, and defers any pubkeys that
+    /// Purges each bank in `bank_ids` from the write cache, and defers any pubkeys that
     /// were fully removed from the write cache to clean to handle removal from the secondary
-    /// index. Slots no longer present in the cache are skipped. This never touches backing
+    /// index. Banks no longer present in the cache are skipped. This never touches backing
     /// storage, so it cannot delete a flushed slot's data.
-    fn purge_slots_from_cache<'a>(
+    fn purge_slots_from_cache(
         &self,
-        removed_slots: impl Iterator<Item = &'a Slot>,
+        bank_ids: impl Iterator<Item = BankId>,
         purge_stats: &PurgeStats,
     ) {
         let mut remove_cache_elapsed_across_slots = 0;
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
-        for remove_slot in removed_slots {
+        for bank_id in bank_ids {
             // This function runs in parallel with the ABS operations (flush, shrink, clean) and
             // must be safe with respect to them. ABS operations will not operate on this slot as
             // it is unrooted.
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
-            if let Some(slot_cache) = self.accounts_cache.slot_cache(*remove_slot) {
+            if let Some(slot_cache) = self.accounts_cache.bank_cache(bank_id) {
                 num_cached_slots_removed += 1;
                 total_removed_cached_bytes += slot_cache.total_bytes();
                 remove_cache_elapsed.stop();
@@ -2902,7 +2889,7 @@ impl AccountsDb {
                 // Nobody else should have removed the slot cache entry yet
                 let pubkeys_removed = self
                     .accounts_cache
-                    .remove_slot(*remove_slot)
+                    .remove_bank(bank_id)
                     .expect("slot cache entry must still be present");
                 self.add_pubkeys_removed_from_cache(pubkeys_removed);
             }
@@ -3064,14 +3051,14 @@ impl AccountsDb {
         }
     }
 
-    fn purge_slots<'a>(&self, slots: impl Iterator<Item = &'a Slot> + Clone) {
+    fn purge_slots(&self, bank_ids: impl Iterator<Item = BankId> + Clone) {
         // `add_root()` should be called first
         let mut safety_checks_elapsed = Measure::start("safety_checks_elapsed");
-        let non_roots = slots
+        let non_roots = bank_ids
             // Only purge slots that are still in the write cache and are not
             // unflushed roots. Flushed roots have already been removed from the
-            // cache, so the `contains` check excludes them; the
-            // `contains_unflushed_root` check excludes roots still pending flush.
+            // cache, so the `bank_cache` check excludes them; the
+            // `contains_unflushed_bank` check excludes roots still pending flush.
             //
             // Only safe to check when there are duplicate versions of a slot
             // because ReplayStage will not make new roots before dumping the
@@ -3083,9 +3070,9 @@ impl AccountsDb {
             // it's safe to filter them out here as they won't need deletion from
             // self.scan_tracker.removed_bank_ids in
             // `purge_slots_from_cache()`.
-            .filter(|slot| {
-                self.accounts_cache.contains(**slot)
-                    && !self.accounts_cache.contains_unflushed_root(**slot)
+            .filter(|bank_id| {
+                self.accounts_cache.bank_cache(*bank_id).is_some()
+                    && !self.accounts_cache.contains_unflushed_bank(*bank_id)
             });
         safety_checks_elapsed.stop();
         self.external_purge_slots_stats
@@ -3119,7 +3106,7 @@ impl AccountsDb {
 
         let remove_unrooted_purge_stats = PurgeStats::default();
         self.purge_slots_from_cache(
-            remove_slots.iter().map(|(slot, _)| slot),
+            remove_slots.iter().map(|(_, bank_id)| *bank_id),
             &remove_unrooted_purge_stats,
         );
         remove_unrooted_purge_stats.report("remove_unrooted_slots_purge_slots_stats", None);

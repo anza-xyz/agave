@@ -358,9 +358,13 @@ impl ShredFilterContext {
                 }
 
                 let Ok(shred_flags) = layout::get_flags(shred) else {
-                    self.stats.shred_flags_bad_deserialize += 1;
+                    self.stats.invalid_shred_flags += 1;
                     return true;
                 };
+                if !shred_flags.is_valid() {
+                    self.stats.invalid_shred_flags += 1;
+                    return true;
+                }
 
                 let expected_data_complete_index = fec_set_index
                     .checked_add(DATA_SHREDS_PER_FEC_BLOCK as u32)

@@ -161,10 +161,11 @@ pub struct SVMTransactionExecutionCost {
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
     /// Big integer modular exponentiation cost divisor.
-    /// The modular exponentiation cost is computed from SIMD-0529 operand
-    /// complexity and adjusted exponent bit length, divided by this divisor,
-    /// plus
-    /// `big_modular_exponentiation_base_cost`.
+    /// The modular exponentiation cost is the SIMD-0529 operand complexity
+    /// times the number of multiplications for the exponent's 64-bit words,
+    /// divided by this divisor and rounded up, plus
+    /// `big_modular_exponentiation_base_cost`. An exponent of 1 is priced as a
+    /// single modular reduction with a fixed divisor of 15 instead.
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
@@ -259,8 +260,8 @@ impl Default for SVMTransactionExecutionCost {
             alt_bn128_g2_multiplication_cost: 15_670,
             alt_bn128_pairing_one_pair_cost_first: 36_364,
             alt_bn128_pairing_one_pair_cost_other: 12_121,
-            big_modular_exponentiation_base_cost: 422,
-            big_modular_exponentiation_cost_divisor: 189,
+            big_modular_exponentiation_base_cost: 50,
+            big_modular_exponentiation_cost_divisor: 4,
             poseidon_cost_coefficient_a: 61,
             poseidon_cost_coefficient_c: 542,
             get_remaining_compute_units_cost: 100,
@@ -320,6 +321,81 @@ impl SVMTransactionExecutionCost {
 
         Some(final_result)
     }
+
+    /// Compute the operation cost of a big integer modular exponentiation, i.e. the
+    /// cost charged on top of the flat `big_modular_exponentiation_base_cost`.
+    pub fn big_mod_exp_operation_cost(
+        &self,
+        base_len: u64,
+        modulus_len: u64,
+        exponent: &[u8],
+    ) -> Option<u64> {
+        let input_len = base_len.max(modulus_len);
+        let mult_complexity = big_mod_exp_mult_complexity(input_len)?;
+        let (operation_complexity, divisor) = if big_mod_exp_is_one_le(exponent) {
+            (mult_complexity, BIG_MOD_EXP_MOD_REDUCTION_CU_DIVISOR)
+        } else {
+            let exponent_words = big_mod_exp_adjusted_exponent_length(exponent)
+                .checked_div(64)?
+                .checked_add(1)?;
+            let multiplications = BIG_MOD_EXP_MULTIPLICATIONS_PER_EXPONENT_WORD
+                .checked_mul(exponent_words)?
+                .checked_add(BIG_MOD_EXP_SETUP_MULTIPLICATIONS)?;
+            (
+                mult_complexity.checked_mul(u128::from(multiplications))?,
+                self.big_modular_exponentiation_cost_divisor,
+            )
+        };
+        let divisor = u128::from(divisor);
+        if divisor == 0 {
+            return None;
+        }
+
+        let operation_cost = operation_complexity
+            .checked_add(divisor.checked_sub(1)?)?
+            .checked_div(divisor)?;
+        u64::try_from(operation_cost).ok()
+    }
+}
+
+const BIG_MOD_EXP_MULT_COMPLEXITY_CONSTANT: u64 = 22;
+const BIG_MOD_EXP_SETUP_MULTIPLICATIONS: u64 = 12;
+const BIG_MOD_EXP_MULTIPLICATIONS_PER_EXPONENT_WORD: u64 = 80;
+const BIG_MOD_EXP_MOD_REDUCTION_CU_DIVISOR: u64 = 15;
+
+fn big_mod_exp_mult_complexity(input_len: u64) -> Option<u128> {
+    let operand_words = u128::from(input_len.div_ceil(8));
+    operand_words
+        .checked_mul(operand_words)?
+        .checked_add(u128::from(BIG_MOD_EXP_MULT_COMPLEXITY_CONSTANT))
+}
+
+fn big_mod_exp_highest_set_bit_index_le(bytes: &[u8]) -> Option<u64> {
+    bytes.iter().enumerate().rev().find_map(|(index, byte)| {
+        (*byte != 0).then(|| {
+            (index as u64)
+                .saturating_mul(u64::from(u8::BITS))
+                .saturating_add(u64::from(7_u32.saturating_sub(byte.leading_zeros())))
+        })
+    })
+}
+
+fn big_mod_exp_adjusted_exponent_length(exponent: &[u8]) -> u64 {
+    if exponent.len() <= 32 {
+        big_mod_exp_highest_set_bit_index_le(exponent).unwrap_or(0)
+    } else {
+        let (trailing_bytes, most_significant_32_bytes) =
+            exponent.split_at(exponent.len().saturating_sub(32));
+        (trailing_bytes.len() as u64)
+            .saturating_mul(u64::from(u8::BITS))
+            .saturating_add(
+                big_mod_exp_highest_set_bit_index_le(most_significant_32_bytes).unwrap_or(0),
+            )
+    }
+}
+
+fn big_mod_exp_is_one_le(bytes: &[u8]) -> bool {
+    matches!(bytes.split_first(), Some((1, rest)) if rest.iter().all(|byte| *byte == 0))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -347,5 +423,33 @@ impl SVMTransactionExecutionAndFeeBudgetLimits {
             fee_details,
             ..SVMTransactionExecutionAndFeeBudgetLimits::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_big_mod_exp_cost() {
+        let execution_cost = SVMTransactionExecutionCost::default();
+        let cost = |base_len: u64, modulus_len: u64, exponent: &[u8]| {
+            execution_cost.big_modular_exponentiation_base_cost
+                + execution_cost
+                    .big_mod_exp_operation_cost(base_len, modulus_len, exponent)
+                    .unwrap()
+        };
+
+        // Costs listed in SIMD-0529
+        let exponent_65537 = [0x01, 0x00, 0x01];
+        assert_eq!(cost(256, 256, &exponent_65537), 24_108);
+        assert_eq!(cost(512, 512, &exponent_65537), 94_764);
+        assert_eq!(cost(512, 512, &[0xff; 128]), 1_330_164);
+        assert_eq!(cost(8, 8, &[0xff; 512]), 29_559);
+        assert_eq!(cost(512, 256, &[0x01]), 325);
+
+        // The reduction path is chosen by the exponent value, not its encoded or adjusted length
+        assert_eq!(cost(512, 256, &[0x01, 0x00, 0x00]), 325);
+        assert_eq!(cost(512, 256, &[0x00]), cost(512, 256, &[0x01, 0x01]));
     }
 }

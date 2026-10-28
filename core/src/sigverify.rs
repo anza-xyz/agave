@@ -4,7 +4,7 @@
 
 use {
     crate::{
-        banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError,
+        banking_channels::BankingPacketSender, sigverify_stage::SigVerifyServiceError,
         transaction_priority::calculate_priority_from_bytes,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},

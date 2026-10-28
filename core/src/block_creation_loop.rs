@@ -6,7 +6,7 @@
 //! Once alpenglow is active, this is the only thread that will touch the [`PohRecorder`].
 use {
     crate::{
-        banking_trace::{BankingPacketSender, BankingTracer},
+        banking_channels::BankingPacketSender,
         block_creation_loop::rewards::{
             certs_requestor::CertsRequestor,
             msg_types::{RewardRequestToken, RewardRespSucc},
@@ -147,7 +147,6 @@ pub struct BlockCreationLoopConfig {
     pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
 
     // Notifiers
-    pub banking_tracer: Arc<BankingTracer>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
     pub transaction_status_sender: Option<TransactionStatusSender>,
@@ -189,7 +188,6 @@ struct LeaderContext {
     slot_status_notifier: Option<SlotStatusNotifier>,
     entry_notification_sender: Option<EntryNotifierSender>,
     transaction_status_sender: Option<TransactionStatusSender>,
-    banking_tracer: Arc<BankingTracer>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
     reward_certs_requestor: CertsRequestor,
     /// Banking-stage ingress used to reschedule transactions after sad handover.
@@ -271,7 +269,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         poh_recorder,
         leader_schedule_cache,
         rpc_subscriptions,
-        banking_tracer,
         slot_status_notifier,
         entry_notification_sender,
         transaction_status_sender,
@@ -332,7 +329,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         slot_status_notifier,
         entry_notification_sender,
         transaction_status_sender,
-        banking_tracer,
         replay_highest_frozen,
         reward_certs_requestor,
         banking_stage_sender,
@@ -1441,13 +1437,6 @@ fn create_and_insert_leader_bank(
         NewBankOptions::default(),
     )
     .mark_leader_bank();
-    // make sure parent is frozen for finalized hashes via the above
-    // new()-ing of its child bank
-    ctx.banking_tracer.hash_event(
-        parent_slot,
-        &parent_bank.last_blockhash(),
-        &parent_bank.hash(),
-    );
 
     // If this is the first alpenglow block, set PoH to low power mode.
     // This is persisted in the recorder when we set bank.
@@ -1545,7 +1534,7 @@ fn should_include_genesis_certificate(
 mod tests {
     use {
         super::*,
-        crate::banking_trace::BankingTracer,
+        crate::banking_channels,
         agave_banking_stage_ingress_types::BankingPacketReceiver,
         agave_votor_messages::consensus_message::BlockId,
         crossbeam_channel::bounded,
@@ -1770,7 +1759,7 @@ mod tests {
 
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
 
@@ -1793,7 +1782,6 @@ mod tests {
             slot_status_notifier: None,
             entry_notification_sender: None,
             transaction_status_sender: None,
-            banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
@@ -1885,7 +1873,7 @@ mod tests {
 
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
         let (reward_certs_requestor, reward_request_receiver) = CertsRequestor::new();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let mut ctx = LeaderContext {
@@ -1907,7 +1895,6 @@ mod tests {
             slot_status_notifier: None,
             entry_notification_sender: None,
             transaction_status_sender: None,
-            banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
@@ -1979,7 +1966,7 @@ mod tests {
 
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
 
@@ -2002,7 +1989,6 @@ mod tests {
             slot_status_notifier: None,
             entry_notification_sender: None,
             transaction_status_sender: None,
-            banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
@@ -2093,7 +2079,7 @@ mod tests {
 
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
         let mut genesis_cert_block_marker = test_genesis_cert_block_marker();
         genesis_cert_block_marker.slot = parent_bank.slot();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
@@ -2118,7 +2104,6 @@ mod tests {
             slot_status_notifier: None,
             entry_notification_sender: None,
             transaction_status_sender: None,
-            banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
@@ -2167,7 +2152,7 @@ mod tests {
 
         let (record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, _banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _reward_request_receiver) = CertsRequestor::new();
 
@@ -2190,7 +2175,6 @@ mod tests {
             slot_status_notifier: None,
             entry_notification_sender: None,
             transaction_status_sender: None,
-            banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,
@@ -2282,7 +2266,7 @@ mod tests {
 
         let (record_sender, record_receiver) = record_channels(false);
         let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
-        let (banking_stage_sender, banking_stage_receiver) = BankingTracer::channel_for_test();
+        let (banking_stage_sender, banking_stage_receiver) = banking_channels::channel_for_test();
         let bank_forks_controller = test_bank_forks_controller(bank_forks.clone());
         let (reward_certs_requestor, _receiver) = CertsRequestor::new();
         let (entry_notification_sender, entry_notification_receiver) = bounded(1);
@@ -2314,7 +2298,6 @@ mod tests {
             slot_status_notifier: None,
             entry_notification_sender: Some(entry_notification_sender),
             transaction_status_sender: Some(transaction_status_sender),
-            banking_tracer: BankingTracer::new_disabled(),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
             banking_stage_sender,

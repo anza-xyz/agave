@@ -23,6 +23,7 @@ use {
         io,
         iter::ExactSizeIterator,
         mem,
+        ops::ControlFlow,
         path::{Path, PathBuf},
         slice,
     },
@@ -113,7 +114,13 @@ impl AccountsFile {
         let mut first_error = None;
         AppendVec::scan_reader(&mut reader, |account| {
             let result = split.write_accounts(&(0, slice::from_ref(&&account), 0));
-            first_error = first_error.take().or(result.err());
+            match result {
+                Ok(_) => ControlFlow::Continue(()),
+                Err(err) => {
+                    first_error = Some(err);
+                    ControlFlow::Break(())
+                }
+            }
         })?;
         if let Some(first_error) = first_error {
             return Err(first_error.into());
@@ -242,10 +249,15 @@ impl AccountsFile {
     /// * Offset: the offset within the file of this account
     /// * StoredAccountInfoWithoutData: the account itself, without account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+        mut callback: impl for<'local> FnMut(
+            Offset,
+            StoredAccountInfoWithoutData<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_without_data(callback)?,
@@ -263,13 +275,16 @@ impl AccountsFile {
     /// * Offset: the offset within the file of this account
     /// * StoredAccountInfo: the account itself, with account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    /// After an early exit, callers must reset `reader` before starting another scan.
+    ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
     #[cfg(test)]
     pub(crate) fn scan_accounts<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         self.set_file_on_reader(reader)?;
         self.scan_accounts_with(reader, callback)
@@ -291,7 +306,7 @@ impl AccountsFile {
     pub(crate) fn scan_accounts_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_with(reader, callback)?,
@@ -332,9 +347,10 @@ impl AccountsFile {
     pub fn scan_pubkeys(&self, mut callback: impl FnMut(&Pubkey)) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_pubkeys(callback)?,
-            Self::Split(split) => {
-                split.scan_accounts_without_data(|_offset, account| callback(account.pubkey))?
-            }
+            Self::Split(split) => split.scan_accounts_without_data(|_offset, account| {
+                callback(account.pubkey);
+                ControlFlow::Continue(())
+            })?,
         }
         Ok(())
     }
@@ -525,6 +541,7 @@ mod tests {
                 assert_eq!(stored_account.pubkey(), expected_pubkey);
                 assert!(accounts_equal(&stored_account, expected_account));
                 i += 1;
+                ControlFlow::Continue(())
             })
             .unwrap();
         assert_eq!(i, accounts.len());

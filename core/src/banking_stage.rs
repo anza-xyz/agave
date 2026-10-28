@@ -918,10 +918,7 @@ where
 mod tests {
     use {
         super::*,
-        crate::{
-            banking_trace::{BankingTracer, Channels},
-            validator::SchedulerPacing,
-        },
+        crate::{banking_channels::Channels, validator::SchedulerPacing},
         agave_banking_stage_ingress_types::{
             to_banking_packet_batch, to_single_banking_packet_batch,
         },
@@ -964,7 +961,6 @@ mod tests {
     fn test_banking_stage_shutdown1() {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let banking_tracer = BankingTracer::new_disabled();
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -972,7 +968,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels();
+        } = Channels::new();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1027,7 +1023,6 @@ mod tests {
         } = create_slow_genesis_config(10);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
-        let banking_tracer = BankingTracer::new_disabled();
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -1035,7 +1030,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels();
+        } = Channels::new();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
@@ -1162,7 +1157,6 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(2);
-        let banking_tracer = BankingTracer::new_disabled();
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -1170,7 +1164,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels();
+        } = Channels::new();
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
