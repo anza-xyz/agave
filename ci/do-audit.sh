@@ -58,15 +58,6 @@ default_cargo_audit_extra_args=(
   # solana-secp256k1-recover, which verify and recover over public data.
   # The fix needs those SDK crates to move to elliptic-curve 0.14.
   --ignore RUSTSEC-2026-0387
-
-  # Crate:     tonic
-  # Version:   0.9.2
-  # Title:     Remotely exploitable Denial of Service in Tonic
-  # Date:      2024-10-01
-  # ID:        RUSTSEC-2024-0376
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
-  # Solution:  Upgrade to >=0.12.3
-  --ignore RUSTSEC-2024-0376
 )
 
 xtask_cargo_audit_extra_args=(
