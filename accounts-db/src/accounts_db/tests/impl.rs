@@ -708,6 +708,38 @@ fn test_remove_unrooted_slot_cached() {
     db.assert_load_account(unrooted_slot, key, 2);
 }
 
+/// Two banks can store at the same slot; purging one leaves the other's cache intact.
+#[test]
+fn test_purge_slot_keeps_other_bank_at_same_slot() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let slot = 9;
+    let removed_bank_id = BankId::new(1);
+    let kept_bank_id = BankId::new(2);
+    let key = Pubkey::new_unique();
+    let removed_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let kept_account = AccountSharedData::new(2, 0, &Pubkey::default());
+    let removed_ancestors = Ancestors::from(vec![(slot, removed_bank_id)]);
+    let kept_ancestors = Ancestors::from(vec![(slot, kept_bank_id)]);
+    db.store_accounts_unfrozen(
+        (slot, [(&key, &removed_account)].as_slice()),
+        removed_bank_id,
+        &removed_ancestors,
+    );
+    db.store_accounts_unfrozen(
+        (slot, [(&key, &kept_account)].as_slice()),
+        kept_bank_id,
+        &kept_ancestors,
+    );
+
+    db.purge_slot(removed_bank_id, false);
+    assert!(!db.accounts_cache.contains(removed_bank_id));
+    assert!(db.do_load_for_tests(&removed_ancestors, &key).is_none());
+    assert_eq!(
+        db.do_load_for_tests(&kept_ancestors, &key),
+        Some((kept_account, slot))
+    );
+}
+
 /// Cache writes populate the secondary indexes but not the primary index. When a cache-only
 /// account is dropped via `remove_unrooted_slots` before it is ever flushed, its secondary-index
 /// entry must be reclaimed; otherwise it leaks because there is no primary entry to drive the
@@ -765,6 +797,13 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
     let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
     let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
     db.store_for_tests((slot, accounts.as_slice()));
+    // Another version of the slot, stored by a different bank
+    let other_bank_id = BankId::new(2);
+    db.store_accounts_unfrozen(
+        (slot, accounts.as_slice()),
+        other_bank_id,
+        &Ancestors::from(vec![(slot, other_bank_id)]),
+    );
 
     let mut visited = 0;
     let result = db.scan_accounts(
