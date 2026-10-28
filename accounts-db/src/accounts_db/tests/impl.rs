@@ -687,8 +687,11 @@ fn test_remove_unrooted_slot_cached() {
     let ancestors = Ancestors::from(vec![unrooted_slot]);
     assert!(!db.contains(&key));
     db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
-    assert!(db.accounts_cache.contains(unrooted_slot));
-    assert!(!db.accounts_cache.contains_unflushed_root(unrooted_slot));
+    assert!(db.accounts_cache.contains(BankId::new(unrooted_slot)));
+    assert!(
+        !db.accounts_cache
+            .contains_unflushed_bank(BankId::new(unrooted_slot))
+    );
     assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 

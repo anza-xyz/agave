@@ -444,10 +444,13 @@ impl AccountsCache {
         self.unflushed_roots.read().unwrap().len()
     }
 
-    /// Returns whether `slot` is a root that has been added but not yet flushed to storage.
-    pub fn contains_unflushed_root(&self, slot: Slot) -> bool {
-        self.bank_id(slot)
-            .is_some_and(|bank_id| self.contains_unflushed_bank(bank_id))
+    /// Returns the id of the bank rooted at `slot`, if that root has not yet been flushed.
+    pub fn unflushed_root_bank_id(&self, slot: Slot) -> Option<BankId> {
+        self.unflushed_roots
+            .read()
+            .unwrap()
+            .iter()
+            .find_map(|(bank_id, root)| (*root == slot).then_some(*bank_id))
     }
 
     /// Returns whether `bank_id` is a root that has been added but not yet flushed to storage.
@@ -470,8 +473,8 @@ impl AccountsCache {
             .collect()
     }
 
-    pub fn contains(&self, slot: Slot) -> bool {
-        self.bank_ids.read().unwrap().contains_key(&slot)
+    pub fn contains(&self, bank_id: BankId) -> bool {
+        self.cache.contains_key(&bank_id)
     }
 
     pub fn contains_pubkey(&self, pubkey: &Pubkey) -> bool {

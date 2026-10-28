@@ -2433,7 +2433,10 @@ impl AccountsDb {
     /// Returns ancestors holding only `root`, with the id of the bank that stored it.
     /// If `root` was already flushed, so were all older roots, and `BankId::FIRST` hides the rest.
     fn root_as_ancestors(&self, root: Slot) -> Ancestors {
-        let bank_id = self.accounts_cache.bank_id(root).unwrap_or(BankId::FIRST);
+        let bank_id = self
+            .accounts_cache
+            .unflushed_root_bank_id(root)
+            .unwrap_or(BankId::FIRST);
         Ancestors::from(vec![(root, bank_id)])
     }
 
@@ -3057,7 +3060,7 @@ impl AccountsDb {
         let non_roots = bank_ids
             // Only purge slots that are still in the write cache and are not
             // unflushed roots. Flushed roots have already been removed from the
-            // cache, so the `bank_cache` check excludes them; the
+            // cache, so the `contains` check excludes them; the
             // `contains_unflushed_bank` check excludes roots still pending flush.
             //
             // Only safe to check when there are duplicate versions of a slot
@@ -3071,7 +3074,7 @@ impl AccountsDb {
             // self.scan_tracker.removed_bank_ids in
             // `purge_slots_from_cache()`.
             .filter(|bank_id| {
-                self.accounts_cache.bank_cache(*bank_id).is_some()
+                self.accounts_cache.contains(*bank_id)
                     && !self.accounts_cache.contains_unflushed_bank(*bank_id)
             });
         safety_checks_elapsed.stop();
@@ -3085,12 +3088,12 @@ impl AccountsDb {
 
     pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
         assert!(
-            remove_slots.iter().all(|(slot, _)| {
+            remove_slots.iter().all(|(_, bank_id)| {
                 debug_assert!(
-                    self.accounts_cache.contains(*slot),
-                    "Trying to remove slot not in cache {slot}"
+                    self.accounts_cache.contains(*bank_id),
+                    "Trying to remove bank not in cache {bank_id:?}"
                 );
-                !self.accounts_cache.contains_unflushed_root(*slot)
+                !self.accounts_cache.contains_unflushed_bank(*bank_id)
             }),
             "Trying to remove accounts for rooted slots {remove_slots:?}"
         );
@@ -4200,8 +4203,6 @@ impl AccountsDb {
         reclaim_handling: UpsertReclaim,
     ) -> StoreAccountsForFlushStats {
         let slot = accounts.target_slot();
-
-        debug_assert!(self.accounts_cache.contains_unflushed_root(slot));
 
         let storage = self.create_store(slot, size_for_new_storage);
 
@@ -5469,11 +5470,6 @@ impl AccountsDb {
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn flush_root_write_cache(&self, root: Slot) {
-        // A root without a slot cache is not tracked
-        assert!(
-            self.accounts_cache.contains_unflushed_root(root)
-                || !self.accounts_cache.contains(root)
-        );
         self.flush_accounts_cache(true, Some(root));
     }
 
