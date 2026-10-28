@@ -58,8 +58,8 @@ pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
 const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Writes end up in the kernel's page cache, so the buffer only amortizes write syscalls.
-/// AppendVec observed that gains flatten out above 64 KiB,
-/// so use the same value and avoid oversized allocations.
+/// AppendVec observed that gains flatten out above 64 KiB and set this to 256 KiB.
+/// Use the same value and avoid oversized allocations.
 const WRITE_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Account storage backed by split metadata and data files.
