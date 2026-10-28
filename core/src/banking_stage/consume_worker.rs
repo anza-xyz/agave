@@ -746,6 +746,7 @@ pub(crate) mod external {
             },
             solana_pubkey::Pubkey,
             solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_signer::Signer,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
             std::{
@@ -1450,9 +1451,43 @@ pub(crate) mod external {
             assert_eq!(responses.len(), 1);
             assert_eq!(responses[0].execution_slot, test_frame.bank.slot());
             assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(responses[0].execution_status, execution_statuses::SUCCESS);
             assert!(responses[0].cost_units > 0);
             assert!(responses[0].fee_payer_balance > 0);
             assert_eq!(test_frame.bank.get_balance(&recipient), 1);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_execute_failed_transaction() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let payer = test_frame.mint_keypair.pubkey();
+            let balance = test_frame.bank.get_balance(&payer);
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                balance + 1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(responses[0].execution_status, execution_statuses::FAILED);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
 
             test_frame.free_batch(batch);
         }
