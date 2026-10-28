@@ -5322,6 +5322,13 @@ impl AccountsDb {
         self.add_root(bank_id)
     }
 
+    /// Returns `slot`'s cache, stored under the `BankId::new(slot)` test convention
+    pub fn slot_cache_for_tests(&self, slot: Slot) -> Option<Arc<SlotCache>> {
+        self.accounts_cache
+            .bank_cache(BankId::new(slot))
+            .filter(|slot_cache| slot_cache.slot() == slot)
+    }
+
     /// note this returns Some for accounts with zero lamports
     /// Note that this is non-deterministic if clean is running asynchronously.
     /// If a zero lamport account exists in the index, then Some is returned.
@@ -5453,8 +5460,7 @@ impl AccountsDb {
             .map(|storage| storage.num_alive_accounts())
             .unwrap_or(0)
             .saturating_add(
-                self.accounts_cache
-                    .slot_cache(slot)
+                self.slot_cache_for_tests(slot)
                     .map(|slot_cache| slot_cache.len())
                     .unwrap_or_default(),
             )
