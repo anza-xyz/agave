@@ -14,6 +14,7 @@ pub struct Config {
     /// Path to Agave's scheduler handshake socket; required in the user's TOML file.
     pub ipc_path: PathBuf,
     /// Log file for the standalone binary. Omit to log to stderr.
+    /// Send SIGUSR1 after rotating this file to reopen it at the configured path.
     pub log_file: Option<PathBuf>,
     pub session: SessionConfig,
     pub scheduler: SchedulerConfig,
