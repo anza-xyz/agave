@@ -31,7 +31,6 @@ use {
     solana_sha256_hasher::hash,
     solana_shred_version::version_from_hash,
     solana_signature::Signature,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
@@ -4928,7 +4927,7 @@ fn test_recovery() {
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let mut metrics = BlockstoreInsertionMetrics::default();
 
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (dummy_retransmit_sender, _) = bounded(0);
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
         (
             Cow::Owned(shred),
@@ -5004,7 +5003,7 @@ fn test_skip_alt_recovery() {
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (dummy_retransmit_sender, _) = bounded(0);
     let alternate_location = BlockLocation::Alternate {
         block_id: Hash::new_unique(),
     };
@@ -5060,7 +5059,7 @@ impl RecoveryTestBlockstore {
     fn new(ledger_path: &Path) -> Self {
         let genesis_config = create_genesis_config(2).genesis_config;
         let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+        let (dummy_retransmit_sender, _) = bounded(0);
         let shred_version = 0;
         Self {
             blockstore: Blockstore::open(ledger_path).unwrap(),
@@ -5514,7 +5513,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
             )
         })
         .collect();
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (dummy_retransmit_sender, _) = bounded(0);
     let mut metrics = BlockstoreInsertionMetrics::default();
     blockstore
         .do_insert_shreds(

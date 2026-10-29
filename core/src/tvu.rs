@@ -398,8 +398,7 @@ impl Tvu {
 
         let (verified_sender, verified_receiver) = unbounded();
 
-        let (retransmit_sender, retransmit_receiver) =
-            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+        let (retransmit_sender, retransmit_receiver) = bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),

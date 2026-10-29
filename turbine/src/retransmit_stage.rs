@@ -100,6 +100,8 @@ struct RetransmitStats {
     num_shreds_skipped: usize,
     num_small_batches: usize,
     total_batches: usize,
+    /// Maximum observed number of queued ingress batches since the previous report.
+    max_retransmit_queue_len: usize,
     total_time: u64,
     epoch_fetch: u64,
     epoch_cache_update: u64,
@@ -169,6 +171,7 @@ impl RetransmitStats {
             ("epoch_fetch", self.epoch_fetch, i64),
             ("epoch_cache_update", self.epoch_cache_update, i64),
             ("total_batches", self.total_batches, i64),
+            ("retransmit_queue_len", self.max_retransmit_queue_len, i64),
             ("num_small_batches", self.num_small_batches, i64),
             ("num_nodes", self.num_nodes, i64),
             ("num_addrs_failed", self.num_addrs_failed, i64),
@@ -388,6 +391,11 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
         shred_buf,
         pending_first_shred_event,
     } = state;
+
+    // Sample the ingress backlog before dequeuing any batches.
+    stats.max_retransmit_queue_len = stats
+        .max_retransmit_queue_len
+        .max(retransmit_receiver.len());
 
     // Attempt to resend a pending first shred event to votor
     if let Some(event) = pending_first_shred_event.take()
@@ -731,6 +739,7 @@ impl RetransmitStats {
             num_shreds: 0usize,
             num_shreds_skipped: 0usize,
             total_batches: 0usize,
+            max_retransmit_queue_len: 0usize,
             num_small_batches: 0usize,
             total_time: 0u64,
             epoch_fetch: 0u64,
