@@ -77,6 +77,7 @@ use {
             Arc, OnceLock, RwLock,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
+        thread,
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -390,7 +391,7 @@ pub(crate) fn process_blockstore_for_bank_0(
 
     info!("Processing ledger for slot 0...");
     let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(
-        NonZeroUsize::new(num_cpus::get()).expect("CPU count is non-zero"),
+        thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
     );
     process_bank_0(
         &bank_forks
@@ -466,7 +467,7 @@ pub fn process_blockstore_from_root(
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
         let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(
-            NonZeroUsize::new(num_cpus::get()).expect("CPU count is non-zero"),
+            thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
         );
         load_frozen_forks(
             bank_forks,
