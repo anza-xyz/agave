@@ -373,6 +373,11 @@ impl AdminRpc for AdminRpcImpl {
                 info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
+                // To ensure a clean exit, we need to release the post-init state now, or its XDP
+                // senders keep `Transmitter::join` waiting until the forced exit below.
+                let post_init = meta.post_init.write().unwrap().take();
+                drop(post_init);
+
                 if !meta.validator_exit_backpressure.is_empty() {
                     let service_names = meta.validator_exit_backpressure.keys();
                     info!("Wait for these services to complete: {service_names:?}");
