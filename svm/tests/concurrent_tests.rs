@@ -2,7 +2,6 @@
 
 use {
     crate::mock_bank::{MockForkGraph, create_custom_loader, deploy_program, register_builtins},
-    assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
         Config, Runner,
@@ -32,7 +31,7 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    std::collections::HashSet,
+    std::{assert_matches, collections::HashSet},
 };
 
 mod mock_bank;

@@ -4476,7 +4476,6 @@ mod tests {
     use {
         super::*,
         crate::mock_sender::PUBKEY,
-        assert_matches::assert_matches,
         base64::{Engine, prelude::BASE64_STANDARD},
         crossbeam_channel::bounded,
         jsonrpc_core::{Error, IoHandler, Params, futures::prelude::*},
@@ -4493,7 +4492,7 @@ mod tests {
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
-        std::{io, thread},
+        std::{assert_matches, io, thread},
         test_case::test_case,
     };
 

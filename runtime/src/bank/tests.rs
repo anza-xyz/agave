@@ -35,7 +35,6 @@ use {
     agave_reserved_account_keys::ReservedAccount,
     agave_snapshots::snapshot_config::SnapshotConfig,
     ahash::AHashMap,
-    assert_matches::assert_matches,
     bytes::Bytes,
     crossbeam_channel::{TrySendError, bounded},
     dashmap::DashMap,
@@ -149,6 +148,7 @@ use {
     },
     spl_generic_token::token,
     std::{
+        assert_matches,
         collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
         io::Cursor,

@@ -721,10 +721,9 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
         solana_system_transaction as system_transaction,
-        std::sync::Mutex,
+        std::{assert_matches, sync::Mutex},
     };
 
     fn setup_mocked_scheduler_with_extra(

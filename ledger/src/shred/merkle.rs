@@ -15,7 +15,6 @@ use {
         headers::peek_header,
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout},
     },
-    assert_matches::debug_assert_matches,
     itertools::Itertools,
     reed_solomon_erasure::{
         Error::{InvalidIndex, TooFewShardsPresent},
@@ -31,6 +30,7 @@ use {
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
+        debug_assert_matches,
         io::{Cursor, Write},
         ops::Range,
         sync::LazyLock,
@@ -1401,7 +1401,7 @@ pub(crate) fn sign_with_invalid_parity_for_tests(
         "expected a full erasure batch"
     );
     for shred in &mut batch[DATA_SHREDS_PER_FEC_BLOCK..][coding_positions] {
-        assert_matches::assert_matches!(shred, Shred::ShredCode(_), "expected a coding shred");
+        std::assert_matches!(shred, Shred::ShredCode(_), "expected a coding shred");
         shred
             .erasure_shard_mut()
             .unwrap()
@@ -1505,7 +1505,6 @@ mod test {
         super::*,
         crate::shred::{ShredFlags, ShredId, ShredType, merkle_tree::get_proof_size},
         agave_shred_wire_format::constants::Section,
-        assert_matches::assert_matches,
         itertools::Itertools,
         rand::{Rng, seq::SliceRandom},
         reed_solomon_erasure::Error::TooFewShardsPresent,
@@ -1513,6 +1512,7 @@ mod test {
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::{
+            assert_matches,
             cmp::Ordering,
             collections::{HashMap, HashSet},
             iter::{once, repeat_with},

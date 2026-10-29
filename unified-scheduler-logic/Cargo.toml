@@ -19,7 +19,6 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
-assert_matches = { workspace = true }
 solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true }

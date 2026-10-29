@@ -82,8 +82,8 @@ impl TargetBpfV2 {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::bank::tests::create_simple_test_bank, assert_matches::assert_matches,
-        solana_account::WritableAccount, solana_sdk_ids::bpf_loader, test_case::test_case,
+        super::*, crate::bank::tests::create_simple_test_bank, solana_account::WritableAccount,
+        solana_sdk_ids::bpf_loader, std::assert_matches, test_case::test_case,
     };
 
     fn store_account(

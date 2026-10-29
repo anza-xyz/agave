@@ -522,7 +522,6 @@ pub(crate) mod tests {
             bank_forks::BankForks,
         },
         agave_feature_set::FeatureSet,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_builtins::{
             BUILTINS,
@@ -554,6 +553,7 @@ pub(crate) mod tests {
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         std::{
+            assert_matches,
             fs::File,
             io::Read,
             sync::{Arc, RwLock},

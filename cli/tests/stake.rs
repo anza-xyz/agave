@@ -1,6 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    assert_matches::assert_matches,
     solana_account::state_traits::StateMutWincode as _,
     solana_cli::{
         check_balance,
@@ -31,6 +30,7 @@ use {
         state::{Lockup, StakeAuthorize, StakeStateV2},
     },
     solana_test_validator::{TestValidator, TestValidatorGenesis},
+    std::assert_matches,
     test_case::test_case,
 };
 

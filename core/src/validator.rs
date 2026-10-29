@@ -3286,7 +3286,7 @@ mod tests {
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
         solana_vote_program::vote_state::{LandedVote, Lockout, VoteStateVersions},
-        std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
+        std::{assert_matches, fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
 
     #[test]

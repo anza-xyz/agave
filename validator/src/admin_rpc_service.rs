@@ -1184,7 +1184,6 @@ mod tests {
         super::*,
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor::event::VotorEventSender,
-        assert_matches::assert_matches,
         crossbeam_channel::bounded,
         serde_json::Value,
         solana_accounts_db::{
@@ -1212,7 +1211,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
-        std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
+        std::{assert_matches, collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
         tokio::sync::mpsc,
     };
 

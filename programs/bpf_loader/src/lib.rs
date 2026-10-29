@@ -1180,7 +1180,6 @@ mod test_utils {
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
@@ -1193,7 +1192,7 @@ mod tests {
         solana_sdk_ids::sysvar,
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
         solana_sysvar_id::SysvarId,
-        std::{fs::File, io::Read},
+        std::{assert_matches, fs::File, io::Read},
         test_case::test_case,
     };
 

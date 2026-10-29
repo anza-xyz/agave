@@ -31,7 +31,6 @@ use {
     agave_votor_messages::{
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
     },
-    assert_matches::{assert_matches, debug_assert_matches},
     bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
     dashmap::DashSet,
@@ -73,6 +72,7 @@ use {
         VersionedConfirmedBlock, VersionedTransactionWithStatusMeta,
     },
     std::{
+        assert_matches,
         borrow::Cow,
         cell::RefCell,
         cmp,
@@ -81,6 +81,7 @@ use {
             hash_map::Entry as HashMapEntry,
         },
         convert::TryInto,
+        debug_assert_matches,
         fmt::Write,
         fs::{self, File},
         io::Error as IoError,

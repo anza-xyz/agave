@@ -91,11 +91,10 @@ impl TargetBuiltin {
 mod tests {
     use {
         super::*, crate::bank::tests::create_simple_test_bank, agave_feature_set as feature_set,
-        assert_matches::assert_matches, solana_account::Account,
-        solana_feature_gate_interface as feature,
+        solana_account::Account, solana_feature_gate_interface as feature,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_sdk_ids::bpf_loader_upgradeable::ID as BPF_LOADER_UPGRADEABLE_ID,
-        test_case::test_matrix,
+        std::assert_matches, test_case::test_matrix,
     };
 
     fn store_account<T: wincode::Serialize<Src = T>>(

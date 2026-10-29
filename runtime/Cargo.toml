@@ -64,7 +64,6 @@ agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 arrayref = { workspace = true }
-assert_matches = { workspace = true }
 base64 = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }

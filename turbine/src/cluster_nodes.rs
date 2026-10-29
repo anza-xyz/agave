@@ -676,7 +676,7 @@ mod tests {
         rand::prelude::IndexedRandom as _,
         solana_hash::Hash as SolanaHash,
         solana_ledger::shred::{ProcessShredsStats, Shredder},
-        std::{collections::VecDeque, fmt::Debug, hash::Hash},
+        std::{assert_matches, collections::VecDeque, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
 

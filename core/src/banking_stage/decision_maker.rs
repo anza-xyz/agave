@@ -124,6 +124,7 @@ impl DecisionMaker {
 mod tests {
     use {
         super::*, solana_ledger::genesis_utils::create_genesis_config, solana_runtime::bank::Bank,
+        std::assert_matches,
     };
 
     #[test]

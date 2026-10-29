@@ -380,9 +380,9 @@ mod tests {
             SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests,
             traits::{ShredCode as _, ShredData},
         },
-        assert_matches::assert_matches,
         rand::Rng,
         solana_perf::packet::PacketFlags,
+        std::assert_matches,
         test_case::test_matrix,
     };
 

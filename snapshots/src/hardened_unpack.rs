@@ -456,8 +456,7 @@ mod tests {
     use {
         super::*,
         agave_fs::{file_io::file_creator, io_setup::IoSetupState},
-        assert_matches::assert_matches,
-        std::io::BufReader,
+        std::{assert_matches, io::BufReader},
         tar::{Builder, Header},
     };
 

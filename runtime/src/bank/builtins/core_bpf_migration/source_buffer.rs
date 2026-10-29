@@ -75,8 +75,8 @@ impl SourceBuffer {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::bank::tests::create_simple_test_bank, assert_matches::assert_matches,
-        solana_account::WritableAccount, solana_sdk_ids::bpf_loader_upgradeable,
+        super::*, crate::bank::tests::create_simple_test_bank, solana_account::WritableAccount,
+        solana_sdk_ids::bpf_loader_upgradeable, std::assert_matches,
     };
 
     fn store_account(bank: &Bank, address: &Pubkey, data: &[u8], owner: &Pubkey) {

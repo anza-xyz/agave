@@ -993,10 +993,10 @@ mod tests {
     };
     use {
         super::*,
-        assert_matches::assert_matches,
         rand_chacha::{ChaChaRng, rand_core::SeedableRng},
         solana_keypair::keypair_from_seed,
         solana_perf::packet::BytesPacket,
+        std::assert_matches,
         test_case::test_case,
     };
 

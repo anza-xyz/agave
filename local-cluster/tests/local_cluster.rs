@@ -5,7 +5,6 @@ use {
         snapshot_archive_info::SnapshotArchiveInfoGetter,
     },
     arc_swap::ArcSwap,
-    assert_matches::assert_matches,
     crossbeam_channel::{Receiver, bounded},
     itertools::Itertools,
     log::*,
@@ -61,6 +60,7 @@ use {
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     std::{
+        assert_matches,
         collections::{HashMap, HashSet},
         fs, iter,
         net::SocketAddr,

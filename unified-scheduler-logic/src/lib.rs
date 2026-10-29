@@ -98,7 +98,6 @@
 //! scheduler pool.
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
-    assert_matches::assert_matches,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -108,6 +107,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     static_assertions::const_assert_eq,
     std::{
+        assert_matches,
         cmp::Ordering,
         collections::{BTreeMap, HashSet, VecDeque},
         mem,
@@ -2260,7 +2260,8 @@ mod tests {
 
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     #[should_panic(
-        expected = "assertion failed: `Readonly` does not match `RequestedUsage::Writable`"
+        expected = "assertion `left matches right` failed\n  left: Readonly\n right: \
+                    RequestedUsage::Writable"
     )]
     fn test_unreachable_unlock_conditions2(capability: Capability) {
         let mut state_machine = unsafe {

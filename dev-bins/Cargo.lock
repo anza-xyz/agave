@@ -6462,7 +6462,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "arrayvec",
- "assert_matches",
  "bincode",
  "bitvec",
  "bytes",
@@ -6952,7 +6951,6 @@ dependencies = [
  "agave-votor-messages",
  "arc-swap",
  "arrayvec",
- "assert_matches",
  "bv",
  "bytes",
  "crossbeam-channel",
@@ -7214,7 +7212,6 @@ dependencies = [
  "agave-votor-messages",
  "agave-worker-pool",
  "anyhow",
- "assert_matches",
  "bitflags 2.13.2",
  "bytes",
  "bzip2",
@@ -8008,7 +8005,6 @@ dependencies = [
  "ahash 0.8.12",
  "arc-swap",
  "arrayref",
- "assert_matches",
  "base64 0.23.1",
  "bitvec",
  "bytemuck",
@@ -9109,7 +9105,6 @@ dependencies = [
 name = "solana-unified-scheduler-logic"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "solana-clock",
  "solana-hash",
  "solana-pubkey 4.4.0",
@@ -9123,7 +9118,6 @@ name = "solana-unified-scheduler-pool"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-jemalloc",
- "assert_matches",
  "crossbeam-channel",
  "crossbeam-utils",
  "dashmap",

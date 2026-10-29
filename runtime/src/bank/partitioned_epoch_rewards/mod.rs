@@ -467,7 +467,6 @@ mod tests {
             stake_utils,
             sysvar_account::from_account,
         },
-        assert_matches::assert_matches,
         rand::Rng,
         rayon::ThreadPoolBuilder,
         solana_account::{
@@ -493,6 +492,7 @@ mod tests {
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
         solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
         std::{
+            assert_matches,
             collections::HashSet,
             sync::{Arc, RwLock},
         },

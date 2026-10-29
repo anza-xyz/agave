@@ -2581,7 +2581,6 @@ pub mod tests {
             certificate::{CertSignature, GenesisCert},
             consensus_message::{Block, BlockId},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::bounded,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, WritableAccount},
@@ -2629,6 +2628,7 @@ pub mod tests {
             vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
         },
         std::{
+            assert_matches,
             collections::BTreeSet,
             sync::{Arc, Barrier, Mutex, RwLock, atomic::Ordering},
             thread,

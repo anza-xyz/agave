@@ -37,7 +37,6 @@ agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
 agave-worker-pool = { workspace = true }
 anyhow = { workspace = true }
-assert_matches = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }

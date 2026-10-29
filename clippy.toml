@@ -12,4 +12,6 @@ disallowed-methods = [
 disallowed-macros = [
     { path = "solana_sdk::saturating_add_assign", reason = "Deprecated. Use std::num::Saturating<T> instead." },
     { path = "lazy_static::lazy_static", reason = "Deprecated. Use std::{cell::{LazyCell, OnceCell}, sync::{LazyLock, OnceLock}} as appropriate." },
+    { path = "assert_matches::assert_matches", reason = "Use std::assert_matches! instead." },
+    { path = "assert_matches::debug_assert_matches", reason = "Use std::debug_assert_matches! instead." },
 ]

@@ -2104,6 +2104,7 @@ mod tests {
         solana_runtime::bank::Bank,
         solana_time_utils::timestamp,
         std::{
+            assert_matches,
             io::Cursor,
             net::{Ipv4Addr, SocketAddrV4},
         },

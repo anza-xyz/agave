@@ -332,7 +332,6 @@ dependencies = [
 name = "agave-random"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "solana-hash",
@@ -405,7 +404,6 @@ dependencies = [
  "agave-fs",
  "agave-logger",
  "agave-snapshots",
- "assert_matches",
  "bzip2",
  "crossbeam-channel",
  "log",
@@ -467,7 +465,6 @@ dependencies = [
  "agave-xdp",
  "arc-swap",
  "assert_cmd",
- "assert_matches",
  "bytesize",
  "caps",
  "chrono",
@@ -6998,7 +6995,6 @@ name = "solana-account-decoder"
 version = "4.5.0-alpha.4"
 dependencies = [
  "Inflector",
- "assert_matches",
  "base64 0.23.1",
  "bs58",
  "bv",
@@ -7082,7 +7078,6 @@ dependencies = [
  "agave-logger",
  "agave-reserved-account-keys",
  "ahash 0.8.12",
- "assert_matches",
  "blake3",
  "bv",
  "criterion",
@@ -7392,7 +7387,6 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
@@ -7481,7 +7475,6 @@ dependencies = [
 name = "solana-clap-utils"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "bip39",
  "bs58",
  "chrono",
@@ -7514,7 +7507,6 @@ dependencies = [
 name = "solana-clap-v3-utils"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "bip39",
  "chrono",
  "clap 3.2.23",
@@ -7552,7 +7544,6 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "agave-votor-messages",
- "assert_matches",
  "async-trait",
  "bip39",
  "bs58",
@@ -7960,7 +7951,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "arrayvec",
- "assert_matches",
  "bencher",
  "bincode",
  "bitvec",
@@ -8230,7 +8220,6 @@ dependencies = [
 name = "solana-ed25519-program-tests"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "rand 0.9.4",
  "solana-ed25519-program",
  "solana-instruction 4.0.0",
@@ -8251,7 +8240,6 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-transaction-view",
  "agave-votor-messages",
- "assert_matches",
  "bytes",
  "criterion",
  "crossbeam-channel",
@@ -8663,7 +8651,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "arrayvec",
- "assert_matches",
  "bs58",
  "bv",
  "bytes",
@@ -9001,7 +8988,6 @@ dependencies = [
  "agave-votor-messages",
  "agave-worker-pool",
  "anyhow",
- "assert_matches",
  "bitflags 2.13.2",
  "bs58",
  "bytes",
@@ -9148,7 +9134,6 @@ dependencies = [
  "agave-votor-messages",
  "agave-votor-transport",
  "arc-swap",
- "assert_matches",
  "crossbeam-channel",
  "gag",
  "itertools 0.15.0",
@@ -9402,7 +9387,6 @@ dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
  "arc-swap",
- "assert_matches",
  "bencher",
  "bitflags 2.13.2",
  "bytes",
@@ -9448,7 +9432,6 @@ dependencies = [
  "agave-logger",
  "agave-votor-messages",
  "arc-swap",
- "assert_matches",
  "bencher",
  "crossbeam-channel",
  "log",
@@ -9640,7 +9623,6 @@ dependencies = [
 name = "solana-program-runtime"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "base64 0.23.1",
  "itertools 0.15.0",
  "libsecp256k1",
@@ -9699,7 +9681,6 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
- "assert_matches",
  "async-trait",
  "base64 0.23.1",
  "chrono-humanize",
@@ -9846,7 +9827,6 @@ dependencies = [
 name = "solana-remote-wallet"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "console 0.16.6",
  "dialoguer",
  "hex",
@@ -10013,7 +9993,6 @@ name = "solana-rpc-client"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-votor-messages",
- "assert_matches",
  "async-trait",
  "base64 0.23.1",
  "bs58",
@@ -10183,7 +10162,6 @@ dependencies = [
  "ahash 0.8.12",
  "arc-swap",
  "arrayref",
- "assert_matches",
  "base64 0.23.1",
  "bitvec",
  "bytemuck",
@@ -10804,7 +10782,6 @@ dependencies = [
  "agave-logger",
  "agave-wake-channel",
  "anyhow",
- "assert_matches",
  "bytes",
  "chrono",
  "clap 4.5.31",
@@ -10846,7 +10823,6 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "ahash 0.8.12",
- "assert_matches",
  "env_logger",
  "libsecp256k1",
  "log",
@@ -10979,7 +10955,6 @@ dependencies = [
 name = "solana-syscalls"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "libsecp256k1",
  "num-traits",
  "solana-account",
@@ -11047,7 +11022,6 @@ dependencies = [
 name = "solana-system-program"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "criterion",
  "log",
  "solana-account",
@@ -11215,7 +11189,6 @@ name = "solana-tokens"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-logger",
- "assert_matches",
  "chrono",
  "clap 2.33.3",
  "console 0.16.6",
@@ -11470,7 +11443,6 @@ dependencies = [
  "agave-votor-messages",
  "agave-wake-channel",
  "agave-worker-pool",
- "assert_matches",
  "bencher",
  "bs58",
  "bytes",
@@ -11535,7 +11507,6 @@ name = "solana-unified-scheduler-logic"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-transaction-view",
- "assert_matches",
  "bytes",
  "solana-clock",
  "solana-hash",
@@ -11557,7 +11528,6 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-jemalloc",
  "agave-logger",
- "assert_matches",
  "crossbeam-channel",
  "crossbeam-utils",
  "dashmap",
@@ -11677,7 +11647,6 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "arbitrary",
- "assert_matches",
  "criterion",
  "log",
  "qualifier_attr",

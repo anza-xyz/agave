@@ -82,7 +82,6 @@ mod tests {
             shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred},
             shredder::Shredder,
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
         rand::{Rng, seq::SliceRandom},
         solana_entry::entry::Entry,
@@ -92,7 +91,10 @@ mod tests {
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
-        std::iter::{once, repeat_with},
+        std::{
+            assert_matches,
+            iter::{once, repeat_with},
+        },
         test_case::test_case,
     };
 
