@@ -79,6 +79,8 @@ Release channels have their own copy of this changelog:
   `which cargo-build-sbf` to confirm which copy you're using. Releases are
   published in the
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
+  support parsing and signing txv1 transactions may no longer work with the CLI.
 
 #### Changes
 
