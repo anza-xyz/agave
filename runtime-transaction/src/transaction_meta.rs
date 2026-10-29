@@ -54,7 +54,7 @@ pub(crate) struct CachedTransactionMeta {
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TransactionConfiguration {
     pub updated_heap_bytes: u32,
     pub compute_unit_limit: u32,
@@ -225,7 +225,7 @@ mod tests {
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMStaticMessage,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::collections::HashSet,
+        std::{assert_matches, collections::HashSet},
     };
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
         };
 
         let config = VersionedTransactionConfiguration::V1(input).try_into_config(&feature_set);
-        assert!(matches!(config, Err(TransactionError::SanitizeFailure)));
+        assert_matches!(config, Err(TransactionError::SanitizeFailure));
     }
 
     #[test]
@@ -359,7 +359,7 @@ mod tests {
         };
 
         let config = VersionedTransactionConfiguration::V1(input).try_into_config(&feature_set);
-        assert!(matches!(config, Err(TransactionError::SanitizeFailure)));
+        assert_matches!(config, Err(TransactionError::SanitizeFailure));
     }
 
     fn try_from_message_and_view(
@@ -384,16 +384,6 @@ mod tests {
             TransactionConfiguration::try_from_message_view(&message_view, &feature_set),
             TransactionConfiguration::try_from_sanitized_message(&sanitized_message, &feature_set),
         )
-    }
-
-    fn assert_config_eq(left: &TransactionConfiguration, right: &TransactionConfiguration) {
-        assert_eq!(left.updated_heap_bytes, right.updated_heap_bytes);
-        assert_eq!(left.compute_unit_limit, right.compute_unit_limit);
-        assert_eq!(left.priority_fee_lamports, right.priority_fee_lamports);
-        assert_eq!(
-            left.loaded_accounts_data_size_limit,
-            right.loaded_accounts_data_size_limit
-        );
     }
 
     fn v1_message(heap_size: Option<u32>) -> VersionedMessage {
@@ -435,14 +425,30 @@ mod tests {
         ));
 
         let (from_view, from_message) = try_from_message_and_view(message);
-        assert_config_eq(&from_view.unwrap(), &from_message.unwrap());
+        assert_eq!(from_view.unwrap(), from_message.unwrap());
+    }
+
+    #[test]
+    fn test_try_from_message_view_legacy_duplicate_instruction() {
+        let payer_keypair = Keypair::new();
+        let message = VersionedMessage::Legacy(Message::new(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(123_456),
+                ComputeBudgetInstruction::set_compute_unit_limit(123_456),
+            ],
+            Some(&payer_keypair.pubkey()),
+        ));
+
+        let (from_view, from_message) = try_from_message_and_view(message);
+        assert_matches!(from_view, Err(TransactionError::DuplicateInstruction(1)));
+        assert_eq!(from_view, from_message);
     }
 
     #[test]
     fn test_try_from_message_view_v1() {
         let (from_view, from_message) = try_from_message_and_view(v1_message(Some(65_536)));
         let from_view = from_view.unwrap();
-        assert_config_eq(&from_view, &from_message.unwrap());
+        assert_eq!(from_view, from_message.unwrap());
         assert_eq!(from_view.compute_unit_limit, MAX_COMPUTE_UNIT_LIMIT);
     }
 
@@ -450,10 +456,7 @@ mod tests {
     fn test_try_from_message_view_v1_invalid_heap_size() {
         let (from_view, from_message) =
             try_from_message_and_view(v1_message(Some(MAX_HEAP_FRAME_BYTES.saturating_add(1024))));
-        assert!(matches!(from_view, Err(TransactionError::SanitizeFailure)));
-        assert!(matches!(
-            from_message,
-            Err(TransactionError::SanitizeFailure)
-        ));
+        assert_matches!(from_view, Err(TransactionError::SanitizeFailure));
+        assert_matches!(from_message, Err(TransactionError::SanitizeFailure));
     }
 }
