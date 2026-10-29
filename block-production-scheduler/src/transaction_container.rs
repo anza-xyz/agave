@@ -3,12 +3,31 @@ use {
         TransactionPriorityId, TransactionPriorityQueue,
     },
     slab::Slab,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    std::collections::HashMap,
 };
 
 struct TransactionEntry<T> {
     priority: u64,
     arrival_order: u64,
     transaction: T,
+    nonce_address: Option<Pubkey>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RemovedTransaction<T> {
+    NonceReplacement(T),
+    CapacityEviction(T),
+}
+
+impl<T> RemovedTransaction<T> {
+    pub(crate) fn into_transaction(self) -> T {
+        match self {
+            Self::NonceReplacement(transaction) | Self::CapacityEviction(transaction) => {
+                transaction
+            }
+        }
+    }
 }
 
 /// Owns transactions until removal, including those popped for scheduling.
@@ -24,6 +43,7 @@ pub(crate) struct TransactionContainer<T> {
     transactions: Slab<TransactionEntry<T>>,
     queue: TransactionPriorityQueue,
     next_arrival_order: u64,
+    nonces_in_use: HashMap<Pubkey, TransactionPriorityId, PubkeyHasherBuilder>,
 }
 
 impl<T> TransactionContainer<T> {
@@ -33,11 +53,18 @@ impl<T> TransactionContainer<T> {
             transactions: Slab::with_capacity(capacity),
             queue: TransactionPriorityQueue::default(),
             next_arrival_order: 0,
+            nonces_in_use: HashMap::with_hasher(PubkeyHasherBuilder::default()),
         }
     }
 
     pub(crate) fn len(&self) -> usize {
         self.transactions.len()
+    }
+
+    pub(crate) fn should_drop_nonce(&self, address: &Pubkey, priority: u64) -> bool {
+        self.nonces_in_use
+            .get(address)
+            .is_some_and(|existing| existing.priority >= priority || !self.queue.contains(existing))
     }
 
     /// Inserts and queues a transaction, returning its ID and any evicted transaction.
@@ -50,7 +77,34 @@ impl<T> TransactionContainer<T> {
         priority: u64,
         transaction: T,
     ) -> Result<(usize, Option<T>), T> {
-        let evicted = if self.len() == self.capacity {
+        self.insert_with_nonce(priority, transaction, None)
+            .map(|(id, removed)| (id, removed.map(RemovedTransaction::into_transaction)))
+    }
+
+    /// A validated nonce replaces a lower-priority queued transaction using the same account.
+    /// An in-flight or held transaction cannot be replaced.
+    /// Returns the inserted ID and at most one removed transaction, with its removal reason.
+    pub(crate) fn insert_with_nonce(
+        &mut self,
+        priority: u64,
+        transaction: T,
+        nonce_address: Option<Pubkey>,
+    ) -> Result<(usize, Option<RemovedTransaction<T>>), T> {
+        let nonce_conflict = nonce_address.and_then(|address| {
+            self.nonces_in_use
+                .get(&address)
+                .copied()
+                .map(|existing| (address, existing))
+        });
+        if let Some((_, existing)) = nonce_conflict
+            && (existing.priority >= priority || !self.queue.contains(&existing))
+        {
+            return Err(transaction);
+        }
+        let removed = if let Some((_, existing)) = nonce_conflict {
+            self.remove(existing.id)
+                .map(RemovedTransaction::NonceReplacement)
+        } else if self.len() == self.capacity {
             if self
                 .queue
                 .first()
@@ -59,7 +113,7 @@ impl<T> TransactionContainer<T> {
                 return Err(transaction);
             }
             let id = self.queue.pop_first().expect("queue has a minimum");
-            Some(self.transactions.remove(id.id).transaction)
+            self.remove(id.id).map(RemovedTransaction::CapacityEviction)
         } else {
             None
         };
@@ -70,10 +124,14 @@ impl<T> TransactionContainer<T> {
             priority,
             arrival_order,
             transaction,
+            nonce_address,
         });
-        self.queue
-            .insert(TransactionPriorityId::new(priority, arrival_order, id));
-        Ok((id, evicted))
+        let priority_id = TransactionPriorityId::new(priority, arrival_order, id);
+        self.queue.insert(priority_id);
+        if let Some(address) = nonce_address {
+            self.nonces_in_use.insert(address, priority_id);
+        }
+        Ok((id, removed))
     }
 
     pub(crate) fn get(&self, id: usize) -> Option<&T> {
@@ -117,11 +175,13 @@ impl<T> TransactionContainer<T> {
     /// Removes a queued or popped transaction and returns ownership to the caller.
     pub(crate) fn remove(&mut self, id: usize) -> Option<T> {
         let entry = self.transactions.try_remove(id)?;
-        self.queue.remove(&TransactionPriorityId::new(
-            entry.priority,
-            entry.arrival_order,
-            id,
-        ));
+        let priority_id = TransactionPriorityId::new(entry.priority, entry.arrival_order, id);
+        self.queue.remove(&priority_id);
+        if let Some(address) = entry.nonce_address
+            && self.nonces_in_use.get(&address) == Some(&priority_id)
+        {
+            self.nonces_in_use.remove(&address);
+        }
         Some(entry.transaction)
     }
 }
@@ -226,6 +286,53 @@ mod tests {
         assert_eq!(zero.insert(1, "rejected"), Err("rejected"));
         assert_eq!(zero.len(), 0);
         assert_eq!(zero.pop_highest(), None);
+    }
+
+    #[test]
+    fn nonce_dedup_replaces_only_lower_priority_queued_transactions() {
+        let address = Pubkey::new_unique();
+        let mut container = TransactionContainer::with_capacity(2);
+        let (other, _) = container.insert(0, "other").unwrap();
+        let (old, removed) = container
+            .insert_with_nonce(1, "old", Some(address))
+            .unwrap();
+        assert_eq!(removed, None);
+        assert!(container.should_drop_nonce(&address, 1));
+        assert_eq!(
+            container.insert_with_nonce(1, "tie", Some(address)),
+            Err("tie")
+        );
+        let (new, removed) = container
+            .insert_with_nonce(2, "new", Some(address))
+            .unwrap();
+        assert_eq!(removed, Some(RemovedTransaction::NonceReplacement("old")));
+        assert_eq!(container.len(), 2);
+        assert_eq!(container.get(other), Some(&"other"));
+        assert_eq!(container.get(old), Some(&"new"));
+        assert_eq!(container.get(new), Some(&"new"));
+        assert!(!container.should_drop_nonce(&address, 3));
+        assert_eq!(container.pop_highest(), Some(new));
+        assert!(container.should_drop_nonce(&address, 3));
+        assert_eq!(
+            container.insert_with_nonce(3, "late", Some(address)),
+            Err("late")
+        );
+        assert_eq!(container.remove(new), Some("new"));
+        assert!(!container.should_drop_nonce(&address, 1));
+    }
+
+    #[test]
+    fn nonce_index_is_cleared_on_capacity_eviction() {
+        let address = Pubkey::new_unique();
+        let mut container = TransactionContainer::with_capacity(1);
+        container
+            .insert_with_nonce(1, "nonce", Some(address))
+            .unwrap();
+        assert_eq!(
+            container.insert_with_nonce(2, "other", None),
+            Ok((0, Some(RemovedTransaction::CapacityEviction("nonce"))))
+        );
+        assert!(!container.should_drop_nonce(&address, 1));
     }
 
     #[test]

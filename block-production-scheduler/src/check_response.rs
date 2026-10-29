@@ -15,6 +15,7 @@ use {
         pubkeys_ptr::OwnedPubkeysPtr, responses_region::CheckResponsesPtr,
         transaction_ptr::OwnedTransactionPtr,
     },
+    solana_svm_transaction::svm_message::SVMStaticMessage,
 };
 
 const MAX_CHECK_RESPONSE_PACKETS_PER_ITERATION: usize = 512;
@@ -107,6 +108,19 @@ impl Scheduler {
                 continue;
             };
             let priority = calculate_priority(response, metadata.flags);
+            let nonce_address = transaction.view.get_durable_nonce(true);
+            if nonce_address
+                .is_some_and(|address| self.transactions.should_drop_nonce(address, priority))
+            {
+                // SAFETY: this accepted view exclusively owns its shared allocations.
+                unsafe { transaction.free(&self.allocator) };
+                continue;
+            }
+            let validated_nonce_address = nonce_address
+                .filter(|_| {
+                    response.age_nonce_check_flags & age_nonce_check_flags::VALIDATED_NONCE != 0
+                })
+                .copied();
             let transaction = TransactionState {
                 execution_worker: None,
                 transaction,
@@ -114,16 +128,24 @@ impl Scheduler {
                 cost: response.estimated_cost_units,
                 allocated_accounts_data_size: response.allocated_accounts_data_size,
             };
-            let inserted = self.transactions.insert(priority, transaction);
+            let inserted =
+                self.transactions
+                    .insert_with_nonce(priority, transaction, validated_nonce_address);
             if inserted.is_ok() {
                 buffered = buffered.saturating_add(1);
             }
             match inserted {
-                Ok((_, Some(transaction))) | Err(transaction) => {
+                Err(transaction) => {
                     // SAFETY: rejection or eviction returns exclusive ownership.
                     unsafe { transaction.transaction.free(&self.allocator) };
                 }
-                Ok((_, None)) => {
+                Ok((_, removed)) => {
+                    if let Some(removed) = removed {
+                        let transaction = removed.into_transaction();
+                        // SAFETY: removal returns exclusive ownership.
+                        unsafe { transaction.transaction.free(&self.allocator) };
+                        dropped = dropped.saturating_add(1);
+                    }
                     dropped = dropped
                         .checked_sub(1)
                         .expect("retained count exceeds batch length");
@@ -198,7 +220,7 @@ mod tests {
         },
         agave_scheduling_utils::responses_region::resolve_responses_from_iter,
         rts_alloc::Allocator,
-        solana_message::{VersionedMessage, v0},
+        solana_message::{VersionedMessage, compiled_instruction::CompiledInstruction, v0},
         solana_pubkey::Pubkey,
         solana_signature::Signature,
         solana_svm_transaction::svm_message::SVMMessage,
@@ -252,14 +274,40 @@ mod tests {
         scheduler: &mut Scheduler,
         response: Option<CheckResponse>,
     ) -> CheckWorkerToPackMessage {
+        make_message_with_nonce(scheduler, response, false)
+    }
+
+    fn make_message_with_nonce(
+        scheduler: &mut Scheduler,
+        response: Option<CheckResponse>,
+        nonce: bool,
+    ) -> CheckWorkerToPackMessage {
         let bytes = wincode::serialize(&VersionedTransaction {
             signatures: vec![Signature::default()],
             message: VersionedMessage::V0(v0::Message {
                 header: solana_message::MessageHeader {
                     num_required_signatures: 1,
+                    num_readonly_unsigned_accounts: u8::from(nonce),
                     ..Default::default()
                 },
-                account_keys: vec![Pubkey::from([1; 32])],
+                account_keys: if nonce {
+                    vec![
+                        Pubkey::from([1; 32]),
+                        Pubkey::from([5; 32]),
+                        Pubkey::default(),
+                    ]
+                } else {
+                    vec![Pubkey::from([1; 32])]
+                },
+                instructions: if nonce {
+                    vec![CompiledInstruction {
+                        program_id_index: 2,
+                        accounts: vec![1],
+                        data: 4u32.to_le_bytes().to_vec(),
+                    }]
+                } else {
+                    vec![]
+                },
                 address_table_lookups: vec![v0::MessageAddressTableLookup {
                     account_key: Pubkey::from([2; 32]),
                     writable_indexes: vec![0],
@@ -339,6 +387,31 @@ mod tests {
             Some(&Pubkey::from([4; 32]))
         );
         assert!(!state.transaction.view.is_writable(2));
+    }
+
+    #[test]
+    fn validated_nonce_replaces_lower_priority_queued_transaction() {
+        let (mut scheduler, _agave) = setup(2);
+        let mut first = make_response(&scheduler.allocator);
+        first.age_nonce_check_flags |= age_nonce_check_flags::VALIDATED_NONCE;
+        first.prioritization_fee = 1;
+        let message = make_message_with_nonce(&mut scheduler, Some(first), true);
+        scheduler.handle_check_worker_response(message);
+        assert_eq!(scheduler.transactions.len(), 1);
+
+        let mut second = make_response(&scheduler.allocator);
+        second.age_nonce_check_flags |= age_nonce_check_flags::VALIDATED_NONCE;
+        second.prioritization_fee = 100;
+        second.estimated_cost_units = 100;
+        let message = make_message_with_nonce(&mut scheduler, Some(second), true);
+        scheduler.handle_check_worker_response(message);
+        assert_eq!(scheduler.transactions.len(), 1);
+        let id = scheduler.transactions.pop_highest().unwrap();
+        assert_eq!(
+            scheduler.transactions.get(id).unwrap().cost,
+            second.estimated_cost_units
+        );
+        assert_eq!(scheduler.leader_slot_metrics.dropped_transactions, 1);
     }
 
     #[test]
