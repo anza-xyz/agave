@@ -716,7 +716,10 @@ mod external {
             };
             let (agave, client) = setup_local_session(session_config.client_logon())
                 .map_err(|err| error!("Failed to create local scheduler session: {err}"))?;
-            let config = agave_block_production_scheduler::SchedulerConfig::default();
+            let config = agave_block_production_scheduler::SchedulerConfig {
+                filter_keys: self.filter_keys.iter().copied().collect(),
+                ..agave_block_production_scheduler::SchedulerConfig::default()
+            };
             let mut threads = self.spawn_external(agave)?;
             let exit = self.worker_exit_signal.clone();
             threads.push(

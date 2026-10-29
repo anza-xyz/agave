@@ -35,6 +35,7 @@ fn config(path: &Path) -> Config {
             check_worker_to_pack_capacity: 512,
         },
         scheduler: SchedulerConfig {
+            filter_keys: HashSet::default(),
             transaction_state_capacity: 512,
             execution_margin: Duration::from_millis(10),
             max_cost_units_per_worker: 1_000_000,
@@ -85,6 +86,7 @@ pub(super) fn setup_with_capacities(
     let mut scheduler = Scheduler::new(
         client,
         check_response_capacity,
+        HashSet::default(),
         512,
         Duration::from_millis(10),
         1_000_000,
@@ -171,6 +173,7 @@ fn config_uses_shared_defaults_and_overrides() {
     assert!(config.log_file.is_none());
     let session = SessionConfig::default();
     let scheduler = SchedulerConfig::default();
+    assert!(scheduler.filter_keys.is_empty());
     assert_eq!(config.session.worker_count, session.worker_count);
     assert_eq!(config.session.allocator_size, session.allocator_size);
     assert_eq!(
@@ -188,6 +191,7 @@ worker_count = 2
 handshake_timeout_ms = 250
 [scheduler]
 execution_margin_ms = 5
+filter_keys = ['11111111111111111111111111111111']
 ",
     )
     .unwrap();
@@ -198,6 +202,8 @@ execution_margin_ms = 5
     assert_eq!(config.session.worker_count, 2);
     assert_eq!(config.session.handshake_timeout, Duration::from_millis(250));
     assert_eq!(config.scheduler.execution_margin, Duration::from_millis(5));
+    assert_eq!(config.scheduler.filter_keys.len(), 1);
+    assert!(config.scheduler.filter_keys.contains(&Pubkey::default()));
     assert_eq!(config.session.allocator_size, session.allocator_size);
     assert_eq!(
         config.scheduler.max_cost_units_per_worker,
@@ -210,6 +216,10 @@ fn config_requires_path_and_rejects_unknown_fields() {
     assert!(Config::from_toml("").is_err());
     assert!(Config::from_toml("ipc_path = '/ledger/socket'\nunknown = 1").is_err());
     assert!(Config::from_toml("ipc_path = '/ledger/socket'\n[session]\nworker_cout = 2").is_err());
+    assert!(
+        Config::from_toml("ipc_path = '/ledger/socket'\n[scheduler]\nfilter_keys = ['invalid']")
+            .is_err()
+    );
 }
 
 #[test]

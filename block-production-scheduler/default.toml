@@ -14,6 +14,7 @@ pack_to_check_worker_capacity = 8192
 check_worker_to_pack_capacity = 8192
 
 [scheduler]
+filter_keys = []
 transaction_state_capacity = 100000
 execution_margin_ms = 10
 max_cost_units_per_worker = 3750000

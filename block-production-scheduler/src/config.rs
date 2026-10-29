@@ -2,7 +2,8 @@ use {
     agave_scheduler_handshake::ClientLogon,
     core::time::Duration,
     serde::{Deserialize, Deserializer},
-    std::path::PathBuf,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    std::{collections::HashSet, path::PathBuf},
 };
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("../default.toml");
@@ -92,6 +93,9 @@ impl Default for SessionConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SchedulerConfig {
+    /// Reject transactions containing any of these account keys.
+    #[serde(deserialize_with = "deserialize_filter_keys")]
+    pub filter_keys: HashSet<Pubkey, PubkeyHasherBuilder>,
     /// Maximum number of checked transactions retained for scheduling.
     pub transaction_state_capacity: usize,
     /// Time before slot end by which pacing releases the full cost budget.
@@ -135,4 +139,13 @@ fn merge(values: &mut toml::Table, overrides: toml::Table) {
 
 fn duration_millis<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
     u64::deserialize(deserializer).map(Duration::from_millis)
+}
+
+fn deserialize_filter_keys<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<HashSet<Pubkey, PubkeyHasherBuilder>, D::Error> {
+    Vec::<String>::deserialize(deserializer)?
+        .into_iter()
+        .map(|key| key.parse().map_err(serde::de::Error::custom))
+        .collect()
 }

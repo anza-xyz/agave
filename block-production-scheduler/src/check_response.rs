@@ -15,7 +15,7 @@ use {
         pubkeys_ptr::OwnedPubkeysPtr, responses_region::CheckResponsesPtr,
         transaction_ptr::OwnedTransactionPtr,
     },
-    solana_svm_transaction::svm_message::SVMStaticMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
 };
 
 const MAX_CHECK_RESPONSE_PACKETS_PER_ITERATION: usize = 512;
@@ -107,6 +107,17 @@ impl Scheduler {
             }) else {
                 continue;
             };
+            if !self.filter_keys.is_empty()
+                && transaction
+                    .view
+                    .account_keys()
+                    .iter()
+                    .any(|key| self.filter_keys.contains(key))
+            {
+                // SAFETY: the accepted view exclusively owns its shared allocations.
+                unsafe { transaction.free(&self.allocator) };
+                continue;
+            }
             let priority = calculate_priority(response, metadata.flags);
             let nonce_address = transaction.view.get_durable_nonce(true);
             if nonce_address
@@ -357,6 +368,21 @@ mod tests {
                     resolve_responses_from_iter(allocator, core::iter::once(response)).unwrap()
                 },
             ),
+        }
+    }
+
+    #[test]
+    fn filters_static_and_lookup_account_keys() {
+        for key in [Pubkey::from([1; 32]), Pubkey::from([3; 32])] {
+            let (mut scheduler, _agave) = setup(2);
+            scheduler.filter_keys.insert(key);
+            let response = make_response(&scheduler.allocator);
+            let message = make_message(&mut scheduler, Some(response));
+            scheduler.handle_check_worker_response(message);
+
+            assert_eq!(scheduler.transactions.len(), 0);
+            assert_eq!(scheduler.leader_slot_metrics.dropped_transactions, 1);
+            assert_eq!(scheduler.allocator.outstanding_allocation_bytes(), 0);
         }
     }
 

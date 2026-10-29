@@ -73,6 +73,7 @@ struct Scheduler {
     check_response_capacity: usize,
     transactions: TransactionContainer<TransactionState>,
     scheduling_scratch: SchedulerScratch,
+    filter_keys: HashSet<Pubkey, PubkeyHasherBuilder>,
     reserved_account_keys: HashSet<Pubkey, PubkeyHasherBuilder>,
     check_receiver: shaq::mpmc::Consumer<CheckWorkerToPackMessage>,
     workers: Vec<ClientWorkerSession>,
@@ -87,6 +88,7 @@ impl Scheduler {
     fn new(
         session: ClientSession,
         check_response_capacity: usize,
+        filter_keys: HashSet<Pubkey, PubkeyHasherBuilder>,
         transaction_state_capacity: usize,
         execution_margin: Duration,
         max_cost_units_per_worker: u64,
@@ -123,6 +125,7 @@ impl Scheduler {
             check_response_capacity,
             transactions: TransactionContainer::with_capacity(transaction_state_capacity),
             scheduling_scratch: SchedulerScratch::new(transaction_state_capacity),
+            filter_keys,
             reserved_account_keys: ReservedAccountKeys::default().active.into_iter().collect(),
             check_receiver: check_worker_to_pack,
             in_flight: InFlightTracker::new(workers.len()),
@@ -226,6 +229,7 @@ pub fn run_session(
     let mut scheduler = Scheduler::new(
         session,
         check_response_capacity,
+        config.filter_keys,
         config.transaction_state_capacity,
         config.execution_margin,
         config.max_cost_units_per_worker,
