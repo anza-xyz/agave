@@ -145,7 +145,6 @@ use {
     solana_message::{
         AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions, v0::LoadedAddresses,
     },
-    solana_nonce_account::verify_nonce_account,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -191,7 +190,7 @@ use {
         AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
@@ -3467,17 +3466,6 @@ impl Bank {
     }
 
     pub fn get_fee_for_message(&self, message: &SanitizedMessage) -> Option<u64> {
-        {
-            let blockhash_queue = self.blockhash_queue.read().unwrap();
-            blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
-        }
-        .or_else(|| {
-            let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
-            let nonce_account = self.get_account(nonce_address)?;
-            verify_nonce_account(&nonce_account, message.recent_blockhash())
-                .map(|nonce_data| nonce_data.get_lamports_per_signature())
-        })?;
-
         let transaction_configuration =
             TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)
                 .ok()?;
