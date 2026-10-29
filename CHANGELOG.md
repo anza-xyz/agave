@@ -34,6 +34,8 @@ Release channels have their own copy of this changelog:
   preserves the existing parsed output.
 * `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
   `--full-rpc-api`.
+* `getFeeForMessage` no longer returns `null` when the message's recent blockhash has expired or
+  its durable nonce is invalid. The fee does not depend on either, so it is now returned.
 
 ### Validator
 

@@ -9052,6 +9052,7 @@ dependencies = [
  "agave-votor",
  "agave-votor-messages",
  "agave-wake-channel",
+ "agave-worker-pool",
  "bytes",
  "crossbeam-channel",
  "itertools 0.15.0",

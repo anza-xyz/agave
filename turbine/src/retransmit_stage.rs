@@ -6,10 +6,10 @@ use {
         cluster_nodes::{
             ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
         },
-        retransmit_stage::worker_pool::{PoolSender, WorkerJob, WorkerPool},
     },
     agave_votor::event::VotorEvent,
     agave_votor_messages::migration::MigrationStatus,
+    agave_worker_pool::{WorkerPool, WorkerPoolConfig},
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError},
     itertools::Itertools,
     lru::LruCache,
@@ -38,14 +38,13 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         ops::AddAssign,
         sync::{Arc, RwLock, atomic::Ordering},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
-
-mod worker_pool;
 
 const MAX_DUPLICATE_COUNT: usize = 2;
 const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
@@ -124,7 +123,7 @@ struct RetransmitNotifiers {
 }
 
 struct RetransmitContext {
-    retransmit_sender: RetransmitSender,
+    thread_pool: WorkerPool<RetransmitJob>,
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     cluster_info: Arc<ClusterInfo>,
@@ -283,7 +282,7 @@ impl JobStats {
     }
 }
 
-impl WorkerJob for RetransmitJob {
+impl RetransmitJob {
     fn run(self, worker_index: usize) {
         let RetransmitJob { context, mut batch } = self;
         let mut stats = JobStats::default();
@@ -313,8 +312,6 @@ impl WorkerJob for RetransmitJob {
         let _ = context.result_sender.send(stats);
     }
 }
-
-type RetransmitSender = PoolSender<RetransmitJob>;
 
 enum RetransmitSocket<'a> {
     Socket(&'a UdpSocket),
@@ -376,7 +373,7 @@ impl<'a> RetransmitSocket<'a> {
 // pull the shreds from the shreds_receiver until empty, then retransmit them. uses a pool of
 // workers to parallelize work if there are enough shreds to justify that.
 fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Result<(), ()> {
-    let retransmit_sender = &context.retransmit_sender;
+    let thread_pool = &context.thread_pool;
     let bank_forks = context.bank_forks.as_ref();
     let leader_schedule_cache = context.leader_schedule_cache.as_ref();
     let cluster_info = &context.cluster_info;
@@ -497,7 +494,7 @@ fn retransmit(context: &RetransmitContext, state: &mut RetransmitState) -> Resul
             context: job_context.clone(),
             batch,
         };
-        retransmit_sender.send(job);
+        thread_pool.send(job);
     }
 
     // Load-bearing: result_receiver.iter() ends only once every result_sender clone (held via
@@ -613,7 +610,6 @@ fn get_retransmit_addrs(
 /// Service to retransmit messages received from other peers in turbine.
 pub struct RetransmitStage {
     retransmit_thread_handle: JoinHandle<()>,
-    thread_pool: WorkerPool,
 }
 
 impl RetransmitStage {
@@ -648,14 +644,16 @@ impl RetransmitStage {
         let shred_deduper = Arc::new(ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS));
 
         // Match workers to retransmit sockets to preserve socket affinity.
-        let (retransmit_sender, thread_pool) = WorkerPool::build(
-            "solRetransmit",
-            retransmit_sockets.len(),
-            retransmit_sockets.len(),
-        );
+        let num_workers = NonZeroUsize::new(retransmit_sockets.len())
+            .expect("retransmit needs at least one socket");
+        let config = WorkerPoolConfig::new("solRetransmit", num_workers);
+        let thread_pool = WorkerPool::spawn(config, |worker_id| {
+            move |job: RetransmitJob| job.run(worker_id)
+        })
+        .expect("failed to spawn retransmit workers");
 
         let retransmit_context = RetransmitContext {
-            retransmit_sender,
+            thread_pool,
             bank_forks,
             leader_schedule_cache,
             cluster_info,
@@ -685,21 +683,11 @@ impl RetransmitStage {
 
         Self {
             retransmit_thread_handle,
-            thread_pool,
         }
     }
 
     pub fn join(self) -> thread::Result<()> {
-        let Self {
-            retransmit_thread_handle,
-            thread_pool,
-        } = self;
-
-        let retransmit_result = retransmit_thread_handle.join();
-        let worker_pool_result = thread_pool.join();
-
-        retransmit_result?;
-        worker_pool_result
+        self.retransmit_thread_handle.join()
     }
 }
 
