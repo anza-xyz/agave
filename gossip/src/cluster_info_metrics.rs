@@ -161,7 +161,9 @@ pub struct GossipStats {
     pub(crate) push_vote_read: Counter,
     pub(crate) repair_peers: Counter,
     pub(crate) save_contact_info_time: Counter,
+    pub(crate) skip_pull_response_expired: Counter,
     pub(crate) skip_pull_response_shred_version: Counter,
+    pub(crate) skip_pull_response_unsolicited: Counter,
     pub(crate) skip_pull_shred_version: Counter,
     pub(crate) skip_push_message_shred_version: Counter,
     pub(crate) trim_crds_table: Counter,
@@ -449,6 +451,16 @@ pub(crate) fn submit_gossip_stats(
         (
             "skip_pull_response_shred_version",
             stats.skip_pull_response_shred_version.clear(),
+            i64
+        ),
+        (
+            "skip_pull_response_unsolicited",
+            stats.skip_pull_response_unsolicited.clear(),
+            i64
+        ),
+        (
+            "skip_pull_response_expired",
+            stats.skip_pull_response_expired.clear(),
             i64
         ),
         (
