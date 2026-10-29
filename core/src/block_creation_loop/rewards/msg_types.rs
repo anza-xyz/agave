@@ -1,8 +1,6 @@
 use {
-    agave_votor_messages::reward_certificate::{
-        BuildRewardCertsRespError, NotarRewardCertificate, SkipRewardCertificate,
-    },
-    crossbeam_channel::{Receiver, Sender},
+    agave_votor_messages::reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+    crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     std::time::Instant,
@@ -10,32 +8,28 @@ use {
 
 /// Request to build reward certificates.
 pub(crate) struct RewardRequest {
-    /// The bank slot which will include the built reward certs.
-    pub(crate) bank_slot: Slot,
+    /// First slot in the leader window for which to build certs.
+    pub(crate) window_start: Slot,
     /// The channel on which to send the reply.
     pub(super) reply_sender: Sender<RewardResponse>,
     pub(super) request_sent: Instant,
 }
 
 /// Response when the reward certs are built successfully.
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RewardRespSucc {
     /// Skip reward certificate.  None if no skip votes were registered.
     pub(crate) skip: Option<SkipRewardCertificate>,
     /// Notar reward certificate.  None if no notar votes were registered.
     pub(crate) notar: Option<NotarRewardCertificate>,
-    /// If at least one of the certs above is present, then this contains the slot for which the
-    /// reward certs were built and the list of validators in the certs.
+    /// Validators present in the certificates.
     pub(crate) validators: Vec<Pubkey>,
 }
 
 /// Response to a [`RewardRequest`].
 pub(crate) struct RewardResponse {
+    /// Bank slot for which reward certificates were requested.
+    pub(crate) bank_slot: Slot,
     /// The result of building reward certs for `bank_slot`.
-    pub(crate) result: Result<RewardRespSucc, BuildRewardCertsRespError>,
-}
-
-/// The request token to be used to receive responses on previously sent requests to build reward certs.
-pub(crate) struct RewardRequestToken {
-    pub(super) reply_receiver: Receiver<RewardResponse>,
+    pub(crate) result: Option<RewardRespSucc>,
 }
