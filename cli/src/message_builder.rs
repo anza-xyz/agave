@@ -18,7 +18,6 @@ pub(crate) struct MessageBuilder {
     instructions: Vec<Instruction>,
     compute_unit_price: Option<u64>,
     compute_unit_limit: ComputeUnitLimit,
-    nonce: Option<(Pubkey, Pubkey)>,
     blockhash: Option<Hash>,
 }
 
@@ -28,7 +27,6 @@ impl MessageBuilder {
             instructions,
             compute_unit_price: None,
             compute_unit_limit: ComputeUnitLimit::Default,
-            nonce: None,
             blockhash: None,
         }
     }
@@ -56,7 +54,8 @@ impl MessageBuilder {
     }
 
     pub(crate) fn with_nonce(mut self, account: &Pubkey, authority: &Pubkey) -> Self {
-        self.nonce = Some((*account, *authority));
+        self.instructions
+            .insert(0, advance_nonce_account(account, authority));
         self
     }
 
@@ -65,11 +64,7 @@ impl MessageBuilder {
         self
     }
 
-    pub(crate) fn build(mut self, payer: &Pubkey) -> VersionedMessage {
-        if let Some((account, authority)) = self.nonce {
-            self.instructions
-                .insert(0, advance_nonce_account(&account, &authority));
-        }
+    pub(crate) fn build(self, payer: &Pubkey) -> VersionedMessage {
         let compute_unit_limit = match self.compute_unit_limit {
             ComputeUnitLimit::Static(limit) => limit,
             ComputeUnitLimit::Simulated | ComputeUnitLimit::SimulatedWithExtraPercentage(_) => {
