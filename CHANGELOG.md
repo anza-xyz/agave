@@ -101,7 +101,8 @@ Release channels have their own copy of this changelog:
   `ReplayStage`: `SlotStatus::CreatedBank` when the bank is created, and block metadata once it is
   frozen and its hash verified. The snapshot root and bank 0 are not announced; a bank that fails
   verification is created but gets no metadata. Plugin callbacks run on the startup replay thread,
-  so a slow plugin delays startup.
+  so a slow plugin delays startup. Plugins loaded after startup replay do not receive these
+  notifications.
 * `solana-ledger` (unstable API): `ProcessSlotCallback` now also receives the slot's entry count,
   and `ProcessOptions` has a new `new_bank_callback`.
 
