@@ -28,6 +28,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Changed the default account storage file format to SplitFile.
+
 ### CLI
 
 #### Breaking
