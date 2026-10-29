@@ -6376,6 +6376,21 @@ impl Bank {
         self.apply_slot_time_runtime_changes();
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
+
+        if new_feature_activations.contains(&feature_set::replace_ata_with_p_ata::id())
+            && let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
+                &feature_set::replace_ata_with_p_ata::SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+                &feature_set::replace_ata_with_p_ata::PROGRAM_BUFFER,
+                feature_set::replace_ata_with_p_ata::BUILD_HASH,
+                true,
+                "replace_ata_with_p_ata",
+            )
+        {
+            warn!(
+                "Failed to replace SPL Associated Token Account with p-ATA buffer '{}': {e}",
+                feature_set::replace_ata_with_p_ata::PROGRAM_BUFFER,
+            );
+        }
     }
 
     fn apply_new_builtin_program_feature_transitions(

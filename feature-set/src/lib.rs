@@ -83,6 +83,7 @@ pub struct FeatureSnapshot {
     pub core_bpf_hash_validation: bool,
     pub loader_v3_remove_extend_program: bool,
     pub remove_runtime_float_ops: bool,
+    pub replace_ata_with_p_ata: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -189,6 +190,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
             loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
             remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
+            replace_ata_with_p_ata: is_active(&replace_ata_with_p_ata::ID),
         }
     }
 }
@@ -1585,6 +1587,20 @@ pub mod remove_runtime_float_ops {
     solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
 }
 
+pub mod replace_ata_with_p_ata {
+    use {solana_hash::Hash, solana_pubkey::Pubkey};
+
+    solana_pubkey::declare_id!("pata6uFabFDejC1U7rpmFj9s1FhmiPyWk6D51U1ksx3");
+
+    pub const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID: Pubkey =
+        Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+    pub const PROGRAM_BUFFER: Pubkey =
+        Pubkey::from_str_const("pataAAkF439TTjwRqmxRkTTEfZemRdoriXusez4PQ6S");
+
+    pub const BUILD_HASH: Hash = Hash::new_from_array([0; 32]);
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2718,6 +2734,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_runtime_float_ops::id(),
             "SIMD-0607: Remove floating point from runtime inflation",
+        ),
+        (
+            replace_ata_with_p_ata::id(),
+            "SIMD-0567: CU-optimized ATA program",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
