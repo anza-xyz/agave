@@ -34,6 +34,8 @@ Release channels have their own copy of this changelog:
   preserves the existing parsed output.
 * `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
   `--full-rpc-api`.
+* `jsonParsed` ProgramData accounts of programs without an upgrade authority no longer return the
+  removed authority's 32 bytes in front of the program data.
 
 ### Validator
 
