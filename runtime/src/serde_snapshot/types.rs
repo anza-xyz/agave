@@ -1,11 +1,15 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
+    solana_account::AccountSharedData,
     solana_accounts_db::accounts_hash::AccountsLtHash,
     solana_clock::Epoch,
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::lt_hash::LtHash,
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_stake_history::StakeHistoryItem,
+    solana_stake_interface::state::Delegation,
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -54,6 +58,30 @@ impl UnusedRentCollector {
                 exemption_threshold: [0; 8],
                 burn_percent: 0,
             },
+        }
+    }
+}
+
+/// Snapshot serde-safe Stakes<Delegation>, which is now unused
+#[repr(C)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, Clone, SchemaRead, SchemaWrite)]
+pub struct UnusedStakes {
+    vote_accounts: Vec<(Pubkey, (u64, AccountSharedData))>,
+    stake_delegations: Vec<(Pubkey, Delegation)>,
+    unused: u64,
+    epoch: Epoch,
+    stake_history: Vec<StakeHistoryItem>,
+}
+
+impl UnusedStakes {
+    pub fn zeroed() -> Self {
+        Self {
+            vote_accounts: Vec::new(),
+            stake_delegations: Vec::new(),
+            unused: 0,
+            epoch: 0,
+            stake_history: Vec::new(),
         }
     }
 }
