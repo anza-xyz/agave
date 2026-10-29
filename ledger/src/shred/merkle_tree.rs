@@ -1,14 +1,17 @@
+pub use agave_shred_wire_format::constants::{
+    ProofEntry as MerkleProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY,
+};
 use {
-    crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
-    static_assertions::const_assert_eq, std::iter::successors,
+    crate::shred::Error, agave_shred_wire_format::constants as wire_format, solana_hash::Hash,
+    solana_sha256_hasher::hashv, static_assertions::const_assert_eq, std::iter::successors,
 };
 
-pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
+pub(crate) const SIZE_OF_MERKLE_ROOT: usize = wire_format::SIZE_OF_MERKLE_ROOT;
 const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
 const_assert_eq!(SIZE_OF_MERKLE_PROOF_ENTRY, 20);
-pub const SIZE_OF_MERKLE_PROOF_ENTRY: usize = std::mem::size_of::<MerkleProofEntry>();
 // Number of proof entries for the standard 64 shred batch.
-pub const PROOF_ENTRIES_FOR_32_32_BATCH: u8 = 6;
+pub const PROOF_ENTRIES_FOR_32_32_BATCH: u8 = wire_format::MERKLE_PROOF_ENTRIES as u8;
+const_assert_eq!(PROOF_ENTRIES_FOR_32_32_BATCH, 6);
 
 // Defense against second preimage attack:
 // https://en.wikipedia.org/wiki/Merkle_tree#Second_preimage_attack
@@ -16,8 +19,6 @@ pub const PROOF_ENTRIES_FOR_32_32_BATCH: u8 = 6;
 // hash data when computing leaf and internal node hashes respectively.
 pub(crate) const MERKLE_HASH_PREFIX_LEAF: &[u8] = b"\x00SOLANA_MERKLE_SHREDS_LEAF";
 pub(crate) const MERKLE_HASH_PREFIX_NODE: &[u8] = b"\x01SOLANA_MERKLE_SHREDS_NODE";
-
-pub type MerkleProofEntry = [u8; 20];
 
 /// Borrows the prefix of a hash represented by a Merkle proof entry.
 #[inline]

@@ -19,6 +19,7 @@ use {
         consensus_message::Block,
         finalized_slot::FinalizedSlot,
         migration::MigrationStatus,
+        stake::Stake,
     },
     log::trace,
     solana_clock::Slot,
@@ -121,7 +122,7 @@ impl ConsensusPool {
         &mut self,
         rank_map: &BLSPubkeyToRankMap,
         msg: &PoolVote,
-    ) -> Result<(u64, Option<Certificate>), AddVoteError> {
+    ) -> Result<(Stake, Option<Certificate>), AddVoteError> {
         self.vote_pools
             .add_pool_vote(
                 rank_map.len(),

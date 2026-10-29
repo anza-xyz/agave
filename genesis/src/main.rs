@@ -105,19 +105,20 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
             ))
         })?;
 
-        let mut account = AccountSharedData::new(account_details.balance, 0, &owner_program_id);
-        if account_details.data != "~" {
-            account.set_data_from_slice(
-                &BASE64_STANDARD
-                    .decode(account_details.data.as_str())
-                    .map_err(|err| {
-                        io::Error::other(format!(
-                            "Invalid account data: {}: {:?}",
-                            account_details.data, err
-                        ))
-                    })?,
-            );
-        }
+        let data = if account_details.data == "~" {
+            vec![]
+        } else {
+            BASE64_STANDARD
+                .decode(account_details.data.as_str())
+                .map_err(|err| {
+                    io::Error::other(format!(
+                        "Invalid account data: {}: {:?}",
+                        account_details.data, err
+                    ))
+                })?
+        };
+        let mut account =
+            AccountSharedData::new_with_data(account_details.balance, data, &owner_program_id);
         account.set_executable(account_details.executable);
         lamports += account.lamports();
         genesis_config.add_account(pubkey, account);
@@ -663,7 +664,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .global(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]. Used for cloning feature sets",
                 ),
         )
@@ -1500,9 +1501,9 @@ mod tests {
                     assert_eq!(meta.authorized.withdrawer, identity_pk);
 
                     assert_eq!(stake.delegation.voter_pubkey, vote_pk);
-                    let stake_account = AccountSharedData::new(
+                    let stake_account = AccountSharedData::new_with_data(
                         b64_account.stake_lamports,
-                        StakeStateV2::size_of(),
+                        vec![0; StakeStateV2::size_of()],
                         &stake::program::id(),
                     );
                     let rent_exempt_reserve =

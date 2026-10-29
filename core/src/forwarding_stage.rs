@@ -14,7 +14,7 @@ use {
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
-    solana_packet as packet,
+    solana_perf::packet,
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -22,8 +22,7 @@ use {
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        transaction_meta::TransactionMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
@@ -293,7 +292,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let sanitize_config = sanitize_config();
         for packet in packet_batch
             .iter()
             .filter(|p| initial_packet_meta_filter(p.meta()))
@@ -313,19 +311,18 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
             // Perform basic sanitization checks and calculate priority.
             // If any steps fail, drop the packet.
-            let Some(priority) =
-                SanitizedTransactionView::try_new_sanitized(packet_data, &sanitize_config)
+            let Some(priority) = SanitizedTransactionView::try_new_sanitized(packet_data)
+                .map_err(|_| ())
+                .and_then(|transaction| {
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+                        transaction,
+                        MessageHash::Compute,
+                        Some(packet.meta().is_simple_vote_tx()),
+                    )
                     .map_err(|_| ())
-                    .and_then(|transaction| {
-                        RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                            transaction,
-                            MessageHash::Compute,
-                            Some(packet.meta().is_simple_vote_tx()),
-                        )
-                        .map_err(|_| ())
-                    })
-                    .ok()
-                    .and_then(|transaction| calculate_priority(&transaction, bank))
+                })
+                .ok()
+                .and_then(|transaction| calculate_priority(&transaction, bank))
             else {
                 self.metrics.votes_dropped_on_receive += vote_count;
                 self.metrics.non_votes_dropped_on_receive += non_vote_count;

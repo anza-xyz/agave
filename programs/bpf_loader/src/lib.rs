@@ -5,13 +5,13 @@
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
-    solana_bincode::limited_deserialize,
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, UpgradeableLoaderInstruction},
         state::UpgradeableLoaderState,
     },
+    solana_packet::PACKET_DATA_WINCODE_CONFIG,
     solana_program_runtime::{
         deploy_program,
         invoke_context::InvokeContext,
@@ -199,7 +199,8 @@ fn process_loader_upgradeable_instruction(
         wincode::deserialize(instruction_data)
             .map_err(|_| InstructionError::InvalidInstructionData)?
     } else {
-        limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?
+        wincode::config::deserialize(instruction_data, PACKET_DATA_WINCODE_CONFIG)
+            .map_err(|_| InstructionError::InvalidInstructionData)?
     };
 
     match instruction {
@@ -344,13 +345,31 @@ fn process_loader_upgradeable_instruction(
             }
 
             let owner_id = *program_id;
-            let mut instruction = system_instruction::create_account(
-                &payer_key,
-                &programdata_key,
-                1.max(rent.minimum_balance(programdata_len)),
-                programdata_len as u64,
-                program_id,
-            );
+            let mut instruction = if invoke_context
+                .get_feature_set()
+                .loader_v3_allow_prefunded_programdata
+            {
+                let programdata_lamports = instruction_context
+                    .try_borrow_instruction_account(1)?
+                    .get_lamports();
+                let top_up_lamports = rent
+                    .minimum_balance(programdata_len)
+                    .saturating_sub(programdata_lamports);
+                system_instruction::create_account_allow_prefund(
+                    &programdata_key,
+                    (top_up_lamports > 0).then_some((&payer_key, top_up_lamports)),
+                    programdata_len as u64,
+                    program_id,
+                )
+            } else {
+                system_instruction::create_account(
+                    &payer_key,
+                    &programdata_key,
+                    1.max(rent.minimum_balance(programdata_len)),
+                    programdata_len as u64,
+                    program_id,
+                )
+            };
 
             // pass an extra account to avoid the overly strict UnbalancedInstruction error
             instruction
@@ -669,6 +688,11 @@ fn process_loader_upgradeable_instruction(
                         && let Ok(sbpf_version) = get_sbpf_version(program)
                         && sbpf_version < SBPFVersion::V3
                     {
+                        ic_logger_msg!(
+                            log_collector,
+                            "Program targets SBPF {:?}, but finalizing requires SBPF V3 or newer",
+                            sbpf_version
+                        );
                         return Err(InstructionError::InvalidAccountData);
                     }
                     account.set_state(&UpgradeableLoaderState::ProgramData {
@@ -1206,7 +1230,7 @@ mod tests {
         let UpgradeableLoaderInstruction::Write { offset, bytes } = &instruction else {
             unreachable!()
         };
-        let serialized = bincode::serialize(&instruction).unwrap();
+        let serialized = wincode::serialize(&instruction).unwrap();
         assert!(serialized.starts_with(&WRITE_INSTRUCTION_TAG));
         assert_eq!(
             parse_write_instruction(&serialized, unbound_loader_v3_instruction_data).unwrap(),

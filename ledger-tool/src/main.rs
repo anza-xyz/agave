@@ -29,6 +29,7 @@ use {
         AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
     },
     solana_clap_utils::{
+        hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
@@ -39,11 +40,10 @@ use {
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_core::{
-        banking_simulation::{BankingSimulator, BankingTraceEvents},
         cost_update_service::report_cost_tracker_stats,
         resource_limits::adjust_nofile_limit,
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
+        validator::BlockVerificationMethod,
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_entry::entry::create_ticks,
@@ -52,7 +52,7 @@ use {
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_keypair::{Keypair, keypair_from_seed},
     solana_ledger::{
-        blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
+        blockstore::{Blockstore, PurgeType, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
         blockstore_processor::ProcessSlotCallback,
         leader_schedule_cache::LeaderScheduleCache,
@@ -93,8 +93,8 @@ use {
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-        ffi::{OsStr, OsString},
-        fs::{File, read_dir},
+        ffi::OsStr,
+        fs::File,
         io::{self, Write},
         mem::swap,
         path::{Path, PathBuf},
@@ -546,70 +546,6 @@ fn assert_capitalization(bank: &Bank) {
         calculated, expected,
         "Capitalization mismatch: calculated: {calculated} != expected: {expected}",
     );
-}
-
-fn load_banking_trace_events_or_exit(ledger_path: &Path) -> BankingTraceEvents {
-    let file_paths = read_banking_trace_event_file_paths_or_exit(banking_trace_path(ledger_path));
-
-    info!("Using: banking trace event files: {file_paths:?}");
-    match BankingTraceEvents::load(&file_paths) {
-        Ok(banking_trace_events) => banking_trace_events,
-        Err(error) => {
-            eprintln!("Failed to load banking trace events: {error:?}");
-            exit(1)
-        }
-    }
-}
-
-fn read_banking_trace_event_file_paths_or_exit(banking_trace_path: PathBuf) -> Vec<PathBuf> {
-    info!("Using: banking trace events dir: {banking_trace_path:?}");
-
-    let entries = match read_dir(&banking_trace_path) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!("Error: failed to open banking_trace_path: {error:?}");
-            exit(1);
-        }
-    };
-
-    let mut entry_names = entries
-        .flat_map(|entry| entry.ok().map(|entry| entry.file_name()))
-        .collect::<HashSet<OsString>>();
-
-    let mut event_file_paths = vec![];
-
-    if entry_names.is_empty() {
-        warn!("banking_trace_path dir is empty.");
-        return event_file_paths;
-    }
-
-    for index in 0.. {
-        let event_file_name: OsString = BankingSimulator::event_file_name(index).into();
-        if entry_names.remove(&event_file_name) {
-            event_file_paths.push(banking_trace_path.join(event_file_name));
-        } else {
-            break;
-        }
-    }
-
-    if event_file_paths.is_empty() {
-        warn!("Error: no event files found");
-    }
-
-    if !entry_names.is_empty() {
-        let full_names = entry_names
-            .into_iter()
-            .map(|name| banking_trace_path.join(name))
-            .collect::<Vec<_>>();
-        warn!(
-            "Some files in {banking_trace_path:?} is ignored due to gapped events file rotation \
-             or unrecognized names: {full_names:?}"
-        );
-    }
-
-    // Reverse to load in the chronicle order (note that this isn't strictly needed)
-    event_file_paths.reverse();
-    event_file_paths
 }
 
 struct SlotRecorderConfig {
@@ -1387,6 +1323,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
     };
 
     let minimize_snapshot_possibly_incomplete = if is_minimized {
+        warn!("Creating minimized snapshots (i.e. `--minimized`) is deprecated.");
         minimize_bank_for_snapshot(
             &blockstore,
             &bank,
@@ -1910,16 +1847,6 @@ fn main() {
                         .long("no-block-cost-limits")
                         .takes_value(false)
                         .help("Disable block cost limits effectively by setting them to the max"),
-                )
-                .arg(
-                    Arg::with_name("enable_hash_overrides")
-                        .long("enable-hash-overrides")
-                        .takes_value(false)
-                        .help(
-                            "Enable override of blockhashes and bank hashes from banking trace \
-                             event files to correctly verify blocks produced by the \
-                             simulate-block-production subcommand",
-                        ),
                 ),
         )
         .subcommand(
@@ -2127,37 +2054,45 @@ fn main() {
                         .conflicts_with("no_snapshot"),
                 )
                 .arg(
+                    // deprecated in v4.5.0
                     Arg::with_name("minimized")
                         .long("minimized")
                         .takes_value(false)
                         .help(
-                            "Create a minimized snapshot instead of a full snapshot. This \
-                             snapshot will only include information needed to replay the ledger \
-                             from the snapshot slot to the ending slot.",
+                            "DEPRECATED: Create a minimized snapshot instead of a full snapshot. \
+                             This snapshot will only include information needed to replay the \
+                             ledger from the snapshot slot to the ending slot.",
                         )
+                        .hidden(hidden_unless_forced())
                         .conflicts_with("incremental")
                         .requires("ending_slot"),
                 )
                 .arg(
+                    // deprecated in v4.5.0
                     Arg::with_name("ending_slot")
                         .long("ending-slot")
                         .takes_value(true)
                         .value_name("ENDING_SLOT")
-                        .help("Ending slot for minimized snapshot creation"),
+                        .help("DEPRECATED: Ending slot for minimized snapshot creation")
+                        .hidden(hidden_unless_forced()),
                 )
                 .arg(
+                    // deprecated in v4.5.0
                     Arg::with_name("recalculate_accounts_lt_hash")
                         .long("recalculate-accounts-lt-hash")
                         .takes_value(false)
-                        .help("Recalculate the accounts lt hash for minimized snapshots")
-                        .long_help(
-                            "Recalculate the accounts lt hash for minimized snapshots. Without \
-                             this flag, loading the minimized snapshot will fail startup accounts \
-                             verification because the accounts lt hash will not match due to the \
-                             pruned account state. If not recalculating the accounts lt hash, \
-                             pass `--accounts-db-skip-initial-hash-calculation` to `leder-tool \
-                             verify` in order to bypass this check.",
+                        .help(
+                            "DEPRECATED: Recalculate the accounts lt hash for minimized snapshots",
                         )
+                        .long_help(
+                            "DEPRECATED: Recalculate the accounts lt hash for minimized \
+                             snapshots. Without this flag, loading the minimized snapshot will \
+                             fail startup accounts verification because the accounts lt hash will \
+                             not match due to the pruned account state. If not recalculating the \
+                             accounts lt hash, pass `--accounts-db-skip-initial-hash-calculation` \
+                             to `leder-tool verify` in order to bypass this check.",
+                        )
+                        .hidden(hidden_unless_forced())
                         .requires("minimized"),
                 )
                 .arg(
@@ -2189,46 +2124,6 @@ fn main() {
                         .long("enable-capitalization-change")
                         .takes_value(false)
                         .help("If snapshot creation should succeed with a capitalization delta."),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("simulate-block-production")
-                .about("Simulate producing blocks with banking trace event files in the ledger")
-                .arg(&load_genesis_config_arg)
-                .args(&accounts_db_config_args)
-                .args(&snapshot_config_args)
-                .arg(
-                    Arg::with_name("block_production_method")
-                        .long("block-production-method")
-                        .value_name("METHOD")
-                        .takes_value(true)
-                        .possible_values(BlockProductionMethod::cli_names())
-                        .default_value(BlockProductionMethod::default().into())
-                        .help(BlockProductionMethod::cli_message()),
-                )
-                .arg(
-                    Arg::with_name("transaction_struct")
-                        .long("transaction-structure")
-                        .value_name("STRUCT")
-                        .takes_value(true)
-                        .possible_values(TransactionStructure::cli_names())
-                        .default_value(TransactionStructure::default().into())
-                        .help(TransactionStructure::cli_message()),
-                )
-                .arg(
-                    Arg::with_name("first_simulated_slot")
-                        .long("first-simulated-slot")
-                        .value_name("SLOT")
-                        .validator(is_slot)
-                        .takes_value(true)
-                        .required(true)
-                        .help("Start simulation at the given slot"),
-                )
-                .arg(
-                    Arg::with_name("no_block_cost_limits")
-                        .long("no-block-cost-limits")
-                        .takes_value(false)
-                        .help("Disable block cost limits effectively by setting them to the max"),
                 ),
         )
         .subcommand(
@@ -2523,11 +2418,6 @@ fn main() {
                     );
 
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
-                    if arg_matches.is_present("enable_hash_overrides") {
-                        let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);
-                        process_options.hash_overrides =
-                            Some(banking_trace_events.hash_overrides().clone());
-                    }
 
                     let (slot_callback, slot_recorder_config) = setup_slot_recording(arg_matches);
                     process_options.slot_callback = slot_callback;
@@ -2647,62 +2537,6 @@ fn main() {
                 }
                 ("create-snapshot", Some(arg_matches)) => {
                     create_snapshot(ledger_path, arg_matches);
-                }
-                ("simulate-block-production", Some(arg_matches)) => {
-                    let mut process_options = parse_process_options(&ledger_path, arg_matches);
-
-                    let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);
-                    process_options.hash_overrides =
-                        Some(banking_trace_events.hash_overrides().clone());
-
-                    let slot = value_t!(arg_matches, "first_simulated_slot", Slot).unwrap();
-                    let simulator = BankingSimulator::new(banking_trace_events, slot);
-                    let Some(parent_slot) = simulator.parent_slot() else {
-                        eprintln!(
-                            "Couldn't determine parent_slot of first_simulated_slot: {slot} due \
-                             to missing banking_trace_event data."
-                        );
-                        exit(1);
-                    };
-                    process_options.halt_at_slot = Some(parent_slot);
-
-                    // PrimaryForMaintenance needed to purge (write) any existing simulated shreds
-                    // from previous runs
-                    let blockstore = Arc::new(open_blockstore(
-                        &ledger_path,
-                        arg_matches,
-                        AccessType::PrimaryForMaintenance,
-                    ));
-                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
-                        load_and_process_ledger_or_exit(
-                            arg_matches,
-                            &genesis_config,
-                            blockstore.clone(),
-                            process_options,
-                            None, // transaction status sender
-                        );
-
-                    let block_production_method = value_t_or_exit!(
-                        arg_matches,
-                        "block_production_method",
-                        BlockProductionMethod
-                    );
-
-                    info!("Using: block-production-method: {block_production_method}");
-
-                    match simulator.start(
-                        genesis_config,
-                        bank_forks,
-                        blockstore,
-                        block_production_method,
-                    ) {
-                        Ok(()) => println!("Ok"),
-                        Err(error) => {
-                            eprintln!("{error:?}");
-                            exit(1);
-                        }
-                    };
                 }
                 ("accounts", Some(arg_matches)) => {
                     let process_options = parse_process_options(&ledger_path, arg_matches);

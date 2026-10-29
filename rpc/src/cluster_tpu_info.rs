@@ -1,10 +1,8 @@
 use {
-    agave_votor_messages::migration::MigrationStatus,
     solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
-    solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::commitment::BlockCommitmentCache,
     solana_send_transaction_service::tpu_info::TpuInfo,
@@ -19,27 +17,21 @@ use {
 #[derive(Clone)]
 pub struct ClusterTpuInfo {
     cluster_info: Arc<ClusterInfo>,
-    poh_recorder: Arc<RwLock<PohRecorder>>,
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    migration_status: Arc<MigrationStatus>,
     recent_peers: HashMap<Pubkey, SocketAddr>, // values are socket address for QUIC protocol
 }
 
 impl ClusterTpuInfo {
     pub fn new(
         cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Arc<RwLock<PohRecorder>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             cluster_info,
-            poh_recorder,
             block_commitment_cache,
             leader_schedule_cache,
-            migration_status,
             recent_peers: HashMap::new(),
         }
     }
@@ -49,14 +41,7 @@ impl ClusterTpuInfo {
         // Commitment-cache slots represent banks we have already processed, so
         // transactions can only land in later slots.
         let target_slot = current_slot.saturating_add(1);
-        if self
-            .migration_status
-            .should_have_alpenglow_ticks(target_slot)
-        {
-            self.alpenglow_leader_pubkeys(target_slot, max_count)
-        } else {
-            self.poh_leader_pubkeys(max_count)
-        }
+        self.alpenglow_leader_pubkeys(target_slot, max_count)
     }
 
     fn commitment_current_slot(&self) -> Slot {
@@ -80,15 +65,6 @@ impl ClusterTpuInfo {
                 self.leader_schedule_cache
                     .slot_leader_at(target_slot, None)
                     .map(|leader| leader.id)
-            })
-            .collect()
-    }
-
-    fn poh_leader_pubkeys(&self, max_count: u64) -> Vec<Pubkey> {
-        let recorder = self.poh_recorder.read().unwrap();
-        (0..max_count)
-            .filter_map(|i| {
-                recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS.get() as u64)
             })
             .collect()
     }
@@ -132,12 +108,8 @@ mod test {
         super::*,
         solana_gossip::contact_info::ContactInfo,
         solana_keypair::Keypair,
-        solana_ledger::{
-            blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
-            leader_schedule_cache::LeaderScheduleCache,
-        },
+        solana_ledger::leader_schedule_cache::LeaderScheduleCache,
         solana_net_utils::SocketAddrSpace,
-        solana_poh_config::PohConfig,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
@@ -147,14 +119,11 @@ mod test {
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        std::{net::Ipv4Addr, sync::atomic::AtomicBool},
+        std::net::Ipv4Addr,
     };
 
     #[test]
     fn test_refresh_recent_peers() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
         let validator_vote_keypairs0 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs1 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs2 = ValidatorVoteKeypairs::new_rand();
@@ -177,18 +146,6 @@ mod test {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            0,
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((2, 2)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &leader_schedule_cache,
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-
         let validator0_contact_info = ContactInfo::new_localhost(
             &validator_vote_keypairs0.node_keypair.pubkey(),
             timestamp(),
@@ -211,10 +168,8 @@ mod test {
 
         let mut leader_info = ClusterTpuInfo::new(
             cluster_info,
-            Arc::new(RwLock::new(poh_recorder)),
             Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
             leader_schedule_cache,
-            Arc::new(MigrationStatus::default()),
         );
         leader_info.refresh_recent_peers();
         let mut refreshed_recent_peers =
@@ -226,9 +181,6 @@ mod test {
 
     #[test]
     fn test_get_leader_tpus() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
         let validator_vote_keypairs0 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs1 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs2 = ValidatorVoteKeypairs::new_rand();
@@ -245,18 +197,6 @@ mod test {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            0,
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((2, 2)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &leader_schedule_cache,
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
-
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
@@ -286,14 +226,12 @@ mod test {
         .collect();
         let mut leader_info = ClusterTpuInfo::new(
             cluster_info,
-            Arc::new(RwLock::new(poh_recorder)),
             Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
             leader_schedule_cache,
-            Arc::new(MigrationStatus::default()),
         );
         leader_info.recent_peers = recent_peers.clone();
 
-        let slot = bank.slot();
+        let slot = bank.slot().saturating_add(1);
         let first_leader =
             solana_runtime::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
         assert_eq!(
@@ -349,10 +287,7 @@ mod test {
     }
 
     #[test]
-    fn test_get_leader_tpus_uses_commitment_slot_after_alpenglow() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
+    fn test_get_leader_tpus_uses_commitment_slot() {
         let validator_vote_keypairs0 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs1 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs2 = ValidatorVoteKeypairs::new_rand();
@@ -368,18 +303,6 @@ mod test {
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-
-        let (poh_recorder, _entry_receiver) = PohRecorder::new(
-            0,
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((2, 2)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &leader_schedule_cache,
-            &PohConfig::default(),
-            Arc::new(AtomicBool::default()),
-        );
 
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -421,13 +344,11 @@ mod test {
 
         let mut leader_info = ClusterTpuInfo::new(
             cluster_info,
-            Arc::new(RwLock::new(poh_recorder)),
             Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests_with_slots(
                 completed_alpenglow_slot,
                 completed_alpenglow_slot,
             ))),
             leader_schedule_cache,
-            Arc::new(MigrationStatus::post_migration_status()),
         );
         leader_info.recent_peers = recent_peers.clone();
 

@@ -1,4 +1,5 @@
 use {
+    agave_event_system::stream_policy::StreamPolicy,
     agave_votor::{
         event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
     },
@@ -18,7 +19,7 @@ use {
             BankingControlMsg, BankingStage,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        consensus::{Tower, tower_storage::TowerStorage},
+        consensus::tower_storage::TowerStorage,
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
@@ -106,6 +107,8 @@ pub struct AdminRpcContactInfo {
     pub serve_repair: SocketAddr,
     pub last_updated_timestamp: u64,
     pub shred_version: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -148,6 +151,7 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
             shred_version: node.shred_version(),
+            version: Some(node.version().as_detailed_string()),
         }
     }
 }
@@ -216,6 +220,9 @@ pub trait AdminRpc {
 
     #[rpc(name = "setLogFilter")]
     fn set_log_filter(&self, filter: String) -> Result<()>;
+
+    #[rpc(meta, name = "setEventFilter")]
+    fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()>;
 
     #[rpc(meta, name = "startTime")]
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime>;
@@ -538,6 +545,16 @@ impl AdminRpc for AdminRpcImpl {
         Ok(())
     }
 
+    fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()> {
+        let stream_policy = filter
+            .parse::<StreamPolicy>()
+            .map_err(|err| jsonrpc_core::Error::invalid_params(err.to_string()))?;
+        meta.with_post_init(|post_init| {
+            post_init.event_system.set_stream_policy(stream_policy);
+            Ok(())
+        })
+    }
+
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime> {
         debug!("start_time admin rpc request received");
         Ok(meta.start_time)
@@ -583,7 +600,7 @@ impl AdminRpc for AdminRpcImpl {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        require_tower: bool,
+        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity request received");
@@ -594,19 +611,14 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_identity_from_bytes(
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        require_tower: bool,
+        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
@@ -617,12 +629,7 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
@@ -950,7 +957,6 @@ impl AdminRpcImpl {
     fn set_identity_keypair(
         meta: AdminRpcRequestMetadata,
         identity_keypair: Keypair,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
@@ -971,17 +977,6 @@ impl AdminRpcImpl {
                          {new_identity} is not supported"
                     )));
                 }
-            }
-
-            if require_tower {
-                let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
-                    .map_err(|err| {
-                        jsonrpc_core::error::Error::invalid_params(format!(
-                            "Unable to load tower file for identity {}: {}",
-                            identity_keypair.pubkey(),
-                            err
-                        ))
-                    })?;
             }
 
             if require_vote_history {
@@ -1286,6 +1281,7 @@ mod tests {
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
+                    event_system: agave_event_system::EventSystem::stub(),
                     cluster_info,
                     bank_forks,
                     vote_account,
@@ -1399,7 +1395,6 @@ mod tests {
             AdminRpcImpl::set_identity_keypair(
                 rpc.meta.clone(),
                 validators[1].node_keypair.insecure_clone(),
-                false,
                 false,
             ),
             Err(jsonrpc_core::Error {

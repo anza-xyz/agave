@@ -8,8 +8,8 @@ use {
         stats::VoteVerificationStats, verified_batch::VerifiedBatch,
     },
     agave_votor_messages::{
-        consensus_message::VoteMessage, unverified_vote_message::UnverifiedVoteMessage, vote::Vote,
-        wire::VotePayloadToSign,
+        consensus_message::VoteMessage, stake::NonZeroStake,
+        unverified_vote_message::UnverifiedVoteMessage, vote::Vote, wire::VotePayloadToSign,
     },
     agave_votor_transport::endpoint::BanSender,
     log::info,
@@ -28,7 +28,6 @@ use {
     },
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    std::num::NonZero,
 };
 
 /// A batch of votes to verify.
@@ -328,7 +327,7 @@ pub(super) struct UnverifiedVotePayload {
     pub sender_bls_pubkey: PopVerified<PubkeyAffine>,
     pub sender_identity_pubkey: Pubkey,
     pub rank: u16,
-    pub stake: NonZero<u64>,
+    pub stake: NonZeroStake,
 }
 
 impl UnverifiedVotePayload {

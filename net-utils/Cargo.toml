@@ -47,7 +47,7 @@ url = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 solana-net-utils = { path = ".", features = ["agave-unstable-api"] }
 
 [lints]

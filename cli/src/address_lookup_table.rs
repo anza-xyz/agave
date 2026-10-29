@@ -1,6 +1,10 @@
 use {
-    crate::cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
+    crate::cli::{
+        CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+        message_into_signed_transaction,
+    },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
+    solana_account::state_traits::StateMutWincode as _,
     solana_address_lookup_table_interface::{
         self as address_lookup_table,
         instruction::{
@@ -13,7 +17,7 @@ use {
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, CliSignature},
     solana_clock::Clock,
     solana_commitment_config::CommitmentConfig,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -21,7 +25,6 @@ use {
     solana_sdk_ids::sysvar,
     solana_signer::Signer,
     solana_slot_hashes::SlotHashes,
-    solana_transaction::Transaction,
     std::{rc::Rc, sync::Arc},
 };
 
@@ -558,7 +561,8 @@ async fn process_create_lookup_table(
         .get_account_with_commitment(&sysvar::clock::id(), CommitmentConfig::finalized())
         .await?;
     let clock_account = get_clock_result.value.expect("Clock account doesn't exist");
-    let clock: Clock = wincode::deserialize(&clock_account.data)
+    let clock: Clock = clock_account
+        .state()
         .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
 
     let get_slot_hashes_result = rpc_client
@@ -589,13 +593,13 @@ async fn process_create_lookup_table(
         create_lookup_table(authority_address, payer_address, recent_slot);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[create_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
     let keypairs: Vec<&dyn Signer> = vec![config.signers[0], payer_signer];
-    tx.try_sign(&keypairs, blockhash)?;
+    let tx = message_into_signed_transaction(message, &keypairs, blockhash, false)?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -653,12 +657,17 @@ async fn process_freeze_lookup_table(
     let freeze_lookup_table_ix = freeze_lookup_table(lookup_table_pubkey, authority_address);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[freeze_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
+    let tx = message_into_signed_transaction(
+        message,
+        &[config.signers[0], authority_signer],
+        blockhash,
+        false,
+    )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -717,14 +726,16 @@ async fn process_extend_lookup_table(
     );
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[extend_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
-    tx.try_sign(
+    let tx = message_into_signed_transaction(
+        message,
         &[config.signers[0], authority_signer, payer_signer],
         blockhash,
+        false,
     )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
@@ -782,12 +793,17 @@ async fn process_deactivate_lookup_table(
         deactivate_lookup_table(lookup_table_pubkey, authority_address);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[deactivate_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
+    let tx = message_into_signed_transaction(
+        message,
+        &[config.signers[0], authority_signer],
+        blockhash,
+        false,
+    )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -844,12 +860,17 @@ async fn process_close_lookup_table(
         close_lookup_table(lookup_table_pubkey, authority_address, recipient_pubkey);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut tx = Transaction::new_unsigned(Message::new(
+    let message = VersionedMessage::Legacy(Message::new(
         &[close_lookup_table_ix],
         Some(&config.signers[0].pubkey()),
     ));
 
-    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
+    let tx = message_into_signed_transaction(
+        message,
+        &[config.signers[0], authority_signer],
+        blockhash,
+        false,
+    )?;
     let result = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,

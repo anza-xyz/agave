@@ -16,8 +16,7 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
-    solana_packet::Meta,
-    solana_perf::packet::{BytesPacket, PacketBatch},
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch},
     solana_pubkey::Pubkey,
     solana_tls_utils::get_remote_pubkey,
     std::{
@@ -85,7 +84,7 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 /// before considering stream to be "too late". 1.5 RTT should be enough
 /// for any reasonable fragmentation to be resolved, so the only way
 /// a stream reassembly would be delayed more is when something
-/// extraordinary has occured (congestion control or flow control blocking)
+/// extraordinary has occurred (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 
 // With the previous 1232-byte transaction limit, transactions were empirically
@@ -853,7 +852,7 @@ fn handle_chunks(
     let packet_size = packet.meta().size;
     let total_latency = accum.start_time.elapsed();
     if total_latency > rtt.mul_f32(LATE_REASSEMBLY_THRESHOLD) {
-        debug!("Stream reassembly dealyed {}", total_latency.as_millis());
+        debug!("Stream reassembly delayed {}", total_latency.as_millis());
         stats
             .reassembly_delayed_streams
             .fetch_add(1, Ordering::Relaxed);

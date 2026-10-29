@@ -66,7 +66,7 @@ pub struct ShredFetchStats {
     pub(super) misaligned_fec_set: usize,
     pub(super) erasure_config_bad_deserialize: usize,
     pub(super) misaligned_erasure_config: usize,
-    pub(super) shred_flags_bad_deserialize: usize,
+    pub(super) invalid_shred_flags: usize,
     pub(super) misaligned_last_data_index: usize,
     pub(super) unexpected_data_complete_shred: usize,
     pub(super) invalid_proof_size: usize,
@@ -201,11 +201,7 @@ impl ShredFetchStats {
                 self.misaligned_erasure_config,
                 i64
             ),
-            (
-                "shred_flags_bad_deserialize",
-                self.shred_flags_bad_deserialize,
-                i64
-            ),
+            ("invalid_shred_flags", self.invalid_shred_flags, i64),
             (
                 "misaligned_last_data_index",
                 self.misaligned_last_data_index,

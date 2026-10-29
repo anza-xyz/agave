@@ -74,11 +74,10 @@ use {
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
         stakes::{
-            DelegatedStakes, DeserializableDelegationStakes, EpochBoundaryStakes,
-            SerdeStakesToStakeFormat, Stakes, StakesCache,
+            DelegatedStakes, EpochBoundaryStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
-        sysvar_account::{create_account, from_account},
+        sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account, from_account},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::AccountsLtHashAsyncProgress,
@@ -89,7 +88,6 @@ use {
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_transaction_view::{
         resolved_transaction_view::ResolvedTransactionView,
-        transaction_data::TransactionData,
         transaction_version::TransactionVersion,
         transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
     },
@@ -107,7 +105,7 @@ use {
     rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_account::{
-        Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
         state_traits::StateMutWincode as _,
     },
     solana_accounts_db::{
@@ -126,8 +124,7 @@ use {
     },
     solana_builtins::{BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        Epoch, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot,
-        SlotIndex, UnixTimestamp,
+        Epoch, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, Slot, SlotIndex, UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::compute_budget::ComputeBudget,
@@ -174,6 +171,7 @@ use {
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
+        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -189,7 +187,9 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_callback::{
+        AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
+    },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
     solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
@@ -519,7 +519,6 @@ pub enum VATHealthError {
         fee_rate_governor(pub),
         epoch_schedule(pub),
         inflation(pub),
-        stakes(pub),
         is_delta(pub),
         accounts_data_len(pub),
         versioned_epoch_stakes(pub),
@@ -550,7 +549,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: DeserializableDelegationStakes,
     /// Transformed into `HashMap<Epoch, VersionedEpochStakes>` in `serde_snapshot` and passed to
     /// `Bank::new_from_snapshot` as separate parameter for performance (conversion is time consuming)
     pub(crate) versioned_epoch_stakes: Vec<(Epoch, DeserializableVersionedEpochStakes)>,
@@ -586,13 +584,6 @@ impl Default for BankFieldsToDeserialize {
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: DeserializableDelegationStakes {
-                vote_accounts: VoteAccounts::default(),
-                stake_delegations: Vec::default(),
-                unused: u64::default(),
-                epoch: Epoch::default(),
-                stake_history: CowStakeHistory::default(),
-            },
             versioned_epoch_stakes: Vec::default(),
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
@@ -691,8 +682,6 @@ impl PartialEq for Bank {
             stakes_cache,
             epoch_stakes,
             is_delta,
-            #[cfg(feature = "dev-context-only-utils")]
-            hash_overrides,
             accounts_lt_hash,
             is_alpenglow,
             // TODO: Confirm if all these fields are intentionally ignored!
@@ -759,10 +748,6 @@ impl PartialEq for Bank {
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
             && epoch_stakes == &other.epoch_stakes
             && is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
-            // No deadlock is possible, when Arc::ptr_eq() returns false, because of being
-            // different Mutexes.
-            && (Arc::ptr_eq(hash_overrides, &other.hash_overrides) ||
-                *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
             && *accounts_lt_hash.lock().unwrap() == *other.accounts_lt_hash.lock().unwrap()
             && *block_id.read().unwrap() == *other.block_id.read().unwrap()
             && is_alpenglow.load(Relaxed) == other.is_alpenglow()
@@ -828,50 +813,6 @@ pub trait DropCallback: fmt::Debug {
 
 #[derive(Debug, Default)]
 pub struct OptionalDropCallback(Option<Box<dyn DropCallback + Send + Sync>>);
-
-#[derive(Default, Debug, Clone, PartialEq)]
-#[cfg(feature = "dev-context-only-utils")]
-pub struct HashOverrides {
-    hashes: HashMap<Slot, HashOverride>,
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl HashOverrides {
-    fn get_hash_override(&self, slot: Slot) -> Option<&HashOverride> {
-        self.hashes.get(&slot)
-    }
-
-    fn get_blockhash_override(&self, slot: Slot) -> Option<&Hash> {
-        self.get_hash_override(slot)
-            .map(|hash_override| &hash_override.blockhash)
-    }
-
-    fn get_bank_hash_override(&self, slot: Slot) -> Option<&Hash> {
-        self.get_hash_override(slot)
-            .map(|hash_override| &hash_override.bank_hash)
-    }
-
-    pub fn add_override(&mut self, slot: Slot, blockhash: Hash, bank_hash: Hash) {
-        let is_new = self
-            .hashes
-            .insert(
-                slot,
-                HashOverride {
-                    blockhash,
-                    bank_hash,
-                },
-            )
-            .is_none();
-        assert!(is_new);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[cfg(feature = "dev-context-only-utils")]
-struct HashOverride {
-    blockhash: Hash,
-    bank_hash: Hash,
-}
 
 /// Manager for the state of all accounts and programs after processing its entries.
 pub struct Bank {
@@ -1051,11 +992,6 @@ pub struct Bank {
 
     /// Fee structure to use for assessing transaction fees.
     fee_structure: FeeStructure,
-
-    /// blockhash and bank_hash overrides keyed by slot for simulated block production.
-    /// This _field_ was needed to be DCOU-ed to avoid 2 locks per bank freezing...
-    #[cfg(feature = "dev-context-only-utils")]
-    hash_overrides: Arc<Mutex<HashOverrides>>,
 
     /// The lattice hash of all accounts
     ///
@@ -1343,8 +1279,6 @@ impl Bank {
             compute_budget: None,
             transaction_account_lock_limit: None,
             fee_structure: FeeStructure::default(),
-            #[cfg(feature = "dev-context-only-utils")]
-            hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
             accounts_lt_hash_async_progress: Arc::new(AccountsLtHashAsyncProgress::new()),
             block_id: RwLock::new(None),
@@ -1611,8 +1545,6 @@ impl Bank {
             compute_budget: parent.compute_budget,
             transaction_account_lock_limit: parent.transaction_account_lock_limit,
             fee_structure: parent.fee_structure.clone(),
-            #[cfg(feature = "dev-context-only-utils")]
-            hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
             accounts_lt_hash_async_progress: Arc::new(AccountsLtHashAsyncProgress::new()),
             block_id: RwLock::new(None),
@@ -2066,10 +1998,7 @@ impl Bank {
         clock.epoch_start_timestamp = parent_timestamp;
         clock.unix_timestamp = parent_timestamp;
         new.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                new.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, new.inherit_lamports(account))
         });
         new.transaction_processor
             .fill_missing_sysvar_cache_entries(&new);
@@ -2077,18 +2006,20 @@ impl Bank {
         new
     }
 
-    fn load_rent_from_account_for_snapshot_load(
+    fn load_sysvar_for_snapshot_load<T>(
         accounts: &Accounts,
         ancestors: &Ancestors,
-    ) -> Rent {
-        // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
-        // the rent sysvar account state.
-        let rent_sysvar = accounts
-            .load_with_fixed_root_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
-            .expect("snapshot must contain rent sysvar account")
+        id: &Pubkey,
+    ) -> T
+    where
+        T: wincode::DeserializeOwned<Dst = T>,
+    {
+        let account = accounts
+            .load_do_not_populate_read_cache(ancestors, id)
+            .unwrap_or_else(|| panic!("snapshot must contain sysvar account {id}"))
             .0;
-        from_account::<sysvar::rent::Rent>(&rent_sysvar)
-            .expect("snapshot must contain well-formed rent sysvar account")
+        wincode::deserialize(account.data())
+            .unwrap_or_else(|_| panic!("snapshot must contain well-formed sysvar account {id}"))
     }
 
     /// Complete bank initialization for block execution. Performs epoch
@@ -2131,7 +2062,12 @@ impl Bank {
         let effective_epoch_of_deployments = self
             .epoch_schedule()
             .get_epoch(self.slot.saturating_add(DELAY_VISIBILITY_SLOT_OFFSET));
-        if self.epoch() != effective_epoch_of_deployments {
+        if self.epoch() != effective_epoch_of_deployments
+            && !self
+                .feature_set
+                .snapshot()
+                .single_program_runtime_environment
+        {
             self.set_deployment_env_override(&upcoming_feature_set, effective_epoch_of_deployments);
         }
 
@@ -2176,6 +2112,7 @@ impl Bank {
         leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
+        pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
         let now = Instant::now();
@@ -2186,28 +2123,38 @@ impl Bank {
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
         let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
-        // For backward compatibility, we can only serialize and deserialize
-        // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
-        // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
-        // from Stakes<Delegation> by reading the full account state from
-        // accounts-db. Note that it is crucial that these accounts are loaded
-        // at the right slot and match precisely with serialized Delegations.
+        // Build the stakes cache from accounts-db, not from the copy in the
+        // snapshot. Stake and vote accounts were found while building the
+        // index. Stake history comes from its sysvar, which the cache writes
+        // at every epoch boundary. The feature set does not exist yet, so
+        // the one feature the stake math needs is read from its account.
         //
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
-        let (stakes, stakes_time) = measure_time!(
-            Stakes::load_from_deserialized_delegations(fields.stakes, |pubkey| {
-                let (account, _slot) = bank_rc
-                    .accounts
-                    .load_with_fixed_root_do_not_populate_read_cache(&ancestors, pubkey)?;
-                Some(account)
-            })
-            .expect(
-                "Stakes cache is inconsistent with accounts-db. This can indicate a corrupted \
-                 snapshot or bugs in cached accounts or accounts-db.",
-            )
+        let load_account = |pubkey: &Pubkey| {
+            let (account, _slot) = bank_rc
+                .accounts
+                .load_do_not_populate_read_cache(&ancestors, pubkey)?;
+            Some(account)
+        };
+        let stake_history = Self::load_sysvar_for_snapshot_load(
+            &bank_rc.accounts,
+            &ancestors,
+            &stake_history::id(),
         );
+        let new_rate_activation_epoch =
+            load_account(&feature_set::reduce_stake_warmup_cooldown::id())
+                .and_then(|account| feature::state::from_account(&account))
+                .and_then(|feature| feature.activated_at)
+                .map(|activation_slot| fields.epoch_schedule.get_epoch(activation_slot));
+        let (stakes, stakes_time) = measure_time!(Stakes::load_from_accounts(
+            epoch,
+            stake_history,
+            new_rate_activation_epoch,
+            pubkeys_by_owner,
+            load_account,
+        ));
         info!("Loading Stakes took: {stakes_time}");
         assert!(
             fields.versioned_epoch_stakes.is_empty(),
@@ -2247,7 +2194,8 @@ impl Bank {
         );
 
         let stakes_accounts_load_duration = now.elapsed();
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
+        let rent =
+            Self::load_sysvar_for_snapshot_load(&bank_rc.accounts, &ancestors, &sysvar::rent::id());
         let partitioned_rewards_stake_account_stores_per_block = bank_rc
             .accounts
             .accounts_db
@@ -2322,8 +2270,6 @@ impl Bank {
             compute_budget: runtime_config.compute_budget,
             transaction_account_lock_limit: runtime_config.transaction_account_lock_limit,
             fee_structure: FeeStructure::default(),
-            #[cfg(feature = "dev-context-only-utils")]
-            hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(fields.accounts_lt_hash),
             accounts_lt_hash_async_progress: Arc::new(AccountsLtHashAsyncProgress::new()),
             block_id: RwLock::new(fields.block_id),
@@ -2536,7 +2482,11 @@ impl Bank {
             (if roots.is_empty() { 0 } else { min }, ancestors)
         };
 
-        ancestors.extend(self.ancestors.iter().filter(|ancestor| *ancestor >= min));
+        ancestors.extend(
+            self.ancestors
+                .iter_slots()
+                .filter(|ancestor| *ancestor >= min),
+        );
         ancestors.sort_unstable();
         ancestors.dedup();
         ancestors
@@ -2567,7 +2517,7 @@ impl Bank {
     where
         F: Fn(&Option<AccountSharedData>) -> AccountSharedData,
     {
-        let old_account = self.get_account_with_fixed_root(pubkey);
+        let old_account = self.get_account(pubkey);
         let mut new_account = updater(&old_account);
 
         // When new sysvar comes into existence (with RENT_UNADJUSTED_INITIAL_BALANCE lamports),
@@ -2579,22 +2529,11 @@ impl Bank {
         self.store_account_and_update_capitalization(pubkey, &new_account);
     }
 
-    fn inherit_specially_retained_account_fields(
-        &self,
-        old_account: &Option<AccountSharedData>,
-    ) -> InheritableAccountFields {
-        const RENT_UNADJUSTED_INITIAL_BALANCE: u64 = 1;
-
-        (
-            old_account
-                .as_ref()
-                .map(|a| a.lamports())
-                .unwrap_or(RENT_UNADJUSTED_INITIAL_BALANCE),
-            old_account
-                .as_ref()
-                .map(|a| a.rent_epoch())
-                .unwrap_or(INITIAL_RENT_EPOCH),
-        )
+    fn inherit_lamports(&self, old_account: &Option<AccountSharedData>) -> u64 {
+        old_account
+            .as_ref()
+            .map(|a| a.lamports())
+            .unwrap_or(RENT_UNADJUSTED_INITIAL_BALANCE)
     }
 
     pub fn clock(&self) -> sysvar::clock::Clock {
@@ -2654,10 +2593,7 @@ impl Bank {
             unix_timestamp,
         };
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, self.inherit_lamports(account))
         });
     }
 
@@ -2684,10 +2620,7 @@ impl Bank {
             unix_timestamp: clock.unix_timestamp,
         };
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, self.inherit_lamports(account))
         });
     }
 
@@ -2720,7 +2653,7 @@ impl Bank {
             self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
                 create_account(
                     &LastRestartSlot { last_restart_slot },
-                    self.inherit_specially_retained_account_fields(account),
+                    self.inherit_lamports(account),
                 )
             });
         }
@@ -2733,10 +2666,7 @@ impl Bank {
             + SysvarId,
     {
         self.update_sysvar_account(&T::id(), |account| {
-            create_account(
-                sysvar,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(sysvar, self.inherit_lamports(account))
         });
         // Simply force fill sysvar cache rather than checking which sysvar was
         // actually updated since tests don't need to be optimized for performance.
@@ -2751,10 +2681,7 @@ impl Bank {
                 .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             slot_history.add(self.slot());
-            create_account(
-                &slot_history,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&slot_history, self.inherit_lamports(account))
         });
     }
 
@@ -2765,10 +2692,7 @@ impl Bank {
                 .map(|account| account.state().unwrap())
                 .unwrap_or_default();
             slot_hashes.add(self.parent_slot, self.parent_hash);
-            create_account(
-                &slot_hashes,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&slot_hashes, self.inherit_lamports(account))
         });
     }
 
@@ -2898,19 +2822,13 @@ impl Bank {
 
     fn update_rent(&self) {
         self.update_sysvar_account(&sysvar::rent::id(), |account| {
-            create_account(
-                &self.rent_collector.rent,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&self.rent_collector.rent, self.inherit_lamports(account))
         });
     }
 
     fn update_epoch_schedule(&self) {
         self.update_sysvar_account(&sysvar::epoch_schedule::id(), |account| {
-            create_account(
-                self.epoch_schedule(),
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(self.epoch_schedule(), self.inherit_lamports(account))
         });
     }
 
@@ -2922,7 +2840,7 @@ impl Bank {
         self.update_sysvar_account(&stake_history::id(), |account| {
             create_account::<StakeHistory>(
                 self.stakes_cache.stakes().history(),
-                self.inherit_specially_retained_account_fields(account),
+                self.inherit_lamports(account),
             )
         });
     }
@@ -3180,9 +3098,9 @@ impl Bank {
         #[expect(deprecated)]
         self.update_sysvar_account(&sysvar::recent_blockhashes::id(), |account| {
             let recent_blockhash_iter = locked_blockhash_queue.get_recent_blockhashes();
-            recent_blockhashes_account::create_account_with_data_and_fields(
+            recent_blockhashes_account::create_account_with_data_and_lamports(
                 recent_blockhash_iter,
-                self.inherit_specially_retained_account_fields(account),
+                self.inherit_lamports(account),
             )
         });
     }
@@ -3279,7 +3197,10 @@ impl Bank {
             // that rehash() can be called and *not* modify self.accounts_lt_hash.
             self.finish_accounts_lt_hash_updates();
             *hash = self.hash_internal_state();
-            self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
+            self.rc
+                .accounts
+                .accounts_db
+                .mark_bank_frozen(self.bank_id());
         }
     }
 
@@ -3328,15 +3249,18 @@ impl Bank {
 
         //this bank and all its parents are now on the rooted path
         let mut roots = Vec::with_capacity(self.ancestors.len());
-        roots.push(self.slot());
-        roots.extend(self.parents_iter().map(|parent| parent.slot()));
+        roots.push((self.bank_id(), self.slot()));
+        roots.extend(
+            self.parents_iter()
+                .map(|parent| (parent.bank_id(), parent.slot())),
+        );
 
         let mut total_cache_us = 0;
 
         let mut squash_accounts_time = Measure::start("squash_accounts_time");
-        for slot in roots.iter().rev() {
+        for (bank_id, _) in roots.iter().rev() {
             // root forks cannot be purged
-            let add_root_timing = self.rc.accounts.add_root(*slot);
+            let add_root_timing = self.rc.accounts.add_root(*bank_id);
             total_cache_us += add_root_timing.cache_us;
         }
         squash_accounts_time.stop();
@@ -3347,7 +3271,7 @@ impl Bank {
         self.status_cache
             .write()
             .unwrap()
-            .add_roots(roots.iter().copied());
+            .add_roots(roots.iter().map(|(_, slot)| slot).copied());
         squash_cache_time.stop();
 
         SquashTiming {
@@ -3467,7 +3391,7 @@ impl Bank {
 
     // Used by tests to simulate clusters with precompiles that aren't owned by the native loader
     fn add_precompiled_account_with_owner(&self, program_id: &Pubkey, owner: Pubkey) {
-        if let Some(account) = self.get_account_with_fixed_root(program_id) {
+        if let Some(account) = self.get_account(program_id) {
             if account.executable() {
                 return;
             } else {
@@ -3484,14 +3408,14 @@ impl Bank {
         );
 
         // Add a bogus executable account, which will be loaded and ignored.
-        let (lamports, rent_epoch) = self.inherit_specially_retained_account_fields(&None);
+        let lamports = self.inherit_lamports(&None);
 
         let account = AccountSharedData::from(Account {
             lamports,
             owner,
             data: vec![],
             executable: true,
-            rent_epoch,
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }
@@ -3549,7 +3473,7 @@ impl Bank {
         }
         .or_else(|| {
             let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
-            let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
+            let nonce_account = self.get_account(nonce_address)?;
             verify_nonce_account(&nonce_account, message.recent_blockhash())
                 .map(|nonce_data| nonce_data.get_lamports_per_signature())
         })?;
@@ -3660,10 +3584,7 @@ impl Bank {
         };
 
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(
-                &clock,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&clock, self.inherit_lamports(account))
         });
 
         // Update Alpenglow clock
@@ -3760,26 +3681,6 @@ impl Bank {
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
         let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
-
-        #[cfg(feature = "dev-context-only-utils")]
-        let blockhash_override = self
-            .hash_overrides
-            .lock()
-            .unwrap()
-            .get_blockhash_override(self.slot())
-            .copied()
-            .inspect(|blockhash_override| {
-                if blockhash_override != blockhash {
-                    info!(
-                        "bank: slot: {}: overrode blockhash: {} with {}",
-                        self.slot(),
-                        blockhash,
-                        blockhash_override
-                    );
-                }
-            });
-        #[cfg(feature = "dev-context-only-utils")]
-        let blockhash = blockhash_override.as_ref().unwrap_or(blockhash);
 
         w_blockhash_queue.register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
         self.update_recent_blockhashes_locked(&w_blockhash_queue);
@@ -4167,7 +4068,7 @@ impl Bank {
         let mut account_overrides = AccountOverrides::default();
         let slot_history_id = sysvar::slot_history::id();
         if account_keys.iter().any(|pubkey| *pubkey == slot_history_id) {
-            let current_account = self.get_account_with_fixed_root(&slot_history_id);
+            let current_account = self.get_account(&slot_history_id);
             let slot_history: SlotHistory = current_account
                 .as_ref()
                 .map(|account| account.state().unwrap())
@@ -4176,9 +4077,7 @@ impl Bank {
                 let mut ancestors = self.ancestors.clone();
                 let removed = ancestors.remove_max_slot();
                 debug_assert_eq!(removed, Some(self.slot()));
-                if let Some((account, _)) =
-                    self.load_slow_with_fixed_root(&ancestors, &slot_history_id)
-                {
+                if let Some((account, _)) = self.load(&ancestors, &slot_history_id) {
                     account_overrides.set_slot_history(Some(account));
                 }
             }
@@ -4665,7 +4564,8 @@ impl Bank {
         Self::create_commit_results(processing_results)
     }
 
-    fn create_commit_results(
+    /// Convert execution results to commit results without changing bank state.
+    pub fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
     ) -> Vec<TransactionCommitResult> {
         processing_results
@@ -4741,9 +4641,7 @@ impl Bank {
     }
 
     fn run_incinerator(&self) {
-        if let Some((account, _)) =
-            self.get_account_modified_since_parent_with_fixed_root(&incinerator::id())
-        {
+        if let Some((account, _)) = self.get_account_modified_since_parent(&incinerator::id()) {
             self.capitalization.fetch_sub(account.lamports(), Relaxed);
             self.store_account(&incinerator::id(), &AccountSharedData::default());
         }
@@ -5051,7 +4949,7 @@ impl Bank {
         new_account: &AccountSharedData,
     ) {
         let old_account_data_size = if let Some(old_account) =
-            self.get_account_with_fixed_root_no_cache(pubkey)
+            self.get_account_do_not_populate_read_cache(pubkey)
         {
             match new_account.lamports().cmp(&old_account.lamports()) {
                 std::cmp::Ordering::Greater => {
@@ -5277,83 +5175,42 @@ impl Bank {
         }
     }
 
-    pub fn get_account_with_fixed_root_no_cache(
+    pub fn get_account_do_not_populate_read_cache(
         &self,
         pubkey: &Pubkey,
     ) -> Option<AccountSharedData> {
         self.rc
             .accounts
-            .load_with_fixed_root_do_not_populate_read_cache(&self.ancestors, pubkey)
+            .load_do_not_populate_read_cache(&self.ancestors, pubkey)
             .map(|(acc, _slot)| acc)
     }
 
-    // Hi! leaky abstraction here....
-    // try to use get_account_with_fixed_root() if it's called ONLY from on-chain runtime account
-    // processing. That alternative fn provides more safety.
     pub fn get_account(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.get_account_modified_slot(pubkey)
             .map(|(acc, _slot)| acc)
     }
 
-    // Hi! leaky abstraction here....
-    // use this over get_account() if it's called ONLY from on-chain runtime account
-    // processing (i.e. from in-band replay/banking stage; that ensures root is *fixed* while
-    // running).
-    // pro: safer assertion can be enabled inside AccountsDb
-    // con: panics!() if called from off-chain processing
-    pub fn get_account_with_fixed_root(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.get_account_modified_slot_with_fixed_root(pubkey)
-            .map(|(acc, _slot)| acc)
-    }
-
-    // See note above get_account_with_fixed_root() about when to prefer this function
-    pub fn get_account_modified_slot_with_fixed_root(
-        &self,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow_with_fixed_root(&self.ancestors, pubkey)
-    }
-
-    // See note above get_account_with_fixed_root() about when to prefer this function.
-    //
     // `load_filter` is a predicate over an account's lamports, owner, and data length,
     // which AccountsDb uses to avoid loading the full data. Callers should regard
     // the predicate as a performance hint, not a validation function, and perform
     // all necessary validation on the returned account themselves.
-    pub fn get_account_with_fixed_root_if(
+    pub fn get_account_if(
         &self,
         pubkey: &Pubkey,
         load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
     ) -> Option<AccountSharedData> {
         self.rc
             .accounts
-            .load_with_fixed_root(&self.ancestors, pubkey, Some(load_filter))
+            .load_with_filter(&self.ancestors, pubkey, Some(load_filter))
             .map(|(acc, _slot)| acc)
     }
 
     pub fn get_account_modified_slot(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
-        self.load_slow(&self.ancestors, pubkey)
+        self.load(&self.ancestors, pubkey)
     }
 
-    fn load_slow(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        // get_account (= primary this fn caller) may be called from on-chain Bank code even if we
-        // try hard to use get_account_with_fixed_root for that purpose...
-        // so pass safer LoadHint:Unspecified here as a fallback
-        self.rc.accounts.load_without_fixed_root(ancestors, pubkey)
-    }
-
-    fn load_slow_with_fixed_root(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-    ) -> Option<(AccountSharedData, Slot)> {
-        self.rc
-            .accounts
-            .load_with_fixed_root(ancestors, pubkey, None::<fn(_, &_, _) -> _>)
+    fn load(&self, ancestors: &Ancestors, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
+        self.rc.accounts.load(ancestors, pubkey)
     }
 
     pub fn get_program_accounts(
@@ -5433,13 +5290,12 @@ impl Bank {
             .load_by_program_slot(self.slot(), self.bank_id(), None)
     }
 
-    // if you want get_account_modified_since_parent without fixed_root, please define so...
-    fn get_account_modified_since_parent_with_fixed_root(
+    fn get_account_modified_since_parent(
         &self,
         pubkey: &Pubkey,
     ) -> Option<(AccountSharedData, Slot)> {
         let just_self: Ancestors = Ancestors::from(vec![(self.slot(), self.bank_id())]);
-        if let Some((account, slot)) = self.load_slow_with_fixed_root(&just_self, pubkey)
+        if let Some((account, slot)) = self.load(&just_self, pubkey)
             && slot == self.slot()
         {
             return Some((account, slot));
@@ -5619,29 +5475,6 @@ impl Bank {
             hash = hard_forked_hash;
         }
 
-        #[cfg(feature = "dev-context-only-utils")]
-        let hash_override = self
-            .hash_overrides
-            .lock()
-            .unwrap()
-            .get_bank_hash_override(slot)
-            .copied()
-            .inspect(|&hash_override| {
-                if hash_override != hash {
-                    info!(
-                        "bank: slot: {}: overrode bank hash: {} with {}",
-                        self.slot(),
-                        hash,
-                        hash_override
-                    );
-                }
-            });
-        // Avoid to optimize out `hash` along with the whole computation by super smart rustc.
-        // hash_override is used by ledger-tool's simulate-block-production, which prefers
-        // the actual bank freezing processing for accurate simulation.
-        #[cfg(feature = "dev-context-only-utils")]
-        let hash = hash_override.unwrap_or(std::hint::black_box(hash));
-
         let bank_hash_stats = self.bank_hash_stats.load();
 
         let total_us = measure_total.end_as_us();
@@ -5754,7 +5587,7 @@ impl Bank {
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<ResolvedTransactionView<D>>>
     where
-        D: TransactionData,
+        D: AsRef<[u8]>,
     {
         let max_transaction_size = match tx.version() {
             TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
@@ -5770,7 +5603,7 @@ impl Bank {
             }
 
             let sanitized_tx = tx
-                .sanitize(&solana_runtime_transaction::sanitize_config::sanitize_config())
+                .sanitize()
                 .map_err(|_| TransactionError::SanitizeFailure)?;
 
             if verification_mode == TransactionVerificationMode::FullVerification {
@@ -5806,7 +5639,7 @@ impl Bank {
 
     /// Load addresses from ALTs (if necessary) and return the
     /// [`LoadedAddresses`] with the minimum deactivation slot.
-    pub fn load_addresses_for_view<D: TransactionData>(
+    pub fn load_addresses_for_view<D: AsRef<[u8]>>(
         &self,
         view: &SanitizedTransactionView<D>,
     ) -> std::result::Result<(Option<LoadedAddresses>, Slot), AddressLoaderError> {
@@ -6289,8 +6122,6 @@ impl Bank {
                 self.get_epoch_rewards_sysvar().active,
             );
         }
-        self.stakes_cache
-            .refresh_delegated_stakes(self.new_warmup_cooldown_rate_epoch());
 
         self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
 
@@ -6304,14 +6135,13 @@ impl Bank {
         let feature_set = self.compute_active_feature_set(false).0;
         self.feature_set = Arc::new(feature_set);
 
-        // Apply rent deprecation feature if it's active at genesis
-        // After feature cleanup, assert that rent exemption threshold is 1.0
-        if self
-            .feature_set
-            .snapshot()
-            .deprecate_rent_exemption_threshold
+        // New genesis configurations must use the already deprecated threshold.
+        #[allow(deprecated)]
         {
-            self.rent_collector.deprecate_rent_exemption_threshold();
+            assert_eq!(
+                self.rent_collector.rent.exemption_threshold,
+                1.0f64.to_le_bytes()
+            );
         }
 
         // Apply the doubled disinflation rate if it's active at genesis (the
@@ -6366,7 +6196,7 @@ impl Bank {
 
         // Update activation slot of features in `new_feature_activations`
         for feature_id in new_feature_activations.iter() {
-            if let Some(mut account) = self.get_account_with_fixed_root(feature_id)
+            if let Some(mut account) = self.get_account(feature_id)
                 && let Some(mut feature) = feature::state::from_account(&account)
             {
                 feature.activated_at = Some(self.slot());
@@ -6383,12 +6213,6 @@ impl Bank {
             reserved_keys.update_active_set(&self.feature_set);
             Arc::new(reserved_keys)
         };
-
-        if new_feature_activations.contains(&feature_set::deprecate_rent_exemption_threshold::id())
-        {
-            self.rent_collector.deprecate_rent_exemption_threshold();
-            self.update_rent();
-        }
 
         // SIMD-0437 feature gates: all assume rent exemption threshold has been deprecated
         // (SIMD-0194), so rent.lamports_per_byte can be set directly. These gates are
@@ -6454,16 +6278,6 @@ impl Bank {
         self.apply_slot_time_runtime_changes();
 
         self.apply_new_builtin_program_feature_transitions(&new_feature_activations);
-
-        if new_feature_activations.contains(&feature_set::upgrade_bpf_stake_program_to_v5::id())
-            && let Err(e) = self.upgrade_core_bpf_program(
-                &solana_sdk_ids::stake::id(),
-                &feature_set::upgrade_bpf_stake_program_to_v5::buffer::id(),
-                "upgrade_stake_program_to_v5",
-            )
-        {
-            error!("Failed to upgrade Core BPF Stake program: {e}");
-        }
     }
 
     fn apply_new_builtin_program_feature_transitions(
@@ -6549,7 +6363,7 @@ impl Bank {
 
         for feature_id in self.feature_set.inactive() {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id)
+            if let Some(account) = self.get_account(feature_id)
                 && let Some(feature) = feature::state::from_account(&account)
             {
                 match feature.activated_at {
@@ -6578,7 +6392,7 @@ impl Bank {
     /// If `feature_id` is pending to be activated at the next epoch boundary, return
     /// the first slot at which it will be active (the epoch boundary).
     pub fn compute_pending_activation_slot(&self, feature_id: &Pubkey) -> Option<Slot> {
-        let account = self.get_account_with_fixed_root(feature_id)?;
+        let account = self.get_account(feature_id)?;
         let feature = feature::from_account(&account)?;
         if feature.activated_at.is_some() {
             // Feature is already active
@@ -6747,20 +6561,18 @@ impl Bank {
     // NOTE: must hold idempotent for the same set of arguments
     /// Add a builtin program account
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let existing_genuine_program =
-            self.get_account_with_fixed_root(program_id)
-                .and_then(|account| {
-                    // it's very unlikely to be squatted at program_id as non-system account because of burden to
-                    // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
-                    // safe to assume it's a genuine program.
-                    if native_loader::check_id(account.owner()) {
-                        Some(account)
-                    } else {
-                        // malicious account is pre-occupying at program_id
-                        self.burn_and_purge_account(program_id, account);
-                        None
-                    }
-                });
+        let existing_genuine_program = self.get_account(program_id).and_then(|account| {
+            // it's very unlikely to be squatted at program_id as non-system account because of burden to
+            // find victim's pubkey/hash. So, when account.owner is indeed native_loader's, it's
+            // safe to assume it's a genuine program.
+            if native_loader::check_id(account.owner()) {
+                Some(account)
+            } else {
+                // malicious account is pre-occupying at program_id
+                self.burn_and_purge_account(program_id, account);
+                None
+            }
+        });
 
         // introducing builtin program
         if existing_genuine_program.is_some() {
@@ -6776,14 +6588,13 @@ impl Bank {
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.
-        let (lamports, rent_epoch) =
-            self.inherit_specially_retained_account_fields(&existing_genuine_program);
+        let lamports = self.inherit_lamports(&existing_genuine_program);
         let account: AccountSharedData = AccountSharedData::from(Account {
             lamports,
             data: name.as_bytes().to_vec(),
             owner: solana_sdk_ids::native_loader::id(),
             executable: true,
-            rent_epoch,
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }
@@ -6926,12 +6737,19 @@ impl InvokeContextCallback for Bank {
     }
 }
 
-impl TransactionProcessingCallback for Bank {
+impl AccountLoadCallback for Bank {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
-        self.rc
-            .accounts
-            .load_with_fixed_root(&self.ancestors, pubkey, None::<fn(_, &_, _) -> _>)
-            .map(|(account, _slot)| account)
+        self.get_account(pubkey)
+    }
+}
+
+impl TransactionProcessingCallback for Bank {
+    fn get_account_shared_data_if(
+        &self,
+        pubkey: &Pubkey,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<AccountSharedData> {
+        self.get_account_if(pubkey, load_filter)
     }
 }
 
@@ -6968,7 +6786,8 @@ impl Bank {
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let mut bank = Self::default_with_bank_rc(bank_rc);
         let ancestors = Ancestors::from(vec![(slot, bank.bank_id())]);
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank.rc.accounts, &ancestors);
+        let rent =
+            Self::load_sysvar_for_snapshot_load(&bank.rc.accounts, &ancestors, &sysvar::rent::id());
         bank.blockhash_queue = RwLock::new(fields.blockhash_queue);
         bank.ancestors = ancestors;
         bank.hash = RwLock::new(fields.hash);
@@ -7098,8 +6917,6 @@ impl Bank {
                 bank.get_epoch_rewards_sysvar().active,
             );
         }
-        bank.stakes_cache
-            .refresh_delegated_stakes(bank.new_warmup_cooldown_rate_epoch());
 
         // If booting mid-distribution, recalculate reward partitions from the
         // EpochRewards sysvar (mirrors initialize_after_snapshot_restore).
@@ -7128,10 +6945,7 @@ impl Bank {
                 ..clock
             };
             bank.update_sysvar_account(&sysvar::clock::id(), |account| {
-                create_account(
-                    &clock,
-                    bank.inherit_specially_retained_account_fields(account),
-                )
+                create_account(&clock, bank.inherit_lamports(account))
             });
             bank.transaction_processor.reset_sysvar_cache();
             bank.transaction_processor
@@ -7328,7 +7142,7 @@ impl Bank {
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {
-        match self.get_account_with_fixed_root(pubkey) {
+        match self.get_account(pubkey) {
             Some(mut account) => {
                 let min_balance = match get_system_account_kind(&account) {
                     Some(SystemAccountKind::Nonce) => self
@@ -7351,10 +7165,6 @@ impl Bank {
             }
             None => Err(TransactionError::AccountNotFound),
         }
-    }
-
-    pub fn set_hash_overrides(&self, hash_overrides: HashOverrides) {
-        *self.hash_overrides.lock().unwrap() = hash_overrides;
     }
 
     /// Get stake and stake node accounts
@@ -7422,7 +7232,7 @@ impl Drop for Bank {
             self.rc
                 .accounts
                 .accounts_db
-                .purge_slot(self.slot(), self.bank_id(), false);
+                .purge_slot(self.bank_id(), false);
         }
     }
 }
@@ -7479,7 +7289,7 @@ pub mod test_utils {
         // This doesn't collect rents intentionally.
         // Rents should only be applied to actual TXes
         let mut account = bank
-            .get_account_with_fixed_root_no_cache(pubkey)
+            .get_account_do_not_populate_read_cache(pubkey)
             .unwrap_or_default();
         account.checked_add_lamports(lamports)?;
         bank.store_account(pubkey, &account);

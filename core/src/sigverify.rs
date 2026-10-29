@@ -4,11 +4,10 @@
 
 use {
     crate::{
-        banking_trace::BankingPacketSender, sigverify_stage::SigVerifyServiceError,
-        transaction_priority::calculate_priority_from_bytes,
+        banking_channels::BankingPacketSender, transaction_priority::calculate_priority_from_bytes,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
-    crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError},
     solana_measure::measure_us,
     solana_perf::{
         deduper::{self, Deduper},
@@ -16,7 +15,6 @@ use {
         sigverify::{self},
     },
     solana_runtime::{bank::Bank, bank_forks::SharableBanks},
-    solana_transaction::Transaction,
     std::{
         num::NonZeroUsize,
         sync::{
@@ -27,16 +25,6 @@ use {
         time::Duration,
     },
 };
-
-pub(crate) struct GossipVerifyTask {
-    batch: PacketBatch,
-    transaction: Transaction,
-}
-
-pub(crate) struct GossipVerifiedVoteBatch {
-    pub(crate) transaction: Transaction,
-    pub(crate) packet_batch: PacketBatch,
-}
 
 #[derive(Clone)]
 pub(crate) struct SigVerifyWorkerStats {
@@ -62,8 +50,7 @@ pub(crate) struct SigVerifyWorkerState {
     /// Scheduler-published priority floor: when saturated, the scheduler publishes
     /// the queue-min transaction's priority and workers drop at-or-below-floor
     /// arrivals here, ahead of signature verification. `None` disables the
-    /// check (e.g. for the vote worker, which is governed by a separate
-    /// priority policy in banking stage).
+    /// check.
     priority_floor: Option<Arc<SchedulerPriorityFloor>>,
 }
 
@@ -83,73 +70,16 @@ impl SigVerifyWorkerState {
     }
 }
 
-pub(crate) struct GossipSigVerifier {
-    worker_sender: Sender<GossipVerifyTask>,
-}
-
-impl GossipSigVerifier {
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(worker_sender: Sender<GossipVerifyTask>) -> Self {
-        Self { worker_sender }
-    }
-
-    pub(crate) fn send_votes_to_worker_pool(
-        &self,
-        votes: Vec<Transaction>,
-        packet_batches: Vec<PacketBatch>,
-    ) -> Result<usize, SigVerifyServiceError> {
-        assert_eq!(votes.len(), packet_batches.len());
-
-        let num_votes = votes.len();
-        let mut num_sent = 0;
-        for (transaction, batch) in votes.into_iter().zip(packet_batches) {
-            match self
-                .worker_sender
-                .try_send(GossipVerifyTask { batch, transaction })
-            {
-                Ok(()) => {
-                    num_sent += 1;
-                }
-                Err(TrySendError::Full(_)) => {
-                    warn!(
-                        "gossip sigverify worker queue is full, dropping {} votes.",
-                        num_votes.saturating_sub(num_sent)
-                    );
-                    break;
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    return Err(SigVerifyServiceError::WorkerQueueClosed);
-                }
-            }
-        }
-
-        Ok(num_sent)
-    }
-}
-
-/// Gossip votes use a bounded queue into the worker pool.
-const SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE: usize = 50_000;
-
-pub(crate) struct SigVerifyWorkerSenders {
-    pub(crate) gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
-    pub(crate) forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
-}
-
 #[derive(Clone)]
 struct WorkerPoolChannels {
     non_vote_receiver: Receiver<PacketBatch>,
-    tpu_vote_receiver: Receiver<PacketBatch>,
-    gossip_receiver: Receiver<GossipVerifyTask>,
-    gossip_verified_vote_sender: Sender<GossipVerifiedVoteBatch>,
     forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
     sharable_banks: SharableBanks,
     non_vote_state: SigVerifyWorkerState,
-    tpu_vote_state: SigVerifyWorkerState,
 }
 
 pub(crate) struct SigVerifyWorkerPool {
     exit: Arc<AtomicBool>,
-    gossip_sender: Sender<GossipVerifyTask>,
     worker_hdls: Vec<JoinHandle<()>>,
 }
 
@@ -168,23 +98,16 @@ impl SigVerifyWorkerPool {
     pub(crate) fn new(
         num_workers: NonZeroUsize,
         non_vote_receiver: Receiver<PacketBatch>,
-        tpu_vote_receiver: Receiver<PacketBatch>,
-        senders: SigVerifyWorkerSenders,
+        forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
         forward_non_votes: bool,
         sharable_banks: SharableBanks,
         non_vote_state: SigVerifyWorkerState,
-        tpu_vote_state: SigVerifyWorkerState,
     ) -> Self {
-        let (gossip_sender, gossip_receiver) = bounded(SIGVERIFY_GOSSIP_VOTE_WORK_CHANNEL_SIZE);
         let channels = WorkerPoolChannels {
             non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_receiver,
-            gossip_verified_vote_sender: senders.gossip_verified_vote_sender,
-            forward_stage_sender: senders.forward_stage_sender,
+            forward_stage_sender,
             sharable_banks,
             non_vote_state,
-            tpu_vote_state,
         };
         let exit = Arc::new(AtomicBool::new(false));
         let worker_hdls = (0..num_workers.get())
@@ -198,17 +121,7 @@ impl SigVerifyWorkerPool {
                     .expect("failed to spawn sigverify worker thread")
             })
             .collect();
-        Self {
-            exit,
-            gossip_sender,
-            worker_hdls,
-        }
-    }
-
-    pub(crate) fn gossip_verifier(&self) -> GossipSigVerifier {
-        GossipSigVerifier {
-            worker_sender: self.gossip_sender.clone(),
-        }
+        Self { exit, worker_hdls }
     }
 
     fn worker(exit: Arc<AtomicBool>, channels: WorkerPoolChannels, forward_non_votes: bool) {
@@ -221,45 +134,21 @@ impl SigVerifyWorkerPool {
 
     /// Returns false if some channel connection is disconnected.
     fn worker_iteration(channels: &WorkerPoolChannels, forward_non_votes: bool) -> bool {
-        crossbeam_channel::select! {
-            recv(&channels.non_vote_receiver) -> maybe_work => {
-                match maybe_work {
-                    Ok(batch) => Self::run_transaction_task(
-                        batch,
-                        false,
-                        &channels.forward_stage_sender,
-                        forward_non_votes,
-                        false,
-                        &channels.sharable_banks,
-                        &channels.non_vote_state,
-                    ),
-                    Err(_) => false,
-                }
-            }
-            recv(&channels.tpu_vote_receiver) -> maybe_work => {
-                match maybe_work {
-                    Ok(batch) => Self::run_transaction_task(
-                        batch,
-                        true,
-                        &channels.forward_stage_sender,
-                        true,
-                        true,
-                        &channels.sharable_banks,
-                        &channels.tpu_vote_state,
-                    ),
-                    Err(_) => false,
-                }
-            }
-            recv(&channels.gossip_receiver) -> maybe_work => {
-                match maybe_work {
-                    Ok(work) => Self::run_gossip_task(
-                        work,
-                        &channels.gossip_verified_vote_sender,
-                    ),
-                    Err(_) => false,
-                }
-            }
-            default(Duration::from_millis(10)) => { true }
+        match channels
+            .non_vote_receiver
+            .recv_timeout(Duration::from_millis(10))
+        {
+            Ok(batch) => Self::run_transaction_task(
+                batch,
+                false,
+                &channels.forward_stage_sender,
+                forward_non_votes,
+                false,
+                &channels.sharable_banks,
+                &channels.non_vote_state,
+            ),
+            Err(RecvTimeoutError::Timeout) => true,
+            Err(RecvTimeoutError::Disconnected) => false,
         }
     }
 
@@ -367,23 +256,6 @@ impl SigVerifyWorkerPool {
         }
         if should_forward {
             Self::try_forward(forward_stage_sender, banking_packet_batch, is_tpu_vote);
-        }
-
-        true
-    }
-
-    fn run_gossip_task(
-        mut work: GossipVerifyTask,
-        verified_vote_sender: &Sender<GossipVerifiedVoteBatch>,
-    ) -> bool {
-        // Gossip votes are legacy Transaction values, not tx-v1 packets.
-        sigverify::ed25519_verify_serial(&mut work.batch, true);
-
-        if let Err(err) = verified_vote_sender.send(GossipVerifiedVoteBatch {
-            transaction: work.transaction,
-            packet_batch: work.batch,
-        }) {
-            debug!("gossip sigverify response send failed: {err:?}");
         }
 
         true

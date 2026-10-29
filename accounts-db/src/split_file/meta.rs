@@ -107,6 +107,7 @@ use {
         cmp,
         convert::TryFrom,
         fs::File,
+        io::Write,
         mem::{MaybeUninit, offset_of},
         path::{Path, PathBuf},
         ptr, slice,
@@ -209,11 +210,11 @@ pub fn read_meta_header(
     })
 }
 
-/// Writes a meta entry to `file` at `offset`.
+/// Writes a meta entry to `writer` at `offset`.
 ///
 /// Returns a `WriteInfo` that contains information about what was written.
 pub fn write_meta_entry(
-    file: &File,
+    writer: &mut impl Write,
     offset: FileOffset,
     address: &Pubkey,
     owner: &Pubkey,
@@ -223,6 +224,43 @@ pub fn write_meta_entry(
     data_len: DataLen,
     data_ref: DataRef,
 ) -> Result<WriteInfo, WriteMetaEntryError> {
+    let start_offset = offset
+        .0
+        .checked_next_multiple_of(META_ENTRY_OFFSET_ALIGNMENT as u64)
+        .ok_or(WriteMetaEntryError::OffsetOverrun(offset))?;
+    // Entries must start aligned, so write any padding from the previous entry as needed.
+    writer.write_all(&[0; META_ENTRY_OFFSET_ALIGNMENT][..(start_offset - offset.0) as usize])?;
+
+    let num_bytes_written = write_meta_entry_bytes(
+        writer,
+        address,
+        owner,
+        lamports,
+        rent_epoch,
+        is_executable,
+        data_len,
+        data_ref,
+    )?;
+
+    Ok(WriteInfo {
+        start: FileOffset(start_offset),
+        num_bytes_written,
+    })
+}
+
+/// Writes a meta entry to `writer`.
+///
+/// Returns the number of bytes written.
+fn write_meta_entry_bytes(
+    writer: &mut impl Write,
+    address: &Pubkey,
+    owner: &Pubkey,
+    lamports: u64,
+    rent_epoch: u64,
+    is_executable: bool,
+    data_len: DataLen,
+    data_ref: DataRef,
+) -> Result</* num bytes written: */ usize, WriteMetaEntryError> {
     match data_ref {
         DataRef::NoData => {
             debug_assert_eq!(data_len.0, 0);
@@ -235,10 +273,6 @@ pub fn write_meta_entry(
         }
     };
 
-    let start_offset = offset
-        .0
-        .checked_next_multiple_of(META_ENTRY_OFFSET_ALIGNMENT as u64)
-        .ok_or(WriteMetaEntryError::OffsetOverrun(offset))?;
     let mut num_bytes_written = 0;
 
     let meta_entry = MetaEntrySerde {
@@ -251,11 +285,7 @@ pub fn write_meta_entry(
         data_len: data_len.0,
     };
     let meta_entry_bytes = as_bytes_ref(&meta_entry);
-    file_io::write_buffer_to_file(
-        file,
-        meta_entry_bytes,
-        start_offset + num_bytes_written as u64,
-    )?;
+    writer.write_all(meta_entry_bytes)?;
     num_bytes_written += size_of::<MetaEntrySerde>();
 
     match data_ref {
@@ -264,26 +294,19 @@ pub fn write_meta_entry(
         }
         DataRef::Inline(data) => {
             // write `data` inline here
-            file_io::write_buffer_to_file(file, data, start_offset + num_bytes_written as u64)?;
+            writer.write_all(data)?;
             num_bytes_written += data.len();
         }
         DataRef::External(external_data_offset) => {
             // data was written to external data file, so only write the offset here
-            file_io::write_buffer_to_file(
-                file,
-                external_data_offset.0.0.to_le_bytes().as_slice(),
-                start_offset + num_bytes_written as u64,
-            )?;
+            writer.write_all(&external_data_offset.0.0.to_le_bytes())?;
             num_bytes_written += size_of_val(&external_data_offset);
         }
     }
 
     let expected_stored_size = calculate_meta_entry_stored_size(data_len);
     if num_bytes_written == expected_stored_size {
-        Ok(WriteInfo {
-            start: FileOffset(start_offset),
-            num_bytes_written,
-        })
+        Ok(num_bytes_written)
     } else {
         Err(WriteMetaEntryError::ShortWrite {
             expected: expected_stored_size,
@@ -519,7 +542,15 @@ const _: () = const {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::assert_matches, tempfile::TempDir, test_case::test_case};
+    use {
+        super::*,
+        std::{
+            assert_matches,
+            io::{Seek as _, SeekFrom},
+        },
+        tempfile::TempDir,
+        test_case::test_case,
+    };
 
     #[test]
     fn test_create_meta_file() {
@@ -671,12 +702,13 @@ mod tests {
     fn test_write_and_read_meta_entry() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let (_path, file, size) = create_meta_file(&base_path, 42).unwrap();
+        let (_path, mut file, size) = create_meta_file(&base_path, 42).unwrap();
 
         let mut offset = FileOffset(size as FileSize);
 
         // no data
         {
+            file.seek(SeekFrom::Start(offset.0)).unwrap();
             let address = Pubkey::new_unique();
             let owner = Pubkey::new_unique();
             let lamports = 1_000_000;
@@ -685,7 +717,7 @@ mod tests {
             let data_len = DataLen::try_from(0).unwrap();
             let data_ref = DataRef::NoData;
             let write_info = write_meta_entry(
-                &file,
+                &mut file,
                 offset,
                 &address,
                 &owner,
@@ -714,6 +746,7 @@ mod tests {
 
         // inline data
         {
+            file.seek(SeekFrom::Start(offset.0)).unwrap();
             let address = Pubkey::new_unique();
             let owner = Pubkey::new_unique();
             let lamports = 1_000_200;
@@ -723,7 +756,7 @@ mod tests {
             let data_len = DataLen::try_from(data.len()).unwrap();
             let data_ref = DataRef::Inline(&data);
             let write_info = write_meta_entry(
-                &file,
+                &mut file,
                 offset,
                 &address,
                 &owner,
@@ -752,6 +785,7 @@ mod tests {
 
         // external data
         {
+            file.seek(SeekFrom::Start(offset.0)).unwrap();
             let address = Pubkey::new_unique();
             let owner = Pubkey::new_unique();
             let lamports = 1_234_567;
@@ -761,7 +795,7 @@ mod tests {
             let external_data_offset = ExternalDataOffset(FileOffset(234_567));
             let data_ref = DataRef::External(external_data_offset);
             let write_info = write_meta_entry(
-                &file,
+                &mut file,
                 offset,
                 &address,
                 &owner,
@@ -789,11 +823,11 @@ mod tests {
 
     #[test]
     fn test_write_meta_entry_bad_offset() {
-        let file = tempfile::tempfile().unwrap();
+        let mut file = tempfile::tempfile().unwrap();
 
         // offset overflows when aligning
         let err = write_meta_entry(
-            &file,
+            &mut file,
             FileOffset(FileSize::MAX),
             &Pubkey::default(),
             &Pubkey::default(),
@@ -805,21 +839,6 @@ mod tests {
         )
         .unwrap_err();
         assert_matches!(err, WriteMetaEntryError::OffsetOverrun(_));
-
-        // offset overflows when attempting to write the entry
-        let err = write_meta_entry(
-            &file,
-            FileOffset(FileSize::MAX - META_ENTRY_OFFSET_ALIGNMENT as u64),
-            &Pubkey::default(),
-            &Pubkey::default(),
-            123,
-            0,
-            false,
-            DataLen(0),
-            DataRef::NoData,
-        )
-        .unwrap_err();
-        assert_matches!(err, WriteMetaEntryError::Io(_));
     }
 
     #[test]

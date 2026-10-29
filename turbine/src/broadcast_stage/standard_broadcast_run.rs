@@ -38,7 +38,7 @@ pub struct StandardBroadcastRun {
     // Parent encoded in shred headers. This must remain stable for the slot
     // because it is used to derive PARENT_OFFSET.
     parent: Slot,
-    parent_block_id: Hash,
+    parent_block_id: BlockId,
     // Parent slot and block id committed into the double-merkle block id. This
     // can change after an UpdateParent marker.
     parent_for_double_merkle: Block,
@@ -85,7 +85,7 @@ impl StandardBroadcastRun {
         Self {
             slot: Slot::MAX,
             parent: Slot::MAX,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
             parent_for_double_merkle: Block {
                 slot: Slot::MAX,
                 block_id: BlockId::default(),
@@ -170,7 +170,7 @@ impl StandardBroadcastRun {
 
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
-        self.parent_block_id = parent_block_id.to_hash();
+        self.parent_block_id = parent_block_id;
         self.parent_for_double_merkle = Block {
             slot: bank.parent_slot(),
             block_id: parent_block_id,
@@ -710,6 +710,7 @@ mod test {
         super::*,
         assert_matches::assert_matches,
         rand::Rng,
+        solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -852,7 +853,7 @@ mod test {
         assert!(Arc::ptr_eq(&header_shreds, &transmit_shreds));
         assert_eq!(
             deshred_component(&header_shreds),
-            BlockComponent::new_block_header(parent_bank.slot(), parent_block_id.to_hash()),
+            BlockComponent::new_block_header(parent_bank.slot(), parent_block_id),
         );
         let header_data_shred = header_shreds.iter().find(|shred| shred.is_data()).unwrap();
         let flags = layout::get_flags(header_data_shred.payload().as_ref()).unwrap();
@@ -923,6 +924,8 @@ mod test {
             Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger"),
         );
         let mut genesis_config = create_genesis_config(10_000).genesis_config;
+        genesis_config.poh_config.target_tick_duration =
+            Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
         let slot_time_features = slot_time_feature_ids().to_vec();
         deactivate_features(&mut genesis_config, &slot_time_features);
         for feature_id in feature_ids {
@@ -992,12 +995,12 @@ mod test {
         assert!(run.completed);
 
         // Set up the slot to be interrupted
-        let next_shred_index = 10;
+        let next_shred_index = 32;
         let slot = 1;
         let parent = 0;
         run.chained_merkle_root = Hash::new_from_array(rand::rng().random());
         run.next_shred_index = next_shred_index;
-        run.next_code_index = 17;
+        run.next_code_index = next_shred_index;
         run.slot = slot;
         run.parent = parent;
         run.completed = false;
@@ -1478,11 +1481,11 @@ mod test {
         );
         bs.slot = 12;
         bs.parent = 10;
-        let original_parent_block_id = Hash::new_unique();
+        let original_parent_block_id = BlockId::new_unique();
         bs.parent_block_id = original_parent_block_id;
         bs.parent_for_double_merkle = Block {
             slot: bs.parent,
-            block_id: BlockId::from(bs.parent_block_id),
+            block_id: bs.parent_block_id,
         };
 
         let new_parent_slot = 7;

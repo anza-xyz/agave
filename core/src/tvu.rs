@@ -4,7 +4,6 @@
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -256,7 +255,6 @@ impl Tvu {
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
-        banking_tracer: Arc<BankingTracer>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         slot_status_notifier: Option<SlotStatusNotifier>,
@@ -619,7 +617,6 @@ impl Tvu {
             tower,
             vote_tracker,
             cluster_slots,
-            banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -774,7 +771,10 @@ pub mod tests {
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        solana_runtime::{bank::Bank, bank_forks_controller::BankForksControllerHandle},
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            bank_forks_controller::BankForksControllerHandle,
+        },
         solana_signer::Signer,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},
@@ -812,6 +812,14 @@ pub mod tests {
             .expect("Expected to successfully open ledger");
         let blockstore = Arc::new(blockstore);
         let bank = bank_forks.read().unwrap().working_bank();
+        // Give PoH a child bank outside of bank_forks (this also freezes bank 0).
+        // Otherwise PoH may complete bank 0, which ReplayStage tracks as active
+        // without a progress entry, and panics.
+        let poh_bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            SlotLeader::default(),
+            1,
+        ));
         let (
             exit,
             poh_recorder,
@@ -819,7 +827,7 @@ pub mod tests {
             _transaction_recorder,
             poh_service,
             _entry_receiver,
-        ) = create_test_recorder(bank.clone(), blockstore.clone(), None, None);
+        ) = create_test_recorder(poh_bank, blockstore.clone(), None, None);
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
@@ -908,7 +916,6 @@ pub mod tests {
             None, // block_metadata_notifier
             None, // wait_to_vote_slot
             None, // snapshot_controller
-            BankingTracer::new_disabled(),
             outstanding_repair_requests,
             cluster_slots,
             None, // slot_status_notifier

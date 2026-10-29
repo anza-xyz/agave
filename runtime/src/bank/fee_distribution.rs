@@ -247,7 +247,7 @@ impl Bank {
     // Deposits fees into a specified account and if successful, returns the new balance of that account
     fn deposit_fees(&self, collector_id: &Pubkey, fees: u64) -> Result<u64, DepositFeeError> {
         let mut account = self
-            .get_account_with_fixed_root_no_cache(collector_id)
+            .get_account_do_not_populate_read_cache(collector_id)
             .unwrap_or_else(default_system_account);
 
         let feature_snapshot = self.feature_set.snapshot();
@@ -306,7 +306,7 @@ impl Bank {
         fees: u64,
     ) -> Result<u64, DepositFeeError> {
         let mut account = self
-            .get_account_with_fixed_root_no_cache(vote_address)
+            .get_account_do_not_populate_read_cache(vote_address)
             .ok_or(DepositFeeError::InvalidVoteAccount)?;
 
         if *account.owner() != solana_sdk_ids::vote::id() {

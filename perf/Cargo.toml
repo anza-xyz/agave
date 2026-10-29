@@ -35,7 +35,7 @@ dev-context-only-utils = [
 stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-packet/stable-abi",
+    "solana-pubkey/stable-abi",
     "solana-vote-program/stable-abi",
 ]
 
@@ -43,6 +43,7 @@ stable-abi = [
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
 bytes = { workspace = true, features = ["serde"] }
 log = { workspace = true }
 num_cpus = { workspace = true }
@@ -55,9 +56,8 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stab
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
-solana-packet = { workspace = true, features = ["serde"] }
-solana-pubkey = { workspace = true, default-features = false, features = ["rand"] }
-solana-runtime-transaction = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["rand", "serde"] }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }

@@ -62,7 +62,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     num_background_threads: None,
-    accounts_file_provider: AccountsFileProvider::AppendVec,
+    accounts_file_provider: AccountsFileProvider::Split,
     use_direct_io: false,
 };
 
@@ -83,6 +83,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     num_background_threads: None,
-    accounts_file_provider: AccountsFileProvider::AppendVec,
+    accounts_file_provider: AccountsFileProvider::Split,
     use_direct_io: false,
 };

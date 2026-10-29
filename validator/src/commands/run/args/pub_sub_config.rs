@@ -87,7 +87,7 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
         Arg::with_name("rpc_pubsub_enable_vote_subscription")
             .long("rpc-pubsub-enable-vote-subscription")
             .takes_value(false)
-            .help("Enable the unstable RPC PubSub `voteSubscribe` subscription"),
+            .help("Deprecated no-op retained for voteSubscribe compatibility"),
         Arg::with_name("rpc_pubsub_max_active_subscriptions")
             .long("rpc-pubsub-max-active-subscriptions")
             .takes_value(true)
@@ -129,6 +129,7 @@ pub(crate) fn args<'a, 'b>(test_validator: bool) -> Vec<Arg<'a, 'b>> {
     ]
 }
 
+#[allow(deprecated)]
 impl FromClapArgMatches for PubSubConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(PubSubConfig {
@@ -184,7 +185,8 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_enable_vote_subscription() {
+    #[allow(deprecated)]
+    fn verify_deprecated_enable_vote_subscription_is_accepted() {
         let default_run_args = crate::commands::run::args::RunArgs::default();
         let expected_args = RunArgs {
             pub_sub_config: PubSubConfig {

@@ -3,7 +3,7 @@ use {
         aggregate_pubkeys, collect_pubkeys, test_create_base2_unverified_certificate,
         test_create_base3_unverified_certificate, verify_certificate,
     },
-    agave_votor_messages::certificate::CertificateType,
+    agave_votor_messages::{certificate::CertificateType, stake::NonZeroStake},
     bitvec::vec::BitVec,
     criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main},
     rand::Rng,
@@ -11,7 +11,6 @@ use {
         keypair::Keypair as BlsKeypair,
         pubkey::{PopVerified, PubkeyAffine as BlsPubkeyAffine},
     },
-    std::num::NonZero,
 };
 
 // Creates random BLS keypairs for bench tests
@@ -88,7 +87,7 @@ fn bench_verify_cert(c: &mut Criterion) {
             BenchmarkId::new("Base2_Notarize", size),
             &size,
             |b, &total_validators| {
-                let total_stake = NonZero::new(TEST_STAKE * total_validators as u64).unwrap();
+                let total_stake = NonZeroStake::new(TEST_STAKE * total_validators as u64).unwrap();
                 b.iter_batched(
                     || cert_base2.clone(),
                     |cert_base2| {
@@ -100,7 +99,7 @@ fn bench_verify_cert(c: &mut Criterion) {
                             total_stake,
                             |rank| {
                                 pubkeys_ref.get(rank).map(|bls_pubkey| {
-                                    (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey)
+                                    (NonZeroStake::new(TEST_STAKE).unwrap(), *bls_pubkey)
                                 })
                             },
                             None,
@@ -130,7 +129,7 @@ fn bench_verify_cert(c: &mut Criterion) {
             BenchmarkId::new("Base3_NotarizeFallback", size),
             &size,
             |b, &total_validators| {
-                let total_stake = NonZero::new(TEST_STAKE * total_validators as u64).unwrap();
+                let total_stake = NonZeroStake::new(TEST_STAKE * total_validators as u64).unwrap();
                 b.iter_batched(
                     || cert_base3.clone(),
                     |cert_base3| {
@@ -140,7 +139,7 @@ fn bench_verify_cert(c: &mut Criterion) {
                             total_stake,
                             |rank| {
                                 pubkeys_ref.get(rank).map(|bls_pubkey| {
-                                    (NonZero::new(TEST_STAKE).unwrap(), *bls_pubkey)
+                                    (NonZeroStake::new(TEST_STAKE).unwrap(), *bls_pubkey)
                                 })
                             },
                             None,

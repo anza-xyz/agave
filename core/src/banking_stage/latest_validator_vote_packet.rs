@@ -105,11 +105,8 @@ impl LatestValidatorVote {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
-        let vote = SanitizedTransactionView::try_new_sanitized(
-            packet_bytes(packet).unwrap(),
-            &solana_runtime_transaction::sanitize_config::sanitize_config(),
-        )
-        .unwrap();
+        let vote =
+            SanitizedTransactionView::try_new_sanitized(packet_bytes(packet).unwrap()).unwrap();
 
         Self::new_from_view(vote, vote_source, deprecate_legacy_vote_ixs)
     }
@@ -158,8 +155,7 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_packet::PacketFlags,
-        solana_perf::packet::{BytesPacket, PacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_signer::Signer,
         solana_system_transaction::transfer,

@@ -40,6 +40,11 @@ pub const DEFAULT_WORKER_THREADS: usize = 1;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
+    /// Deprecated no-op retained for source and command-line compatibility.
+    #[deprecated(
+        since = "4.5.0",
+        note = "voteSubscribe is always accepted as an empty compatibility subscription"
+    )]
     pub enable_vote_subscription: bool,
     pub max_active_subscriptions: usize,
     pub queue_capacity_items: usize,
@@ -49,6 +54,7 @@ pub struct PubSubConfig {
 }
 
 impl PubSubConfig {
+    #[allow(deprecated)]
     pub const fn default_for_tests() -> Self {
         Self {
             enable_block_subscription: false,
@@ -120,7 +126,6 @@ struct SentNotificationStats {
     num_slot: AtomicUsize,
     num_slots_updates: AtomicUsize,
     num_root: AtomicUsize,
-    num_vote: AtomicUsize,
     num_block: AtomicUsize,
     total_creation_to_queue_time_us: AtomicU64,
     last_report: AtomicInterval,
@@ -167,11 +172,6 @@ impl SentNotificationStats {
                     i64
                 ),
                 (
-                    "num_vote",
-                    self.num_vote.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
                     "num_block",
                     self.num_block.swap(0, Ordering::Relaxed) as i64,
                     i64
@@ -192,6 +192,7 @@ struct BroadcastHandler {
     sent_stats: Arc<SentNotificationStats>,
 }
 
+#[allow(deprecated)]
 fn increment_sent_notification_stats(
     params: &SubscriptionParams,
     notification: &RpcNotification,
@@ -219,9 +220,7 @@ fn increment_sent_notification_stats(
         SubscriptionParams::Root => {
             stats.num_root.fetch_add(1, Ordering::Relaxed);
         }
-        SubscriptionParams::Vote => {
-            stats.num_vote.fetch_add(1, Ordering::Relaxed);
-        }
+        SubscriptionParams::Vote => {}
         SubscriptionParams::Block(_) => {
             stats.num_block.fetch_add(1, Ordering::Relaxed);
         }
@@ -320,7 +319,6 @@ pub fn test_connection(
     let rpc_impl = RpcSolPubSubImpl::new(
         PubSubConfig {
             enable_block_subscription: true,
-            enable_vote_subscription: true,
             ..PubSubConfig::default_for_tests()
         },
         subscriptions.control().clone(),

@@ -251,12 +251,12 @@ impl RequestResponse for AncestorHashesRepairType {
 pub enum BlockIdRepairType {
     ParentAndFecSetCount {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
 
     FecSetRoot {
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
         // Authenticated by the ParentAndFecSetCount response and retained locally
         // to verify the depth of the FEC-set proof. This is not sent on the wire.
@@ -267,14 +267,8 @@ pub enum BlockIdRepairType {
 impl BlockIdRepairType {
     pub(crate) fn block(&self) -> Block {
         match *self {
-            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block {
-                slot,
-                block_id: BlockId::from(block_id),
-            },
-            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block {
-                slot,
-                block_id: BlockId::from(block_id),
-            },
+            BlockIdRepairType::ParentAndFecSetCount { slot, block_id } => Block { slot, block_id },
+            BlockIdRepairType::FecSetRoot { slot, block_id, .. } => Block { slot, block_id },
         }
     }
 
@@ -355,7 +349,7 @@ impl RequestResponse for BlockIdRepairType {
                     merkle_tree::hash_as_merkle_proof_entry(&parent_info_leaf),
                     *fec_set_count as usize,
                     parent_proof,
-                    *block_id,
+                    block_id.to_hash(),
                 )
                 .is_ok()
             }
@@ -394,7 +388,7 @@ impl RequestResponse for BlockIdRepairType {
                     fec_set_root.as_bytes(),
                     leaf_index,
                     fec_set_proof,
-                    *block_id,
+                    block_id.to_hash(),
                 )
                 .is_ok()
             }
@@ -535,19 +529,19 @@ pub enum RepairProtocol {
     ParentAndFecSetCount {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
     },
     FecSetRoot {
         header: RepairRequestHeader,
         slot: Slot,
-        block_id: Hash,
+        block_id: BlockId,
         fec_set_index: u32,
     },
     WindowIndexForBlockId {
         header: RepairRequestHeader,
         slot: Slot,
         shred_index: u32,
-        block_id: Hash,
+        block_id: BlockId,
     },
 }
 
@@ -589,19 +583,19 @@ impl solana_frozen_abi::rand::prelude::Distribution<RepairProtocol>
             12 => RepairProtocol::ParentAndFecSetCount {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
             },
             13 => RepairProtocol::FecSetRoot {
                 header: rng.random(),
                 slot: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
                 fec_set_index: rng.random(),
             },
             14 => RepairProtocol::WindowIndexForBlockId {
                 header: rng.random(),
                 slot: rng.random(),
                 shred_index: rng.random(),
-                block_id: Hash::new_from_array(rng.random::<[u8; HASH_BYTES]>()),
+                block_id: BlockId::sample(rng),
             },
             _ => unreachable!(),
         }
@@ -985,7 +979,7 @@ impl ServeRepair {
         }
 
         peers_cache.pop(&slot);
-        let repair_peers = self.repair_peers(repair_validators, slot, &identity_keypair.pubkey());
+        let repair_peers = self.repair_peers(repair_validators, &identity_keypair.pubkey());
         let weights = self.repair_peer_weights(slot, cluster_slots, &repair_peers, weight_source);
         let repair_peers =
             RepairPeers::new(Instant::now(), weight_source, &repair_peers, &weights)?;
@@ -1081,9 +1075,12 @@ impl ServeRepair {
                 } => {
                     stats.parent += 1;
                     let response = if self.migration_status.should_allow_block_markers(*slot) {
-                        let response = self
-                            .repair_handler
-                            .run_parent_fec_set_count(from_addr, *slot, *block_id, *nonce);
+                        let response = self.repair_handler.run_parent_fec_set_count(
+                            from_addr,
+                            *slot,
+                            block_id.to_hash(),
+                            *nonce,
+                        );
                         if response.is_none() {
                             stats.parent_misses += 1;
                         }
@@ -1104,7 +1101,7 @@ impl ServeRepair {
                         let response = self.repair_handler.run_fec_set_root(
                             from_addr,
                             *slot,
-                            *block_id,
+                            block_id.to_hash(),
                             *fec_set_index,
                             *nonce,
                         );
@@ -1129,7 +1126,7 @@ impl ServeRepair {
                             from_addr,
                             *slot,
                             u64::from(*shred_index),
-                            *block_id,
+                            block_id.to_hash(),
                             *nonce,
                         );
                         if batch.is_none() {
@@ -1906,7 +1903,7 @@ impl ServeRepair {
         repair_protocol: Protocol,
         my_pubkey: &Pubkey,
     ) -> Result<Vec<(Pubkey, SocketAddr)>> {
-        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot, my_pubkey);
+        let repair_peers: Vec<_> = self.repair_peers(repair_validators, my_pubkey);
         if repair_peers.is_empty() {
             return Err(ClusterInfoError::NoPeers.into());
         }
@@ -1931,7 +1928,7 @@ impl ServeRepair {
         repair_validators: &Option<HashSet<Pubkey>>,
         my_pubkey: &Pubkey,
     ) -> Option<(Pubkey, SocketAddr)> {
-        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot, my_pubkey);
+        let repair_peers: Vec<_> = self.repair_peers(repair_validators, my_pubkey);
         if repair_peers.is_empty() {
             return None;
         }
@@ -1997,7 +1994,7 @@ impl ServeRepair {
                 header,
                 slot: *slot,
                 shred_index: *index,
-                block_id: block_id.to_hash(),
+                block_id: *block_id,
             },
         };
         Self::repair_proto_to_bytes(&request_proto, identity_keypair)
@@ -2053,7 +2050,6 @@ impl ServeRepair {
     fn repair_peers(
         &self,
         repair_validators: &Option<HashSet<Pubkey>>,
-        slot: Slot,
         my_pubkey: &Pubkey,
     ) -> Vec<ContactInfo> {
         if let Some(repair_validators) = repair_validators {
@@ -2068,7 +2064,7 @@ impl ServeRepair {
                 })
                 .collect()
         } else {
-            self.cluster_info.repair_peers(slot)
+            self.cluster_info.repair_peers()
         }
     }
 }
@@ -2231,7 +2227,7 @@ mod tests {
             REPAIR_PING_CACHE_CAPACITY,
         );
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let header = |nonce| {
             RepairRequestHeader::new(
                 remote_keypair.pubkey(),
@@ -3132,7 +3128,7 @@ mod tests {
                 &repair_info,
                 BlockIdRepairType::ParentAndFecSetCount {
                     slot,
-                    block_id: Hash::new_unique(),
+                    block_id: BlockId::new_unique(),
                 },
                 &mut peers_cache,
                 &mut outstanding_block_id_requests,
@@ -3177,7 +3173,7 @@ mod tests {
             repair_info.repair_validators = known_validators.clone();
             assert!(
                 serve_repair
-                    .repair_peers(&known_validators, 1, &identity_keypair.pubkey())
+                    .repair_peers(&known_validators, &identity_keypair.pubkey())
                     .is_empty()
             );
             assert_matches!(
@@ -3195,8 +3191,7 @@ mod tests {
         // If known validator exists in gossip, should return repair successfully
         let known_validators = Some(vec![*contact_info2.pubkey()].into_iter().collect());
         repair_info.repair_validators = known_validators.clone();
-        let repair_peers =
-            serve_repair.repair_peers(&known_validators, 1, &identity_keypair.pubkey());
+        let repair_peers = serve_repair.repair_peers(&known_validators, &identity_keypair.pubkey());
         assert_eq!(repair_peers.len(), 1);
         assert_eq!(repair_peers[0].pubkey(), contact_info2.pubkey());
         assert_matches!(
@@ -3214,7 +3209,7 @@ mod tests {
         // validator's available in gossip, excluding myself
         repair_info.repair_validators = None;
         let repair_peers: HashSet<Pubkey> = serve_repair
-            .repair_peers(&None, 1, &identity_keypair.pubkey())
+            .repair_peers(&None, &identity_keypair.pubkey())
             .into_iter()
             .map(|node| *node.pubkey())
             .collect();
@@ -3421,7 +3416,7 @@ mod tests {
         let tree =
             merkle_tree::MerkleTree::try_new_with_len(leaves.iter().copied().map(Ok), leaves.len())
                 .unwrap();
-        let block_id = *tree.root();
+        let block_id = BlockId::from(*tree.root());
         let real_parent_proof: Vec<u8> = tree
             .make_merkle_proof(fec_set_count as usize, leaves.len())
             .flat_map(|entry| entry.unwrap().iter().copied())
@@ -3455,7 +3450,7 @@ mod tests {
 
     #[test]
     fn test_verify_fec_set_root_rejects_empty_proof() {
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let request = BlockIdRepairType::FecSetRoot {
             slot: 100,
             block_id,
@@ -3463,7 +3458,7 @@ mod tests {
             fec_set_count: 1,
         };
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root: block_id.into(),
+            fec_set_root: FecSetRoot::from(block_id.to_hash()),
             fec_set_proof: vec![],
         };
 
@@ -3478,7 +3473,7 @@ mod tests {
         let tree =
             merkle_tree::MerkleTree::try_new_with_len(leaves.into_iter().map(Ok), leaves.len())
                 .unwrap();
-        let block_id = *tree.root();
+        let block_id = BlockId::from(*tree.root());
         let fec_set_proof: Vec<u8> = tree
             .make_merkle_proof(0, leaves.len())
             .flat_map(|entry| entry.unwrap().iter().copied())
@@ -3497,7 +3492,7 @@ mod tests {
                 hash_as_merkle_proof_entry(&internal_node),
                 0,
                 &shortened_proof,
-                block_id
+                block_id.to_hash()
             )
             .is_ok()
         );

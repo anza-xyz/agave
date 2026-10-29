@@ -56,7 +56,7 @@ fn maybe_convert_update_parent_to_block_header(
     // so UpdateParent becomes the effective header in Bigtable.
     VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: update_parent.new_parent_slot,
-        parent_block_id: update_parent.new_parent_block_id.to_hash(),
+        parent_block_id: update_parent.new_parent_block_id,
     })
 }
 
@@ -392,7 +392,7 @@ mod tests {
             vec![
                 VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                     parent_slot: new_parent_slot,
-                    parent_block_id: new_parent_block_id.to_hash(),
+                    parent_block_id: new_parent_block_id,
                 }),
                 footer,
             ]

@@ -49,8 +49,5 @@ pub fn vote_is_relevant_for_rewards(
     else {
         return false;
     };
-    if &leader.id != my_pubkey {
-        return false;
-    }
-    true
+    &leader.id == my_pubkey
 }

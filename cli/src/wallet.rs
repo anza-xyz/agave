@@ -2,7 +2,8 @@ use {
     crate::{
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error, request_and_confirm_airdrop,
+            log_instruction_custom_error, message_into_signed_transaction,
+            request_and_confirm_airdrop,
         },
         compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
         memo::WithMemo,
@@ -30,7 +31,7 @@ use {
         stdout::writeln_stdout,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_message::Message,
+    solana_message::{Message, VersionedMessage},
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -40,7 +41,7 @@ use {
     solana_sdk_ids::{stake, system_program},
     solana_signature::Signature,
     solana_system_interface::{error::SystemError, instruction as system_instruction},
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
         TransactionBinaryEncoding, UiTransactionEncoding,
@@ -1040,14 +1041,14 @@ pub async fn process_transfer(
         };
 
         if let Some(nonce_account) = &nonce_account {
-            Message::new_with_nonce(
+            VersionedMessage::Legacy(Message::new_with_nonce(
                 ixs,
                 Some(&fee_payer.pubkey()),
                 nonce_account,
                 &nonce_authority.pubkey(),
-            )
+            ))
         } else {
-            Message::new(&ixs, Some(&fee_payer.pubkey()))
+            VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
         }
     };
 
@@ -1063,10 +1064,21 @@ pub async fn process_transfer(
         config.commitment,
     )
     .await?;
-    let mut tx = Transaction::new_unsigned(message);
 
+    if !sign_only && let Some(nonce_account) = &nonce_account {
+        let nonce_account =
+            solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
+                rpc_client,
+                nonce_account,
+                config.commitment,
+            )
+            .await?;
+        check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
+    }
+
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1075,18 +1087,6 @@ pub async fn process_transfer(
             },
         )
     } else {
-        if let Some(nonce_account) = &nonce_account {
-            let nonce_account =
-                solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
-                    rpc_client,
-                    nonce_account,
-                    config.commitment,
-                )
-                .await?;
-            check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
-        }
-
-        tx.try_sign(&config.signers, recent_blockhash)?;
         let result = if no_wait {
             rpc_client
                 .send_transaction_with_config(&tx, config.send_transaction_config)
@@ -1152,7 +1152,7 @@ mod tests {
             expected("testnet")
         );
         assert_eq!(
-            web_faucet_url("https://api.mainnet-beta.solana.com", &pubkey),
+            web_faucet_url("https://api.mainnet.solana.com", &pubkey),
             None
         );
         assert_eq!(web_faucet_url("http://localhost:8899", &pubkey), None);

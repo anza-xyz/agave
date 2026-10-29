@@ -4,11 +4,11 @@
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
+        banking_channels::Channels,
         banking_stage::{
             BankingControlMsg, BankingStage, BankingStageHandle,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VoteTracker,
@@ -25,6 +25,7 @@ use {
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
     agave_bls_sigverify::pubkeys::VerifiedVotorSlotsMessage,
+    agave_jemalloc::group::ArenaGroup,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded},
@@ -109,7 +110,6 @@ pub struct Tpu {
     tpu_forwards_quic_t: thread::JoinHandle<()>,
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
-    tracer_thread_hdl: TracerThread,
     tpu_vote_quic_t: thread::JoinHandle<()>,
 }
 
@@ -146,8 +146,7 @@ impl Tpu {
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-        banking_tracer_channels: Channels,
-        tracer_thread_hdl: TracerThread,
+        banking_channels: Channels,
         tpu_quic_server_config: SwQosQuicStreamerConfig,
         tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
         vote_quic_server_config: SimpleQosQuicStreamerConfig,
@@ -156,6 +155,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         block_production_num_workers: NonZeroUsize,
         block_production_scheduler_config: SchedulerConfig,
+        worker_thread_arenas: Option<Arc<ArenaGroup>>,
         filter_keys: Arc<HashSet<Pubkey>>,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
@@ -175,7 +175,7 @@ impl Tpu {
         } = sockets;
 
         let (packet_sender, packet_receiver) = bounded(TPU_CHANNEL_SIZE);
-        let (vote_packet_sender, vote_packet_receiver) = bounded(TPU_VOTE_CHANNEL_SIZE);
+        let (vote_packet_sender, vote_packet_receiver) = bounded(0); // TPU votes are not ingested
         let evicting_vote_sender =
             EvictingSender::new(vote_packet_sender.clone(), vote_packet_receiver.clone());
         let (forwarded_packet_sender, forwarded_packet_receiver) =
@@ -200,11 +200,11 @@ impl Tpu {
         let Channels {
             non_vote_sender,
             non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
-        } = banking_tracer_channels;
+            tpu_vote_sender: _,
+            tpu_vote_receiver: _,
+            gossip_vote_sender: _,
+            gossip_vote_receiver: _,
+        } = banking_channels;
 
         // Streamer for Votes:
         let quic_vote_sockets: Vec<QuicSocket> =
@@ -280,11 +280,9 @@ impl Tpu {
         // below-floor packets ahead of signature verification.
         let scheduler_priority_floor = Arc::new(SchedulerPriorityFloor::new());
 
-        let (sigverify_stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let sigverify_stage = SigVerifyStage::new(
             packet_receiver,
-            vote_packet_receiver,
             non_vote_sender,
-            tpu_vote_sender,
             forward_stage_sender.clone(),
             tpu_sigverify_threads,
             enable_block_production_forwarding,
@@ -294,9 +292,6 @@ impl Tpu {
 
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
-            cluster_info.clone(),
-            gossip_sigverify_handle,
-            gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
             subscriptions,
@@ -313,11 +308,13 @@ impl Tpu {
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
+            // Votes are not ingested. A disconnected receiver would shut down banking stage.
+            crossbeam_channel::never(),
+            crossbeam_channel::never(),
             banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,
+            worker_thread_arenas,
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
@@ -394,7 +391,6 @@ impl Tpu {
             tpu_forwards_quic_t,
             tpu_entry_notifier,
             staked_nodes_updater_service,
-            tracer_thread_hdl,
             tpu_vote_quic_t,
         }
     }
@@ -419,14 +415,6 @@ impl Tpu {
             tpu_entry_notifier.join()?;
         }
         let _ = broadcast_result?;
-        if let Some(tracer_thread_hdl) = self.tracer_thread_hdl
-            && let Err(tracer_result) = tracer_thread_hdl.join()?
-        {
-            error!(
-                "banking tracer thread returned error after successful thread join: \
-                 {tracer_result:?}"
-            );
-        }
         Ok(())
     }
 }

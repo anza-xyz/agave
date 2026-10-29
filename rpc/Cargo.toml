@@ -73,7 +73,6 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
-solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -116,7 +115,7 @@ serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
-solana-client = { workspace = true }
+solana-client = { path = "../client" }
 solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }

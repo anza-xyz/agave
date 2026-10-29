@@ -152,7 +152,7 @@ impl ClientBuilder {
     ///
     /// This token is used to create child tokens for the scheduler and reporter tasks. It is useful
     /// if user wants to immediately cancel all internal tasks, otherwise calling `Client::shutdown`
-    /// is prefered way because it ensures orderly shutdown of internal tasks, see
+    /// is preferred way because it ensures orderly shutdown of internal tasks, see
     /// `Client::shutdown` for details.
     pub fn cancel_token(mut self, cancel: CancellationToken) -> Self {
         self.cancel_scheduler = cancel.child_token();

@@ -1,12 +1,13 @@
+use {
+    log::warn,
+    std::{ffi::CString, fmt, os::raw::c_uint, ptr, thread},
+    thiserror::Error,
+};
 #[cfg(feature = "metrics")]
 use {
-    log::{Level, log_enabled, warn},
+    log::{Level, log_enabled},
     solana_metrics::{datapoint_debug, datapoint_info},
     std::mem::{self, MaybeUninit},
-};
-use {
-    std::{ffi::CString, fmt, os::raw::c_uint, ptr},
-    thiserror::Error,
 };
 
 #[derive(Debug, Error)]
@@ -258,6 +259,33 @@ impl Arena {
             Ok(())
         } else {
             Err(Error::MallctlCommand { name, code })
+        }
+    }
+}
+
+/// Drop this before jemalloc's thread-local destructor runs. This flushes and disables the
+/// thread's tcache while it is still assigned to its arena, avoiding jemalloc's
+/// no-background-thread forced purge path when the last thread exits.
+#[derive(Debug)]
+pub struct DisableThreadTcacheOnDrop {
+    arena: Arena,
+}
+
+impl DisableThreadTcacheOnDrop {
+    pub fn new(arena: Arena) -> Self {
+        Self { arena }
+    }
+}
+
+impl Drop for DisableThreadTcacheOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = Jemalloc::disable_current_thread_tcache() {
+            warn!(
+                "failed to disable thread jemalloc tcache before thread exit; thread_name: {:?}; \
+                 arena_id: {}; error: {error}",
+                thread::current().name(),
+                self.arena.id()
+            );
         }
     }
 }

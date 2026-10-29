@@ -31,6 +31,7 @@ lru = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
+scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-cost-model = { workspace = true }
@@ -61,7 +62,7 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "../votor-messages", features = ["dev-context-only-utils"] }
 assert_matches = { workspace = true }
 bencher = { workspace = true }

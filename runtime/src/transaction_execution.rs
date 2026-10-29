@@ -75,6 +75,7 @@ pub enum TransactionHistoryPurgeSource {
     LeaderWindow,
     SoftDeadSlot,
     UpdateParentSignal,
+    ReplayStart,
     AbandonedBank,
     SwitchBank,
     StartupReplay,
@@ -86,6 +87,7 @@ impl TransactionHistoryPurgeSource {
             Self::LeaderWindow => "leader_window",
             Self::SoftDeadSlot => "soft_dead_slot",
             Self::UpdateParentSignal => "update_parent_signal",
+            Self::ReplayStart => "replay_start",
             Self::AbandonedBank => "abandoned_bank",
             Self::SwitchBank => "switch_bank",
             Self::StartupReplay => "startup_replay",
@@ -600,7 +602,10 @@ mod tests {
         );
 
         let committed = commit_results[0].as_ref().unwrap();
-        assert_eq!(committed.status, Err(TransactionError::AccountNotFound));
+        assert_eq!(
+            committed.status,
+            Err(TransactionError::InvalidAccountForFee)
+        );
         assert_eq!(committed.executed_units, compute);
 
         let tx_costs =

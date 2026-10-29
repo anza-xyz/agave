@@ -70,6 +70,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(commands::plugin::command())
         .subcommand(commands::set_identity::command())
+        .subcommand(commands::set_event_filter::command())
         .subcommand(commands::set_log_filter::command())
         .subcommand(commands::staked_nodes_overrides::command())
         .subcommand(commands::wait_for_restart_window::command())
@@ -172,6 +173,16 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .help("No-op; AccountsDb no longer uses a foreground thread pool"),
     );
     add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("banking_trace_dir_byte_limit")
+            .long("enable-banking-trace")
+            .value_name("BYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help("No-op; banking trace has been removed"),
+        usage_warning: "Banking trace has been removed.",
+    );
+    add_arg!(
         // deprecated in v4.3.0
         Arg::with_name("disable_banking_trace")
             .long("disable-banking-trace")
@@ -217,6 +228,29 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .long("no-skip-initial-accounts-db-clean")
             .help("No-op; initial accounts cleaning is no longer performed"),
         usage_warning: "Initial accounts cleaning is no longer performed.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("require_tower")
+            .long("require-tower")
+            .takes_value(false)
+            .help("Refuse to start if saved tower state is not found"),
+        usage_warning: "The --require-tower flag has been deprecated and will be removed in the \
+            future. The flag is only relevant to TowerBFT and setting it is now a no-op.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("tpu_max_connections_per_peer")
+            .long("tpu-max-connections-per-peer")
+            .takes_value(true)
+            .validator(is_parsable::<u32>)
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity. Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+        usage_warning: "It still overrides --tpu-max-connections-per-unstaked-peer and \
+                        --tpu-max-connections-per-staked-peer, but will be removed in a future \
+                        release. Set both of those instead.",
     );
     add_arg!(
         // deprecated in v4.5.0
@@ -305,7 +339,6 @@ pub struct DefaultArgs {
     pub num_quic_endpoints: String,
     pub num_votor_endpoints: String,
 
-    pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
 
     pub thread_args: DefaultThreadArgs,
@@ -357,7 +390,6 @@ impl DefaultArgs {
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             num_votor_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS.to_string(),
-            banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
             thread_args: DefaultThreadArgs::default(),
@@ -426,7 +458,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]",
                 ),
         )

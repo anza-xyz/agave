@@ -367,6 +367,7 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
             migration::MigrationStatus,
+            stake::NonZeroStake,
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -398,7 +399,6 @@ mod tests {
         std::{
             collections::HashMap,
             net::SocketAddr,
-            num::NonZero,
             sync::{Arc, RwLock},
         },
         test_case::test_case,
@@ -428,7 +428,7 @@ mod tests {
             vote,
             signature,
             rank,
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         }
     }
 
