@@ -395,6 +395,11 @@ fn get_singleton_agent() -> &'static MetricsAgent {
     &AGENT
 }
 
+/// Starts the metrics reporting thread and reads its configuration from the environment.
+pub fn initialize() {
+    get_singleton_agent();
+}
+
 static HOST_ID: std::sync::LazyLock<RwLock<String>> = std::sync::LazyLock::new(|| {
     RwLock::new({
         let hostname: String = gethostname()

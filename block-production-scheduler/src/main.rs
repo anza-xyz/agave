@@ -77,6 +77,7 @@ fn main() {
         config_path.display()
     );
     debug!("Scheduler configuration: {config:?}");
+    solana_metrics::initialize();
     if let Err(err) = flag::register(SIGINT, Arc::clone(&exit)) {
         error!("Failed to register SIGINT handler: {err}");
         process::exit(1);
