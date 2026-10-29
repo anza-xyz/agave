@@ -414,7 +414,7 @@ impl Tpu {
         if let Some(tpu_entry_notifier) = self.tpu_entry_notifier {
             tpu_entry_notifier.join()?;
         }
-        let _ = broadcast_result?;
+        broadcast_result?;
         Ok(())
     }
 }
