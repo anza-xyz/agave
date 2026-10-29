@@ -16,6 +16,6 @@ check_worker_to_pack_capacity = 8192
 [scheduler]
 transaction_state_capacity = 100000
 execution_margin_ms = 10
-max_cost_units_per_worker = 15000000
+max_cost_units_per_worker = 3750000
 max_cost_units_per_batch = 1000000
 target_entry_bytes_per_batch = 4622
