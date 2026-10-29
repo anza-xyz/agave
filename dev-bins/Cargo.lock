@@ -7230,7 +7230,6 @@ dependencies = [
  "log",
  "lru 0.18.5",
  "mockall",
- "num_cpus",
  "num_enum",
  "parking_lot 0.12.5",
  "prost",
