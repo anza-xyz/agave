@@ -2,7 +2,6 @@
 members = [
     "account-decoder",
     "account-decoder-client-types",
-    "accounts-cluster-bench",
     "accounts-db",
     "accounts-db/store-histogram",
     "banking-stage-ingress-types",
@@ -182,7 +181,6 @@ dcou-tainted-packages = [
     "agave-ledger-tool",
     "agave-store-histogram",
     "agave-store-tool",
-    "solana-accounts-cluster-bench",
     "solana-banking-bench",
     "solana-local-cluster",
     "solana-svm-conformance",

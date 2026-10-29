@@ -7075,51 +7075,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-accounts-cluster-bench"
-version = "4.5.0-alpha.4"
-dependencies = [
- "agave-logger",
- "clap 2.33.3",
- "log",
- "rand 0.9.4",
- "rayon",
- "serial_test",
- "solana-accounts-db",
- "solana-clap-utils",
- "solana-cli-config",
- "solana-client",
- "solana-clock",
- "solana-commitment-config",
- "solana-core",
- "solana-faucet",
- "solana-gossip",
- "solana-hash",
- "solana-instruction 4.0.0",
- "solana-keypair",
- "solana-local-cluster",
- "solana-measure",
- "solana-message",
- "solana-native-token",
- "solana-net-utils",
- "solana-poh-config",
- "solana-program-pack",
- "solana-pubkey 4.4.0",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-runtime",
- "solana-signature",
- "solana-signer",
- "solana-system-interface",
- "solana-test-validator",
- "solana-transaction",
- "solana-transaction-status",
- "solana-version",
- "spl-generic-token",
- "spl-token-interface",
- "tikv-jemallocator",
-]
-
-[[package]]
 name = "solana-accounts-db"
 version = "4.5.0-alpha.4"
 dependencies = [
