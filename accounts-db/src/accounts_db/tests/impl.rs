@@ -837,6 +837,39 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
     assert_eq!(visited, expected_visits);
 }
 
+/// A scan whose bank is removed while walking the index must not go on to emit the cache-only
+/// accounts of the next step.
+#[test]
+fn test_scan_accounts_stays_aborted_across_steps() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let rooted: Vec<_> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let rooted: Vec<_> = rooted.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((1, rooted.as_slice()));
+    db.add_root_and_flush_write_cache(1);
+    let cached: Vec<_> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let cached: Vec<_> = cached.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((2, cached.as_slice()));
+
+    let bank_id = BankId::new(2);
+    let mut visited = 0;
+    let result = db.scan_accounts(
+        &Ancestors::from(vec![2, 1]),
+        bank_id,
+        |scan_result| {
+            if scan_result.is_some() {
+                visited += 1;
+                if visited == 1 {
+                    db.scan_tracker.mark_banks_removed([bank_id]);
+                }
+            }
+        },
+        &ScanConfig::default(),
+    );
+    assert_eq!(result, Err(ScanError::SlotRemoved { slot: 2, bank_id }));
+    assert_eq!(visited, 1);
+}
+
 /// An index scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
 /// instead of scanning to completion.
 #[test]

@@ -110,6 +110,7 @@ pub(crate) struct ScanGuard<'a> {
     max_root: Slot,
     scan_bank_id: BankId,
     bank_removals_at_last_check: u64,
+    bank_removed: bool,
 }
 
 impl<'a> ScanGuard<'a> {
@@ -167,11 +168,16 @@ impl<'a> ScanGuard<'a> {
             max_root: max_root_inclusive,
             scan_bank_id,
             bank_removals_at_last_check,
+            bank_removed: false,
         })
     }
 
     /// Checks if the bank being scanned is removed
     pub(crate) fn is_bank_removed(&mut self) -> bool {
+        if self.bank_removed {
+            return true;
+        }
+
         // Fast path: No banks have been removed since the last check.
         let bank_removals = self.scan_tracker.bank_removals.load(Ordering::Relaxed);
         if bank_removals == self.bank_removals_at_last_check {
@@ -180,11 +186,13 @@ impl<'a> ScanGuard<'a> {
 
         // If any bank has been removed, check to see if the bank being scanned has been removed
         self.bank_removals_at_last_check = bank_removals;
-        self.scan_tracker
+        self.bank_removed = self
+            .scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
-            .contains(&self.scan_bank_id)
+            .contains(&self.scan_bank_id);
+        self.bank_removed
     }
 
     /// The inclusive max root pinned by this scan guard.
@@ -414,6 +422,18 @@ mod tests {
 
         assert!(guard_on_removed_bank.is_bank_removed());
         assert!(!guard_on_other_bank.is_bank_removed());
+    }
+
+    #[test]
+    fn test_is_bank_removed_stays_true() {
+        let tracker = ScanTracker::default();
+        let mut guard = ScanGuard::try_new(&tracker, BankId::new(1), || 10).unwrap();
+        assert!(!guard.is_bank_removed());
+
+        tracker.mark_banks_removed([BankId::new(1)]);
+
+        assert!(guard.is_bank_removed());
+        assert!(guard.is_bank_removed());
     }
 
     #[test]
