@@ -1,9 +1,5 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
-#[cfg(feature = "stable-abi")]
-use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
-#[cfg(feature = "stable-abi")]
-use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     crate::{
         alpenglow_epoch_type::RewardEpochDelegatedStakes, bank::rewards_calculation_thread_pool,
@@ -28,7 +24,6 @@ use {
         collections::HashMap,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
-    wincode::{SchemaWrite, containers::FromIntoIterator, len::BincodeLen},
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
@@ -37,7 +32,6 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::DeserializableDelegationStakes;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 #[derive(Debug, Clone, PartialEq, Eq, ToPrimitive)]
 pub enum InvalidCacheEntryReason {
@@ -188,14 +182,12 @@ impl StakesCache {
     }
 }
 
-/// The generic type T is either Delegation or StakeAccount.
-/// [`Stakes<Delegation>`] is the snapshot layout. Only tests build it.
-/// But banks cache [`Stakes<StakeAccount>`] which includes the entire stake
+/// The generic type T is either Stake or StakeAccount.
+/// Banks cache [`Stakes<StakeAccount>`] which includes the entire stake
 /// account and StakeStateV2 deserialized from the account. Doing so, will remove
 /// the need to load the stake account from accounts-db when working with
 /// stake-delegations.
-#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Default, Clone, PartialEq, Debug, SchemaWrite)]
+#[derive(Default, Clone, PartialEq, Debug)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(
@@ -212,16 +204,9 @@ pub struct Stakes<T: Clone> {
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
-    #[cfg_attr(
-        feature = "stable-abi",
-        stable_abi_sample(with = "sample_collection_sized(rng, SequenceLenMax(1))")
-    )]
-    #[wincode(with = "FromIntoIterator<ImblHashMap<Pubkey, T>, BincodeLen>")]
     stake_delegations: ImblHashMap<Pubkey, T>,
 
     /// current effective stake delegated to each vote account pubkey
-    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
-    #[wincode(skip)]
     delegated_stakes: DelegatedStakes,
 
     /// unused
