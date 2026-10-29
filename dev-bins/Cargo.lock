@@ -5812,9 +5812,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account"
-version = "5.1.1"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ee649074c8eaec79930b9aad6a6adcf87b2c77a4078bee1bf9a4442166a8da"
+checksum = "a19a89e4abe5053773609fb3653139dd485da0424016365206ea92e549580bbf"
 dependencies = [
  "serde",
  "serde_bytes",
@@ -6861,9 +6861,9 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-config"
-version = "5.0.1"
+version = "5.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "243dbdddc74d260db0b3bdbb1aedb1037dfe0feaffafd10eff581b46dac58005"
+checksum = "91cfd92357dd107a9f1efcd559e2436b64b0e0a8730eb0454904dd39c4a5bac0"
 dependencies = [
  "chrono",
  "memmap2 0.5.10",
