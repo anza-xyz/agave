@@ -4136,6 +4136,45 @@ fn test_assign_from_nonce_account_fail() {
     assert_eq!(bank.process_transaction(&tx), expect);
 }
 
+fn new_sanitized_message_view(message: VersionedMessage) -> SanitizedMessageView<Vec<u8>> {
+    SanitizedMessageView::try_new_sanitized(wincode::serialize(&message).unwrap()).unwrap()
+}
+
+#[test]
+fn test_get_fee_for_message_view() {
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let payer = mint_keypair.pubkey();
+    let transfer = system_instruction::transfer(&payer, &Pubkey::new_unique(), 1);
+
+    let message = Message::new(
+        &[
+            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+            transfer.clone(),
+        ],
+        Some(&payer),
+    );
+    let view = new_sanitized_message_view(VersionedMessage::Legacy(message.clone()));
+    let fee = bank.get_fee_for_message_view(&view);
+    assert!(fee.is_some());
+    assert_eq!(
+        fee,
+        bank.get_fee_for_message(&new_sanitized_message(message))
+    );
+
+    // invalid compute budget configuration
+    let message = Message::new(
+        &[
+            ComputeBudgetInstruction::set_compute_unit_price(1),
+            ComputeBudgetInstruction::set_compute_unit_price(2),
+            transfer,
+        ],
+        Some(&payer),
+    );
+    let view = new_sanitized_message_view(VersionedMessage::Legacy(message));
+    assert_eq!(bank.get_fee_for_message_view(&view), None);
+}
+
 #[test]
 fn test_nonce_must_be_advanceable() {
     let mut bank = create_simple_test_bank(100_000_000);

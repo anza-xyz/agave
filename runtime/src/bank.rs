@@ -87,6 +87,7 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_transaction_view::{
+        message_view::SanitizedMessageView,
         resolved_transaction_view::ResolvedTransactionView,
         transaction_version::TransactionVersion,
         transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
@@ -190,7 +191,7 @@ use {
         AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_syscalls::create_program_runtime_environment,
     solana_system_transaction as system_transaction,
     solana_sysvar::{self as sysvar, last_restart_slot::LastRestartSlot},
@@ -3469,12 +3470,29 @@ impl Bank {
         let transaction_configuration =
             TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)
                 .ok()?;
-        Some(solana_fee::calculate_fee(
+        Some(self.get_fee_for_message_with_configuration(message, &transaction_configuration))
+    }
+
+    pub fn get_fee_for_message_view<D: AsRef<[u8]>>(
+        &self,
+        message: &SanitizedMessageView<D>,
+    ) -> Option<u64> {
+        let transaction_configuration =
+            TransactionConfiguration::try_from_message_view(message, &self.feature_set).ok()?;
+        Some(self.get_fee_for_message_with_configuration(message, &transaction_configuration))
+    }
+
+    fn get_fee_for_message_with_configuration(
+        &self,
+        message: &impl SVMStaticMessage,
+        transaction_configuration: &TransactionConfiguration,
+    ) -> u64 {
+        solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
             self.fee_features(),
-        ))
+        )
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
