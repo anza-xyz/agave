@@ -1959,6 +1959,9 @@ impl ClusterInfo {
             self.gossip
                 .prune_received_cache(&self_pubkey, origins, stakes)
         };
+        if prunes.is_empty() {
+            return vec![];
+        }
         // Look up gossip addresses of destination nodes.
         let prunes: Vec<(
             Pubkey,      // gossip peer to be pruned
