@@ -337,7 +337,7 @@ num-traits = "0.2.19"
 num_cpus = "1.17.0"
 num_enum = "0.7.6"
 openssl = "0.10.81"
-parking_lot = "0.12"
+parking_lot = "0.13"
 pem = "1.1.1"
 pickledb = { version = "0.5.1", default-features = false }
 predicates = "3.1"
