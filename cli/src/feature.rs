@@ -5,6 +5,7 @@ use {
             log_instruction_custom_error, log_instruction_custom_error_to_str,
             message_into_signed_transaction,
         },
+        compute_budget::ComputeUnitConfig,
         message_builder::MessageBuilder,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
@@ -1031,8 +1032,10 @@ async fn process_activate(
         SpendAmount::Some(rent),
         &blockhash,
         &fee_payer.pubkey(),
-        ComputeUnitLimit::Default,
-        None,
+        &ComputeUnitConfig {
+            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_price: None,
+        },
         |lamports| {
             MessageBuilder::new(activate_with_lamports(
                 &feature_id,
@@ -1090,8 +1093,10 @@ async fn process_revoke(
         SpendAmount::Some(0),
         &blockhash,
         &fee_payer.pubkey(),
-        ComputeUnitLimit::Default,
-        None,
+        &ComputeUnitConfig {
+            compute_unit_limit: ComputeUnitLimit::Default,
+            compute_unit_price: None,
+        },
         |_lamports| {
             MessageBuilder::new(vec![revoke_pending_activation(&feature_id)])
                 .build(Some(&fee_payer.pubkey()))

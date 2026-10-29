@@ -424,8 +424,10 @@ pub async fn process_publish_validator_info(
         SpendAmount::Some(lamports),
         &latest_blockhash,
         &config.signers[0].pubkey(),
-        compute_unit_limit,
-        compute_unit_price,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )

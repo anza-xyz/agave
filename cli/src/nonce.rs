@@ -522,8 +522,10 @@ pub async fn process_create_nonce_account(
         amount,
         &latest_blockhash,
         &config.signers[0].pubkey(),
-        compute_unit_limit,
-        compute_unit_price,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )

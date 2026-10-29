@@ -1058,8 +1058,10 @@ pub async fn process_transfer(
         &recent_blockhash,
         &from_pubkey,
         &fee_payer.pubkey(),
-        compute_unit_limit,
-        compute_unit_price,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )

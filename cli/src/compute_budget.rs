@@ -127,9 +127,9 @@ pub(crate) fn set_compute_unit_limit(
     instructions[index].data = ComputeBudgetInstruction::set_compute_unit_limit(limit).data;
 }
 
-pub(crate) struct ComputeUnitConfig {
-    pub(crate) compute_unit_price: Option<u64>,
-    pub(crate) compute_unit_limit: ComputeUnitLimit,
+pub struct ComputeUnitConfig {
+    pub compute_unit_price: Option<u64>,
+    pub compute_unit_limit: ComputeUnitLimit,
 }
 
 #[cfg(test)]
