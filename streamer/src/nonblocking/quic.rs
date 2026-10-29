@@ -1646,6 +1646,10 @@ pub mod test {
         const NUM_ATTEMPTS: usize = 8;
         for _ in 0..NUM_ATTEMPTS {
             connections.push(make_client_endpoint(&server_address, attacker).await);
+            // An attempt holds an open-connection slot until the server rejects it, and the
+            // occupants can nearly fill `max_concurrent_connections()`. Wait for the slot to
+            // be released, or the next attempt may be refused before it reaches QoS.
+            wait_until(|| stats.open_connections.load(Ordering::Relaxed) <= occupants.len()).await;
         }
         wait_until(|| stats.connection_add_failed.load(Ordering::Relaxed) == NUM_ATTEMPTS).await;
         assert_eq!(stats.num_evictions_staked.load(Ordering::Relaxed), 0);
