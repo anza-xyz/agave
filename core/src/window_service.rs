@@ -29,7 +29,6 @@ use {
     solana_runtime::bank_forks::{BankForks, SharableBanks},
     solana_streamer::evicting_sender::EvictingSender,
     std::{
-        borrow::Cow,
         net::UdpSocket,
         sync::{
             Arc, RwLock,
@@ -175,7 +174,7 @@ where
             ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
         }
         let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        Some((Cow::Owned(shred), repair, block_location))
+        Some((shred, repair, block_location))
     };
     let now = Instant::now();
     let shreds: Vec<_> = thread_pool.install(|| {
@@ -584,7 +583,7 @@ mod test {
         let is_trusted = false;
         blockstore
             .insert_shreds_handle_duplicate(
-                [(Cow::Borrowed(&duplicate_shred), /*is_repaired:*/ false)],
+                [(duplicate_shred, /*is_repaired:*/ false)],
                 is_trusted,
                 &mut ShredRecoveryContext::new(
                     dummy_retransmit_sender,
@@ -667,7 +666,7 @@ mod test {
             // Simulate storing both duplicate shreds in the same batch
             let shreds = [&original_shred, &duplicate_shred]
                 .into_iter()
-                .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+                .map(|shred| (shred.clone(), /*is_repaired:*/ false));
             let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
             blockstore
                 .insert_shreds_handle_duplicate(

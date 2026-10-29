@@ -41,7 +41,6 @@ use {
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
     solana_transaction::sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash},
     std::{
-        borrow::Cow,
         cell::{Cell, RefCell},
         collections::{BTreeMap, HashMap},
         ffi::c_int,
@@ -168,9 +167,14 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     let mut metrics = BlockstoreInsertionMetrics::default();
     // Blockstore stores duplicate proofs at insert time.
     let handle_duplicate = |_| {};
+
+    let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
+    slots.sort_unstable();
+    slots.dedup();
+
     let shreds_iter = parsed
-        .iter()
-        .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+        .into_iter()
+        .map(|shred| (shred, /*is_repaired:*/ false));
     let _ = blockstore.insert_shreds_handle_duplicate(
         shreds_iter,
         false, // is_trusted: keep dedup + integrity checks
@@ -178,10 +182,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         &handle_duplicate,
         &mut metrics,
     );
-
-    let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
-    slots.sort_unstable();
-    slots.dedup();
 
     // Replay only reaches a slot whose parent chain is connected to the root
     // through full slots; the other slots are held unverified.  FEC sets are

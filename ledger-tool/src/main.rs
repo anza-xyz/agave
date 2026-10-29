@@ -91,7 +91,6 @@ use {
         vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     },
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         ffi::OsStr,
         fs::File,
@@ -1231,12 +1230,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
             let mut write_batch = backup_blockstore.get_write_batch();
             let _ = backup_blockstore
-                .insert_cow_shreds(
-                    shreds.into_iter().map(Cow::Owned),
-                    true,
-                    &mut pinnable_slice,
-                    &mut write_batch,
-                )
+                .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                 .expect("Blockstore operation must succeed");
 
             // Purge modifies state so use rw_blockstore
@@ -1274,7 +1268,6 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
             )
             .into_iter()
             .filter(Shred::is_data)
-            .map(Cow::Owned)
             .collect();
         let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
         let mut write_batch = rw_blockstore.get_write_batch();

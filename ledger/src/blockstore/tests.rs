@@ -33,7 +33,7 @@ use {
     solana_transaction_context::transaction::TransactionReturnData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{InnerInstruction, InnerInstructions},
-    std::{borrow::Cow, cmp::Ordering, time::Duration},
+    std::{cmp::Ordering, time::Duration},
     test_case::{test_case, test_matrix},
 };
 
@@ -1952,7 +1952,7 @@ fn test_merkle_root_metas_coding() {
         ShredInsertionTracker::new(coding_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&coding_shred),
+            coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2010,7 +2010,7 @@ fn test_merkle_root_metas_coding() {
 
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Owned(new_coding_shred),
+            new_coding_shred,
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2076,7 +2076,7 @@ fn test_merkle_root_metas_coding() {
 
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&new_coding_shred),
+            new_coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2144,7 +2144,7 @@ fn test_merkle_root_metas_data() {
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_data_shred(
-            Cow::Borrowed(&data_shred),
+            data_shred.clone(),
             BlockLocation::Original,
             &mut shred_insertion_tracker,
             false,
@@ -2201,7 +2201,7 @@ fn test_merkle_root_metas_data() {
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
 
     let insert_result = blockstore.check_insert_data_shred(
-        Cow::Owned(new_data_shred),
+        new_data_shred,
         BlockLocation::Original,
         &mut shred_insertion_tracker,
         false,
@@ -2296,7 +2296,7 @@ fn test_merkle_root_metas_data() {
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_data_shred(
-            Cow::Borrowed(&new_data_shred),
+            new_data_shred.clone(),
             BlockLocation::Original,
             &mut shred_insertion_tracker,
             false,
@@ -2371,7 +2371,7 @@ fn test_check_insert_coding_shred() {
     let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&coding_shred),
+            coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2382,7 +2382,7 @@ fn test_check_insert_coding_shred() {
     // insert again fails on dupe
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Borrowed(&coding_shred),
+            coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2429,7 +2429,7 @@ fn test_existing_shred_index_with_different_signature() {
     let is_trusted = false;
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&original_shred),
+            original_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -2438,7 +2438,7 @@ fn test_existing_shred_index_with_different_signature() {
         .unwrap();
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Borrowed(&conflicting_shred),
+            conflicting_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -2526,7 +2526,7 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
     let is_trusted = false;
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&original_shred),
+            original_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -2535,7 +2535,7 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
         .unwrap();
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Borrowed(&conflicting_shred),
+            conflicting_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -4914,11 +4914,7 @@ fn test_recovery() {
 
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
-        (
-            Cow::Owned(shred),
-            /*is_repaired:*/ false,
-            BlockLocation::Original,
-        )
+        (shred, /*is_repaired:*/ false, BlockLocation::Original)
     });
     blockstore
         .do_insert_shreds(
@@ -4969,7 +4965,7 @@ fn test_skip_alt_recovery() {
     blockstore
         .do_insert_shreds(
             std::iter::once((
-                Cow::Owned(coding_shreds[0].clone()),
+                coding_shreds[0].clone(),
                 /*is_repaired:*/ false,
                 BlockLocation::Original,
             )),
@@ -4991,11 +4987,7 @@ fn test_skip_alt_recovery() {
 
     blockstore
         .do_insert_shreds(
-            std::iter::once((
-                Cow::Owned(data_shred),
-                /*is_repaired:*/ true,
-                alternate_location,
-            )),
+            std::iter::once((data_shred, /*is_repaired:*/ true, alternate_location)),
             false, // is_trusted
             Some(&mut ShredRecoveryContext::new(
                 dummy_retransmit_sender,
@@ -5077,11 +5069,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
                 .take(DATA_SHREDS_PER_FEC_BLOCK - 1),
         )
         .map(|shred| {
-            (
-                Cow::Owned(shred),
-                /*is_repaired:*/ false,
-                BlockLocation::Original,
-            )
+            (shred, /*is_repaired:*/ false, BlockLocation::Original)
         })
         .collect();
     let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
@@ -6265,8 +6253,8 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
 
     // Insert shreds into blockstore at the specified location
     let shreds = data_shreds
-        .iter()
-        .map(|shred| (Cow::Borrowed(shred), use_alternate_location, block_location));
+        .into_iter()
+        .map(|shred| (shred, use_alternate_location, block_location));
     let insert_results = blockstore
         .do_insert_shreds(
             shreds,
@@ -6362,9 +6350,9 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     );
 
     let shreds = partial_shreds
-        .iter()
+        .into_iter()
         .take(3)
-        .map(|shred| (Cow::Borrowed(shred), use_alternate_location, block_location));
+        .map(|shred| (shred, use_alternate_location, block_location));
     let insert_results = blockstore
         .do_insert_shreds(
             shreds,
@@ -6397,7 +6385,7 @@ fn insert_test_block_at_location(
     let is_repaired = location != BlockLocation::Original;
     let shreds = data_shreds
         .iter()
-        .map(|shred| (Cow::Borrowed(shred), is_repaired, location));
+        .map(|shred| (shred.clone(), is_repaired, location));
     let insert_results = blockstore
         .do_insert_shreds(
             shreds,
@@ -6548,7 +6536,7 @@ fn test_get_data_shreds_for_slot() {
         let is_repaired = location != BlockLocation::Original;
         let shreds = data_shreds
             .iter()
-            .map(|shred| (Cow::Borrowed(shred), is_repaired, location));
+            .map(|shred| (shred.clone(), is_repaired, location));
         let insert_results = blockstore
             .do_insert_shreds(
                 shreds,

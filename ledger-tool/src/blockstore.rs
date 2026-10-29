@@ -29,7 +29,6 @@ use {
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::{
-        borrow::Cow,
         collections::{BTreeMap, BTreeSet},
         fs::File,
         io::{BufRead, BufReader},
@@ -652,7 +651,6 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     break;
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
-                let shreds = shreds.into_iter().map(Cow::Owned);
                 if target
                     .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                     .is_err()
