@@ -338,6 +338,16 @@ impl ShredFilterContext {
                     self.stats.misaligned_erasure_config += 1;
                     return true;
                 }
+
+                // SIMD-0504 requires coding shred indices to start at fec_set_index.
+                // TODO: add enforcement here in a followup PR
+                let Ok(position) = layout::get_position(shred) else {
+                    self.stats.erasure_config_bad_deserialize += 1;
+                    return true;
+                };
+                if index.checked_sub(fec_set_index) != Some(u32::from(position)) {
+                    self.stats.misaligned_coding_position += 1;
+                }
             }
             ShredType::Data => {
                 if !shred_limits.is_data_index_in_bounds(index) {
@@ -637,8 +647,8 @@ mod tests {
     use {
         super::{
             super::{
-                PROOF_ENTRIES_FOR_32_32_BATCH, Shred, make_merkle_shreds_for_tests,
-                override_proof_size,
+                CODING_SHREDS_PER_FEC_BLOCK, PROOF_ENTRIES_FOR_32_32_BATCH, Shred,
+                make_merkle_shreds_for_tests, override_proof_size,
             },
             *,
         },
@@ -1157,6 +1167,44 @@ mod tests {
         shred_slot: Slot,
     ) -> bool {
         check_feature_activation(feature_slot, shred_slot, &epoch_schedule)
+    }
+
+    /// SIMD-0504 requires `position == index - fec_set_index` for coding shreds.
+    /// A shred violating it is counted but not discarded before feature activation.
+    #[test]
+    fn test_should_discard_shred_misaligned_coding_position() {
+        agave_logger::setup();
+        let mut rng = rand::rng();
+        let root_bank = root_bank_for_tests([], []);
+        let slot = root_bank.slot() + 1;
+        let data_size = 1200 * 5;
+        let is_last_in_slot = false;
+        let shreds =
+            make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
+        let shred_version = shreds[0].common_header().version;
+        let mut shred_filter_context = ShredFilterContext::new(root_bank, shred_version);
+        for shred in &shreds {
+            assert!(!shred_filter_context.should_discard_packet(&to_packet(shred.payload())));
+        }
+        assert_eq!(
+            shred_filter_context.stats.misaligned_coding_position, 0,
+            "shredder output should have aligned coding positions"
+        );
+        let shred = shreds
+            .iter()
+            .find(|shred| shred.shred_type() == ShredType::Code)
+            .expect("shredder should produce coding shreds");
+        let mut payload = shred.payload().to_vec();
+        let position = layout::get_position(&payload).expect("coding shred should have a position");
+        let bad_position = (position + 1) % CODING_SHREDS_PER_FEC_BLOCK as u16;
+        payload[87..87 + 2].copy_from_slice(&bad_position.to_le_bytes());
+        assert_eq!(layout::get_position(&payload).unwrap(), bad_position);
+
+        assert!(
+            !shred_filter_context.should_discard_packet(&to_packet(&payload)),
+            "misaligned coding position should only be counted until SIMD-0504 is active"
+        );
+        assert_eq!(shred_filter_context.stats.misaligned_coding_position, 1);
     }
 
     // Shreds produced by the shredder must pass the new checks, otherwise
