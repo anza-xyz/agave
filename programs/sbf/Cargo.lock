@@ -9646,9 +9646,9 @@ dependencies = [
 
 [[package]]
 name = "solana-system-transaction"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6dc332e991863432f49af4f4ebe2ff3a3fab38cdb8631148c49fd864c4de48e"
+checksum = "0f77240a7badc8bc72d0a4b272b9b45251aa828ee23feed3ac4f61bd206cea42"
 dependencies = [
  "solana-hash",
  "solana-keypair",
