@@ -158,7 +158,7 @@ impl ProcessActiveBanksContext {
         let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
         let (votor_event_sender, _) = bounded(1024);
         let migration_status = Arc::new(MigrationStatus::default());
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
         Self {
             bank_forks,
             blockstore,
@@ -6894,7 +6894,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
     let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
     let shred_version = compute_shred_version(&genesis_config.hash(), None);
-    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
 
     process_bank_0(
         &bank0,

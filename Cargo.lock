@@ -9032,7 +9032,7 @@ dependencies = [
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
- "agave-wake-channel",
+ "agave-worker-pool",
  "anyhow",
  "assert_matches",
  "bitflags 2.13.2",

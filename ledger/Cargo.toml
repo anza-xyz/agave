@@ -35,7 +35,7 @@ agave-shred-wire-format = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
-agave-wake-channel = { workspace = true }
+agave-worker-pool = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bitflags = { workspace = true }
