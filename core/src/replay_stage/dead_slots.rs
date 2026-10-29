@@ -24,6 +24,7 @@ use {
     solana_runtime::{
         bank::Bank,
         block_component_processor::BlockComponentProcessorError,
+        leader_schedule_utils::leader_slot_index,
         vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_time_utils::timestamp,
@@ -157,6 +158,7 @@ fn soft_dead_reason(
 ) -> Option<DeadSlotReason> {
     let slot = bank.slot();
     if !bank.feature_set.snapshot().alpenglow_fast_leader_handover
+        || leader_slot_index(slot) != 0
         || !migration_status.should_allow_block_markers(slot)
         || blockstore.is_dead(slot)
         || !is_update_parent_recoverable_replay_error(err)
