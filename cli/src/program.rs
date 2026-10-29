@@ -1631,7 +1631,7 @@ async fn process_program_upgrade(
         &fee_payer_signer.pubkey(),
     )])
     .with_blockhash(blockhash)
-    .build(Some(&fee_payer_signer.pubkey()));
+    .build(&fee_payer_signer.pubkey());
 
     let signers = &[fee_payer_signer, upgrade_authority_signer];
     let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
@@ -1798,7 +1798,7 @@ async fn process_set_authority(
             &authority_signer.pubkey(),
             new_authority.as_ref(),
         )])
-        .build(Some(&config.signers[0].pubkey()))
+        .build(&config.signers[0].pubkey())
     } else if let Some(pubkey) = buffer_pubkey {
         if let Some(ref new_authority) = new_authority {
             MessageBuilder::new(vec![loader_v3_instruction::set_buffer_authority(
@@ -1806,7 +1806,7 @@ async fn process_set_authority(
                 &authority_signer.pubkey(),
                 new_authority,
             )])
-            .build(Some(&config.signers[0].pubkey()))
+            .build(&config.signers[0].pubkey())
         } else {
             return Err("Buffer authority cannot be None".into());
         }
@@ -1872,7 +1872,7 @@ async fn process_set_authority_checked(
         &authority_signer.pubkey(),
         &new_authority_signer.pubkey(),
     )])
-    .build(Some(&config.signers[0].pubkey()));
+    .build(&config.signers[0].pubkey());
 
     let signers = &[config.signers[0], authority_signer, new_authority_signer];
     let tx = message_into_signed_transaction(message, signers, blockhash, sign_only)?;
@@ -2248,7 +2248,7 @@ async fn close(
         Some(&authority_signer.pubkey()),
         program_pubkey,
     )])
-    .build(Some(&config.signers[0].pubkey()));
+    .build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -2512,7 +2512,7 @@ async fn process_extend_program(
         Some(&payer_pubkey),
         additional_bytes,
     );
-    let message = MessageBuilder::new(vec![instruction]).build(Some(&fee_payer_pubkey));
+    let message = MessageBuilder::new(vec![instruction]).build(&fee_payer_pubkey);
 
     let tx = message_into_signed_transaction(
         message,
@@ -2609,7 +2609,7 @@ async fn do_process_program_deploy(
                     compute_unit_limit,
                 })
                 .with_blockhash(blockhash)
-                .build(Some(&fee_payer_signer.pubkey())),
+                .build(&fee_payer_signer.pubkey()),
         )
     } else {
         None
@@ -2631,7 +2631,7 @@ async fn do_process_program_deploy(
             });
         instructions
             .with_blockhash(blockhash)
-            .build(Some(&fee_payer_signer.pubkey()))
+            .build(&fee_payer_signer.pubkey())
     };
 
     let mut write_messages = vec![];
@@ -2664,7 +2664,7 @@ async fn do_process_program_deploy(
         Some(
             instructions
                 .with_blockhash(blockhash)
-                .build(Some(&fee_payer_signer.pubkey())),
+                .build(&fee_payer_signer.pubkey()),
         )
     };
 
@@ -2750,7 +2750,7 @@ async fn do_process_write_buffer(
                     compute_unit_limit,
                 })
                 .with_blockhash(blockhash)
-                .build(Some(&fee_payer_signer.pubkey())),
+                .build(&fee_payer_signer.pubkey()),
         )
     } else {
         None
@@ -2772,7 +2772,7 @@ async fn do_process_write_buffer(
             });
         instructions
             .with_blockhash(blockhash)
-            .build(Some(&fee_payer_signer.pubkey()))
+            .build(&fee_payer_signer.pubkey())
     };
 
     let mut write_messages = vec![];
@@ -2881,7 +2881,7 @@ async fn do_process_program_upgrade(
                             compute_unit_limit: ComputeUnitLimit::Simulated,
                         })
                         .with_blockhash(blockhash)
-                        .build(Some(&fee_payer_signer.pubkey())),
+                        .build(&fee_payer_signer.pubkey()),
                 )
             } else {
                 None
@@ -2902,7 +2902,7 @@ async fn do_process_program_upgrade(
                 });
                 instructions
                     .with_blockhash(blockhash)
-                    .build(Some(&fee_payer_signer.pubkey()))
+                    .build(&fee_payer_signer.pubkey())
             };
 
             // Create and add write messages
@@ -2933,7 +2933,7 @@ async fn do_process_program_upgrade(
     });
     let final_message = final_instructions
         .with_blockhash(blockhash)
-        .build(Some(&fee_payer_signer.pubkey()));
+        .build(&fee_payer_signer.pubkey());
     let final_message = Some(final_message);
 
     if !skip_fee_check {

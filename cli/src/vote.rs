@@ -1272,9 +1272,9 @@ pub async fn process_create_vote_account(
 
         if let Some(nonce_account) = &nonce_account {
             ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-                .build(Some(&fee_payer.pubkey()))
+                .build(&fee_payer.pubkey())
         } else {
-            ixs.build(Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -1515,9 +1515,9 @@ pub async fn process_vote_authorize(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -1611,9 +1611,9 @@ pub async fn process_vote_update_validator(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -1701,9 +1701,9 @@ pub async fn process_vote_update_commission(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -1811,9 +1811,9 @@ pub async fn process_vote_update_commission_bps(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -1914,9 +1914,9 @@ pub async fn process_vote_update_commission_collector(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -2133,9 +2133,9 @@ pub async fn process_withdraw_from_vote_account(
 
         if let Some(nonce_account) = &nonce_account {
             ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-                .build(Some(&fee_payer.pubkey()))
+                .build(&fee_payer.pubkey())
         } else {
-            ixs.build(Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -2257,7 +2257,7 @@ pub async fn process_close_vote_account(
         compute_unit_limit,
     });
 
-    let mut message = ixs.build(Some(&fee_payer.pubkey()));
+    let mut message = ixs.build(&fee_payer.pubkey());
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
         compute_unit_price,

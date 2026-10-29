@@ -596,7 +596,7 @@ async fn process_create_lookup_table(
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let message =
-        MessageBuilder::new(vec![create_lookup_table_ix]).build(Some(&config.signers[0].pubkey()));
+        MessageBuilder::new(vec![create_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let keypairs: Vec<&dyn Signer> = vec![config.signers[0], payer_signer];
     let tx = message_into_signed_transaction(message, &keypairs, blockhash, false)?;
@@ -658,7 +658,7 @@ async fn process_freeze_lookup_table(
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let message =
-        MessageBuilder::new(vec![freeze_lookup_table_ix]).build(Some(&config.signers[0].pubkey()));
+        MessageBuilder::new(vec![freeze_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -725,7 +725,7 @@ async fn process_extend_lookup_table(
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let message =
-        MessageBuilder::new(vec![extend_lookup_table_ix]).build(Some(&config.signers[0].pubkey()));
+        MessageBuilder::new(vec![extend_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -789,8 +789,8 @@ async fn process_deactivate_lookup_table(
         deactivate_lookup_table(lookup_table_pubkey, authority_address);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let message = MessageBuilder::new(vec![deactivate_lookup_table_ix])
-        .build(Some(&config.signers[0].pubkey()));
+    let message =
+        MessageBuilder::new(vec![deactivate_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -855,7 +855,7 @@ async fn process_close_lookup_table(
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
     let message =
-        MessageBuilder::new(vec![close_lookup_table_ix]).build(Some(&config.signers[0].pubkey()));
+        MessageBuilder::new(vec![close_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,

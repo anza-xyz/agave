@@ -1045,9 +1045,9 @@ pub async fn process_transfer(
 
         if let Some(nonce_account) = &nonce_account {
             ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-                .build(Some(&fee_payer.pubkey()))
+                .build(&fee_payer.pubkey())
         } else {
-            ixs.build(Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 

@@ -65,7 +65,7 @@ impl MessageBuilder {
         self
     }
 
-    pub(crate) fn build(mut self, payer: Option<&Pubkey>) -> VersionedMessage {
+    pub(crate) fn build(mut self, payer: &Pubkey) -> VersionedMessage {
         if let Some((account, authority)) = self.nonce {
             self.instructions
                 .insert(0, advance_nonce_account(&account, &authority));
@@ -90,7 +90,7 @@ impl MessageBuilder {
         };
         VersionedMessage::V1(
             solana_message::v1::Message::try_compile_with_config(
-                payer.expect("CLI messages require a fee payer"),
+                payer,
                 &self.instructions,
                 self.blockhash.unwrap_or_default(),
                 config,
@@ -129,7 +129,7 @@ mod tests {
             .with_compute_unit_config(&config)
             .with_nonce(&nonce_account, &nonce_authority)
             .with_blockhash(blockhash)
-            .build(Some(&payer));
+            .build(&payer);
 
         let VersionedMessage::V1(message) = built else {
             panic!("expected a V1 message");

@@ -422,7 +422,7 @@ pub async fn process_authorize_nonce_account(
         compute_unit_price,
         compute_unit_limit,
     });
-    let mut message = ixs.build(Some(&config.signers[0].pubkey()));
+    let mut message = ixs.build(&config.signers[0].pubkey());
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
         compute_unit_price,
@@ -511,7 +511,7 @@ pub async fn process_create_nonce_account(
                 compute_unit_limit,
             })
         };
-        ixs.build(Some(&config.signers[0].pubkey()))
+        ixs.build(&config.signers[0].pubkey())
     };
 
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;
@@ -606,7 +606,7 @@ pub async fn process_new_nonce(
         compute_unit_limit,
     });
     let latest_blockhash = rpc_client.get_latest_blockhash().await?;
-    let mut message = ixs.build(Some(&config.signers[0].pubkey()));
+    let mut message = ixs.build(&config.signers[0].pubkey());
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
         compute_unit_price,
@@ -690,7 +690,7 @@ pub async fn process_withdraw_from_nonce_account(
         compute_unit_price,
         compute_unit_limit,
     });
-    let mut message = ixs.build(Some(&config.signers[0].pubkey()));
+    let mut message = ixs.build(&config.signers[0].pubkey());
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
         compute_unit_price,
@@ -732,7 +732,7 @@ pub(crate) async fn process_upgrade_nonce_account(
             compute_unit_price,
             compute_unit_limit,
         });
-    let mut message = ixs.build(Some(&config.signers[0].pubkey()));
+    let mut message = ixs.build(&config.signers[0].pubkey());
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
         compute_unit_price,

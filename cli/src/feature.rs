@@ -1042,7 +1042,7 @@ async fn process_activate(
                 &fee_payer.pubkey(),
                 lamports,
             ))
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
         },
         config.commitment,
     )
@@ -1099,7 +1099,7 @@ async fn process_revoke(
         },
         |_lamports| {
             MessageBuilder::new(vec![revoke_pending_activation(&feature_id)])
-                .build(Some(&fee_payer.pubkey()))
+                .build(&fee_payer.pubkey())
         },
         config.commitment,
     )

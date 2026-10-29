@@ -400,7 +400,7 @@ pub async fn process_publish_validator_info(
                 keys,
                 &validator_info,
             ));
-            instructions.build(Some(&config.signers[0].pubkey()))
+            instructions.build(&config.signers[0].pubkey())
         } else {
             let instructions = MessageBuilder::new(vec![config_instruction::store(
                 &info_pubkey,
@@ -412,7 +412,7 @@ pub async fn process_publish_validator_info(
                 compute_unit_price,
                 compute_unit_limit,
             });
-            instructions.build(Some(&config.signers[0].pubkey()))
+            instructions.build(&config.signers[0].pubkey())
         }
     };
 

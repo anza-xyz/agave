@@ -1452,9 +1452,9 @@ pub async fn process_create_stake_account(
         });
         if let Some(nonce_account) = &nonce_account {
             ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-                .build(Some(&fee_payer.pubkey()))
+                .build(&fee_payer.pubkey())
         } else {
-            ixs.build(Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -1648,9 +1648,9 @@ pub async fn process_stake_authorize(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -1819,9 +1819,9 @@ pub async fn process_deactivate_stake_account(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -1925,9 +1925,9 @@ pub async fn process_withdraw_stake(
 
         if let Some(nonce_account) = &nonce_account {
             ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-                .build(Some(&fee_payer.pubkey()))
+                .build(&fee_payer.pubkey())
         } else {
-            ixs.build(Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -2132,9 +2132,9 @@ pub async fn process_split_stake(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -2258,9 +2258,9 @@ pub async fn process_merge_stake(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -2370,9 +2370,9 @@ pub async fn process_stake_set_lockup(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
@@ -2934,9 +2934,9 @@ pub async fn process_delegate_stake(
 
     let mut message = if let Some(nonce_account) = &nonce_account {
         ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
-            .build(Some(&fee_payer.pubkey()))
+            .build(&fee_payer.pubkey())
     } else {
-        ixs.build(Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
     simulate_and_update_compute_unit_limit(
         &compute_unit_limit,
