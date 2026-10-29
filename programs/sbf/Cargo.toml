@@ -186,7 +186,7 @@ agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 borsh = { workspace = true }
-solana-account = { version = "5.1.1", features = ["wincode"] }
+solana-account = { version = "5.4.0", features = ["wincode"] }
 solana-account-info = "3.1.0"
 solana-client-traits = "6.0.0"
 solana-clock = { workspace = true }
