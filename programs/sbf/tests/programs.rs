@@ -19,7 +19,7 @@ use solana_runtime::loader_utils::{
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
     solana_account::ReadableAccount,
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -52,7 +52,7 @@ use {
     solana_svm::conformance::programs::keyed_account_for_system_program,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
+    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     std::{
         assert_eq,
         str::FromStr,
@@ -67,14 +67,14 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
-    solana_message::{inner_instruction::InnerInstruction, Message},
+    solana_message::{Message, inner_instruction::InnerInstruction},
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_client::BankClient,
-        genesis_utils::{create_genesis_config_with_default_rent, GenesisConfigInfo},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_default_rent},
         loader_utils::create_program,
     },
     solana_sbf_rust_invoke_dep::*,
@@ -791,17 +791,21 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == "Program data: AQID BAUG"));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == "Program data: AQID BAUG")
+        );
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program return: {} CAFE", program_id))
+        );
     }
 }
 
@@ -3788,9 +3792,11 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(bank_client
-        .send_and_confirm_message(&[&mint_keypair], message)
-        .is_ok());
+    assert!(
+        bank_client
+            .send_and_confirm_message(&[&mint_keypair], message)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -5656,21 +5662,27 @@ fn test_program_sbf_invoke_signed_v2(is_signer: Option<bool>, request_signers: b
     if request_signers && is_signer != Some(true) {
         assert_eq!(effects.result, Some(InstructionError::PrivilegeEscalation));
         // Check that there was an attempt to invoke the noop program.
-        assert!(!effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program {noop_program_id} invoke [2]")));
+        assert!(
+            !effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program {noop_program_id} invoke [2]"))
+        );
     } else {
         assert_eq!(effects.result, None);
         // Check that the noop program was invoked and completed successfully.
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program {noop_program_id} invoke [2]")));
-        assert!(effects
-            .logs
-            .iter()
-            .any(|log| log == &format!("Program {noop_program_id} success")));
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program {noop_program_id} invoke [2]"))
+        );
+        assert!(
+            effects
+                .logs
+                .iter()
+                .any(|log| log == &format!("Program {noop_program_id} success"))
+        );
     }
 }
 
