@@ -2,11 +2,11 @@ use {
     crate::block_creation_loop::rewards::msg_types::{
         RewardRequest, RewardRespSucc, RewardResponse,
     },
-    agave_bls_sigverify::rewards::RewardInput,
+    agave_bls_sigverify::rewards::{RewardInput, reward_vote_and_signers},
     agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
     crossbeam_channel::RecvError,
-    entry::Entry,
+    entry::{CertificateStats, Entry},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure_us,
@@ -27,6 +27,7 @@ struct Metrics {
     build_us: WelfordStats,
     purged_state: u64,
     queue_waited_us: WelfordStats,
+    certificates: CertificateStats,
 }
 
 impl Default for Metrics {
@@ -36,6 +37,7 @@ impl Default for Metrics {
             build_us: WelfordStats::default(),
             purged_state: 0,
             queue_waited_us: WelfordStats::default(),
+            certificates: CertificateStats::default(),
         }
     }
 }
@@ -47,6 +49,7 @@ impl Metrics {
             build_us,
             purged_state,
             queue_waited_us,
+            certificates,
         } = self;
         if last_report.elapsed() > REPORT_INTERVAL {
             datapoint_info!(
@@ -58,6 +61,8 @@ impl Metrics {
                 ("queue_waited_us_max", queue_waited_us.maximum::<u64>(), Option<i64>),
                 ("queue_waited_us_mean", queue_waited_us.mean::<u64>(), Option<i64>),
                 ("purged_state", *purged_state, i64),
+                ("validators_from_certs", certificates.validators_from_certs, i64),
+                ("partially_overlapping_certs", certificates.partially_overlapping_certs, i64),
             );
             *self = Self::default();
         }
@@ -100,7 +105,7 @@ impl CertsBuilder {
         self.aggregates = self.aggregates.split_off(&reward_slot);
         match self.aggregates.remove(&reward_slot) {
             None => Ok(RewardRespSucc::default()),
-            Some(entry) => entry.build_certs(reward_slot),
+            Some(entry) => entry.build_certs(reward_slot, &mut self.metrics.certificates),
         }
     }
 
@@ -165,7 +170,6 @@ impl CertsBuilder {
                         );
                         return;
                     };
-                    let max_validators = rank_map.len();
                     let mut vote_account_pubkeys = vec![];
                     for rank in aggregate.ranks().iter_ones() {
                         let Some(stake_entry) = rank_map.get_pubkey_stake_entry(rank) else {
@@ -177,7 +181,7 @@ impl CertsBuilder {
                     match self
                         .aggregates
                         .entry(vote_slot)
-                        .or_insert_with(|| Entry::new(max_validators))
+                        .or_insert_with(|| Entry::new(rank_map.clone()))
                         .add_aggregate(aggregate, vote_account_pubkeys)
                     {
                         Ok(()) => (),
@@ -197,7 +201,6 @@ impl CertsBuilder {
                     );
                     return;
                 };
-                let max_validators = rank_map.len();
                 let Some(stake_entry) = rank_map.get_pubkey_stake_entry(vote_msg.rank as usize)
                 else {
                     return;
@@ -206,13 +209,35 @@ impl CertsBuilder {
                 match self
                     .aggregates
                     .entry(vote_msg.vote.slot())
-                    .or_insert_with(|| Entry::new(max_validators))
+                    .or_insert_with(|| Entry::new(rank_map.clone()))
                     .add_own_msg(vote_msg, stake_entry.vote_account_pubkey)
                 {
                     Ok(()) => (),
                     Err(e) => {
                         warn!("Adding aggregate with vote {vote:?} failed with {e}");
                     }
+                }
+            }
+            RewardInput::Certificates(certs) => {
+                for cert in certs {
+                    let cert_slot = cert.cert_type.slot();
+                    let Some(rank_map) = root_bank.get_rank_map(cert_slot) else {
+                        warn!(
+                            "failed to look up rank_map for slot {cert_slot} using bank for slot \
+                             {}",
+                            root_bank.slot()
+                        );
+                        continue;
+                    };
+                    let Some((vote, ranks)) =
+                        reward_vote_and_signers(&cert.cert_type, &cert.bitmap, rank_map.len())
+                    else {
+                        continue;
+                    };
+                    self.aggregates
+                        .entry(cert_slot)
+                        .or_insert_with(|| Entry::new(rank_map.clone()))
+                        .add_certificate(vote, &ranks, cert.signature);
                 }
             }
         }

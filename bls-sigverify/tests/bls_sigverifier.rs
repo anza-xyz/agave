@@ -83,7 +83,7 @@ struct TestContext {
     ban_receiver: mpsc::Receiver<BanCommand>,
     packet_sender: Sender<Datagram>,
     repair_receiver: Receiver<VerifiedVotorSlotsMessage>,
-    _reward_receiver: Receiver<RewardInput>,
+    reward_receiver: Receiver<RewardInput>,
     pool_receiver: Receiver<SigVerifiedBatch>,
     metrics_receiver: ConsensusMetricsEventReceiver,
     generated_cert_types: Arc<GeneratedCertTypes>,
@@ -97,6 +97,24 @@ impl TestContext {
     }
 
     fn new_with_config(pool_capacity: usize, migration_status: MigrationStatus) -> Self {
+        Self::new_with_leader_slot(pool_capacity, migration_status, None)
+    }
+
+    /// A context whose node leads `leader_slot`, and so publishes the rewards for the votes of
+    /// `leader_slot - NUM_SLOTS_FOR_REWARD`.
+    fn new_for_leader_of(leader_slot: Slot) -> Self {
+        Self::new_with_leader_slot(
+            1024,
+            MigrationStatus::post_migration_status(),
+            Some(leader_slot),
+        )
+    }
+
+    fn new_with_leader_slot(
+        pool_capacity: usize,
+        migration_status: MigrationStatus,
+        leader_slot: Option<Slot>,
+    ) -> Self {
         let (channel_to_pool, pool_receiver) = bounded(pool_capacity);
         let num_validators = 10;
         let validator_keypairs = (0..num_validators)
@@ -114,14 +132,25 @@ impl TestContext {
         let bank = Bank::new_for_tests(&genesis.genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let keypair = Keypair::new();
+        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
+        let keypair = match leader_slot {
+            None => Keypair::new(),
+            Some(leader_slot) => {
+                let leader = leader_schedule.slot_leader_at(leader_slot, None).unwrap();
+                validator_keypairs
+                    .iter()
+                    .find(|keys| keys.node_keypair.pubkey() == leader.id)
+                    .unwrap()
+                    .node_keypair
+                    .insecure_clone()
+            }
+        };
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let cluster_info = Arc::new(ClusterInfo::new(
             contact_info,
             Arc::new(keypair),
             SocketAddrSpace::Unspecified,
         ));
-        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&sharable_banks.root()));
 
         let (channel_to_repair, repair_receiver) = EvictingSender::new_bounded(1024);
         let (channel_to_reward, reward_receiver) = bounded(1024);
@@ -167,7 +196,7 @@ impl TestContext {
             ban_receiver,
             packet_sender,
             repair_receiver,
-            _reward_receiver: reward_receiver,
+            reward_receiver,
             pool_receiver,
             metrics_receiver,
             generated_cert_types,
@@ -193,6 +222,14 @@ impl TestContext {
 
     fn send_certificate(&self, slot: Slot, certificate: UnverifiedCertificate) {
         self.certificate_sender.send((slot, certificate)).unwrap();
+    }
+
+    fn set_root(&self, root_slot: Slot) {
+        let root_bank =
+            Bank::new_from_parent(self.sharable_banks.root(), SlotLeader::default(), root_slot);
+        let mut bank_forks = self.bank_forks.write().unwrap();
+        bank_forks.insert(root_bank);
+        bank_forks.set_root(root_slot, None, None);
     }
 
     fn bls_keypairs(&self) -> Vec<BLSKeypair> {
@@ -261,6 +298,23 @@ fn receive_messages(
     }
     expect_no_receive(receiver);
     (votes, certificates)
+}
+
+fn receive_certificates_for_rewards(
+    receiver: &Receiver<RewardInput>,
+    expected_certificates: usize,
+) -> Vec<Certificate> {
+    let deadline = Instant::now() + RECEIVE_TIMEOUT;
+    let mut certificates = Vec::new();
+    while certificates.len() < expected_certificates {
+        match receiver.recv_deadline(deadline).expect("certificates") {
+            RewardInput::Certificates(certs) => certificates.extend(certs),
+            input => panic!("unexpected reward input {input:?}"),
+        }
+    }
+    assert_eq!(certificates.len(), expected_certificates);
+    expect_no_receive(receiver);
+    certificates
 }
 
 fn assert_verified_votes(aggregates: &[VoteAggregate], expected: &[(Vote, usize)]) {
@@ -1738,4 +1792,172 @@ fn messages_to_datagrams(
         .iter()
         .map(|(message, peer_pubkey)| message_to_datagram(message, shred_version, *peer_pubkey))
         .collect()
+}
+
+/// The leader of slots 20 to 23 publishes the rewards for the votes of slots 12 to 15.
+const REWARD_LEADER_SLOT: Slot = 20;
+
+fn certificate_message(
+    ctx: &TestContext,
+    cert_type: CertificateType,
+    ranks: &[usize],
+) -> ConsensusMessage {
+    ConsensusMessage::Certificate(test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        cert_type,
+        ranks,
+    ))
+}
+
+fn forged_certificate_message(ctx: &TestContext, cert_type: CertificateType) -> ConsensusMessage {
+    let mut cert = test_create_base2_certificate(
+        &ctx.bls_keypairs(),
+        ctx.cluster_info.my_shred_version(),
+        cert_type,
+        &[0, 1, 2, 3, 4, 5, 6],
+    );
+    cert.signature = ctx.bls_keypairs()[0].sign(b"forged").into();
+    ConsensusMessage::Certificate(cert)
+}
+
+fn cert_types(certs: &[Certificate]) -> Vec<CertificateType> {
+    certs.iter().map(|cert| cert.cert_type).collect()
+}
+
+#[test]
+fn test_old_certificate_is_verified_only_for_rewards() {
+    let mut ctx = TestContext::new_for_leader_of(REWARD_LEADER_SLOT);
+    let cert_slot = 13;
+    ctx.set_root(14);
+    let wanted = CertificateType::Notarize(Block::new_unique(cert_slot));
+    let forged_sender = Pubkey::new_unique();
+    ctx.send_datagrams(messages_to_datagrams(
+        &[
+            (
+                certificate_message(&ctx, wanted, &[0, 1, 2, 3, 4, 5, 6]),
+                Pubkey::new_unique(),
+            ),
+            // Finalization votes earn no vote rewards.
+            (
+                certificate_message(&ctx, CertificateType::Finalize(cert_slot), &[0, 1, 2]),
+                Pubkey::new_unique(),
+            ),
+            (
+                forged_certificate_message(
+                    &ctx,
+                    CertificateType::Notarize(Block::new_unique(cert_slot)),
+                ),
+                forged_sender,
+            ),
+        ],
+        ctx.cluster_info.my_shred_version(),
+    ));
+
+    let certs = receive_certificates_for_rewards(&ctx.reward_receiver, 1);
+    assert_eq!(cert_types(&certs), [wanted]);
+    expect_no_receive(&ctx.pool_receiver);
+    assert_eq!(ctx.banned_pubkeys(), HashSet::from([forged_sender]));
+}
+
+#[test]
+fn test_rewards_get_the_consensus_certificate_and_one_more_of_its_type() {
+    let ctx = TestContext::new_for_leader_of(REWARD_LEADER_SLOT);
+    ctx.set_root(14);
+    let cert_type = CertificateType::Notarize(Block::new_unique(15));
+    let send = |ranks: &[usize]| {
+        ctx.send_datagrams(messages_to_datagrams(
+            &[(
+                certificate_message(&ctx, cert_type, ranks),
+                Pubkey::new_unique(),
+            )],
+            ctx.cluster_info.my_shred_version(),
+        ))
+    };
+
+    send(&[0, 1, 2, 3, 4, 5, 6]);
+    let (_, pool_certs) = receive_messages(&ctx.pool_receiver, 0, 1);
+    assert_eq!(
+        receive_certificates_for_rewards(&ctx.reward_receiver, 1),
+        pool_certs
+    );
+
+    // A cert from another validator can contain votes that never reached this node.
+    send(&[1, 2, 3, 4, 5, 6, 7]);
+    let certs = receive_certificates_for_rewards(&ctx.reward_receiver, 1);
+    assert_eq!(cert_types(&certs), [cert_type]);
+    assert_ne!(certs[0].bitmap, pool_certs[0].bitmap);
+    expect_no_receive(&ctx.pool_receiver);
+
+    send(&[2, 3, 4, 5, 6, 7, 8]);
+    expect_no_receive(&ctx.reward_receiver);
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_certificate_of_a_generated_type_is_verified_for_rewards() {
+    let ctx = TestContext::new_for_leader_of(REWARD_LEADER_SLOT);
+    ctx.set_root(14);
+    // This node built a cert of this type from the votes it received.
+    let cert_type = CertificateType::Notarize(Block::new_unique(15));
+    ctx.generated_cert_types.insert_cert(cert_type);
+    ctx.send_datagrams(messages_to_datagrams(
+        &[(
+            certificate_message(&ctx, cert_type, &[0, 1, 2, 3, 4, 5, 6]),
+            Pubkey::new_unique(),
+        )],
+        ctx.cluster_info.my_shred_version(),
+    ));
+
+    let certs = receive_certificates_for_rewards(&ctx.reward_receiver, 1);
+    assert_eq!(cert_types(&certs), [cert_type]);
+    expect_no_receive(&ctx.pool_receiver);
+}
+
+#[test]
+fn test_forged_certificate_does_not_take_the_place_of_a_valid_one() {
+    let mut ctx = TestContext::new_for_leader_of(REWARD_LEADER_SLOT);
+    ctx.set_root(14);
+    let cert_type = CertificateType::Notarize(Block::new_unique(13));
+    let forged_sender = Pubkey::new_unique();
+    ctx.send_datagrams(messages_to_datagrams(
+        &[
+            (forged_certificate_message(&ctx, cert_type), forged_sender),
+            (
+                certificate_message(&ctx, cert_type, &[0, 1, 2, 3, 4, 5, 6]),
+                Pubkey::new_unique(),
+            ),
+        ],
+        ctx.cluster_info.my_shred_version(),
+    ));
+
+    let certs = receive_certificates_for_rewards(&ctx.reward_receiver, 1);
+    assert_eq!(cert_types(&certs), [cert_type]);
+    assert_eq!(ctx.banned_pubkeys(), HashSet::from([forged_sender]));
+}
+
+#[test]
+fn test_block_below_root_only_carries_old_certificates_for_rewards() {
+    let ctx = TestContext::new_for_leader_of(REWARD_LEADER_SLOT);
+    let (carrier_slot, root_slot) = (13, 14);
+    ctx.set_root(root_slot);
+    let certificate = |cert_type| {
+        test_create_base2_unverified_certificate(
+            &ctx.bls_keypairs(),
+            ctx.cluster_info.my_shred_version(),
+            cert_type,
+            &[0, 1, 2, 3, 4, 5, 6],
+        )
+    };
+    let old = CertificateType::Notarize(Block::new_unique(12));
+    // Only a faulty leader's block carries a cert for a later slot.
+    ctx.send_certificate(
+        carrier_slot,
+        certificate(CertificateType::Notarize(Block::new_unique(root_slot))),
+    );
+    ctx.send_certificate(carrier_slot, certificate(old));
+
+    let certs = receive_certificates_for_rewards(&ctx.reward_receiver, 1);
+    assert_eq!(cert_types(&certs), [old]);
+    expect_no_receive(&ctx.pool_receiver);
 }
