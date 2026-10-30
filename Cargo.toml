@@ -104,7 +104,6 @@ members = [
     "svm-timings",
     "svm-type-overrides",
     "syscalls",
-    "syscalls/gen-syscall-list",
     "test-validator",
     "tls-utils",
     "tokens",
