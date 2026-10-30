@@ -20,7 +20,7 @@ use {
         },
         ledger_lockfile, lock_ledger,
     },
-    agave_votor::vote_history_storage,
+    agave_votor::vote_history_storage::VoteHistoryStorage,
     agave_votor_transport::MAX_ENDPOINTS,
     arc_swap::ArcSwap,
     clap::{ArgMatches, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit},
@@ -435,10 +435,6 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
-    let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
-        vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
-    );
-
     let on_start_geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
         Some(
             values_t_or_exit!(matches, "geyser_plugin_config", String)
@@ -486,6 +482,8 @@ pub fn execute(
              snapshot generation are disabled"
         );
     }
+
+    let vote_history_storage = Some(Arc::new(VoteHistoryStorage::new(ledger_path.clone())));
 
     let mut validator_config = ValidatorConfig {
         log_config,

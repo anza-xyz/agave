@@ -682,9 +682,12 @@ impl EventHandler {
         if local_context.my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
             let my_old_pubkey = vctx.vote_history.node_pubkey;
             local_context.my_pubkey = new_pubkey;
-            vctx.vote_history =
-                VoteHistory::restore(ctx.vote_history_storage.as_ref(), &local_context.my_pubkey)
-                    .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
+            vctx.vote_history = ctx
+                .vote_history_storage
+                .as_ref()
+                .and_then(|s| VoteHistory::restore(s, &local_context.my_pubkey).ok())
+                .unwrap_or_else(|| VoteHistory::new(new_pubkey, 0));
+
             vctx.identity_keypair = new_identity;
             warn!(
                 "set-identity: from {my_old_pubkey} to {}",
@@ -1049,8 +1052,7 @@ mod tests {
             event::{LeaderWindowInfo, RepairEventReceiver},
             slot_clock::SharedAlpenglowSlotClock,
             vote_history_storage::{
-                FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
-                VoteHistoryStorage,
+                SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage, filename,
             },
             voting_service::BLSOp,
         },
@@ -1109,9 +1111,9 @@ mod tests {
         root_context: RootContext,
         local_context: LocalContext,
         bls_ops: Vec<BLSOp>,
-        vote_history_storage: Arc<FileVoteHistoryStorage>,
+        vote_history_storage: Arc<VoteHistoryStorage>,
         // Keep the temp directory alive for vote history and bank hash details.
-        _test_dir: TempDir,
+        test_dir: TempDir,
     }
 
     struct DirectBankForksController {
@@ -1227,13 +1229,12 @@ mod tests {
         let highest_parent_ready = Arc::new(RwLock::default());
         let alpenglow_slot_clock = SharedAlpenglowSlotClock::default();
 
-        let vote_history_storage =
-            Arc::new(FileVoteHistoryStorage::new(test_dir.path().to_path_buf()));
+        let vote_history_storage = Arc::new(VoteHistoryStorage::new(test_dir.path().to_path_buf()));
         let shared_context = SharedContext {
             cluster_info: cluster_info.clone(),
             alpenglow_slot_clock,
             bank_forks: bank_forks.clone(),
-            vote_history_storage: vote_history_storage.clone(),
+            vote_history_storage: Some(vote_history_storage.clone()),
             leader_window_info_sender,
             blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
@@ -1253,7 +1254,7 @@ mod tests {
             vote_account_pubkey: my_vote_keypair.pubkey(),
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
-            vote_history_storage: vote_history_storage.clone(),
+            vote_history_storage: Some(vote_history_storage.clone()),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: reward_aggregates_sender,
@@ -1296,7 +1297,7 @@ mod tests {
             local_context,
             bls_ops: vec![],
             vote_history_storage,
-            _test_dir: test_dir,
+            test_dir,
         }
     }
 
@@ -1639,14 +1640,14 @@ mod tests {
                     .unwrap();
             assert!(
                 self.vote_history_storage
-                    .store(&SavedVoteHistoryVersions::from(saved_vote_history),)
+                    .store(SavedVoteHistoryVersions::from(saved_vote_history),)
                     .is_ok()
             );
             self.cluster_info
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
 
             self.send_set_identity_event();
-            self.vote_history_storage.filename(&new_identity.pubkey())
+            filename(self.test_dir.path(), &new_identity.pubkey())
         }
     }
 
@@ -2457,7 +2458,7 @@ mod tests {
             SavedVoteHistory::new(&restored_vote_history, &new_identity).unwrap();
         test_context
             .vote_history_storage
-            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .store(SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
 
         let parent_block = Block::default();
@@ -2547,7 +2548,7 @@ mod tests {
             SavedVoteHistory::new(&restored_vote_history, &new_identity).unwrap();
         test_context
             .vote_history_storage
-            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .store(SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
 
         let parent_block = Block::default();
@@ -2593,7 +2594,7 @@ mod tests {
         let new_vote_history = VoteHistory::new(new_identity.pubkey(), 0);
         let saved_vote_history = SavedVoteHistory::new(&new_vote_history, &new_identity).unwrap();
         vote_history_storage
-            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .store(SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
 
         let restored_vote = Vote::new_unique_notar(1);
@@ -2601,7 +2602,7 @@ mod tests {
         old_vote_history.add_vote(restored_vote);
         let saved_vote_history = SavedVoteHistory::new(&old_vote_history, &old_identity).unwrap();
         vote_history_storage
-            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .store(SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
         old_vote_history.initialize_genesis(Block::default());
 
