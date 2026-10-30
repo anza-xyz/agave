@@ -96,7 +96,7 @@ solana-precompile-error = { workspace = true, optional = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }

@@ -103,6 +103,23 @@ pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
     current_slot: Slot,
     execute_timings: &mut ExecuteTimings,
 ) -> Option<Arc<ProgramCacheEntry>> {
+    let load_result = load_program_accounts(callbacks, pubkey)?;
+    Some(load_program_from_accounts(
+        program_runtime_environment,
+        pubkey,
+        current_slot,
+        execute_timings,
+        &load_result,
+    ))
+}
+
+pub(crate) fn load_program_from_accounts(
+    program_runtime_environment: &ProgramRuntimeEnvironment,
+    pubkey: &Pubkey,
+    current_slot: Slot,
+    execute_timings: &mut ExecuteTimings,
+    load_result: &ProgramAccountLoadResult,
+) -> Arc<ProgramCacheEntry> {
     #[cfg(feature = "metrics")]
     let mut load_program_metrics = LoadProgramMetrics {
         program_id: pubkey.to_string(),
@@ -111,11 +128,10 @@ pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
     #[cfg(not(feature = "metrics"))]
     let _ = execute_timings;
 
-    let load_result = load_program_accounts(callbacks, pubkey)?;
     let loaded_program = match load_result {
-        ProgramAccountLoadResult::InvalidAccountData(owner) => {
-            Ok(ProgramCacheEntry::new_closed_tombstone(current_slot, owner))
-        }
+        ProgramAccountLoadResult::InvalidAccountData(owner) => Ok(
+            ProgramCacheEntry::new_closed_tombstone(current_slot, *owner),
+        ),
 
         ProgramAccountLoadResult::ProgramOfLoaderV1(program_account) => ProgramCacheEntry::load(
             program_account.owner(),
@@ -149,14 +165,14 @@ pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
                 ProgramCacheEntry::load(
                     program_account.owner(),
                     ProgramRuntimeEnvironment::clone(program_runtime_environment),
-                    deployment_slot,
+                    *deployment_slot,
                     programdata,
                     #[cfg(feature = "metrics")]
                     &mut load_program_metrics,
                 )
                 .map_err(|_| ())
             })
-            .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
+            .map_err(|_| (*deployment_slot, ProgramCacheEntryOwner::LoaderV3)),
 
         ProgramAccountLoadResult::ProgramOfLoaderV4(program_account, deployment_slot) => {
             program_account
@@ -167,14 +183,14 @@ pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
                     ProgramCacheEntry::load(
                         &loader_v4::id(),
                         ProgramRuntimeEnvironment::clone(program_runtime_environment),
-                        deployment_slot,
+                        *deployment_slot,
                         elf_bytes,
                         #[cfg(feature = "metrics")]
                         &mut load_program_metrics,
                     )
                     .map_err(|_| ())
                 })
-                .map_err(|_| (deployment_slot, ProgramCacheEntryOwner::LoaderV4))
+                .map_err(|_| (*deployment_slot, ProgramCacheEntryOwner::LoaderV4))
         }
     }
     .unwrap_or_else(|(deployment_slot, owner)| {
@@ -184,7 +200,7 @@ pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
 
     #[cfg(feature = "metrics")]
     load_program_metrics.submit_datapoint(&mut execute_timings.details);
-    Some(Arc::new(loaded_program))
+    Arc::new(loaded_program)
 }
 
 fn get_program_deployment_slot<CB: AccountLoadCallback>(
@@ -618,6 +634,46 @@ mod tests {
             assert_eq!(program, program_account);
             assert_eq!(deployment_slot, 9);
         }
+    }
+
+    #[test]
+    fn test_load_program_from_accounts_uses_captured_accounts() {
+        const DEPLOYMENT_SLOT: Slot = 7;
+
+        let mock_bank = MockBankCallback::default();
+        let program_id = Pubkey::new_unique();
+        let programdata_id = Pubkey::new_unique();
+        mock_bank
+            .account_shared_data
+            .borrow_mut()
+            .insert(program_id, loader_v3_program_account(programdata_id));
+        mock_bank.account_shared_data.borrow_mut().insert(
+            programdata_id,
+            loader_v3_programdata_account(DEPLOYMENT_SLOT, &load_test_program()),
+        );
+
+        let accounts = load_program_accounts(&mock_bank, &program_id).unwrap();
+        assert!(matches!(
+            &accounts,
+            ProgramAccountLoadResult::ProgramOfLoaderV3(_, _, deployment_slot)
+                if *deployment_slot == DEPLOYMENT_SLOT
+        ));
+
+        // Changing the backing account after resolution must not change the
+        // bytes compiled below.
+        mock_bank.account_shared_data.borrow_mut().insert(
+            programdata_id,
+            loader_v3_programdata_account(DEPLOYMENT_SLOT + 1, &[]),
+        );
+        let entry = load_program_from_accounts(
+            &get_mock_program_runtime_environment(),
+            &program_id,
+            200,
+            &mut ExecuteTimings::default(),
+            &accounts,
+        );
+        assert_eq!(entry.deployment_slot, DEPLOYMENT_SLOT);
+        assert!(matches!(entry.program, ProgramCacheEntryType::Loaded(_)));
     }
 
     #[test]

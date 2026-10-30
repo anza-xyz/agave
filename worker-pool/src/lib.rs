@@ -21,7 +21,10 @@ use {
 
 mod results;
 
-pub use results::{ResultRecvError, ResultWorkerPool};
+pub use {
+    agave_wake_channel::TrySendError,
+    results::{ResultRecvError, ResultWorkerPool},
+};
 
 /// Byte length limit of a Linux thread name. Linux truncates longer names.
 pub const MAX_THREAD_NAME_LEN: usize = 15;
@@ -148,6 +151,11 @@ impl<J> WorkerPool<J> {
             .expect("worker threads exited unexpectedly");
     }
 
+    /// Queues `job` without blocking, returning it if the queue is full or disconnected.
+    pub fn try_send(&self, job: J) -> Result<(), TrySendError<J>> {
+        self.job_sender.try_send(job)
+    }
+
     pub fn num_workers(&self) -> usize {
         self.workers.0.len()
     }
@@ -195,7 +203,11 @@ impl Drop for Workers {
 mod tests {
     use {
         super::*,
-        std::{collections::HashSet, hint::black_box, sync::mpsc},
+        std::{
+            collections::HashSet,
+            hint::black_box,
+            sync::{Arc, Barrier, mpsc},
+        },
     };
 
     const NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
@@ -216,6 +228,32 @@ mod tests {
 
     fn panic_job(_job: ()) {
         panic!("worker job panicked");
+    }
+
+    #[test]
+    fn test_try_send_returns_error_when_queue_is_full() {
+        let (started_sender, started_receiver) = mpsc::channel();
+        let release = Arc::new(Barrier::new(2));
+        let config = WorkerPoolConfig::new("solTrySend", NonZeroUsize::MIN);
+        let pool = WorkerPool::spawn(config, |_| {
+            let release = Arc::clone(&release);
+            let started_sender = started_sender.clone();
+            move |block| {
+                if block {
+                    started_sender.send(()).unwrap();
+                    release.wait();
+                }
+            }
+        })
+        .unwrap();
+        pool.try_send(true).unwrap();
+        started_receiver.recv().unwrap();
+        let queued = pool.try_send(false);
+        let overflow = pool.try_send(false);
+        release.wait();
+        pool.join().unwrap();
+        assert_eq!(queued, Ok(()));
+        assert_eq!(overflow, Err(TrySendError::Full(false)));
     }
 
     fn panic_on_true(should_panic: bool) {

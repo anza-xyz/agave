@@ -366,6 +366,14 @@ mod tests {
     }
 
     #[test]
+    fn test_try_send_does_not_block_when_full() {
+        let (sender, receiver) = bounded(1);
+        assert_eq!(sender.try_send(1), Ok(()));
+        assert_eq!(sender.try_send(2), Err(TrySendError::Full(2)));
+        assert_eq!(receiver.recv(), Ok(1));
+    }
+
+    #[test]
     fn test_wake_receivers_and_disconnect() {
         let (sender, receiver) = bounded(NUM_RECEIVERS);
         // Testing sender-clone lifecycle (num_senders).

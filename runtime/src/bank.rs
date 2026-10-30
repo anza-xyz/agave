@@ -1628,6 +1628,10 @@ impl Bank {
             .set_fork_graph(fork_graph);
     }
 
+    pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
+        &self.transaction_processor
+    }
+
     // Returns whether we've entered the recompilation window of the program
     // cache's Epoch Boundary Preparation Phase (EBPP)
     fn in_ebpp_recompilation_window(&self) -> bool {
@@ -7116,10 +7120,6 @@ impl Bank {
             .accounts
             .accounts_db
             .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors)
-    }
-
-    pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
-        &self.transaction_processor
     }
 
     pub fn bank_id_generator(&self) -> &BankIdGenerator {

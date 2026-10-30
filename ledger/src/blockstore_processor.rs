@@ -21,6 +21,7 @@ use {
     bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
+    indexmap::IndexSet,
     itertools::Itertools,
     log::*,
     rayon::ThreadPool,
@@ -61,7 +62,7 @@ use {
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_shred_version::compute_shred_version,
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings, report_execute_timings},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
@@ -74,7 +75,7 @@ use {
         path::PathBuf,
         result,
         sync::{
-            Arc, OnceLock, RwLock,
+            Arc, OnceLock, RwLock, Weak,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         thread,
@@ -108,6 +109,87 @@ fn transaction_hash_verify_thread_pool() -> &'static ThreadPool {
             .thread_name(|i| format!("solReplayHash{i:02}"))
             .build()
             .expect("new transaction hash verify rayon threadpool")
+    })
+}
+
+struct SpeculativeJitJob {
+    bank: Weak<Bank>,
+    /// Top-level instruction program IDs, known directly from the transaction
+    /// messages. These are compiled first because they are the programs
+    /// execution is certain to reach.
+    top_level_programs: IndexSet<Pubkey>,
+    /// All remaining account keys. These are best-effort guesses at CPI
+    /// program IDs: which of them are programs is only known at runtime, so
+    /// they are compiled after the top-level programs.
+    guess_program_candidates: IndexSet<Pubkey>,
+}
+
+impl SpeculativeJitJob {
+    fn run(self) {
+        let Self {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        } = self;
+        // The job holds only a weak reference, and this pool outlives any bank.
+        // The bank may have been dropped (rooted-and-cleared, or its fork
+        // abandoned) before the job runs. In that case, skip the job.
+        let Some(bank) = bank.upgrade() else { return };
+        let program_loader = bank.get_transaction_processor();
+        // Top-level programs are the critical ones: compiling them first gives
+        // them the best chance of being ready in the global cache before
+        // execution reaches them. The remaining candidates are best-effort; the
+        // second call skips programs the first call already compiled.
+        program_loader.precompile_programs(bank.as_ref(), top_level_programs.iter());
+        program_loader.precompile_programs(bank.as_ref(), guess_program_candidates.iter());
+    }
+}
+
+/// Number of threads compiling programs speculatively.
+const SPECULATIVE_JIT_NUM_WORKERS: usize = 4;
+
+/// Maximum number of speculative JIT jobs (one per `confirm_slot_entries()`
+/// call) waiting for a worker. When the queue is full, new jobs are dropped
+/// and their programs are compiled on demand by the execution threads, exactly
+/// as without speculation.
+///
+/// The queue must stay short, because a speculative job is only useful if it
+/// compiles a program before execution reaches it, and that window is small.
+/// Measured on a mainnet replay profile (60 s, ~41 jobs/s):
+///
+/// - A job takes 0.6-0.8 ms on average and ~1.2 ms at p90 (p99 ~7 ms). Most of
+///   that is loading program accounts. Programs that are already cached are
+///   skipped.
+/// - Execution threads start executing a batch ~0.1 ms (p90) after the job is
+///   queued. On-demand compilations that speculation failed to prevent started
+///   0.6 ms (p50) and 4.8 ms (p90) after the job was queued. Replay execution
+///   of the entries stays busy for 0.8 ms (p50) and 5.3 ms (p90) after the job
+///   was queued.
+/// - Arrivals are bursty: up to 13 jobs were queued within 10 ms, and up to 15
+///   within 50 ms.
+///
+/// So a job that waits more than ~5 ms behind other jobs almost always loses
+/// the race against on-demand compilation and only wastes CPU and account
+/// loads. With `SPECULATIVE_JIT_NUM_WORKERS` workers and the p90 job duration,
+/// a full queue of 16 jobs drains in 16 * 1.2 ms / 4 = ~5 ms, which matches
+/// that window while still absorbing the observed bursts.
+const SPECULATIVE_JIT_JOB_QUEUE_CAPACITY: usize = 16;
+
+fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
+    // Programs are queued in first-use order, maximizing the chance that the next cold program
+    // is ready before execution reaches it.
+    static SPECULATIVE_JIT_WORKER_POOL: OnceLock<WorkerPool<SpeculativeJitJob>> = OnceLock::new();
+    SPECULATIVE_JIT_WORKER_POOL.get_or_init(|| {
+        let config = WorkerPoolConfig {
+            job_queue_capacity: NonZeroUsize::new(SPECULATIVE_JIT_JOB_QUEUE_CAPACITY).unwrap(),
+            stack_size: Some(2 * 1024 * 1024),
+            ..WorkerPoolConfig::new(
+                "solSpecJit",
+                NonZeroUsize::new(SPECULATIVE_JIT_NUM_WORKERS).unwrap(),
+            )
+        };
+        WorkerPool::spawn(config, |_worker_id| SpeculativeJitJob::run)
+            .expect("failed to spawn speculative JIT workers")
     })
 }
 
@@ -686,6 +768,13 @@ pub struct ConfirmationTiming {
 
     /// Number of times this slot was switched from an alternate location.
     pub num_bank_switches: u64,
+
+    /// Number of speculative JIT jobs queued for this slot.
+    pub num_speculative_jit_jobs_scheduled: u64,
+
+    /// Number of speculative JIT jobs for this slot that could not be queued, because the job
+    /// queue was full. Programs of such jobs are compiled on demand during execution.
+    pub num_speculative_jit_jobs_dropped: u64,
 }
 
 impl Default for ConfirmationTiming {
@@ -700,6 +789,8 @@ impl Default for ConfirmationTiming {
             fetch_fail_elapsed: 0,
             batch_execute: BatchExecutionTiming::default(),
             num_bank_switches: 0,
+            num_speculative_jit_jobs_scheduled: 0,
+            num_speculative_jit_jobs_dropped: 0,
         }
     }
 }
@@ -863,6 +954,16 @@ impl ReplaySlotStats {
                 (replay_elapsed, self.replay_elapsed as i64, i64),
                 ("execute_batches_us", execute_batches_us, Option<i64>),
                 ("num_bank_switches", self.num_bank_switches as i64, i64),
+                (
+                    "num_speculative_jit_jobs_scheduled",
+                    self.num_speculative_jit_jobs_scheduled as i64,
+                    i64
+                ),
+                (
+                    "num_speculative_jit_jobs_dropped",
+                    self.num_speculative_jit_jobs_dropped as i64,
+                    i64
+                ),
                 (
                     "replay_total_elapsed",
                     self.started.elapsed().as_micros() as i64,
@@ -1587,6 +1688,8 @@ fn confirm_slot_entries(
         replay_elapsed,
         poh_verify_elapsed,
         transaction_verify_elapsed,
+        num_speculative_jit_jobs_scheduled,
+        num_speculative_jit_jobs_dropped,
         ..
     } = timing;
 
@@ -1729,6 +1832,47 @@ fn confirm_slot_entries(
 
     let mut replay_timer = Measure::start("replay_elapsed");
     let is_vote_only_bank = bank.vote_only_bank();
+
+    let mut top_level_programs = IndexSet::new();
+    let mut guess_program_candidates = IndexSet::new();
+    for entry in &entries {
+        if let EntryType::Transactions(transactions) = entry {
+            for tx in transactions {
+                // Top-level instruction program IDs are known directly from the message,
+                // so collect them for the first (critical) speculative pass.
+                top_level_programs.extend(
+                    tx.program_instructions_iter()
+                        .map(|(program_id, _)| *program_id),
+                );
+                // `tx.program_instructions_iter()` only gives top-level instruction
+                // program IDs. We want CPI program IDs as well, and the only reliable way
+                // to retrieve them is to retrieve all account keys. Everything that is not
+                // a top-level program is a best-effort guess, collected for the second
+                // (best-effort) speculative pass.
+                guess_program_candidates.extend(tx.account_keys().iter().copied());
+            }
+        }
+    }
+    // The job compiles the top-level programs first, so drop them from the guess
+    // set to avoid redundant account loads in the best-effort pass.
+    guess_program_candidates.retain(|key| !top_level_programs.contains(key));
+    if !top_level_programs.is_empty() || !guess_program_candidates.is_empty() {
+        let bank: Weak<Bank> = Arc::downgrade(bank);
+        if let Err(err) = speculative_jit_worker_pool().try_send(SpeculativeJitJob {
+            bank,
+            top_level_programs,
+            guess_program_candidates,
+        }) {
+            *num_speculative_jit_jobs_dropped += 1;
+            debug!(
+                "Failed to schedule a speculative JIT job at slot {slot}, programs are not going \
+                 to be precompiled: {err}"
+            );
+        } else {
+            *num_speculative_jit_jobs_scheduled += 1;
+        }
+    }
+
     let replay_entries =
         entries
             .into_iter()
