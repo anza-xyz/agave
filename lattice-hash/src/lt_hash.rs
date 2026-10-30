@@ -1,6 +1,6 @@
 use {
     base64::{display::Base64Display, prelude::BASE64_STANDARD},
-    std::{fmt, str},
+    std::{cell::RefCell, fmt, str},
 };
 
 /// A 16-bit, 1024 element lattice-based incremental hash based on blake3
@@ -74,6 +74,63 @@ impl SingleLtHashUpdater for blake3::Hasher {
     fn write_part(&mut self, bytes: &[u8]) {
         self.update(bytes);
     }
+}
+
+/// Number of input bytes that [`BufferingHasher`] buffers before streaming the rest directly:
+/// 16 BLAKE3 chunks, the widest SIMD batch.
+const BUFFERED_PREFIX_LEN: usize = 16 * blake3::CHUNK_LEN;
+
+/// Hashes an input given in parts, buffering its first 16 KiB in `buffer`.
+///
+/// BLAKE3 hashes its 1 KiB chunks in parallel only from a chunk-aligned start, so a short
+/// first part makes it hash the following chunks serially and widen its batches gradually.
+/// Handing BLAKE3 the buffered prefix as one slice keeps every batch at full SIMD width.
+pub struct BufferingHasher<'a> {
+    hasher: blake3::Hasher,
+    /// The prefix so far, `None` once the full prefix is hashed.
+    buffer: Option<&'a mut Vec<u8>>,
+}
+
+impl<'a> BufferingHasher<'a> {
+    pub fn new(buffer: &'a mut Vec<u8>) -> Self {
+        buffer.clear();
+        Self {
+            hasher: blake3::Hasher::new(),
+            buffer: Some(buffer),
+        }
+    }
+
+    #[must_use]
+    pub fn into_lt_hash(mut self) -> LtHash {
+        if let Some(buffer) = self.buffer {
+            self.hasher.update(buffer);
+        }
+        LtHash::with(&self.hasher)
+    }
+}
+
+impl SingleLtHashUpdater for BufferingHasher<'_> {
+    fn write_part(&mut self, bytes: &[u8]) {
+        let Some(buffer) = &mut self.buffer else {
+            self.hasher.update(bytes);
+            return;
+        };
+        let free_len = BUFFERED_PREFIX_LEN.saturating_sub(buffer.len());
+        let (prefix, rest) = bytes.split_at(bytes.len().min(free_len));
+        buffer.extend_from_slice(prefix);
+        if buffer.len() == BUFFERED_PREFIX_LEN {
+            self.hasher.update(buffer).update(rest);
+            self.buffer = None;
+        }
+    }
+}
+
+/// Calls `f` with this thread's buffer for a [`BufferingHasher`].
+pub fn with_thread_buffer<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    thread_local! {
+        static BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    }
+    BUFFER.with_borrow_mut(f)
 }
 
 /// A smaller "checksum" of the LtHash, useful when 2 KiB is too large
@@ -403,5 +460,27 @@ mod tests {
         let checksum = lt_hash.checksum();
         let str = checksum.to_string();
         assert_eq!(str.as_str(), "DoL6fvKuTpTQCyUh83NxQw2ewKzWYtq9gsTKp1eQiGC2");
+    }
+
+    /// Splitting the input into parts must not change its lt hash, wherever the parts
+    /// cross the buffered prefix.
+    #[test]
+    fn test_buffering_hasher_matches_contiguous_input() {
+        let mut buffer = Vec::new();
+        for len in [0, 1, 1024, 16383, 16384, 16385, 50_000] {
+            let input = (0..len).map(|i| i as u8).collect::<Vec<_>>();
+            let expected = LtHash::with(blake3::Hasher::new().update(&input));
+            for part_len in [1, 7, 8, 1000, 16384, usize::MAX] {
+                let mut hasher = BufferingHasher::new(&mut buffer);
+                for part in input.chunks(part_len.min(len.max(1))) {
+                    hasher.write_part(part);
+                }
+                assert_eq!(
+                    hasher.into_lt_hash(),
+                    expected,
+                    "len={len} part_len={part_len}"
+                );
+            }
+        }
     }
 }

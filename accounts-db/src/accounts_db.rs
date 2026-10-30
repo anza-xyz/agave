@@ -82,7 +82,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::{
         batch,
-        lt_hash::{LtHash, SingleLtHashUpdater},
+        lt_hash::{self, BufferingHasher, LtHash, SingleLtHashUpdater},
     },
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
@@ -3140,12 +3140,24 @@ impl AccountsDb {
 
     /// Calculates the `AccountLtHash` of `account`
     pub fn lt_hash_account(account: &impl ReadableAccount, pubkey: &Pubkey) -> AccountLtHash {
+        lt_hash::with_thread_buffer(|buffer| {
+            Self::lt_hash_account_with_buffer(account, pubkey, buffer)
+        })
+    }
+
+    /// Calculates the `AccountLtHash` of `account` like `lt_hash_account()`, with `buffer`
+    /// held by the caller instead of the thread.
+    pub fn lt_hash_account_with_buffer(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        buffer: &mut Vec<u8>,
+    ) -> AccountLtHash {
         if account.lamports() == 0 {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::write_account_hash_input(account, pubkey, blake3::Hasher::new());
-        AccountLtHash(LtHash::with(&hasher))
+        let hasher = Self::write_account_hash_input(account, pubkey, BufferingHasher::new(buffer));
+        AccountLtHash(hasher.into_lt_hash())
     }
 
     /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the
