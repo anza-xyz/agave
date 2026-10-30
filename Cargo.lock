@@ -10732,7 +10732,6 @@ dependencies = [
  "agave-reserved-account-keys",
  "agave-votor-messages",
  "base64 0.23.1",
- "bincode",
  "bzip2",
  "flate2",
  "futures 0.3.34",
