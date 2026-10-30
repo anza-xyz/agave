@@ -1600,8 +1600,8 @@ pub mod test {
     async fn check_peer_at_limit_does_not_evict(
         stakes: HashMap<Pubkey, u64>,
         qos_config: SwQosConfig,
-        occupants: &[Option<&Keypair>],
-        attacker: Option<&Keypair>,
+        occupants: &[&Keypair],
+        attacker: &Keypair,
     ) {
         async fn wait_until(condition: impl Fn() -> bool) {
             timeout(Duration::from_secs(5), async {
@@ -1630,7 +1630,7 @@ pub mod test {
         );
         let mut connections = Vec::new();
         for &occupant in occupants {
-            connections.push(make_client_endpoint(&server_address, occupant).await);
+            connections.push(make_client_endpoint(&server_address, Some(occupant)).await);
         }
         wait_until(|| {
             stats
@@ -1645,7 +1645,7 @@ pub mod test {
 
         const NUM_ATTEMPTS: usize = 8;
         for _ in 0..NUM_ATTEMPTS {
-            connections.push(make_client_endpoint(&server_address, attacker).await);
+            connections.push(make_client_endpoint(&server_address, Some(attacker)).await);
             // An attempt holds an open-connection slot until the server rejects it, and the
             // occupants can nearly fill `max_concurrent_connections()`. Wait for the slot to
             // be released, or the next attempt may be refused before it reaches QoS.
@@ -1670,8 +1670,8 @@ pub mod test {
             max_staked_connections: 2,
             ..SwQosConfig::default_for_tests()
         };
-        let occupants = [Some(&victim), Some(&attacker)];
-        check_peer_at_limit_does_not_evict(stakes, qos_config, &occupants, Some(&attacker)).await;
+        let occupants = [&victim, &attacker];
+        check_peer_at_limit_does_not_evict(stakes, qos_config, &occupants, &attacker).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1681,10 +1681,12 @@ pub mod test {
         // To get a second key into the unstaked table, the victim is a staked peer that
         // overflows into it, where it is keyed by pubkey: the filler takes the whole
         // staked table, and the victim cannot evict it there because the filler has a
-        // higher stake. The test then checks that the unstaked peer (`None`), already
-        // at its limit, cannot evict the victim.
+        // higher stake. The test then checks that the unstaked peer, already at its limit,
+        // cannot evict the victim.
         let filler = Keypair::new();
         let victim = Keypair::new();
+        // Not in `stakes`, so unstaked.
+        let unstaked = Keypair::new();
         let stakes = HashMap::from([(filler.pubkey(), 1_000_000), (victim.pubkey(), 100_000)]);
         let qos_config = SwQosConfig {
             max_staked_connections: 2,
@@ -1692,8 +1694,8 @@ pub mod test {
             max_connections_per_staked_peer: 2,
             ..SwQosConfig::default_for_tests()
         };
-        let occupants = [Some(&filler), Some(&filler), Some(&victim), None];
-        check_peer_at_limit_does_not_evict(stakes, qos_config, &occupants, None).await;
+        let occupants = [&filler, &filler, &victim, &unstaked];
+        check_peer_at_limit_does_not_evict(stakes, qos_config, &occupants, &unstaked).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
