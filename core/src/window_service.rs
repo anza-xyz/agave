@@ -21,7 +21,10 @@ use {
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
-        shred::{self, Shred, filter::ShredRecoveryContext},
+        shred::{
+            self, Shred,
+            filter::{RetransmitSender, ShredRecoveryContext},
+        },
     },
     solana_measure::measure::Measure,
     solana_net_utils::PinnedXdpSender,
@@ -208,7 +211,7 @@ where
 
 pub struct WindowServiceChannels {
     pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
-    pub retransmit_sender: Sender<Vec<shred::Payload>>,
+    pub retransmit_sender: RetransmitSender,
     pub completed_data_sets_sender: Option<CompletedDataSetsSender>,
     pub duplicate_slots_sender: DuplicateSlotSender,
     pub repair_service_channels: RepairServiceChannels,
@@ -218,7 +221,7 @@ pub struct WindowServiceChannels {
 impl WindowServiceChannels {
     pub fn new(
         verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
-        retransmit_sender: Sender<Vec<shred::Payload>>,
+        retransmit_sender: RetransmitSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         duplicate_slots_sender: DuplicateSlotSender,
         repair_service_channels: RepairServiceChannels,
@@ -355,7 +358,7 @@ impl WindowService {
         verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
-        retransmit_sender: Sender<Vec<shred::Payload>>,
+        retransmit_sender: RetransmitSender,
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solWinInsert".to_string())
@@ -459,7 +462,7 @@ mod test {
         solana_ledger::{
             blockstore::{Blockstore, make_many_slot_entries},
             get_tmp_ledger_path_auto_delete,
-            shred::{ProcessShredsStats, Shredder},
+            shred::{ProcessShredsStats, Shredder, filter::new_dummy_retransmit_sender},
         },
         solana_net_utils::SocketAddrSpace,
         solana_pubkey::Pubkey,
@@ -582,7 +585,7 @@ mod test {
             .insert_shreds(vec![original_shred.clone()], false)
             .unwrap();
 
-        let (dummy_retransmit_sender, _) = bounded(0);
+        let dummy_retransmit_sender = new_dummy_retransmit_sender();
         let is_trusted = false;
         blockstore
             .insert_shreds_handle_duplicate(
@@ -670,7 +673,7 @@ mod test {
             let shreds = [&original_shred, &duplicate_shred]
                 .into_iter()
                 .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
-            let (dummy_retransmit_sender, _) = bounded(0);
+            let dummy_retransmit_sender = new_dummy_retransmit_sender();
             blockstore
                 .insert_shreds_handle_duplicate(
                     shreds,

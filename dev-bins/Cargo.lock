@@ -119,7 +119,6 @@ dependencies = [
  "bv",
  "bytes",
  "clap 4.6.1",
- "crossbeam-channel",
  "prost",
  "protosol",
  "rayon",
