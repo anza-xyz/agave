@@ -31,7 +31,7 @@ stable-abi = [
 [dependencies]
 log = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-bls-signatures = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }

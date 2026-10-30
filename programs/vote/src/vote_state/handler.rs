@@ -1378,7 +1378,8 @@ mod tests {
         // First create a vote account that's too small for v4.
         let v1_14_11_size = VoteState1_14_11::size_of();
         let lamports = rent.minimum_balance(v1_14_11_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Initialize - should fail.
         init_vote_account_state_v4_and_assert(
@@ -1394,7 +1395,8 @@ mod tests {
         // lamports for resize.
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Initialize - should resize and create v4.
         init_vote_account_state_v4_and_assert(
@@ -1408,7 +1410,7 @@ mod tests {
 
         // Now create a vote account that's large enough for v4.
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
 
         // Initialize - should create v4.
         init_vote_account_state_v4_and_assert(
@@ -1429,7 +1431,8 @@ mod tests {
         // First create a vote account that's too small for v4.
         let v1_14_11_size = VoteState1_14_11::size_of();
         let lamports = rent.minimum_balance(v1_14_11_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Deinitialize - should fail.
         deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent.clone());
@@ -1438,14 +1441,15 @@ mod tests {
         // lamports for resize.
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Deinitialize - should resize and create v4.
         deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent.clone());
 
         // Now create a vote account that's large enough for v4.
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
 
         // Deinitialize - should create v4.
         deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent);
@@ -1773,7 +1777,7 @@ mod tests {
             rent.minimum_balance(account_size)
         };
 
-        let vote_account = AccountSharedData::new(lamports, account_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; account_size], &id());
 
         let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
@@ -1910,7 +1914,7 @@ mod tests {
 
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
 
         let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();

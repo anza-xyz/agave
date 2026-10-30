@@ -314,7 +314,8 @@ struct BenchInitializeAccount {
 impl BenchInitializeAccount {
     fn new() -> Self {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(100, VoteStateV3::size_of(), &id());
+        let vote_account =
+            AccountSharedData::new_with_data(100, vec![0; VoteStateV3::size_of()], &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
         let instruction_data = serialize(&VoteInstruction::InitializeAccount(VoteInit {
