@@ -8129,6 +8129,7 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
+ "ahash 0.8.12",
  "bytes",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
