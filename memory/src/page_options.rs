@@ -4,9 +4,12 @@ pub const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
 pub fn page_size() -> usize {
     #[cfg(unix)]
     {
-        // SAFETY: sysconf has no preconditions.
-        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        usize::try_from(page_size).expect("sysconf(_SC_PAGESIZE) failed")
+        static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *PAGE_SIZE.get_or_init(|| {
+            // SAFETY: sysconf has no preconditions.
+            let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+            usize::try_from(page_size).expect("sysconf(_SC_PAGESIZE) failed")
+        })
     }
     #[cfg(not(unix))]
     4096
