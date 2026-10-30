@@ -562,6 +562,7 @@ dependencies = [
  "itertools 0.15.0",
  "log",
  "parking_lot 0.12.5",
+ "qualifier_attr",
  "rand 0.9.4",
  "smallvec",
  "solana-bls-signatures",
