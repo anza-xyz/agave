@@ -5477,15 +5477,22 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new((t + 1) as u64, space, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(
+                (t + 1) as u64,
+                vec![0; space],
+                &Pubkey::default(),
+            );
             pubkeys.push(pubkey);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
         for t in 0..num_vote {
             let pubkey = solana_pubkey::new_rand();
-            let account =
-                AccountSharedData::new((num + t + 1) as u64, space, &solana_vote_program::id());
+            let account = AccountSharedData::new_with_data(
+                (num + t + 1) as u64,
+                vec![0; space],
+                &solana_vote_program::id(),
+            );
             pubkeys.push(pubkey);
             let ancestors = Ancestors::from(vec![slot]);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
