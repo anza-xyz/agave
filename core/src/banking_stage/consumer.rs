@@ -587,16 +587,21 @@ impl Consumer {
 mod tests {
     use {
         super::*,
-        crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
+        crate::{
+            banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
+            test_utils::RecordingAccountsNotifier,
+        },
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
         solana_cost_model::cost_model::CostModel,
         solana_fee_calculator::FeeCalculator,
+        solana_fee_structure::FeeStructure,
         solana_hash::Hash,
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
@@ -615,6 +620,7 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank_forks::BankForks,
+            runtime_config::RuntimeConfig,
             transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -1496,6 +1502,174 @@ mod tests {
                 ))
             ]
         );
+    }
+
+    #[test]
+    fn test_transaction_status_batch_indexes_follow_poh_starting_index() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        // Enables index tracking, as with a TransactionStatusSender
+        let (record_sender, mut record_receiver) = record_channels(true);
+        record_receiver.restart(bank.bank_id());
+        let recorder = TransactionRecorder::new(record_sender);
+
+        let (transaction_status_sender, transaction_status_receiver) = bounded(1024);
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let committer = Committer::new(
+            Some(TransactionStatusSender {
+                sender: transaction_status_sender,
+                dependency_tracker: None,
+            }),
+            replay_vote_sender,
+            None,
+        );
+        let consumer = Consumer::new(committer, recorder, None);
+
+        let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+        let keypair1 = Keypair::new();
+        bank.transfer(rent_exempt_amount, &mint_keypair, &keypair1.pubkey())
+            .unwrap();
+
+        // Distinct fee payers share a batch; the failing second tx is still processed and indexed
+        let first_batch = sanitize_transactions(vec![
+            system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                rent_exempt_amount,
+                bank.last_blockhash(),
+            ),
+            system_transaction::transfer(
+                &keypair1,
+                &solana_pubkey::new_rand(),
+                2 * rent_exempt_amount,
+                bank.last_blockhash(),
+            ),
+        ]);
+        let _ = consumer.process_and_record_transactions(&bank, &first_batch);
+
+        let second_batch = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            rent_exempt_amount,
+            bank.last_blockhash(),
+        )]);
+        let _ = consumer.process_and_record_transactions(&bank, &second_batch);
+
+        drop(consumer); // disconnect transaction_status_sender
+        let indexes_per_batch = transaction_status_receiver
+            .into_iter()
+            .map(|message| {
+                let TransactionStatusMessage::Batch((status_batch, _)) = message else {
+                    panic!("not a batch");
+                };
+                status_batch.transaction_indexes
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(indexes_per_batch, vec![vec![0, 1], vec![2]]);
+    }
+
+    #[test]
+    fn test_accounts_only_geyser_indexes_follow_poh_starting_index() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(
+            10_000,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        );
+        let notifier = Arc::new(RecordingAccountsNotifier::default());
+        let mut bank = Bank::new_from_genesis(
+            &genesis_config,
+            Arc::new(RuntimeConfig::default()),
+            vec![],
+            None,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            Some(notifier.clone()),
+            None,
+            Arc::default(),
+            None,
+            None,
+        );
+        bank.set_fee_structure(&FeeStructure {
+            lamports_per_signature: genesis_config.fee_rate_governor.lamports_per_signature,
+            ..FeeStructure::default()
+        });
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+        // Enables index tracking, as with an accounts update notifier and no TransactionStatusSender
+        let (record_sender, mut record_receiver) = record_channels(true);
+        record_receiver.restart(bank.bank_id());
+        let recorder = TransactionRecorder::new(record_sender);
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let consumer = Consumer::new(
+            Committer::new(None, replay_vote_sender, None),
+            recorder,
+            None,
+        );
+
+        let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+        let funded_payer = Keypair::new();
+        bank.transfer(
+            rent_exempt_amount * 2,
+            &mint_keypair,
+            &funded_payer.pubkey(),
+        )
+        .unwrap();
+        notifier.updates.lock().unwrap().clear();
+
+        let recipients: [Pubkey; 4] = std::array::from_fn(|_| Pubkey::new_unique());
+        let transfer = |payer: &Keypair, recipient: &Pubkey| {
+            system_transaction::transfer(
+                payer,
+                recipient,
+                rent_exempt_amount,
+                bank.last_blockhash(),
+            )
+        };
+        // The unfunded payer's transaction is rejected and must not consume an index
+        let first_batch = sanitize_transactions(vec![
+            transfer(&mint_keypair, &recipients[0]),
+            transfer(&Keypair::new(), &recipients[1]),
+            transfer(&funded_payer, &recipients[2]),
+        ]);
+        let second_batch = sanitize_transactions(vec![transfer(&mint_keypair, &recipients[3])]);
+        let committed_count = |batch| {
+            consumer
+                .process_and_record_transactions(&bank, batch)
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .unwrap()
+                .iter()
+                .filter(|details| matches!(details, CommitTransactionDetails::Committed { .. }))
+                .count()
+        };
+        assert_eq!(committed_count(&first_batch), 2);
+        assert_eq!(committed_count(&second_batch), 1);
+
+        let updates = notifier.updates.lock().unwrap().clone();
+        let index_of = |recipient: &Pubkey| {
+            updates
+                .iter()
+                .find(|(pubkey, _)| pubkey == recipient)
+                .map(|(_, txn_index)| *txn_index)
+        };
+        assert_eq!(index_of(&recipients[0]), Some(Some(0)));
+        assert_eq!(index_of(&recipients[1]), None);
+        assert_eq!(index_of(&recipients[2]), Some(Some(1)));
+        assert_eq!(index_of(&recipients[3]), Some(Some(2)));
     }
 
     #[test]
