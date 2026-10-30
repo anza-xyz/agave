@@ -9123,6 +9123,7 @@ name = "solana-unified-scheduler-pool"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-jemalloc",
+ "agave-wake-channel",
  "assert_matches",
  "crossbeam-channel",
  "crossbeam-utils",
