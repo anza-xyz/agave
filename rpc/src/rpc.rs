@@ -4781,6 +4781,7 @@ pub mod tests {
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
         },
+        solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_entry::entry::next_versioned_entry,
         solana_fee_calculator::FeeRateGovernor,
@@ -6627,6 +6628,83 @@ pub mod tests {
             result.value, expected,
             "should use data slice if parsing fails"
         );
+    }
+
+    fn tower_bft_genesis() -> GenesisConfigInfo {
+        create_genesis_config_with_tower_leader(
+            TEST_MINT_LAMPORTS,
+            &Pubkey::new_unique(),
+            bootstrap_validator_stake_lamports(),
+        )
+    }
+
+    fn alpenglow_genesis() -> GenesisConfigInfo {
+        create_genesis_config(TEST_MINT_LAMPORTS)
+    }
+
+    // TowerBFT estimates the timestamp from PoH time: slot 4 is 1.2 s after genesis at 300 ms per slot.
+    #[test_case(tower_bft_genesis, 2, "processed", 4, 1_700_000_001; "tower_bft processed")]
+    #[test_case(tower_bft_genesis, 2, "confirmed", 3, 1_700_000_000; "tower_bft confirmed")]
+    #[test_case(tower_bft_genesis, 2, "finalized", 2, 1_700_000_000; "tower_bft finalized")]
+    // Alpenglow finalizes the bank it confirms.
+    #[test_case(alpenglow_genesis, 3, "processed", 4, 1_700_000_000; "alpenglow processed")]
+    #[test_case(alpenglow_genesis, 3, "confirmed", 3, 1_700_000_000; "alpenglow confirmed")]
+    #[test_case(alpenglow_genesis, 3, "finalized", 3, 1_700_000_000; "alpenglow finalized")]
+    fn test_rpc_account_reads_return_the_clock_of_their_context_slot(
+        genesis: fn() -> GenesisConfigInfo,
+        finalized_slot: Slot,
+        commitment: &str,
+        slot: Slot,
+        unix_timestamp: UnixTimestamp,
+    ) {
+        let mut genesis_config_info = genesis();
+        genesis_config_info.genesis_config.creation_time = 1_700_000_000;
+        let rpc = RpcHandler::start_with_config_and_genesis(
+            JsonRpcConfig::default(),
+            genesis_config_info,
+        );
+        // Banks 1 to 3, and a working bank at 4 on top of them.
+        rpc.add_roots_to_blockstore(vec![1, 2, 3]);
+        *rpc.block_commitment_cache.write().unwrap() = BlockCommitmentCache::new(
+            HashMap::new(),
+            0,
+            CommitmentSlots {
+                slot: 4,
+                root: 3,
+                highest_confirmed_slot: 3,
+                highest_super_majority_root: finalized_slot,
+            },
+        );
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank =
+            rpc.bank_forks.read().unwrap().get(3).unwrap();
+        let expected_clock = Clock {
+            slot,
+            epoch_start_timestamp: 1_700_000_000,
+            epoch: 0,
+            leader_schedule_epoch: 1,
+            unix_timestamp,
+        };
+        let clock_address = solana_sdk_ids::sysvar::clock::id().to_string();
+        let config = json!({"encoding": "base64", "commitment": commitment});
+
+        let request = create_test_request("getAccountInfo", Some(json!([clock_address, config])));
+        let response: RpcResponse<Option<UiAccount>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let account = response.value.unwrap();
+        let clock: Clock = wincode::deserialize(&account.data.decode().unwrap()).unwrap();
+        assert_eq!(response.context.slot, slot);
+        assert_eq!(clock, expected_clock);
+
+        let request = create_test_request(
+            "getMultipleAccounts",
+            Some(json!([[clock_address], config])),
+        );
+        let response: RpcResponse<Vec<Option<UiAccount>>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        let account = response.value[0].as_ref().unwrap();
+        let clock: Clock = wincode::deserialize(&account.data.decode().unwrap()).unwrap();
+        assert_eq!(response.context.slot, slot);
+        assert_eq!(clock, expected_clock);
     }
 
     #[test]
