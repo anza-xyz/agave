@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-26.04
     if: github.actor == 'dependabot[bot]'
     outputs:
-      crate_name: ${{ steps.dependabot-metadata.outputs.dependency-names }}
+      # grouped PRs repeat the crate once per directory in `dependency-names`
+      crate_name: ${{ fromJSON(steps.dependabot-metadata.outputs.updated-dependencies-json)[0].dependencyName }}
       new_version: ${{ steps.dependabot-metadata.outputs.new-version }}
       old_version: ${{ steps.dependabot-metadata.outputs.previous-version }}
       package_ecosystem: ${{ steps.dependabot-metadata.outputs.package-ecosystem }}
