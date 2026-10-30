@@ -10,7 +10,7 @@
 #![cfg(feature = "agave-unstable-api")]
 
 use {
-    agave_wake_channel::{Sender, bounded},
+    agave_wake_channel::{Sender, TrySendError, bounded},
     std::{
         io,
         num::NonZeroUsize,
@@ -146,6 +146,13 @@ impl<J> WorkerPool<J> {
         self.job_sender
             .send(job)
             .expect("worker threads exited unexpectedly");
+    }
+
+    /// Queues `job` without blocking.
+    ///
+    /// Returns the job if the queue is full or every worker has exited.
+    pub fn try_send(&self, job: J) -> Result<(), TrySendError<J>> {
+        self.job_sender.try_send(job)
     }
 
     pub fn num_workers(&self) -> usize {
