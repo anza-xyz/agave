@@ -3349,11 +3349,9 @@ fn program_cache_stats() {
     );
 }
 
-#[test_case(false; "old_fee_only")]
-#[test_case(true; "simd186_fee_only")]
-fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
+#[test]
+fn fee_only_loaded_transaction_data_size() {
     let mut common_test_entry = SvmTestEntry::default();
-    common_test_entry.feature_set.define_ltds_fee_only_semantics = define_ltds_fee_only_semantics;
 
     let program_name = "hello-solana";
     let program_id = program_address(program_name);
@@ -3367,8 +3365,9 @@ fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
     let fee_payer = fee_payer_keypair.pubkey();
     let loaded_fee_payer_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32;
 
-    let fee_payer_data =
-        AccountSharedData::new_rent_epoch(LAMPORTS_PER_SOL, 0, &Pubkey::default(), u64::MAX);
+    let mut fee_payer_data =
+        AccountSharedData::new_with_data(LAMPORTS_PER_SOL, Vec::new(), &Pubkey::default());
+    fee_payer_data.set_rent_epoch(u64::MAX);
 
     common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
@@ -3379,12 +3378,12 @@ fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
         let base_size = 2_usize.pow(i);
 
         let pubkey = Pubkey::new_unique();
-        let account_data = AccountSharedData::new_rent_epoch(
+        let mut account_data = AccountSharedData::new_with_data(
             LAMPORTS_PER_SOL,
-            base_size,
+            vec![0; base_size],
             &Pubkey::default(),
-            u64::MAX,
         );
+        account_data.set_rent_epoch(u64::MAX);
 
         common_test_entry.add_initial_account(pubkey, &account_data);
         loaded_account_sizes.push((pubkey, base_size + TRANSACTION_ACCOUNT_BASE_SIZE));
@@ -3468,30 +3467,15 @@ fn fee_only_loaded_transaction_data_size(define_ltds_fee_only_semantics: bool) {
             .unwrap()
             .loaded_accounts_data_size();
 
-        // blowing limit with define_ltds_fee_only_semantics sets the size to the limit
-        // otherwise it is the raw sum of rollback sizes which here is zero
-        assert_eq!(
-            if define_ltds_fee_only_semantics {
-                size_limit
-            } else {
-                0
-            },
-            fail_limit_loaded_size,
-        );
+        assert_eq!(size_limit, fail_limit_loaded_size);
 
         let fail_program_id_loaded_size = output.processing_results[2]
             .as_ref()
             .unwrap()
             .loaded_accounts_data_size();
 
-        // violating constraints *after* passing size with define_ltds_fee_only_semantics uses the size
-        // otherwise as above it is the raw sum of rollback sizes which here is zero
         assert_eq!(
-            if define_ltds_fee_only_semantics {
-                loaded_fee_payer_size + other_accounts_size
-            } else {
-                0
-            },
+            loaded_fee_payer_size + other_accounts_size,
             fail_program_id_loaded_size,
         );
     }

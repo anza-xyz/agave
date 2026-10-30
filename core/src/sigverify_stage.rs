@@ -5,18 +5,15 @@
 
 use {
     crate::{
-        banking_trace::BankingPacketSender,
-        sigverify::{
-            GossipSigVerifier, GossipVerifiedVoteBatch, SigVerifyWorkerPool,
-            SigVerifyWorkerSenders, SigVerifyWorkerState, SigVerifyWorkerStats,
-        },
+        banking_channels::BankingPacketSender,
+        sigverify::{SigVerifyWorkerPool, SigVerifyWorkerState, SigVerifyWorkerStats},
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, SchedulerPriorityFloor},
+    agave_wake_channel::Receiver,
     core::time::Duration,
-    crossbeam_channel::{Receiver, Sender, unbounded},
+    crossbeam_channel::Sender,
     solana_perf::{deduper::Deduper, packet::PacketBatch},
     solana_runtime::bank_forks::SharableBanks,
-    solana_transaction::Transaction,
     std::{
         num::NonZeroUsize,
         sync::{
@@ -26,14 +23,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::Instant,
     },
-    thiserror::Error,
 };
-
-#[derive(Error, Debug)]
-pub enum SigVerifyServiceError {
-    #[error("sigverify worker queue closed")]
-    WorkerQueueClosed,
-}
 
 const DEDUPER_NUM_BITS: u64 = 63_999_979;
 const MAX_DEDUPER_AGE: Duration = Duration::from_secs(2);
@@ -42,13 +32,8 @@ const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
 pub struct SigVerifyStage {
     exit: Arc<AtomicBool>,
     servicer_thread_hdl: Option<JoinHandle<()>>,
-    // pool held so workers stay alive. If dropped, workers in pool shut down.
+    // Joins the workers on drop.
     _worker_pool: SigVerifyWorkerPool,
-}
-
-pub struct GossipSigVerifyHandle {
-    verifier: GossipSigVerifier,
-    verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
 }
 
 #[derive(Default)]
@@ -146,32 +131,24 @@ impl SigVerifierStats {
 }
 
 impl SigVerifyStage {
+    /// Joining or dropping the stage blocks until all senders of `packet_receiver` are dropped.
     pub fn new(
         packet_receiver: Receiver<PacketBatch>,
-        vote_packet_receiver: Receiver<PacketBatch>,
         non_vote_sender: BankingPacketSender,
-        tpu_vote_sender: BankingPacketSender,
         forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
         num_workers: NonZeroUsize,
         forward_non_votes: bool,
         sharable_banks: SharableBanks,
         scheduler_priority_floor: Option<Arc<SchedulerPriorityFloor>>,
-    ) -> (Self, GossipSigVerifyHandle) {
-        let (gossip_verified_vote_sender, verified_vote_receiver) = unbounded();
+    ) -> Self {
         let non_vote_stats = SigVerifierStats::default();
-        let tpu_vote_stats = SigVerifierStats::default();
         let exit = Arc::new(AtomicBool::new(false));
         let mut rng = rand::rng();
         let non_vote_deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
-        let tpu_vote_deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
         let worker_pool = SigVerifyWorkerPool::new(
             num_workers,
             packet_receiver,
-            vote_packet_receiver,
-            SigVerifyWorkerSenders {
-                gossip_verified_vote_sender,
-                forward_stage_sender,
-            },
+            forward_stage_sender,
             forward_non_votes,
             sharable_banks,
             SigVerifyWorkerState::new(
@@ -195,27 +172,6 @@ impl SigVerifyStage {
                 },
                 scheduler_priority_floor,
             ),
-            SigVerifyWorkerState::new(
-                tpu_vote_sender,
-                tpu_vote_deduper.clone(),
-                SigVerifyWorkerStats {
-                    total_batches: tpu_vote_stats.total_batches.clone(),
-                    total_packets: tpu_vote_stats.total_packets.clone(),
-                    total_dedup: tpu_vote_stats.total_dedup.clone(),
-                    total_dedup_time_us: tpu_vote_stats.total_dedup_time_us.clone(),
-                    total_valid_packets: tpu_vote_stats.total_valid_packets.clone(),
-                    total_verify_time_us: tpu_vote_stats.total_verify_time_us.clone(),
-                    max_pre_send_len: tpu_vote_stats.max_pre_send_len.clone(),
-                    eviction_drops: tpu_vote_stats.eviction_drops.clone(),
-                    total_dropped_below_priority_floor: tpu_vote_stats
-                        .total_dropped_below_priority_floor
-                        .clone(),
-                    total_priority_floor_time_us: tpu_vote_stats
-                        .total_priority_floor_time_us
-                        .clone(),
-                },
-                None, // votes are not dropped for priority-floor
-            ),
         );
         let servicer_thread_hdl = Self::servicer(
             exit.clone(),
@@ -224,25 +180,13 @@ impl SigVerifyStage {
                 metrics_name: "tpu-verifier",
                 stats: non_vote_stats,
             },
-            ServicerState {
-                deduper: tpu_vote_deduper,
-                metrics_name: "tpu-vote-verifier",
-                stats: tpu_vote_stats,
-            },
         );
-        let gossip_sigverify_handle = GossipSigVerifyHandle {
-            verifier: worker_pool.gossip_verifier(),
-            verified_vote_receiver,
-        };
 
-        (
-            Self {
-                exit,
-                servicer_thread_hdl: Some(servicer_thread_hdl),
-                _worker_pool: worker_pool,
-            },
-            gossip_sigverify_handle,
-        )
+        Self {
+            exit,
+            servicer_thread_hdl: Some(servicer_thread_hdl),
+            _worker_pool: worker_pool,
+        }
     }
 
     pub fn join(mut self) -> thread::Result<()> {
@@ -257,34 +201,23 @@ impl SigVerifyStage {
             .unwrap_or(Ok(()))
     }
 
-    /// Drives deduper reset and metrics reporting for sigverify packet streams.
-    fn servicer(
-        exit: Arc<AtomicBool>,
-        mut non_vote_state: ServicerState,
-        mut tpu_vote_state: ServicerState,
-    ) -> JoinHandle<()> {
+    /// Drives deduper reset and metrics reporting for the sigverify packet stream.
+    fn servicer(exit: Arc<AtomicBool>, mut state: ServicerState) -> JoinHandle<()> {
         let mut last_print = Instant::now();
         Builder::new()
             .name("solSigVerSvc".to_string())
             .spawn(move || {
                 let mut rng = rand::rng();
                 while !exit.load(Ordering::Relaxed) {
-                    for state in [&mut non_vote_state, &mut tpu_vote_state] {
-                        if state.deduper.maybe_reset(
-                            &mut rng,
-                            DEDUPER_FALSE_POSITIVE_RATE,
-                            MAX_DEDUPER_AGE,
-                        ) {
-                            state.stats.num_deduper_saturations += 1;
-                        }
+                    if state.deduper.maybe_reset(
+                        &mut rng,
+                        DEDUPER_FALSE_POSITIVE_RATE,
+                        MAX_DEDUPER_AGE,
+                    ) {
+                        state.stats.num_deduper_saturations += 1;
                     }
                     if last_print.elapsed() > SigVerifierStats::REPORT_INTERVAL {
-                        non_vote_state
-                            .stats
-                            .maybe_report_and_reset(non_vote_state.metrics_name);
-                        tpu_vote_state
-                            .stats
-                            .maybe_report_and_reset(tpu_vote_state.metrics_name);
+                        state.stats.maybe_report_and_reset(state.metrics_name);
                         last_print = Instant::now();
                     }
                     thread::sleep(Duration::from_millis(10));
@@ -302,57 +235,11 @@ impl Drop for SigVerifyStage {
     }
 }
 
-impl GossipSigVerifyHandle {
-    #[cfg(test)]
-    pub(crate) fn new_for_tests(
-        worker_sender: Sender<crate::sigverify::GossipVerifyTask>,
-        verified_vote_receiver: Receiver<GossipVerifiedVoteBatch>,
-    ) -> Self {
-        Self {
-            verifier: GossipSigVerifier::new_for_tests(worker_sender),
-            verified_vote_receiver,
-        }
-    }
-
-    /// Submit gossip votes for signature verification and collect the corresponding responses.
-    ///
-    /// This takes `&mut self` because responses for all submitted gossip tasks share one receiver.
-    /// Allowing concurrent callers would make it possible for one caller to consume another caller's
-    /// verification results.
-    pub(crate) fn verify_and_receive_votes(
-        &mut self,
-        votes: Vec<Transaction>,
-        packet_batches: Vec<PacketBatch>,
-    ) -> std::result::Result<(Vec<Transaction>, Vec<PacketBatch>), crossbeam_channel::RecvError>
-    {
-        let num_batches = match self
-            .verifier
-            .send_votes_to_worker_pool(votes, packet_batches)
-        {
-            Ok(num_batches) => num_batches,
-            Err(err) => {
-                error!("gossip sigverify enqueue failed: {err:?}");
-                return Ok((Vec::new(), Vec::new()));
-            }
-        };
-        let mut verified_vote_txs = Vec::with_capacity(num_batches);
-        let mut verified_packet_batches = Vec::with_capacity(num_batches);
-
-        for _ in 0..num_batches {
-            let verified_vote_batch = self.verified_vote_receiver.recv()?;
-            verified_vote_txs.push(verified_vote_batch.transaction);
-            verified_packet_batches.push(verified_vote_batch.packet_batch);
-        }
-
-        Ok((verified_vote_txs, verified_packet_batches))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::banking_trace::BankingTracer,
+        crate::banking_channels,
         crossbeam_channel::bounded,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -413,16 +300,12 @@ mod tests {
         let (_bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&create_genesis_config(1).genesis_config);
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
-        let (vote_packet_s, vote_packet_r) = bounded(1024);
-        let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (packet_s, packet_r) = agave_wake_channel::bounded(1024);
+        let (verified_s, verified_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
-        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let stage = SigVerifyStage::new(
             packet_r,
-            vote_packet_r,
             verified_s,
-            tpu_vote_s,
             forward_stage_s,
             NonZeroUsize::new(4).unwrap(),
             false,
@@ -468,8 +351,6 @@ mod tests {
         } else {
             assert_eq!(valid_received, total_packets);
         }
-        drop(vote_packet_s);
-        drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }
 
@@ -479,16 +360,12 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
-        let (packet_s, packet_r) = bounded(1024);
-        let (vote_packet_s, vote_packet_r) = bounded(1024);
-        let (verified_s, verified_r) = BankingTracer::channel_for_test();
-        let (tpu_vote_s, _tpu_vote_r) = BankingTracer::channel_for_test();
+        let (packet_s, packet_r) = agave_wake_channel::bounded(1024);
+        let (verified_s, verified_r) = banking_channels::channel_for_test();
         let (forward_stage_s, _forward_stage_r) = bounded(1024);
-        let (stage, gossip_sigverify_handle) = SigVerifyStage::new(
+        let stage = SigVerifyStage::new(
             packet_r,
-            vote_packet_r,
             verified_s,
-            tpu_vote_s,
             forward_stage_s,
             NonZeroUsize::new(1).unwrap(),
             false,
@@ -521,8 +398,6 @@ mod tests {
         );
 
         drop(packet_s);
-        drop(vote_packet_s);
-        drop(gossip_sigverify_handle);
         stage.join().unwrap();
     }
 }

@@ -51,8 +51,6 @@ EOF
   exit 1
 }
 
-maybeRequireTower=true
-
 positional_args=()
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -184,9 +182,6 @@ while [[ -n $1 ]]; do
     elif [[ $1 == --accounts-db-skip-shrink ]]; then
       args+=("$1")
       shift
-    elif [[ $1 == --skip-require-tower ]]; then
-      maybeRequireTower=false
-      shift
     elif [[ $1 == --block-production-method ]]; then
       args+=("$1" "$2")
       shift 2
@@ -272,11 +267,6 @@ default_arg --full-rpc-api
 default_arg --no-incremental-snapshots
 default_arg --allow-private-addr
 
-if [[ $maybeRequireTower = true ]]; then
-  default_arg --require-tower
-fi
-
-
 program=$agave_validator
 
 set -e
@@ -341,13 +331,15 @@ setup_validator_accounts() {
         ) || return $?
       fi
       echo "Creating stake account"
-      # in case partitioned epoch rewards distribution is active, retry the command to add more tolerance
+      # The command will fail if partitioned epoch rewards distribution is
+      # active; retry the command several times to add some tolerance
       retry_command 10 2 \
         wallet create-stake-account "$stake_account" "$stake_sol" || return $?
       echo "Delegating stake"
       declare vote_pubkey
       vote_pubkey=$($solana_keygen pubkey "$vote_account") || return $?
-      # in case partitioned epoch rewards distribution is active, retry the command to add more tolerance
+      # The command will fail if partitioned epoch rewards distribution is
+      # active; retry the command several times to add some tolerance
       retry_command 10 2 \
         wallet delegate-stake "$stake_account" "$vote_pubkey" || return $?
     fi

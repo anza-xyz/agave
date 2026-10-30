@@ -4,7 +4,6 @@
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -256,7 +255,6 @@ impl Tvu {
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
-        banking_tracer: Arc<BankingTracer>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         slot_status_notifier: Option<SlotStatusNotifier>,
@@ -400,8 +398,7 @@ impl Tvu {
 
         let (verified_sender, verified_receiver) = unbounded();
 
-        let (retransmit_sender, retransmit_receiver) =
-            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+        let (retransmit_sender, retransmit_receiver) = bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
@@ -619,7 +616,6 @@ impl Tvu {
             tower,
             vote_tracker,
             cluster_slots,
-            banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -919,7 +915,6 @@ pub mod tests {
             None, // block_metadata_notifier
             None, // wait_to_vote_slot
             None, // snapshot_controller
-            BankingTracer::new_disabled(),
             outstanding_repair_requests,
             cluster_slots,
             None, // slot_status_notifier

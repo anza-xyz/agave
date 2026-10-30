@@ -139,14 +139,12 @@ solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true }
 solana-seed-derivable = { workspace = true }
-solana-serde = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
@@ -200,7 +198,7 @@ solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["wincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["bincode"] }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }

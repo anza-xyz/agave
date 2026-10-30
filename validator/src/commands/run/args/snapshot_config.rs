@@ -193,7 +193,7 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .help("Use DIR as full snapshot archives location [default: --snapshots value]"),
         Arg::with_name("incremental_snapshot_archive_path")
             .long("incremental-snapshot-archive-path")
-            .conflicts_with("no-incremental-snapshots")
+            .conflicts_with("no_incremental_snapshots")
             .value_name("DIR")
             .takes_value(true)
             .help("Use DIR as incremental snapshot archives location [default: --snapshots value]"),
@@ -272,6 +272,7 @@ pub(crate) fn args(default_args: &DefaultArgs) -> Vec<Arg<'_, '_>> {
             .default_value(&default_args.snapshot_zstd_compression_level)
             .value_name("LEVEL")
             .takes_value(true)
+            .validator(is_parsable::<i32>)
             .help("The compression level to use when archiving with zstd")
             .long_help(
                 "The compression level to use when archiving with zstd. Higher compression levels \

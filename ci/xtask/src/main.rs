@@ -29,6 +29,10 @@ enum Commands {
     UpdateCrate(xtask_shared::commands::update_crate::CommandArgs),
     #[command(about = "Publish crates")]
     Publish(xtask_shared::commands::publish::CommandArgs),
+    #[command(about = "Check workspace dev-dependencies")]
+    DevDeps(xtask_shared::commands::dev_deps::CommandArgs),
+    #[command(about = "Print the number of parallel jobs this host can afford")]
+    Jobs,
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
     #[command(about = "Print release channel info")]
@@ -87,6 +91,10 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         Commands::Publish(args) => {
             xtask_shared::commands::publish::run(args)?;
         }
+        Commands::DevDeps(args) => {
+            xtask_shared::commands::dev_deps::run(args)?;
+        }
+        Commands::Jobs => xtask_shared::commands::jobs::run()?,
         Commands::GeneratePipeline(args) => {
             commands::generate_pipeline::run(args).await?;
         }

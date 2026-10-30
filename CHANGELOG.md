@@ -29,6 +29,21 @@ Release channels have their own copy of this changelog:
   for the epoch containing a requested slot, with an optional identity filter. Always queries
   finalized state; there is no commitment parameter.
 * Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
+  instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
+  preserves the existing parsed output.
+* `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
+  `--full-rpc-api`.
+* `getFeeForMessage` no longer returns `null` when the message's recent blockhash has expired or
+  its durable nonce is invalid. The fee does not depend on either, so it is now returned.
+* `getInflationReward` provides the block rewards for stake accounts as a separate
+  `blockRewardAmount` field in the response, if block revenue sharing is enabled in the epoch.
+  Otherwise, the field is present with a value of `null`. The `amount` field always contains
+  both inflation and block rewards. To get inflation rewards, calculate `amount - blockRewardAmount`.
+* `getBlock` returns block revenue rewards as separate entries in the `rewards` field. This
+  means a single stake account has two separate reward entries in a block if it received
+  block rewards and inflation rewards. The new entries can only appear when block revenue
+  sharing is enabled.
 
 ### Validator
 
@@ -45,10 +60,18 @@ Release channels have their own copy of this changelog:
 * The default full snapshot interval is now 200,000 slots.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
+* Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
+  the ledger, and an existing one can be deleted.
 
 #### Deprecations
 
 * `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--enable-banking-trace` is deprecated and a no-op, since banking trace has been removed.
+* `--tpu-max-connections-per-peer` is deprecated and will be removed in a future release. Until then,
+  it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
+  Replace `--tpu-max-connections-per-peer N` with
+  `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
+* `--require-tower` is deprecated and will be removed in a future release.
 
 ### CLI
 
@@ -56,6 +79,18 @@ Release channels have their own copy of this changelog:
 
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
+* **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave
+  release.** Installing or updating via `agave-install` (including the
+  `release.anza.xyz/<version>/install` script) no longer puts them in
+  `active_release/bin`. After upgrading, `cargo build-sbf` and `cargo test-sbf`
+  will fail with `no such command`, or silently use an older copy found
+  elsewhere on your `PATH`. Install them separately with
+  `cargo install cargo-build-sbf --force --locked` (this installs both), and run
+  `which cargo-build-sbf` to confirm which copy you're using. Releases are
+  published in the
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
+  support parsing and signing txv1 transactions may no longer work with the CLI.
 
 #### Changes
 

@@ -207,7 +207,7 @@ fn bench_process_vote(c: &mut Criterion) {
         (num_initial_votes..=last_vote_slot).collect(),
         last_vote_hash,
     );
-    let instruction_data = bincode::serialize(&VoteInstruction::Vote(vote)).unwrap();
+    let instruction_data = wincode::serialize(&VoteInstruction::Vote(vote)).unwrap();
 
     bench_process_deprecated_vote_instruction(
         c,
@@ -237,7 +237,7 @@ fn bench_process_vote_state_update(c: &mut Criterion) {
     vote_state_update.root = Some(num_initial_votes);
     vote_state_update.hash = last_vote_hash;
     let instruction_data =
-        bincode::serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap();
+        wincode::serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap();
 
     bench_process_deprecated_vote_instruction(
         c,
@@ -267,7 +267,7 @@ fn bench_process_tower_sync(c: &mut Criterion) {
     tower_sync.root = Some(num_initial_votes);
     tower_sync.hash = last_vote_hash;
     tower_sync.block_id = Hash::new_unique();
-    let instruction_data = bincode::serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
+    let instruction_data = wincode::serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
 
     bench_process_vote_instruction(
         c,

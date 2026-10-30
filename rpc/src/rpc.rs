@@ -33,7 +33,7 @@ use {
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey},
         accounts_scan::ScanResult,
     },
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
     solana_epoch_info::EpochInfo,
@@ -91,8 +91,8 @@ use {
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta, Reward,
-        RewardType, Rewards, TransactionBinaryEncoding, TransactionConfirmationStatus,
-        TransactionStatus, UiConfirmedBlock, UiTransactionEncoding, map_inner_instructions,
+        RewardType, TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
+        UiConfirmedBlock, UiTransactionEncoding, map_inner_instructions,
     },
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
@@ -507,7 +507,6 @@ impl JsonRpcRequestProcessor {
         let slot = bank.slot();
         let optimistically_confirmed_bank =
             Arc::new(RwLock::new(OptimisticallyConfirmedBank { bank }));
-        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             config,
             snapshot_config: None,
@@ -521,9 +520,7 @@ impl JsonRpcRequestProcessor {
             validator_exit: create_validator_exit(exit.clone()),
             health: Arc::new(RpcHealth::new(
                 Arc::clone(&optimistically_confirmed_bank),
-                blockstore,
                 Arc::default(),
-                migration_status,
                 0,
                 exit,
             )),
@@ -681,31 +678,45 @@ impl JsonRpcRequestProcessor {
         })
     }
 
-    fn filter_map_rewards<'a, F>(
-        rewards: Option<Rewards>,
-        slot: Slot,
-        addresses: &'a [String],
-        reward_type_filter: &'a F,
-    ) -> impl Iterator<Item = (String, (Reward, Slot))> + use<'a, F>
-    where
-        F: Fn(RewardType) -> bool,
-    {
-        Self::filter_rewards(rewards, reward_type_filter)
-            .filter(|reward| addresses.contains(&reward.pubkey))
-            .map(move |reward| (reward.pubkey.clone(), (reward, slot)))
+    fn is_stake_reward(reward_type: RewardType) -> bool {
+        matches!(
+            reward_type,
+            RewardType::Staking | RewardType::DeactivatedStake | RewardType::BlockRevenueSharing
+        )
     }
 
-    fn filter_rewards<F>(
-        rewards: Option<Rewards>,
-        reward_type_filter: &F,
-    ) -> impl Iterator<Item = Reward> + use<'_, F>
-    where
-        F: Fn(RewardType) -> bool,
-    {
-        rewards
-            .into_iter()
-            .flatten()
-            .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
+    fn update_reward_response(
+        reward_response: &mut Option<RpcInflationReward>,
+        epoch: Epoch,
+        slot: Slot,
+        reward: &Reward,
+        block_rewards_enabled: bool,
+    ) {
+        let reward_response = reward_response.get_or_insert(RpcInflationReward {
+            epoch,
+            effective_slot: slot,
+            amount: 0,
+            post_balance: reward.post_balance,
+            commission: reward.commission,
+            commission_bps: reward.commission_bps,
+            block_reward_amount: (block_rewards_enabled
+                && reward.reward_type.is_some_and(Self::is_stake_reward))
+            .then_some(0),
+        });
+        let amount = reward.lamports.unsigned_abs();
+        let block_reward_amount = (block_rewards_enabled
+            && reward
+                .reward_type
+                .is_some_and(|reward_type| reward_type == RewardType::BlockRevenueSharing))
+        .then_some(amount);
+        reward_response.amount = reward_response.amount.saturating_add(amount);
+        // Merge two options, summing if they're both `Some(...)`, or just
+        // taking one of them, or `None` if they're both `None`
+        reward_response.block_reward_amount =
+            match (reward_response.block_reward_amount, block_reward_amount) {
+                (Some(accumulator), Some(value)) => Some(accumulator.saturating_add(value)),
+                (accumulator, value) => accumulator.or(value),
+            };
     }
 
     pub async fn get_inflation_reward(
@@ -784,26 +795,45 @@ impl JsonRpcRequestProcessor {
             .into());
         }
 
+        // The activated slot represents the first slot in the epoch, but we
+        // want the first full epoch with the feature enabled.
+        let block_rewards_enabled = bank
+            .feature_set
+            .activated_slot(&agave_feature_set::block_revenue_sharing::id())
+            .is_some_and(|activated_slot| activated_slot < first_slot_in_epoch);
+
         let epoch_has_partitioned_rewards = epoch_boundary_block.num_reward_partitions.is_some();
+
+        let address_strings = addresses
+            .iter()
+            .map(|address| address.to_string())
+            .collect::<Vec<_>>();
+        let mut rewards_response: Vec<Option<RpcInflationReward>> = vec![None; addresses.len()];
 
         // Collect rewards from first block in the epoch if partitioned epoch
         // rewards not enabled, or address is a vote account
-        let mut reward_map: HashMap<String, (Reward, Slot)> = {
-            let addresses: Vec<String> =
-                addresses.iter().map(|pubkey| pubkey.to_string()).collect();
-            Self::filter_map_rewards(
-                epoch_boundary_block.rewards,
-                first_confirmed_block_in_epoch,
-                &addresses,
-                &|reward_type| -> bool {
-                    let is_staking_reward = reward_type == RewardType::Staking
-                        || reward_type == RewardType::DeactivatedStake;
+        if let Some(rewards) = &epoch_boundary_block.rewards {
+            rewards.iter().for_each(|reward| {
+                if reward.reward_type.is_some_and(|reward_type| {
                     reward_type == RewardType::Voting
-                        || (!epoch_has_partitioned_rewards && is_staking_reward)
-                },
-            )
-            .collect()
-        };
+                        || (!epoch_has_partitioned_rewards && Self::is_stake_reward(reward_type))
+                }) {
+                    for index in address_strings
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, address)| (*address == reward.pubkey).then_some(index))
+                    {
+                        Self::update_reward_response(
+                            &mut rewards_response[index],
+                            epoch,
+                            first_confirmed_block_in_epoch,
+                            reward,
+                            block_rewards_enabled,
+                        );
+                    }
+                }
+            });
+        }
 
         // Append stake account rewards from partitions if partitions epoch
         // rewards is enabled
@@ -820,17 +850,16 @@ impl JsonRpcRequestProcessor {
                 &Hash::from_str(&epoch_boundary_block.previous_blockhash)
                     .expect("UiConfirmedBlock::previous_blockhash should be properly formed"),
             );
-            let mut partition_index_addresses: HashMap<usize, Vec<String>> = HashMap::new();
-            for address in addresses.iter() {
-                let address_string = address.to_string();
-                // Skip this address if (Voting) rewards were already found in
-                // the first block of the epoch
-                if !reward_map.contains_key(&address_string) {
+            let mut partition_index_to_address_indices: HashMap<usize, Vec<usize>> = HashMap::new();
+            for (index, address) in addresses.iter().enumerate() {
+                // Process this address if rewards weren't found in the first
+                // block of the epoch
+                if rewards_response[index].is_none() {
                     let partition_index = hasher.clone().hash_address_to_partition(address);
-                    partition_index_addresses
+                    partition_index_to_address_indices
                         .entry(partition_index)
-                        .and_modify(|list| list.push(address_string.clone()))
-                        .or_insert(vec![address_string]);
+                        .and_modify(|list| list.push(index))
+                        .or_insert(vec![index]);
                 }
             }
 
@@ -842,8 +871,9 @@ impl JsonRpcRequestProcessor {
                 )
                 .await?;
 
-            for (partition_index, addresses) in partition_index_addresses.iter() {
-                let slot = *block_list.get(*partition_index).ok_or_else(|| {
+            for (partition_index, address_indices) in partition_index_to_address_indices.into_iter()
+            {
+                let slot = *block_list.get(partition_index).ok_or_else(|| {
                     // If block_list.len() too short to contain
                     // partition_index, the epoch rewards period must be
                     // currently active.
@@ -875,37 +905,28 @@ impl JsonRpcRequestProcessor {
                     return Err(RpcCustomError::BlockNotAvailable { slot }.into());
                 };
 
-                let index_reward_map = Self::filter_map_rewards(
-                    block.rewards,
-                    slot,
-                    addresses,
-                    &|reward_type| -> bool {
-                        reward_type == RewardType::Staking
-                            || reward_type == RewardType::DeactivatedStake
-                    },
-                );
-                reward_map.extend(index_reward_map);
+                if let Some(rewards) = &block.rewards {
+                    rewards.iter().for_each(|reward| {
+                        if reward.reward_type.is_some_and(Self::is_stake_reward) {
+                            for index in address_indices
+                                .iter()
+                                .filter(|&index| address_strings[*index] == reward.pubkey)
+                            {
+                                Self::update_reward_response(
+                                    &mut rewards_response[*index],
+                                    epoch,
+                                    slot,
+                                    reward,
+                                    block_rewards_enabled,
+                                );
+                            }
+                        }
+                    });
+                }
             }
         }
 
-        let rewards = addresses
-            .iter()
-            .map(|address| {
-                if let Some((reward, slot)) = reward_map.get(&address.to_string()) {
-                    return Some(RpcInflationReward {
-                        epoch,
-                        effective_slot: *slot,
-                        amount: reward.lamports.unsigned_abs(),
-                        post_balance: reward.post_balance,
-                        commission: reward.commission,
-                        commission_bps: reward.commission_bps,
-                    });
-                }
-                None
-            })
-            .collect();
-
-        Ok(rewards)
+        Ok(rewards_response)
     }
 
     pub fn get_inflation_governor(
@@ -2533,9 +2554,7 @@ impl JsonRpcRequestProcessor {
 
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
-        let stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
-        );
+        let stake_minimum_delegation = stake_utils::get_minimum_delegation();
         Ok(new_response(&bank, stake_minimum_delegation))
     }
 
@@ -2883,6 +2902,22 @@ pub mod rpc_minimal {
     pub trait Minimal {
         type Metadata;
 
+        #[rpc(meta, name = "getAccountInfo")]
+        fn get_account_info(
+            &self,
+            meta: Self::Metadata,
+            pubkey_str: String,
+            config: Option<RpcAccountInfoConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>>;
+
+        #[rpc(meta, name = "getMultipleAccounts")]
+        fn get_multiple_accounts(
+            &self,
+            meta: Self::Metadata,
+            pubkey_strs: Vec<String>,
+            config: Option<RpcAccountInfoConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Vec<Option<UiAccount>>>>>;
+
         #[rpc(meta, name = "getBalance")]
         fn get_balance(
             &self,
@@ -2953,6 +2988,49 @@ pub mod rpc_minimal {
     pub struct MinimalImpl;
     impl Minimal for MinimalImpl {
         type Metadata = JsonRpcRequestProcessor;
+
+        fn get_account_info(
+            &self,
+            meta: Self::Metadata,
+            pubkey_str: String,
+            config: Option<RpcAccountInfoConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>> {
+            debug!("get_account_info rpc request received: {pubkey_str:?}");
+            async move {
+                let pubkey = verify_pubkey(&pubkey_str)?;
+                meta.get_account_info(pubkey, config).await
+            }
+            .boxed()
+        }
+
+        fn get_multiple_accounts(
+            &self,
+            meta: Self::Metadata,
+            pubkey_strs: Vec<String>,
+            config: Option<RpcAccountInfoConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Vec<Option<UiAccount>>>>> {
+            debug!(
+                "get_multiple_accounts rpc request received: {:?}",
+                pubkey_strs.len()
+            );
+            async move {
+                let max_multiple_accounts = meta
+                    .config
+                    .max_multiple_accounts
+                    .unwrap_or(MAX_MULTIPLE_ACCOUNTS);
+                if pubkey_strs.len() > max_multiple_accounts {
+                    return Err(Error::invalid_params(format!(
+                        "Too many inputs provided; max {max_multiple_accounts}"
+                    )));
+                }
+                let pubkeys = pubkey_strs
+                    .into_iter()
+                    .map(|pubkey_str| verify_pubkey(&pubkey_str))
+                    .collect::<Result<Vec<_>>>()?;
+                meta.get_multiple_accounts(pubkeys, config).await
+            }
+            .boxed()
+        }
 
         fn get_balance(
             &self,
@@ -3377,29 +3455,12 @@ pub mod rpc_bank {
     }
 }
 
-// RPC interface that depends on AccountsDB
-// Expected to be provided by API nodes
+// Remaining account RPC methods expected to be provided by API nodes.
 pub mod rpc_accounts {
     use super::*;
     #[rpc]
     pub trait AccountsData {
         type Metadata;
-
-        #[rpc(meta, name = "getAccountInfo")]
-        fn get_account_info(
-            &self,
-            meta: Self::Metadata,
-            pubkey_str: String,
-            config: Option<RpcAccountInfoConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>>;
-
-        #[rpc(meta, name = "getMultipleAccounts")]
-        fn get_multiple_accounts(
-            &self,
-            meta: Self::Metadata,
-            pubkey_strs: Vec<String>,
-            config: Option<RpcAccountInfoConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Vec<Option<UiAccount>>>>>;
 
         #[rpc(meta, name = "getBlockCommitment")]
         fn get_block_commitment(
@@ -3432,49 +3493,6 @@ pub mod rpc_accounts {
     pub struct AccountsDataImpl;
     impl AccountsData for AccountsDataImpl {
         type Metadata = JsonRpcRequestProcessor;
-
-        fn get_account_info(
-            &self,
-            meta: Self::Metadata,
-            pubkey_str: String,
-            config: Option<RpcAccountInfoConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>> {
-            debug!("get_account_info rpc request received: {pubkey_str:?}");
-            async move {
-                let pubkey = verify_pubkey(&pubkey_str)?;
-                meta.get_account_info(pubkey, config).await
-            }
-            .boxed()
-        }
-
-        fn get_multiple_accounts(
-            &self,
-            meta: Self::Metadata,
-            pubkey_strs: Vec<String>,
-            config: Option<RpcAccountInfoConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Vec<Option<UiAccount>>>>> {
-            debug!(
-                "get_multiple_accounts rpc request received: {:?}",
-                pubkey_strs.len()
-            );
-            async move {
-                let max_multiple_accounts = meta
-                    .config
-                    .max_multiple_accounts
-                    .unwrap_or(MAX_MULTIPLE_ACCOUNTS);
-                if pubkey_strs.len() > max_multiple_accounts {
-                    return Err(Error::invalid_params(format!(
-                        "Too many inputs provided; max {max_multiple_accounts}"
-                    )));
-                }
-                let pubkeys = pubkey_strs
-                    .into_iter()
-                    .map(|pubkey_str| verify_pubkey(&pubkey_str))
-                    .collect::<Result<Vec<_>>>()?;
-                meta.get_multiple_accounts(pubkeys, config).await
-            }
-            .boxed()
-        }
 
         fn get_block_commitment(
             &self,
@@ -3675,7 +3693,9 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::{UiLoadedAddresses, parse_ui_inner_instructions},
+        solana_transaction_status::{
+            UiInnerInstructions, UiLoadedAddresses, parse_ui_inner_instructions,
+        },
     };
     #[rpc]
     pub trait Full {
@@ -3889,9 +3909,6 @@ pub mod rpc_full {
                             tpu_forwards: None,
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_vote: contact_info
-                                .tpu_vote(Protocol::UDP)
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
                                 .serve_repair(Protocol::UDP)
@@ -4168,7 +4185,19 @@ pub mod rpc_full {
                 accounts: config_accounts,
                 min_context_slot,
                 inner_instructions: enable_cpi_recording,
+                inner_instructions_encoding,
             } = config.unwrap_or_default();
+            let inner_instructions_encoding =
+                inner_instructions_encoding.unwrap_or(UiTransactionEncoding::JsonParsed);
+            if !matches!(
+                inner_instructions_encoding,
+                UiTransactionEncoding::Json | UiTransactionEncoding::JsonParsed
+            ) {
+                return Err(Error::invalid_params(format!(
+                    "unsupported inner instructions encoding: {inner_instructions_encoding}. \
+                     Supported encodings: json, jsonParsed"
+                )));
+            }
             let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
                 Error::invalid_params(format!(
@@ -4283,7 +4312,10 @@ pub mod rpc_full {
 
             let inner_instructions = inner_instructions.map(|info| {
                 map_inner_instructions(info)
-                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
+                    .map(|converted| match inner_instructions_encoding {
+                        UiTransactionEncoding::Json => UiInnerInstructions::from(converted),
+                        _ => parse_ui_inner_instructions(converted, &account_keys),
+                    })
                     .collect()
             });
 
@@ -4804,7 +4836,7 @@ pub mod tests {
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
-            TransactionDetails,
+            RewardsAndNumPartitions, TransactionDetails,
         },
         solana_vote_interface::state::VoteStateV4,
         solana_vote_program::{
@@ -5072,7 +5104,7 @@ pub mod tests {
                 block_commitment_cache.clone(),
                 blockstore.clone(),
                 validator_exit,
-                RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+                RpcHealth::stub(optimistically_confirmed_bank.clone()),
                 cluster_info,
                 Hash::default(),
                 None,
@@ -5249,12 +5281,12 @@ pub mod tests {
                 );
             }
             self.blockstore.set_roots(roots.iter()).unwrap();
-            let new_bank = Bank::new_from_parent(
-                parent_bank.clone(),
-                *parent_bank.leader(),
-                roots.iter().max().unwrap() + 1,
-            );
+            let max_root = roots.iter().max().unwrap();
+            let new_bank =
+                Bank::new_from_parent(parent_bank.clone(), *parent_bank.leader(), max_root + 1);
             self.bank_forks.write().unwrap().insert(new_bank);
+            self.max_complete_transaction_status_slot
+                .store(*max_root, Ordering::Relaxed);
 
             for root in roots.iter() {
                 self.bank_forks
@@ -5379,6 +5411,39 @@ pub mod tests {
         let result = serde_json::from_str::<Value>(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_minimal_rpc_account_reads() {
+        let genesis = create_genesis_config(20);
+        let mint_pubkey = genesis.mint_keypair.pubkey();
+        let missing_pubkey = Pubkey::new_unique();
+        let bank = Bank::new_for_tests(&genesis.genesis_config);
+        let meta = JsonRpcRequestProcessor::new_from_bank(bank, SocketAddrSpace::Unspecified);
+
+        let mut io = MetaIoHandler::default();
+        io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
+
+        let request = create_test_request("getAccountInfo", Some(json!([mint_pubkey.to_string()])));
+        let response = io
+            .handle_request_sync(&request.to_string(), meta.clone())
+            .unwrap();
+        let account: RpcResponse<Option<UiAccount>> =
+            parse_success_result(serde_json::from_str(&response).unwrap());
+        assert_eq!(account.value.unwrap().lamports, 20);
+
+        let request = create_test_request(
+            "getMultipleAccounts",
+            Some(json!([[
+                mint_pubkey.to_string(),
+                missing_pubkey.to_string()
+            ]])),
+        );
+        let response = io.handle_request_sync(&request.to_string(), meta).unwrap();
+        let accounts: RpcResponse<Vec<Option<UiAccount>>> =
+            parse_success_result(serde_json::from_str(&response).unwrap());
+        assert_eq!(accounts.value[0].as_ref().unwrap().lamports, 20);
+        assert!(accounts.value[1].is_none());
     }
 
     #[test]
@@ -5656,7 +5721,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:8009",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:8010",
-            "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -5672,7 +5736,6 @@ pub mod tests {
             "tpuQuic": "127.0.0.1:1240",
             "tpuForwards": null,
             "tpuForwardsQuic": "127.0.0.1:1245",
-            "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
             "rpc": "127.0.0.1:8899",
             "pubsub": "127.0.0.1:8900",
@@ -6084,6 +6147,181 @@ pub mod tests {
             format!("Too many inputs provided; max {MAX_GET_INFLATION_REWARD_ADDRESSES}"),
         );
         assert_eq!(response, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_inflation_reward_success() {
+        let rpc = RpcHandler::start();
+        let vote_address = Pubkey::new_unique();
+        let stake_only_address = Pubkey::new_unique();
+        let block_only_address = Pubkey::new_unique();
+        let stake_and_block_receiver_address = Pubkey::new_unique();
+        let not_found_address = Pubkey::new_unique();
+        let first_slot_of_epoch = 256;
+        rpc.add_roots_to_blockstore((255..=260).collect());
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_highest_super_majority_root(260);
+
+        let num_partitions = 3;
+        let blockhash = Hash::default(); // the test doesn't fill a real parent blockhash
+        let hasher = EpochRewardsHasher::new(num_partitions, &blockhash);
+        let mut all_partition_rewards = [vec![], vec![], vec![]];
+        let stake_only_partition = hasher
+            .clone()
+            .hash_address_to_partition(&stake_only_address);
+        all_partition_rewards[stake_only_partition].push(Reward {
+            pubkey: stake_only_address.to_string(),
+            lamports: 1,
+            post_balance: 2,
+            reward_type: Some(RewardType::Staking),
+            commission: None,
+            commission_bps: None,
+        });
+        let block_only_partition = hasher
+            .clone()
+            .hash_address_to_partition(&block_only_address);
+        all_partition_rewards[block_only_partition].push(Reward {
+            pubkey: block_only_address.to_string(),
+            lamports: 3,
+            post_balance: 4,
+            reward_type: Some(RewardType::BlockRevenueSharing),
+            commission: None,
+            commission_bps: None,
+        });
+        let stake_and_block_partition = hasher
+            .clone()
+            .hash_address_to_partition(&stake_and_block_receiver_address);
+        all_partition_rewards[stake_and_block_partition].push(Reward {
+            pubkey: stake_and_block_receiver_address.to_string(),
+            lamports: 5,
+            post_balance: 6,
+            reward_type: Some(RewardType::DeactivatedStake),
+            commission: None,
+            commission_bps: None,
+        });
+        all_partition_rewards[stake_and_block_partition].push(Reward {
+            pubkey: stake_and_block_receiver_address.to_string(),
+            lamports: 7,
+            post_balance: 8,
+            reward_type: Some(RewardType::BlockRevenueSharing),
+            commission: None,
+            commission_bps: None,
+        });
+
+        // write out number of partitions and vote rewards first
+        rpc.blockstore
+            .write_rewards(
+                first_slot_of_epoch,
+                RewardsAndNumPartitions {
+                    rewards: vec![Reward {
+                        pubkey: vote_address.to_string(),
+                        lamports: 10,
+                        post_balance: 11,
+                        reward_type: Some(RewardType::Voting),
+                        commission: None,
+                        commission_bps: None,
+                    }],
+                    num_partitions: Some(num_partitions as u64),
+                },
+            )
+            .unwrap();
+
+        // then write out the actual rewards
+        rpc.blockstore
+            .write_rewards(
+                first_slot_of_epoch + 1,
+                RewardsAndNumPartitions {
+                    rewards: all_partition_rewards[0].clone(),
+                    num_partitions: None,
+                },
+            )
+            .unwrap();
+
+        rpc.blockstore
+            .write_rewards(
+                first_slot_of_epoch + 2,
+                RewardsAndNumPartitions {
+                    rewards: all_partition_rewards[1].clone(),
+                    num_partitions: None,
+                },
+            )
+            .unwrap();
+
+        rpc.blockstore
+            .write_rewards(
+                first_slot_of_epoch + 3,
+                RewardsAndNumPartitions {
+                    rewards: all_partition_rewards[2].clone(),
+                    num_partitions: None,
+                },
+            )
+            .unwrap();
+
+        let addresses = [
+            stake_only_address.to_string(),
+            block_only_address.to_string(),
+            stake_and_block_receiver_address.to_string(),
+            not_found_address.to_string(),
+            stake_and_block_receiver_address.to_string(), // test repeated address
+            vote_address.to_string(),
+        ];
+
+        // Normal request
+        let request = create_test_request("getInflationReward", Some(json!([addresses])));
+        let result: Vec<Option<RpcInflationReward>> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(
+            result[0],
+            Some(RpcInflationReward {
+                epoch: 0,
+                effective_slot: first_slot_of_epoch + 1 + stake_only_partition as u64,
+                amount: 1,
+                post_balance: 2,
+                commission: None,
+                commission_bps: None,
+                block_reward_amount: Some(0),
+            })
+        );
+        assert_eq!(
+            result[1],
+            Some(RpcInflationReward {
+                epoch: 0,
+                effective_slot: first_slot_of_epoch + 1 + block_only_partition as u64,
+                amount: 3,
+                post_balance: 4,
+                commission: None,
+                commission_bps: None,
+                block_reward_amount: Some(3),
+            })
+        );
+        assert_eq!(
+            result[2],
+            Some(RpcInflationReward {
+                epoch: 0,
+                effective_slot: first_slot_of_epoch + 1 + stake_and_block_partition as u64,
+                amount: 12,
+                post_balance: 6,
+                commission: None,
+                commission_bps: None,
+                block_reward_amount: Some(7),
+            })
+        );
+        assert_eq!(result[2], result[4]);
+        assert_eq!(result[3], None);
+        assert_eq!(
+            result[5],
+            Some(RpcInflationReward {
+                epoch: 0,
+                effective_slot: first_slot_of_epoch,
+                amount: 10,
+                post_balance: 11,
+                commission: None,
+                commission_bps: None,
+                block_reward_amount: None,
+            })
+        );
     }
 
     #[test]
@@ -7277,6 +7515,79 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+
+        // `innerInstructionsEncoding` provided as `json`, should have compiled inner instructions
+        let req = format!(
+            r#"{{"jsonrpc":"2.0",
+                 "id":1,
+                 "method":"simulateTransaction",
+                 "params":[
+                   "{tx_serialized_encoded}",
+                   {{ "innerInstructions": true, "innerInstructionsEncoding": "json", "encoding": "base64" }}
+                 ]
+            }}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let account_index = |pubkey: &Pubkey| {
+            tx.message
+                .account_keys
+                .iter()
+                .position(|key| key == pubkey)
+                .unwrap()
+        };
+        let create_account_ix = system_instruction::create_account(
+            &from_pubkey,
+            &to_pubkey,
+            lamports,
+            space as u64,
+            &owner_pubkey,
+        );
+        let expected_inner_instructions = json!([
+            {
+            "index": 0,
+            "instructions": [
+                {
+                "programIdIndex": account_index(&system_program::id()),
+                "accounts": [account_index(&from_pubkey), account_index(&to_pubkey)],
+                "data": bs58::encode(&create_account_ix.data).into_string(),
+                "stackHeight": 2
+                }
+            ]
+            }
+        ]);
+        let result: Response = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let Response::Single(Output::Success(success)) = result else {
+            panic!("expected success response, got {result:?}");
+        };
+        assert_eq!(
+            success.result["value"]["innerInstructions"],
+            expected_inner_instructions
+        );
+
+        // Unsupported `innerInstructionsEncoding` should return an error
+        let req = format!(
+            r#"{{"jsonrpc":"2.0",
+                 "id":1,
+                 "method":"simulateTransaction",
+                 "params":[
+                   "{tx_serialized_encoded}",
+                   {{ "innerInstructions": true, "innerInstructionsEncoding": "base64", "encoding": "base64" }}
+                 ]
+            }}"#,
+        );
+        let res = io.handle_request_sync(&req, meta.clone());
+        let result: Response = serde_json::from_str(&res.expect("actual response"))
+            .expect("actual response deserialization");
+        let Response::Single(Output::Failure(failure)) = result else {
+            panic!("expected failure response, got {result:?}");
+        };
+        assert_eq!(failure.error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            failure.error.message,
+            "unsupported inner instructions encoding: base64. Supported encodings: json, \
+             jsonParsed"
+        );
     }
 
     #[test]
@@ -7455,7 +7766,7 @@ pub mod tests {
         let (bank_forks, mint_keypair, ..) = new_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone());
+        let health = RpcHealth::stub(optimistically_confirmed_bank.clone());
         // Mark the node as healthy to start
         health.stub_set_health_status(Some(RpcHealthStatus::Ok));
 
@@ -7811,7 +8122,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
@@ -9670,7 +9981,7 @@ pub mod tests {
             block_commitment_cache,
             blockstore.clone(),
             validator_exit,
-            RpcHealth::stub(optimistically_confirmed_bank.clone(), blockstore.clone()),
+            RpcHealth::stub(optimistically_confirmed_bank.clone()),
             cluster_info,
             Hash::default(),
             None,
@@ -10030,10 +10341,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_stake_minimum_delegation() {
         let rpc = RpcHandler::start();
-        let bank = rpc.working_bank();
-        let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation(
-            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
-        );
+        let expected_stake_minimum_delegation = stake_utils::get_minimum_delegation();
 
         let request = create_test_request("getStakeMinimumDelegation", None);
         let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));

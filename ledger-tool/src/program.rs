@@ -18,7 +18,7 @@ use {
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
         program_metrics::LoadProgramMetrics,
-        serialization::serialize_parameters,
+        serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
     },
     solana_pubkey::Pubkey,
@@ -420,9 +420,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         // Override account data and lamports from input file if provided
                         if space > 0 {
                             let lamports = account_info.lamports.unwrap_or(account.lamports());
-                            let mut account = AccountSharedData::new(lamports, space, &owner);
-                            account.set_data_from_slice(&data);
-                            account
+                            AccountSharedData::new_with_data(lamports, data, &owner)
                         } else {
                             account
                         }
@@ -435,9 +433,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                             Pubkey::new_unique()
                         });
                         let lamports = account_info.lamports.unwrap_or(0);
-                        let mut account = AccountSharedData::new(lamports, space, &owner);
-                        account.set_data_from_slice(&data);
-                        account
+                        AccountSharedData::new_with_data(lamports, data, &owner)
                     };
                     let txn_acct_index = if let Some(idx) = txn_acct_indices.get(&pubkey) {
                         *idx
@@ -498,17 +494,22 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
     invoke_context.push().unwrap();
-    let (_parameter_bytes, regions, account_lengths, instruction_data_offset) =
-        serialize_parameters(
-            &invoke_context
-                .transaction_context
-                .get_current_instruction_context()
-                .unwrap(),
-            false, // virtual_address_space_adjustments
-            false, // account_data_direct_mapping
-            false, // direct_account_pointers_in_program_input
-        )
-        .unwrap();
+    let SerializationResult {
+        parameter_bytes: _parameter_bytes,
+        regions,
+        accounts_metadata: account_lengths,
+        instruction_data_offset,
+        ..
+    } = serialize_parameters(
+        &invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap(),
+        false, // virtual_address_space_adjustments
+        false, // account_data_direct_mapping
+        false, // direct_account_pointers_in_program_input
+    )
+    .unwrap();
 
     let regions = [
         MemoryRegion::new_empty(MM_RODATA_START),

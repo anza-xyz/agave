@@ -336,7 +336,6 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_perf::packet::BytesPacket,
-        solana_runtime_transaction::sanitize_config::sanitize_config,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{
@@ -479,8 +478,7 @@ mod tests {
 
         let reserved_addresses = HashSet::default();
         let packet_parser = |data, priority, cost| {
-            let view =
-                SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
             let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,

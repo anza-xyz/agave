@@ -1451,23 +1451,27 @@ mod tests {
         }
     }
 
-    /// Checks that the inline wincode decoders match bincode and the hand-written
-    /// `VoteStateVersions::deserialize` on `data`.
+    /// Checks that the inline wincode decoders match the boxed `VoteStateVersions` wincode decoder
+    /// and the hand-written `VoteStateVersions::deserialize` on `data`.
     fn assert_vote_state_decoders_agree(data: &[u8]) {
         let inline = wincode::config::deserialize::<VoteStateVersionsInline, _>(
             data,
             solana_account::WINCODE_CONFIG,
         )
-        .ok()
-        .map(boxed);
+        .map(boxed)
+        .map_err(|err| err.to_string());
         assert_eq!(
             inline,
-            bincode::deserialize::<VoteStateVersions>(data).ok(),
+            wincode::config::deserialize::<VoteStateVersions, _>(
+                data,
+                solana_account::WINCODE_CONFIG,
+            )
+            .map_err(|err| err.to_string()),
             "data: {data:?}",
         );
         assert_eq!(
-            VoteStateVersionsInline::deserialize(data).ok().map(boxed),
-            VoteStateVersions::deserialize(data).ok(),
+            VoteStateVersionsInline::deserialize(data).map(boxed),
+            VoteStateVersions::deserialize(data),
             "data: {data:?}",
         );
     }
@@ -1495,7 +1499,7 @@ mod tests {
                 VoteStateVersions::new_v3(vote_state_v3),
                 VoteStateVersions::new_v4(vote_state_v4),
             ] {
-                let encoded = bincode::serialize(&versions).unwrap();
+                let encoded = wincode::serialize(&versions).unwrap();
                 let mut trailing = encoded.clone();
                 trailing.extend_from_slice(&[0xff; 16]);
                 assert_vote_state_decoders_agree(&trailing);
@@ -1609,14 +1613,12 @@ mod tests {
             }
         };
         let version1_14_11_serialized =
-            bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
+            wincode::serialize(&VoteStateVersions::V1_14_11(Box::new(vote_state_v1_14_11)))
                 .unwrap();
-        let version1_14_11_serialized_len = version1_14_11_serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(version1_14_11_serialized_len);
-        let mut vote_account =
-            AccountSharedData::new(lamports, version1_14_11_serialized_len, &id());
-        vote_account.set_data_from_slice(&version1_14_11_serialized);
+        let lamports = rent.minimum_balance(version1_14_11_serialized.len());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, version1_14_11_serialized, &id());
 
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
@@ -1759,11 +1761,9 @@ mod tests {
         vote_state.set_commission(10);
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
@@ -1916,11 +1916,9 @@ mod tests {
         vote_state.set_commission(10); // 10%
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
@@ -4207,11 +4205,9 @@ mod tests {
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
@@ -4294,11 +4290,9 @@ mod tests {
         vote_state.set_block_revenue_collector(custom_collector);
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
@@ -4672,11 +4666,9 @@ mod tests {
         let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
 
         let serialized = vote_state.serialize();
-        let serialized_len = serialized.len();
         let rent = Rent::default();
-        let lamports = rent.minimum_balance(serialized_len);
-        let mut vote_account = AccountSharedData::new(lamports, serialized_len, &id());
-        vote_account.set_data_from_slice(&serialized);
+        let lamports = rent.minimum_balance(serialized.len());
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
         let get_commission_collector =
             |instruction_context: &InstructionContext, kind: CommissionKind| {
@@ -4826,11 +4818,13 @@ mod tests {
 
             let v4_size = VoteStateV4::size_of();
             let mut account_data = vec![0u8; v4_size];
-            bincode::serialize_into(&mut account_data[..], &VoteStateVersions::V3(Box::new(v3)))
+            wincode::serialize_into(&mut account_data[..], &VoteStateVersions::V3(Box::new(v3)))
                 .unwrap();
-            let mut v3_vote_account =
-                AccountSharedData::new(rent.minimum_balance(v4_size), v4_size, &id());
-            v3_vote_account.set_data_from_slice(&account_data);
+            let v3_vote_account = AccountSharedData::new_with_data(
+                rent.minimum_balance(v4_size),
+                account_data,
+                &id(),
+            );
 
             let v3_signers: HashSet<Pubkey> = vec![v3_withdrawer].into_iter().collect();
 
@@ -4877,9 +4871,8 @@ mod tests {
         // * V0_23_5 is explicitly unsupported
         // * V1_14_11, V3, and V4 fail if state is bad
         let run_with_account_data = |bytes: Vec<u8>| -> Result<(), InstructionError> {
-            let mut bad_vote_account =
-                AccountSharedData::new(rent.minimum_balance(bytes.len()), bytes.len(), &id());
-            bad_vote_account.set_data_from_slice(&bytes);
+            let bad_vote_account =
+                AccountSharedData::new_with_data(rent.minimum_balance(bytes.len()), bytes, &id());
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -5427,8 +5420,8 @@ mod tests {
 
         // Should fail - not a valid vote state.
         {
-            let mut invalid_vote_account = AccountSharedData::new(lamports, v4_size, &id());
-            invalid_vote_account.set_data_from_slice(&vec![0xFFu8; v4_size]);
+            let invalid_vote_account =
+                AccountSharedData::new_with_data(lamports, vec![0xFFu8; v4_size], &id());
 
             let transaction_context = new_transaction_context(
                 vec![
@@ -5468,9 +5461,11 @@ mod tests {
             let preexisting_state = preexisting_handler.as_ref_v4().clone();
             let serialized = preexisting_handler.serialize();
             let serialized_len = serialized.len();
-            let mut initialized_vote_account =
-                AccountSharedData::new(rent.minimum_balance(serialized_len), serialized_len, &id());
-            initialized_vote_account.set_data_from_slice(&serialized);
+            let initialized_vote_account = AccountSharedData::new_with_data(
+                rent.minimum_balance(serialized_len),
+                serialized,
+                &id(),
+            );
 
             let transaction_context = new_transaction_context(
                 vec![
@@ -5737,8 +5732,7 @@ mod tests {
 
         // Account at exact rent-exempt minimum: withdraw 1 fails.
         {
-            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct = AccountSharedData::new_with_data(min_balance, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             assert_eq!(
@@ -5749,8 +5743,7 @@ mod tests {
 
         // Account at exact rent-exempt minimum: withdraw all succeeds (deinit).
         {
-            let mut acct = AccountSharedData::new(min_balance, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct = AccountSharedData::new_with_data(min_balance, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             withdraw(
@@ -5768,8 +5761,8 @@ mod tests {
 
         // Account at rent_exempt + 100: withdraw 100 succeeds.
         {
-            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct =
+                AccountSharedData::new_with_data(min_balance + 100, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             withdraw(&ix, 0, target_version, 100, 1, &signers, &rent, &clock).unwrap();
@@ -5777,8 +5770,8 @@ mod tests {
 
         // Account at rent_exempt + 100: withdraw 101 fails.
         {
-            let mut acct = AccountSharedData::new(min_balance + 100, serialized_len, &id());
-            acct.set_data_from_slice(&serialized);
+            let acct =
+                AccountSharedData::new_with_data(min_balance + 100, serialized.clone(), &id());
             let transaction_context = setup_withdraw_context(vote_pubkey, acct);
             let ix = transaction_context.get_next_instruction_context().unwrap();
             assert_eq!(
@@ -5802,8 +5795,7 @@ mod tests {
         let serialized = handler.clone().serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len()) + extra_lamports;
-        let mut account = AccountSharedData::new(lamports, serialized.len(), &id());
-        account.set_data_from_slice(&serialized);
+        let account = AccountSharedData::new_with_data(lamports, serialized, &id());
         (handler, account)
     }
 
@@ -5992,15 +5984,14 @@ mod tests {
         // Serialize V3 into a fixed-size account buffer.
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
-        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let v3_serialized_len = wincode::serialized_size(&v3_versioned).unwrap() as usize;
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         // Drive V3 to V4 conversion through the program handler.
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
-        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
-        vote_account.set_data_from_slice(&vote_account_data);
+        let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -6020,7 +6011,7 @@ mod tests {
         let account_data = borrowed.get_data();
         let v4_serialized_len = {
             let v4 = VoteStateV4::deserialize(account_data, &vote_pubkey).unwrap();
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4)).unwrap() as usize
         };
         assert!(
             v4_serialized_len < v3_serialized_len,
@@ -6093,14 +6084,13 @@ mod tests {
         // Step 1: Populate V3 account and record V3 serialized size.
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
-        let v3_serialized_len = bincode::serialized_size(&v3_versioned).unwrap() as usize;
+        let v3_serialized_len = wincode::serialized_size(&v3_versioned).unwrap() as usize;
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
-        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
-        vote_account.set_data_from_slice(&vote_account_data);
+        let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -6117,7 +6107,7 @@ mod tests {
 
         let v4_after_convert = VoteStateV4::deserialize(borrowed.get_data(), &vote_pubkey).unwrap();
         let v4_serialized_len =
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4_after_convert.clone())).unwrap()
                 as usize;
 
         assert!(
@@ -6150,7 +6140,7 @@ mod tests {
         let mut v4_empty_votes = v4_after_convert.clone();
         v4_empty_votes.votes.clear();
         let v4_empty_serialized_len =
-            bincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
+            wincode::serialized_size(&VoteStateVersions::new_v4(v4_empty_votes.clone())).unwrap()
                 as usize;
         assert!(
             v4_empty_serialized_len < v4_serialized_len,
@@ -6217,7 +6207,7 @@ mod tests {
                 .set_state(&VoteStateVersions::new_v4(v4_regrowing.clone()))
                 .unwrap();
             let current_serialized_len =
-                bincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
+                wincode::serialized_size(&VoteStateVersions::new_v4(v4_regrowing.clone())).unwrap()
                     as usize;
             let current_trailing = buf_size - current_serialized_len;
             assert!(
@@ -6272,12 +6262,11 @@ mod tests {
         let buf_size = VoteStateV3::size_of();
         let v3_versioned = VoteStateVersions::V3(Box::new(v3));
         let mut vote_account_data = vec![0u8; buf_size];
-        bincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
+        wincode::serialize_into(&mut vote_account_data[..], &v3_versioned).unwrap();
 
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
-        let mut vote_account = AccountSharedData::new(lamports, buf_size, &id());
-        vote_account.set_data_from_slice(&vote_account_data);
+        let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -6313,8 +6302,7 @@ mod tests {
         let serialized = vote_state.serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -6379,8 +6367,7 @@ mod tests {
         let serialized = vote_state.serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -6462,8 +6449,7 @@ mod tests {
         let serialized = vote_state.clone().serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
@@ -6525,8 +6511,7 @@ mod tests {
         let serialized = vote_state.clone().serialize();
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
-        let mut vote_account = AccountSharedData::new(lamports, serialized.len(), &id());
-        vote_account.set_data_from_slice(&serialized);
+        let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
         let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],

@@ -31,6 +31,7 @@ use {
 };
 #[cfg(any(feature = "dev-context-only-utils", feature = "stable-abi"))]
 use {
+    solana_account::state_traits::StateMutWincode as _,
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_clock::Clock,
     solana_keypair::Keypair,
@@ -153,13 +154,12 @@ impl VoteAccount {
             &Pubkey::from(rng.random::<[u8; 32]>()),
             &clock,
         );
-        let data = wincode::serialize(&VoteStateVersions::new_v4(vote_state)).unwrap();
-        let mut account = AccountSharedData::new(
+        let account = AccountSharedData::new_data(
             rng.random(), // lamports
-            data.len(),
+            &VoteStateVersions::new_v4(vote_state),
             &solana_sdk_ids::vote::id(), // owner
-        );
-        account.set_data_from_slice(&data);
+        )
+        .unwrap();
         VoteAccount::try_from(account).unwrap()
     }
 }

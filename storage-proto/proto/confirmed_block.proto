@@ -133,6 +133,7 @@ enum RewardType {
     Voting = 4;
     DeactivatedStake = 5;
     VATDebit = 6;
+    BlockRevenueSharing = 7;
 }
 
 message Reward {

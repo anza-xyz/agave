@@ -37,6 +37,7 @@ use {
         io::{self, BufWriter, Seek, SeekFrom},
         iter::ExactSizeIterator,
         mem::{self, MaybeUninit, offset_of},
+        ops::ControlFlow,
         path::{Path, PathBuf},
         range::Range,
         slice,
@@ -645,10 +646,15 @@ impl AppendVec {
     /// * LogicalOffset: the logical offset of this account
     /// * StoredAccountInfoWithoutData: the account itself, without account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfoWithoutData<'local>),
+        mut callback: impl for<'local> FnMut(
+            LogicalOffset,
+            StoredAccountInfoWithoutData<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<()> {
         self.scan_stored_accounts_no_data(|stored_account| {
             // SAFETY: The offset in stored_account_meta is required to be a valid/aligned offset
@@ -662,7 +668,7 @@ impl AppendVec {
                 executable: stored_account.executable(),
                 rent_epoch: stored_account.rent_epoch(),
             };
-            callback(logical_offset, account);
+            callback(logical_offset, account)
         })
     }
 
@@ -673,26 +679,40 @@ impl AppendVec {
     /// * LogicalOffset: the logical offset of this account
     /// * StoredAccountInfo: the account itself, with account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    /// After an early exit, callers must reset `reader` before starting another scan.
+    ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
     pub(crate) fn scan_accounts_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
+        mut callback: impl for<'local> FnMut(
+            LogicalOffset,
+            StoredAccountInfo<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<()> {
-        self.scan_accounts_stored_meta_with(reader, |stored_account_meta| {
+        Self::scan_accounts_stored_meta_with(reader, |stored_account_meta| {
             // SAFETY: The offset in stored_account_meta is required to be a valid/aligned offset
             // for an AppendVec entry/account, thus it is also a valid logical offset.
             let logical_offset = logical_offset_from_file(stored_account_meta.offset()).unwrap();
-            let account = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            callback(logical_offset, account);
+            callback(logical_offset, stored_account_from(stored_account_meta))
+        })
+    }
+
+    /// Iterate over all accounts on `reader` and call `callback` with each.
+    ///
+    /// `callback` parameters:
+    /// * StoredAccountInfo: the account itself, with account data
+    ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    /// After an early exit, callers must reset `reader` before starting another scan.
+    pub(crate) fn scan_reader<'a>(
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> ControlFlow<()>,
+    ) -> Result<()> {
+        Self::scan_accounts_stored_meta_with(reader, |stored_account_meta| {
+            callback(stored_account_from(stored_account_meta))
         })
     }
 
@@ -703,11 +723,11 @@ impl AppendVec {
     #[cfg(feature = "dev-context-only-utils")]
     fn scan_accounts_stored_meta<'a>(
         &'a self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         let mut reader = crate::accounts_file::new_scan_accounts_reader();
         reader.set_file(&self.file, self.len() as FileSize)?;
-        self.scan_accounts_stored_meta_with(&mut reader, callback)
+        Self::scan_accounts_stored_meta_with(&mut reader, callback)
     }
 
     /// See [`scan_accounts_stored_meta`] for documentation.
@@ -715,9 +735,8 @@ impl AppendVec {
     /// This fn does not call `FileBufRead::set_file()` first, before scanning.
     /// The *caller* is responsible for setting the file.
     fn scan_accounts_stored_meta_with<'a>(
-        &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         let mut min_buf_len = STORE_META_OVERHEAD;
         loop {
@@ -749,7 +768,10 @@ impl AppendVec {
                     offset,
                     stored_size,
                 };
-                callback(account);
+                let control_flow = callback(account);
+                if control_flow.is_break() {
+                    break;
+                }
                 reader.consume_or_skip(stored_size);
                 // restore default required buffer size
                 min_buf_len = STORE_META_OVERHEAD;
@@ -768,7 +790,7 @@ impl AppendVec {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn scan_accounts_stored_meta_for_store_tool(
         &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         self.scan_accounts_stored_meta(callback)
     }
@@ -836,13 +858,14 @@ impl AppendVec {
     pub fn scan_pubkeys(&self, mut callback: impl FnMut(&Pubkey)) -> Result<()> {
         self.scan_stored_accounts_no_data(|account| {
             callback(account.pubkey());
+            ControlFlow::Continue(())
         })
     }
 
     /// Iterate over all accounts and call `callback` with the fixed sized portion of each account.
     fn scan_stored_accounts_no_data(
         &self,
-        mut callback: impl FnMut(StoredAccountNoData),
+        mut callback: impl FnMut(StoredAccountNoData) -> ControlFlow<()>,
     ) -> Result<()> {
         let self_len = self.len();
         // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
@@ -874,11 +897,14 @@ impl AppendVec {
                 break;
             }
             let stored_size = u64_align!(unaligned_stored_size);
-            callback(StoredAccountNoData {
+            let control_flow = callback(StoredAccountNoData {
                 meta: stored_meta,
                 account_meta,
                 offset,
             });
+            if control_flow.is_break() {
+                break;
+            }
             reader.consume_or_skip(stored_size);
         }
         Ok(())
@@ -1092,6 +1118,18 @@ impl<W: io::Write> AppendVecAccountWriter<W> {
     }
 }
 
+/// Helper fn to return a StoredAccountInfo from a StoredAccountMeta.
+fn stored_account_from<'a>(stored_account_meta: StoredAccountMeta<'a>) -> StoredAccountInfo<'a> {
+    StoredAccountInfo {
+        pubkey: stored_account_meta.pubkey(),
+        lamports: stored_account_meta.lamports(),
+        owner: &stored_account_meta.account_meta.owner,
+        data: stored_account_meta.data(),
+        executable: stored_account_meta.executable(),
+        rent_epoch: stored_account_meta.rent_epoch(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -1103,6 +1141,7 @@ mod tests {
         solana_clock::Slot,
         std::{
             io::{Seek as _, SeekFrom, Write as _},
+            iter,
             mem::ManuallyDrop,
             ptr,
         },
@@ -1130,12 +1169,13 @@ mod tests {
             let mut matches = true;
             let mut last_offset = 0;
             self.scan_stored_accounts_no_data(|account| {
-                if !matches || !account.sanitize() {
+                if !account.sanitize() {
                     matches = false;
-                    return;
+                    return ControlFlow::Break(());
                 }
                 last_offset = account.offset() + account.stored_size() as FileOffset;
                 num_accounts += 1;
+                ControlFlow::Continue(())
             })?;
             let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
 
@@ -1199,8 +1239,11 @@ mod tests {
     /// Note that `sample`=0 returns a fully default account with a default pubkey.
     fn create_test_account(sample: usize) -> (Pubkey, AccountSharedData) {
         let data_len = sample % 256;
-        let mut account = AccountSharedData::new(sample as u64, 0, &Pubkey::default());
-        account.set_data_from_slice(&vec![data_len as u8; data_len]);
+        let account = AccountSharedData::new_with_data(
+            sample as u64,
+            vec![data_len as u8; data_len],
+            &Pubkey::default(),
+        );
         (Pubkey::default(), account)
     }
 
@@ -1327,6 +1370,7 @@ mod tests {
             let mut count = 0;
             self.scan_stored_accounts_no_data(|_| {
                 count += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
             count
@@ -1356,12 +1400,12 @@ mod tests {
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
             let pubkey = Pubkey::new_from_array(rng.random());
             let owner = Pubkey::new_from_array(rng.random());
-            let mut account = AccountSharedData::new(rng.random(), data_len, &owner);
+            let lamports = rng.random();
             // Ensure we actually have some unique data to compare against when checking correctness
             let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
-            account.set_data_from_slice(&data);
+            let account = AccountSharedData::new_with_data(lamports, data, &owner);
             (pubkey, account)
         };
 
@@ -1413,6 +1457,7 @@ mod tests {
                 assert_eq!(&recovered, account);
                 assert_eq!(v.pubkey(), pubkey);
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
             assert_eq!(index, num_accounts);
@@ -1428,6 +1473,7 @@ mod tests {
                 assert_eq!(stored_account.executable(), account.executable());
                 assert_eq!(stored_account.rent_epoch(), account.rent_epoch());
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
             assert_eq!(index, num_accounts);
@@ -1491,6 +1537,7 @@ mod tests {
                 assert_eq!(stored_account.pubkey(), pubkey);
                 assert_eq!(recovered, *account);
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
         assert_eq!(index, num_new_accounts);
@@ -1505,6 +1552,7 @@ mod tests {
                 assert_eq!(stored_account.executable(), account.executable());
                 assert_eq!(stored_account.rent_epoch(), account.rent_epoch());
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
         assert_eq!(index, num_new_accounts);
@@ -1549,6 +1597,7 @@ mod tests {
             let recovered = create_account_shared_data(&v);
             assert_eq!(recovered, account.1);
             sample += 1;
+            ControlFlow::Continue(())
         })
         .expect("must scan accounts storage");
     }
@@ -1571,8 +1620,7 @@ mod tests {
             let pubkey = solana_pubkey::new_rand();
             let owner = Pubkey::default();
             let data_len = 3_u64;
-            let mut account = AccountSharedData::new(0, data_len as usize, &owner);
-            account.set_data_from_slice(b"abc");
+            let account = AccountSharedData::new_with_data(0, b"abc".to_vec(), &owner);
             let stored_meta = StoredMeta {
                 write_version: 0,
                 pubkey,
@@ -2030,6 +2078,7 @@ mod tests {
                         assert_eq!(stored_account.data_len(), account.data().len() as u64);
 
                         i += 1;
+                        ControlFlow::Continue(())
                     })
                     .expect("must scan accounts storage");
                 assert_eq!(i, accounts.len());
@@ -2119,6 +2168,7 @@ mod tests {
                         assert!(accounts_equal(&stored_account, account));
 
                         i += 1;
+                        ControlFlow::Continue(())
                     })
                     .expect("must scan accounts storage");
                 assert_eq!(i, accounts.len());
@@ -2243,5 +2293,54 @@ mod tests {
             Some(MAX_LOGICAL_OFFSET),
         );
         assert_eq!(logical_offset_from_file(MAXIMUM_APPEND_VEC_FILE_SIZE), None);
+    }
+
+    /// Ensure the scan_accounts() fns respect their callback's control flow.
+    #[test]
+    fn test_scan_accounts_control_flow() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 10_000);
+
+        let num_accounts = 9;
+        let accounts: Box<_> = iter::repeat_with(|| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, 0, &Pubkey::default()),
+            )
+        })
+        .take(num_accounts)
+        .collect();
+
+        let slot = 11; // value does not matter
+        av.append_accounts(&(slot, &*accounts)).unwrap();
+
+        let stop_at = num_accounts - 4;
+        let mut i = 0;
+        av.scan_accounts_stored_meta(|_stored_account| {
+            i += 1;
+            if i == stop_at {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap();
+        // ensure the scan visited the expected number of accounts
+        assert_eq!(i, stop_at);
+
+        let stop_at = num_accounts - 2;
+        let mut i = 0;
+        av.scan_stored_accounts_no_data(|_stored_account| {
+            i += 1;
+            if i == stop_at {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap();
+        // ensure the scan visited the expected number of accounts
+        assert_eq!(i, stop_at);
     }
 }

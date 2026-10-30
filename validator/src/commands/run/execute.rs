@@ -1,5 +1,11 @@
 #[cfg(target_os = "linux")]
-use {super::xdp, agave_xdp::transmitter::XdpConfig};
+use {
+    super::{
+        capabilities::{self, XdpMode},
+        xdp,
+    },
+    agave_xdp::transmitter::XdpConfig,
+};
 use {
     crate::{
         admin_rpc_service::{self, StakedNodesOverrides, load_staked_nodes_overrides},
@@ -115,6 +121,10 @@ pub fn execute(
         tvu_bls_sigverify_threads,
     } = num_threads;
 
+    let unified_scheduler_handler_threads =
+        value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
+    let execution_arenas = value_t!(matches, "execution_arenas", usize).ok();
+
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
     let logfile = run_args.logfile;
@@ -155,13 +165,21 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    #[cfg(target_os = "linux")]
+    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
+        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
+        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
+
+    #[cfg(not(target_os = "linux"))]
+    let poh_pinned_cpu_core = None;
+
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<XdpConfig> = if operation == Operation::Initialize {
         None
     } else {
-        args::xdp_config::new_config(matches, &bind_addresses)?
+        args::xdp_config::new_config(matches, &bind_addresses, poh_pinned_cpu_core)?
     };
 
     let dynamic_port_range =
@@ -273,107 +291,24 @@ pub fn execute(
 
     #[cfg(target_os = "linux")]
     let (xdp_transmit_setup, xdp_network_config_report) = {
-        use caps::{
-            CapSet,
-            Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW, CAP_PERFMON, CAP_SYS_NICE},
+        let needs_sys_nice = value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8) != 0
+            || run_args.json_rpc_config.rpc_niceness_adj != 0;
+        let xdp_mode = match xdp_transmit_config.as_ref() {
+            None => XdpMode::Disabled,
+            Some(xdp_config) if xdp_config.zero_copy => XdpMode::ZeroCopy,
+            Some(_) => XdpMode::Copy,
         };
-
-        let super::Config { primordial_caps } = config;
-
-        let mut required_caps = HashSet::new();
-        let mut retained_caps = HashSet::new();
-        let mut supported_caps = HashSet::from_iter([
-            CAP_BPF,
-            CAP_NET_ADMIN,
-            CAP_NET_RAW,
-            CAP_PERFMON,
-            CAP_SYS_NICE,
-        ]);
-
-        // make sure we keep any primordial caps
-        supported_caps.extend(primordial_caps.clone());
-        required_caps.extend(primordial_caps.clone());
-        retained_caps.extend(primordial_caps.clone());
-
-        if let Some(xdp_config) = xdp_transmit_config.as_ref() {
-            required_caps.insert(CAP_NET_ADMIN);
-            required_caps.insert(CAP_NET_RAW);
-            if xdp_config.zero_copy {
-                required_caps.insert(CAP_BPF);
-                required_caps.insert(CAP_PERFMON);
-            }
-        }
-
-        let snapshot_packager_niceness_adj =
-            value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
-
-        if snapshot_packager_niceness_adj != 0 || run_args.json_rpc_config.rpc_niceness_adj != 0 {
-            required_caps.insert(CAP_SYS_NICE);
-            retained_caps.insert(CAP_SYS_NICE);
-        }
-
-        // lazy dev check
-        assert!(
-            required_caps.is_subset(&supported_caps),
-            "required_caps contains a cap not in supported_caps",
-        );
-
-        // validate and minimize the permitted set
-        let current_permitted =
-            caps::read(None, CapSet::Permitted).expect("permitted capset to be readable");
-        let missing_caps = required_caps
-            .difference(&current_permitted)
-            .collect::<Vec<_>>();
-        if !missing_caps.is_empty() {
-            error!(
-                "the current configuration requires the following capabilities, which have not \
-                 been permitted to the current process: {missing_caps:?}",
-            );
-            std::process::exit(1);
-        }
-        // warn about extraneous caps that no configuration requires
-        let extra_caps = current_permitted
-            .difference(&supported_caps)
-            .collect::<Vec<_>>();
-        if !extra_caps.is_empty() {
-            warn!(
-                "dropping extraneous capabilities ({extra_caps:?}) from the current process. \
-                 consider removing them from your operational configuration.",
-            );
-        }
-
-        // drop all caps that the current configuration does not require
-        caps::set(None, CapSet::Effective, &required_caps)
-            .expect("linux allows effective capset to be set");
-        caps::set(None, CapSet::Permitted, &required_caps)
-            .expect("linux allows permitted capset to be set");
-
-        // XDP _MUST_ be setup _BEFORE_ the app spawns any threads to ensure linux
-        // capabilities do not leak, leaving the process in a state where it could
-        // potentially be used as a privilege escalation gadget
-        let xdp_transmit_setup_result = xdp_transmit_config.clone().map(|xdp_config| {
-            xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
-        });
-
-        // Drop temporary XDP capabilities before propagating any setup error.
-        caps::set(None, CapSet::Effective, &retained_caps)
-            .expect("linux allows effective capset to be set");
-        caps::set(None, CapSet::Permitted, &retained_caps)
-            .expect("linux allows permitted capset to be set");
-
-        xdp_transmit_setup_result.transpose()?.unzip()
+        capabilities::restrict(config.primordial_caps, needs_sys_nice, xdp_mode, || {
+            xdp_transmit_config.map(|xdp_config| {
+                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+            })
+        })?
+        .transpose()?
+        .unzip()
     };
 
     #[cfg(not(target_os = "linux"))]
     let (xdp_transmit_setup, xdp_network_config_report) = (None, None);
-
-    #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-
-    #[cfg(not(target_os = "linux"))]
-    let poh_pinned_cpu_core = None;
 
     solana_core::validator::report_target_features();
 
@@ -554,7 +489,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        require_tower: matches.is_present("require_tower"),
+        require_tower: false,
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
         vote_history_storage,
@@ -640,13 +575,8 @@ pub fn execute(
             "block_verification_method",
             BlockVerificationMethod
         ),
-        unified_scheduler_handler_threads: value_t!(
-            matches,
-            "unified_scheduler_handler_threads",
-            usize
-        )
-        .ok(),
-        replay_arenas: value_t!(matches, "replay_arenas", usize).ok(),
+        unified_scheduler_handler_threads,
+        execution_arenas,
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",
@@ -662,11 +592,6 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
-        banking_trace_dir_byte_limit: value_t_or_exit!(
-            matches,
-            "banking_trace_dir_byte_limit",
-            u64
-        ),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use solana_entry::entry::{Entry, entry_views_for_tests};
 use {
@@ -8,16 +10,14 @@ use {
         entry_notifier_service::{EntryNotification, EntryNotifierSender, send_entry_notification},
         leader_schedule_cache::LeaderScheduleCache,
         shred::MAX_FEC_SETS_PER_SLOT,
-        thread_pool::{WorkerJob, WorkerPool},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::UnsanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_view::UnsanitizedTransactionView,
     agave_votor_messages::{
         certificate::Certificate, consensus_message::BlockId, migration::MigrationStatus,
     },
+    agave_worker_pool::{WorkerPool, WorkerPoolConfig},
     bytes::Bytes,
     chrono_humanize::{Accuracy, HumanTime, Tense},
     crossbeam_channel::{Receiver, Sender},
@@ -69,7 +69,7 @@ use {
         cmp,
         collections::{HashMap, HashSet},
         mem,
-        num::Saturating,
+        num::{NonZeroUsize, Saturating},
         ops::{Index, Range},
         path::PathBuf,
         result,
@@ -77,13 +77,11 @@ use {
             Arc, OnceLock, RwLock,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
+        thread,
         time::{Duration, Instant},
     },
     thiserror::Error,
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
-
 struct ReplayEntry {
     entry: EntryType<ReplayTransaction>,
     starting_index: usize,
@@ -360,8 +358,6 @@ pub struct ProcessOptions {
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
-    #[cfg(feature = "dev-context-only-utils")]
-    pub hash_overrides: Option<HashOverrides>,
     pub abort_on_invalid_block: bool,
     pub no_block_cost_limits: bool,
 }
@@ -394,7 +390,9 @@ pub(crate) fn process_blockstore_for_bank_0(
     let bank_forks = BankForks::new_rw_arc(bank0);
 
     info!("Processing ledger for slot 0...");
-    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(num_cpus::get());
+    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(
+        thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
+    );
     process_bank_0(
         &bank_forks
             .read()
@@ -429,11 +427,6 @@ pub fn process_blockstore_from_root(
         // Starting slot must be a root, and thus has no parents
         assert_eq!(bank_forks.read().unwrap().banks().len(), 1);
         let bank = bank_forks.read().unwrap().root_bank();
-        #[cfg(feature = "dev-context-only-utils")]
-        if let Some(hash_overrides) = &opts.hash_overrides {
-            info!("Will override following slots' hashes: {hash_overrides:#?}");
-            bank.set_hash_overrides(hash_overrides.clone());
-        }
         if opts.no_block_cost_limits {
             warn!("setting block cost limits to MAX");
             bank.write_cost_tracker().unwrap().set_limits_max();
@@ -473,7 +466,9 @@ pub fn process_blockstore_from_root(
         .meta(start_slot)
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(num_cpus::get());
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(
+            thread::available_parallelism().unwrap_or(NonZeroUsize::MIN),
+        );
         load_frozen_forks(
             bank_forks,
             shred_version,
@@ -532,7 +527,7 @@ pub fn process_blockstore_from_root(
 
 /// Verify that a segment of entries has the correct number of ticks and hashes
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-fn verify_ticks<D: TransactionData>(
+fn verify_ticks<D: AsRef<[u8]>>(
     bank: &Bank,
     entries: &[EntryView<D>],
     slot_full: bool,
@@ -1161,7 +1156,7 @@ enum VerificationJob {
     Signatures(SignaturesVerificationJob),
 }
 
-impl WorkerJob for VerificationJob {
+impl VerificationJob {
     fn run(self) {
         match self {
             Self::Poh(job) => job.run(),
@@ -1176,7 +1171,7 @@ pub struct ReplayVerificationWorkerPool {
 }
 
 impl ReplayVerificationWorkerPool {
-    pub fn new(num_workers: usize) -> Self {
+    pub fn new(num_workers: NonZeroUsize) -> Self {
         // set the maximum number of jobs that can be sent replaying a completely full slot as
         // the capacity, so we avoid blocking the replay thread when sending work. ~8MB of
         // memory. Not load bearing, a smaller capacity would do, just cause more stalls.
@@ -1185,14 +1180,21 @@ impl ReplayVerificationWorkerPool {
             .checked_mul(2)
             .unwrap()
             // each poh/signature batch can be split into multiple jobs, at most 1 for each worker
-            .checked_mul(num_workers)
+            .checked_mul(num_workers.get())
             .expect("verification job queue capacity overflow");
         Self::with_capacity(num_workers, job_capacity)
     }
 
-    fn with_capacity(num_workers: usize, job_capacity: usize) -> Self {
+    fn with_capacity(num_workers: NonZeroUsize, job_capacity: usize) -> Self {
+        let config = WorkerPoolConfig {
+            job_queue_capacity: NonZeroUsize::new(job_capacity)
+                .expect("verification job queue capacity must be nonzero"),
+            ..WorkerPoolConfig::new("solReplayVer", num_workers)
+        };
+        let inner = WorkerPool::spawn(config, |_worker_id| VerificationJob::run)
+            .expect("failed to spawn replay verification workers");
         Self {
-            inner: WorkerPool::new("solReplayVer", num_workers, job_capacity),
+            inner,
             job_capacity,
         }
     }
@@ -4166,7 +4168,7 @@ pub mod tests {
         let mut hash = bank.last_blockhash();
 
         let present_account_key = Keypair::new();
-        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let entries: Vec<_> = (0..NUM_TRANSFERS)
@@ -4520,7 +4522,7 @@ pub mod tests {
             run_verification: true,
             ..ProcessOptions::default()
         };
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
         process_bank_0(
             &bank0,
             compute_shred_version(&genesis_config.hash(), None),
@@ -4612,7 +4614,7 @@ pub mod tests {
         }
 
         let present_account_key = Keypair::new();
-        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         let mut i = 0;
@@ -5046,9 +5048,9 @@ pub mod tests {
                 .map(|(root, stake)| {
                     let mut vote_state = VoteStateV4::default();
                     vote_state.root_slot = Some(root);
-                    let mut vote_account = AccountSharedData::new(
+                    let mut vote_account = AccountSharedData::new_with_data(
                         1,
-                        VoteStateV4::size_of(),
+                        vec![0; VoteStateV4::size_of()],
                         &solana_vote_program::id(),
                     );
                     let versioned = VoteStateVersions::new_v4(vote_state);
@@ -5141,7 +5143,7 @@ pub mod tests {
         slot_full: bool,
         progress: &mut ConfirmationProgress,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
         let bank = take_bank_with_scheduler_for_tests(pool, bank.clone());
         let result = confirm_slot_entries(
             &bank,
@@ -5340,8 +5342,10 @@ pub mod tests {
     fn test_verification_workers_small_capacity() {
         let num_workers = 2;
         let channel_capacity = 1;
-        let worker_pool =
-            ReplayVerificationWorkerPool::with_capacity(num_workers, channel_capacity);
+        let worker_pool = ReplayVerificationWorkerPool::with_capacity(
+            NonZeroUsize::new(num_workers).unwrap(),
+            channel_capacity,
+        );
         let mut progress = AsyncVerificationProgress::new(channel_capacity);
         let start_hash = Hash::new_unique();
         let verification_entries = entry::entries_to_verification_data(&create_ticks(
@@ -5373,7 +5377,10 @@ pub mod tests {
             // each poh/signature batch can be split into multiple jobs, at most 1 for each worker
             .checked_mul(num_workers)
             .expect("verification job queue capacity overflow");
-        let worker_pool = ReplayVerificationWorkerPool::with_capacity(num_workers, job_capacity);
+        let worker_pool = ReplayVerificationWorkerPool::with_capacity(
+            NonZeroUsize::new(num_workers).unwrap(),
+            job_capacity,
+        );
 
         // make sure that each batch generates work for each worker
         let num_items = num_workers + 1;
@@ -5416,9 +5423,7 @@ pub mod tests {
                     transaction_hash_verify_thread_pool(),
                     |unsanitized: UnsanitizedTransactionView<Bytes>| {
                         let sanitized = unsanitized
-                            .sanitize(
-                                &solana_runtime_transaction::sanitize_config::sanitize_config(),
-                            )
+                            .sanitize()
                             .map_err(|_| TransactionError::SanitizeFailure)?;
                         let statically_loaded = RuntimeTransaction::<
                             SanitizedTransactionView<Bytes>,
@@ -5478,14 +5483,15 @@ pub mod tests {
             barrier: Arc<Barrier>,
         }
 
-        impl WorkerJob for BlockingVerificationJob {
+        impl BlockingVerificationJob {
             fn run(self) {
                 self.barrier.wait();
                 self.job.run();
             }
         }
 
-        let pool = WorkerPool::new("solReplayTest", 1, 1);
+        let config = WorkerPoolConfig::new("solReplayTest", NonZeroUsize::MIN);
+        let pool = WorkerPool::spawn(config, |_worker_id| BlockingVerificationJob::run).unwrap();
         let barrier = Arc::new(Barrier::new(2));
         let progress = AsyncVerificationProgress::new(1);
         let entries = Arc::new(VerificationBatch {
@@ -5779,7 +5785,7 @@ pub mod tests {
 
         let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
             parent_slot: 0,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
         });
         let header_component = BlockComponent::new_block_marker(header);
 
@@ -5887,7 +5893,7 @@ pub mod tests {
         }
         blockstore.insert_shreds(all_shreds, true).unwrap();
 
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
 
         (
             blockstore,
@@ -6391,7 +6397,7 @@ pub mod tests {
             ..ProcessOptions::default()
         };
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
         process_bank_0(
             &bank0,
             compute_shred_version(&genesis_config.hash(), None),

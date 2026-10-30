@@ -1,11 +1,12 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
-    bip39::Mnemonic,
+    bip39::{Language, Mnemonic},
     clap::{
         Arg, ArgAction, ArgMatches, Command, builder::ValueParser, crate_description, crate_name,
         value_parser,
     },
+    rand::RngCore,
     solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_v3_utils::{
         DisplayError,
@@ -471,6 +472,16 @@ fn app<'a>(num_threads: &'a str, crate_version: &'a str) -> Command<'a> {
         )
 }
 
+fn generate_mnemonic(language: Language, word_count: usize) -> Result<Mnemonic, bip39::Error> {
+    if !(12..=24).contains(&word_count) || !word_count.is_multiple_of(3) {
+        return Err(bip39::Error::BadWordCount(word_count));
+    }
+    let mut entropy = [0u8; 32];
+    let entropy = &mut entropy[..word_count / 3 * 4];
+    rand::rng().fill_bytes(entropy);
+    Mnemonic::from_entropy_in(language, entropy)
+}
+
 fn write_pubkey_file(outfile: &str, pubkey: Pubkey) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
 
@@ -580,7 +591,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 
             let derivation_path = acquire_derivation_path(matches)?;
 
-            let mnemonic = Mnemonic::generate_in(language, word_count)
+            let mnemonic = generate_mnemonic(language, word_count)
                 .map_err(|e| format!("Unable to generate mnemonic: {e}"))?;
             let (passphrase, passphrase_message) = acquire_passphrase_and_message(matches)
                 .map_err(|err| format!("Unable to acquire passphrase: {err}"))?;
@@ -777,7 +788,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
                                 );
                             }
                             let (keypair, phrase) = if use_mnemonic {
-                                let mnemonic = Mnemonic::generate_in(language, word_count)
+                                let mnemonic = generate_mnemonic(language, word_count)
                                     .expect("CLI word count is always a valid BIP39 length");
                                 let seed = mnemonic.to_seed(&passphrase);
                                 let keypair = match derivation_path {
@@ -868,7 +879,7 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
         ("verify", matches) => {
             let keypair = get_keypair_from_matches(matches, config, &mut wallet_manager)?;
             let simple_message = Message::new(
-                &[Instruction::new_with_bincode(
+                &[Instruction::new_with_wincode(
                     Pubkey::default(),
                     &0,
                     vec![AccountMeta::new(keypair.pubkey(), true)],
@@ -958,6 +969,18 @@ mod tests {
 
         // run clap internal assert statements
         app(&default_num_threads, solana_version).debug_assert();
+    }
+
+    #[test]
+    fn test_generate_mnemonic() {
+        for word_count in [12, 15, 18, 21, 24] {
+            let mnemonic = generate_mnemonic(Language::English, word_count).unwrap();
+            assert_eq!(mnemonic.word_count(), word_count);
+        }
+        assert_ne!(
+            generate_mnemonic(Language::English, 24).unwrap(),
+            generate_mnemonic(Language::English, 24).unwrap(),
+        );
     }
 
     #[test]

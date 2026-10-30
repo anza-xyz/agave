@@ -133,17 +133,6 @@ impl RollbackAccounts {
             },
         }
     }
-
-    // Size of accounts tracked for rollback, used internally when calculating the actual
-    // loaded transaction data size for the cost model. This function will be removed by
-    // the fee-payer data size amendment to SIMD-186.
-    pub(crate) fn data_size(&self) -> usize {
-        let mut total_size: usize = 0;
-        for (_, account) in self.iter() {
-            total_size = total_size.saturating_add(account.data().len());
-        }
-        total_size
-    }
 }
 
 #[cfg(test)]

@@ -481,14 +481,7 @@ pub(crate) fn load_transaction<CB: AccountLoadCallback>(
                 Err(err) => TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
                     load_error: err,
                     fee_details: tx_details.fee_details,
-                    loaded_accounts_data_size: if account_loader
-                        .feature_set
-                        .define_ltds_fee_only_semantics
-                    {
-                        loaded_transaction_data_size.into()
-                    } else {
-                        tx_details.rollback_accounts.data_size() as u32
-                    },
+                    loaded_accounts_data_size: loaded_transaction_data_size.into(),
                     rollback_accounts: tx_details.rollback_accounts,
                 }),
             }

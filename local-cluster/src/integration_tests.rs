@@ -11,7 +11,6 @@
 
 use {
     crate::{
-        cluster::{Cluster, ClusterValidatorInfo},
         cluster_tests,
         local_cluster::{ClusterConfig, LocalCluster},
         validator_configs::*,
@@ -21,20 +20,16 @@ use {
     log::*,
     solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_dir,
-    solana_clock::{self as clock, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_clock::{self as clock, DEFAULT_TICKS_PER_SLOT},
     solana_core::{
-        consensus::{SWITCH_FORK_THRESHOLD, Tower, tower_storage::FileTowerStorage},
         snapshot_packager_service::SnapshotPackagerService,
         validator::{ValidatorConfig, is_snapshot_config_valid},
     },
     solana_gossip::gossip_service::discover_validators,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
     solana_ledger::{
-        ancestor_iterator::AncestorIterator,
-        blockstore::{Blockstore, PurgeType},
-        blockstore_meta::DuplicateSlotProof,
+        blockstore::Blockstore,
         blockstore_options::{AccessType, BlockstoreOptions},
         shred::filter::{TurbineMode, TurbineModeKind},
     },
@@ -43,8 +38,6 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_turbine::broadcast_stage::BroadcastStageType,
-    static_assertions,
     std::{
         collections::{HashMap, HashSet},
         fs, iter,
@@ -92,43 +85,6 @@ impl From<&ValidatorKeys> for SlotLeader {
         }
     }
 }
-
-pub fn last_vote_in_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<(Slot, Hash)> {
-    restore_tower(tower_path, node_pubkey).map(|tower| tower.last_voted_slot_hash().unwrap())
-}
-
-pub fn last_root_in_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<Slot> {
-    restore_tower(tower_path, node_pubkey).map(|tower| tower.root())
-}
-
-pub fn restore_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<Tower> {
-    let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
-
-    let tower = Tower::restore(&file_tower_storage, node_pubkey);
-    if let Err(tower_err) = tower {
-        if tower_err.is_file_missing() {
-            return None;
-        } else {
-            panic!("tower restore failed...: {tower_err:?}");
-        }
-    }
-    // actually saved tower must have at least one vote.
-    Tower::restore(&file_tower_storage, node_pubkey).ok()
-}
-
-pub fn remove_tower_if_exists(tower_path: &Path, node_pubkey: &Pubkey) {
-    let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
-    let filename = file_tower_storage.filename(node_pubkey);
-    if filename.exists() {
-        fs::remove_file(file_tower_storage.filename(node_pubkey)).unwrap();
-    }
-}
-
-pub fn remove_tower(tower_path: &Path, node_pubkey: &Pubkey) {
-    let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
-    fs::remove_file(file_tower_storage.filename(node_pubkey)).unwrap();
-}
-
 pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
     Blockstore::open_with_options(
         ledger_path,
@@ -155,193 +111,7 @@ pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
     })
 }
 
-pub fn purge_slots_with_count(blockstore: &Blockstore, start_slot: Slot, slot_count: Slot) {
-    blockstore
-        .purge_slots_cleanup_chaining(start_slot, start_slot + slot_count - 1, PurgeType::Exact)
-        .expect("Purge must succeed");
-}
-
-// Fetches the last vote in the tower, blocking until it has also appeared in blockstore.
-// Fails if tower is empty
-pub fn wait_for_last_vote_in_tower_to_land_in_ledger(
-    ledger_path: &Path,
-    node_pubkey: &Pubkey,
-) -> Option<Slot> {
-    last_vote_in_tower(ledger_path, node_pubkey).map(|(last_vote, _)| {
-        loop {
-            // We reopen in a loop to make sure we get updates
-            let blockstore = open_blockstore(ledger_path);
-            if blockstore.is_full(last_vote) {
-                break;
-            }
-            sleep(Duration::from_millis(100));
-        }
-        last_vote
-    })
-}
-
-/// Waits roughly 10 seconds for duplicate proof to appear in blockstore at `dup_slot`. Returns proof if found.
-pub fn wait_for_duplicate_proof(ledger_path: &Path, dup_slot: Slot) -> Option<DuplicateSlotProof> {
-    for _ in 0..10 {
-        let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
-        if let Some((found_dup_slot, found_duplicate_proof)) =
-            duplicate_fork_validator_blockstore.get_first_duplicate_proof()
-            && found_dup_slot == dup_slot
-        {
-            return Some(found_duplicate_proof);
-        };
-
-        sleep(Duration::from_millis(1000));
-    }
-    None
-}
-
-/// Copy blocks from `source` blockstore to `dest` blockstore
-/// Set `is_trusted` to avoid sanity checks typically performed by Blockstore::insert_shreds()
-pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_trusted: bool) {
-    for slot in std::iter::once(end_slot).chain(AncestorIterator::new(end_slot, source)) {
-        let source_meta = source.meta(slot).unwrap().unwrap();
-        assert!(source_meta.is_full());
-
-        let shreds = source.get_data_shreds_for_slot(slot, 0).unwrap();
-        dest.insert_shreds(shreds, is_trusted).unwrap();
-
-        let dest_meta = dest.meta(slot).unwrap().unwrap();
-        assert!(dest_meta.is_full());
-        assert_eq!(dest_meta.last_index, source_meta.last_index);
-    }
-}
-
-/// Computes the number of milliseconds `num_blocks` blocks will take given
-/// each slot contains `ticks_per_slot`
-pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
-    (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)
-}
-
-/// Implements a test scenario that creates a network partition by killing validator nodes.
-///
-/// # Arguments
-/// * `stakes_to_kill` - Validators to remove from the network, where each tuple contains:
-///   * First element (usize): The stake weight/size of the validator
-///   * Second element (usize): The number of slots assigned to the validator
-/// * `alive_stakes` - Validators to keep alive, where each tuple contains:
-///   * First element (usize): The stake weight/size of the validator
-///   * Second element (usize): The number of slots assigned to the validator
-/// * `ticks_per_slot` - Optional override for the default ticks per slot
-/// * `partition_context` - Test-specific context object that will be passed to callbacks
-/// * `on_partition_start` - Callback executed when the partition begins
-/// * `on_before_partition_resolved` - Callback executed right before the partition is resolved
-/// * `on_partition_resolved` - Callback executed after the partition is resolved
-///
-/// This function simulates a network partition by killing specified validator nodes,
-/// waiting for a period, resolving the partition, and then verifying the network
-/// can recover and reach consensus. The IS_ALPENGLOW parameter determines whether
-/// to use Alpenglow-specific cluster initialization.
-fn run_kill_partition_switch_threshold_impl<C, const IS_ALPENGLOW: bool>(
-    stakes_to_kill: &[(usize, usize)],
-    alive_stakes: &[(usize, usize)],
-    ticks_per_slot: Option<u64>,
-    partition_context: C,
-    on_partition_start: impl Fn(&mut LocalCluster, &[Pubkey], Vec<ClusterValidatorInfo>, &mut C),
-    on_before_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
-    on_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
-) {
-    // Needs to be at least 1/3 or there will be no overlap
-    // with the confirmation supermajority 2/3
-    static_assertions::const_assert!(SWITCH_FORK_THRESHOLD >= 1f64 / 3f64);
-    info!("stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}");
-
-    // Define validator stake partitions and leader schedule from input
-    // parameters.
-    let mut stake_partitions = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
-    let mut num_slots_per_validator = Vec::with_capacity(stakes_to_kill.len() + alive_stakes.len());
-    for (stake, num_slots) in stakes_to_kill.iter().chain(alive_stakes.iter()) {
-        stake_partitions.push(*stake);
-        num_slots_per_validator.push(*num_slots);
-    }
-    let (leader_schedule, validator_keys) =
-        create_custom_leader_schedule_with_random_keys(&num_slots_per_validator);
-
-    let validator_pubkeys: Vec<Pubkey> = validator_keys
-        .iter()
-        .map(|k| k.node_keypair.pubkey())
-        .collect();
-    info!("Validator ids: {validator_pubkeys:?}");
-
-    // Append routine to kill the specified validators on partition start.
-    let on_partition_start = |cluster: &mut LocalCluster, partition_context: &mut C| {
-        let dead_validator_infos: Vec<ClusterValidatorInfo> = validator_pubkeys
-            [0..stakes_to_kill.len()]
-            .iter()
-            .map(|validator_to_kill| {
-                info!("Killing validator with id: {validator_to_kill}");
-                cluster.exit_node(validator_to_kill)
-            })
-            .collect();
-        on_partition_start(
-            cluster,
-            &validator_pubkeys,
-            dead_validator_infos,
-            partition_context,
-        );
-    };
-
-    // Spin up cluster and execute partition.
-    run_cluster_partition(
-        &stake_partitions,
-        Some((leader_schedule, validator_keys)),
-        partition_context,
-        on_partition_start,
-        on_before_partition_resolved,
-        on_partition_resolved,
-        ticks_per_slot,
-        true,
-        vec![],
-        IS_ALPENGLOW,
-    )
-}
-
-pub fn run_kill_partition_switch_threshold_alpenglow<C>(
-    stakes_to_kill: &[(usize, usize)],
-    alive_stakes: &[(usize, usize)],
-    ticks_per_slot: Option<u64>,
-    partition_context: C,
-    on_partition_start: impl Fn(&mut LocalCluster, &[Pubkey], Vec<ClusterValidatorInfo>, &mut C),
-    on_before_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
-    on_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
-) {
-    run_kill_partition_switch_threshold_impl::<C, true>(
-        stakes_to_kill,
-        alive_stakes,
-        ticks_per_slot,
-        partition_context,
-        on_partition_start,
-        on_before_partition_resolved,
-        on_partition_resolved,
-    )
-}
-
-pub fn run_kill_partition_switch_threshold<C>(
-    stakes_to_kill: &[(usize, usize)],
-    alive_stakes: &[(usize, usize)],
-    ticks_per_slot: Option<u64>,
-    partition_context: C,
-    on_partition_start: impl Fn(&mut LocalCluster, &[Pubkey], Vec<ClusterValidatorInfo>, &mut C),
-    on_before_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
-    on_partition_resolved: impl Fn(&mut LocalCluster, &mut C),
-) {
-    run_kill_partition_switch_threshold_impl::<C, false>(
-        stakes_to_kill,
-        alive_stakes,
-        ticks_per_slot,
-        partition_context,
-        on_partition_start,
-        on_before_partition_resolved,
-        on_partition_resolved,
-    )
-}
-
-pub fn create_custom_leader_schedule(
+fn create_custom_leader_schedule(
     slot_leader_to_slots: impl Iterator<Item = (SlotLeader, usize)>,
 ) -> LeaderSchedule {
     let mut leader_schedule = vec![];
@@ -397,8 +167,6 @@ pub fn create_custom_leader_schedule_with_random_keys(
 /// * `ticks_per_slot` - Optional override for the default ticks per slot. Controls the
 ///   rate at which slots advance in the cluster.
 /// * `additional_accounts` - Additional accounts to be added to the genesis configuration.
-/// * `is_alpenglow` - Boolean flag indicating whether to initialize the `LocalCluster` in Alpenglow
-///   mode.
 #[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
 pub fn run_cluster_partition<C>(
     partitions: &[usize],
@@ -410,13 +178,8 @@ pub fn run_cluster_partition<C>(
     ticks_per_slot: Option<u64>,
     no_wait_for_vote_to_start_leader: bool,
     additional_accounts: Vec<(Pubkey, AccountSharedData)>,
-    is_alpenglow: bool,
 ) {
-    if is_alpenglow {
-        agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
-    } else {
-        agave_logger::setup_with_default(RUST_LOG_FILTER);
-    }
+    agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
     info!("PARTITION_TEST!");
     let num_nodes = partitions.len();
     let node_stakes: Vec<_> = partitions
@@ -509,11 +272,7 @@ pub fn run_cluster_partition<C>(
         partitions, config.slots_per_epoch,
     );
 
-    let mut cluster = if is_alpenglow {
-        LocalCluster::new(&mut config, SocketAddrSpace::Unspecified)
-    } else {
-        LocalCluster::new_tower(&mut config, SocketAddrSpace::Unspecified)
-    };
+    let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     info!("PARTITION_TEST spend_and_verify_all_nodes(), ensure all nodes are caught up");
     cluster_tests::spend_and_verify_all_nodes(
@@ -572,85 +331,6 @@ pub fn run_cluster_partition<C>(
     sleep(propagation_duration);
     info!("PARTITION_TEST resuming normal operation");
     on_partition_resolved(&mut cluster, &mut context);
-}
-
-pub struct ValidatorTestConfig {
-    pub validator_keys: ValidatorKeys,
-    pub validator_config: ValidatorConfig,
-    pub in_genesis: bool,
-}
-
-pub fn test_faulty_node(
-    faulty_node_type: BroadcastStageType,
-    node_stakes: Vec<u64>,
-    validator_test_configs: Option<Vec<ValidatorTestConfig>>,
-    custom_leader_schedule: Option<FixedSchedule>,
-) -> (LocalCluster, Vec<ValidatorKeys>) {
-    let num_nodes = node_stakes.len();
-    let validator_keys = validator_test_configs
-        .as_ref()
-        .map(|configs| {
-            configs
-                .iter()
-                .map(|config| (config.validator_keys.clone(), config.in_genesis))
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            let mut validator_keys = Vec::with_capacity(num_nodes);
-            validator_keys.resize_with(num_nodes, || (ValidatorKeys::new(), true));
-            validator_keys
-        });
-
-    assert_eq!(node_stakes.len(), num_nodes);
-    assert_eq!(validator_keys.len(), num_nodes);
-
-    let fixed_leader_schedule = custom_leader_schedule.unwrap_or_else(|| {
-        // Use a fixed leader schedule so that only the faulty node gets leader slots.
-        let validator_to_slots = vec![(
-            SlotLeader::from(&validator_keys[0].0),
-            solana_clock::DEFAULT_DEV_SLOTS_PER_EPOCH as usize,
-        )];
-        let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
-        FixedSchedule {
-            leader_schedule: Arc::new(leader_schedule),
-        }
-    });
-
-    let mut validator_configs = validator_test_configs
-        .map(|configs| {
-            configs
-                .into_iter()
-                .map(|config| config.validator_config)
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            let mut configs = Vec::with_capacity(num_nodes);
-            configs.resize_with(num_nodes, ValidatorConfig::default_for_test);
-            configs
-        });
-
-    // First validator is the bootstrap leader with the malicious broadcast logic.
-    validator_configs[0].broadcast_stage_type = faulty_node_type;
-    for config in &mut validator_configs {
-        config.fixed_leader_schedule = Some(fixed_leader_schedule.clone());
-        config.wait_for_supermajority = Some(0);
-    }
-
-    let mut cluster_config = ClusterConfig {
-        mint_lamports: crate::local_cluster::DEFAULT_MINT_LAMPORTS
-            + node_stakes.iter().sum::<u64>().saturating_mul(2),
-        node_stakes,
-        validator_configs,
-        validator_keys: Some(validator_keys.clone()),
-        skip_warmup_slots: true,
-        ..ClusterConfig::default()
-    };
-
-    let cluster = LocalCluster::new_tower(&mut cluster_config, SocketAddrSpace::Unspecified);
-    let validator_keys: Vec<ValidatorKeys> =
-        validator_keys.into_iter().map(|(keys, _)| keys).collect();
-
-    (cluster, validator_keys)
 }
 
 pub fn farf_dir() -> PathBuf {
@@ -741,9 +421,4 @@ pub fn setup_snapshot_validator_config(
         SnapshotInterval::Disabled,
         num_account_paths,
     )
-}
-
-pub fn save_tower(tower_path: &Path, tower: &Tower, node_keypair: &Keypair) {
-    let file_tower_storage = FileTowerStorage::new(tower_path.to_path_buf());
-    tower.save(&file_tower_storage, node_keypair).unwrap();
 }

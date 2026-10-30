@@ -14,10 +14,7 @@ use {
         },
         keypair::SKIP_SEED_PHRASE_VALIDATION_ARG,
     },
-    solana_core::{
-        banking_trace::DirByteLimit,
-        validator::{BlockProductionMethod, BlockVerificationMethod},
-    },
+    solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_net_utils::SocketAddrSpace,
@@ -433,12 +430,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Skip ledger verification at validator bootup."),
     )
     .arg(
-        clap::Arg::with_name("require_tower")
-            .long("require-tower")
-            .takes_value(false)
-            .help("Refuse to start if saved tower state is not found"),
-    )
-    .arg(
         clap::Arg::with_name("do_not_require_vote_history")
             .long("do-not-require-vote-history")
             .takes_value(false)
@@ -753,21 +744,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Maximum number of bytes written to the program log before truncation"),
     )
     .arg(
-        Arg::with_name("banking_trace_dir_byte_limit")
-            // expose friendly alternative name to cli than internal
-            // implementation-oriented one
-            .long("enable-banking-trace")
-            .value_name("BYTES")
-            .validator(is_parsable::<DirByteLimit>)
-            .takes_value(true)
-            .default_value(&default_args.banking_trace_dir_byte_limit)
-            .help(
-                "Enables the banking trace that writes trace files for simulate-leader-blocks, \
-                 retaining up to the specified total bytes in the ledger. Banking trace is \
-                 disabled by default.",
-            ),
-    )
-    .arg(
         Arg::with_name("no_delay_leader_block_for_pending_fork")
             .hidden(hidden_unless_forced())
             .long("no-delay-leader-block-for-pending-fork")
@@ -838,15 +814,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(DefaultSchedulerPool::cli_message()),
     )
     .arg(
-        Arg::with_name("replay_arenas")
-            .long("experimental-replay-arenas")
+        Arg::with_name("execution_arenas")
+            .long("experimental-execution-arenas")
             .value_name("COUNT")
             .takes_value(true)
             .validator(|s| is_within_range(s, 1..))
-            .help(
-                "Number of jemalloc arenas for replay. solReplayStage uses arena 0 and unified \
-                 scheduler handler threads use the arenas in round-robin order",
-            ),
+            .help("Number of jemalloc arenas shared by replay and banking."),
     )
     .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())

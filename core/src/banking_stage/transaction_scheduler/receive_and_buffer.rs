@@ -14,9 +14,8 @@ use {
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
-        resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
-        transaction_data::TransactionData, transaction_version::TransactionVersion,
-        transaction_view::SanitizedTransactionView,
+        resolved_transaction_view::ResolvedTransactionView,
+        transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
     core::time::Duration,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError},
@@ -29,8 +28,8 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        transaction_meta::TransactionMeta, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
     solana_secp256k1_program as secp256k1, solana_secp256r1_program as secp256r1,
@@ -96,15 +95,10 @@ pub(crate) fn precheck_transaction(
     working_bank: &Bank,
     filter_keys: &HashSet<Pubkey>,
 ) -> PrecheckResult {
-    let sanitize_config = sanitize_config();
     let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
-    let (view, deactivation_slot) = translate_to_runtime_view(
-        bytes,
-        root_bank,
-        transaction_account_lock_limit,
-        &sanitize_config,
-    )
-    .map_err(IngressCheckError::PacketHandling)?;
+    let (view, deactivation_slot) =
+        translate_to_runtime_view(bytes, root_bank, transaction_account_lock_limit)
+            .map_err(IngressCheckError::PacketHandling)?;
 
     if !filter_keys.is_empty()
         && view
@@ -146,13 +140,12 @@ pub(crate) fn precheck_transaction(
 /// Perform sanitization checks and transition from data to an executable
 /// [`RuntimeTransaction`]. This additionally returns the minimum slot for
 /// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
-pub(crate) fn translate_to_runtime_view<D: TransactionData>(
+pub(crate) fn translate_to_runtime_view<D: AsRef<[u8]>>(
     data: D,
     bank: &Bank,
     transaction_account_lock_limit: usize,
-    sanitize_config: &SanitizeConfig,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
-    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(data) else {
         return Err(PacketHandlingError::Sanitization);
     };
 
@@ -162,7 +155,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 /// Load runtime metadata and addresses for an already sanitized transaction.
 /// Returns the minimum ALT deactivation slot, or `Slot::MAX` if none.
 /// Preloaded addresses, when supplied, must belong to this view and bank.
-pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
+pub(crate) fn translate_sanitized_to_runtime_view<D: AsRef<[u8]>>(
     view: SanitizedTransactionView<D>,
     bank: &Bank,
     transaction_account_lock_limit: usize,
@@ -208,7 +201,7 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
     Ok((view, deactivation_slot))
 }
 
-fn load_addresses_for_view<D: TransactionData>(
+fn load_addresses_for_view<D: AsRef<[u8]>>(
     view: &SanitizedTransactionView<D>,
     bank: &Bank,
 ) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {

@@ -307,8 +307,6 @@ pub struct RpcContactInfo {
     pub tpu_forwards: Option<SocketAddr>,
     /// Tpu QUIC forwards port
     pub tpu_forwards_quic: Option<SocketAddr>,
-    /// Tpu UDP vote port
-    pub tpu_vote: Option<SocketAddr>,
     /// Server repair UDP port
     pub serve_repair: Option<SocketAddr>,
     /// JSON RPC port
@@ -376,6 +374,10 @@ pub struct RpcIdentity {
     pub identity: String,
 }
 
+/// A legacy TowerBFT vote notification payload.
+///
+/// These notifications are no longer produced. This type is retained for API
+/// compatibility until the next major release.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVote {
@@ -560,6 +562,7 @@ pub struct RpcInflationReward {
     pub commission: Option<u8>, // Vote account commission when the reward was credited
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commission_bps: Option<u16>, // Vote account commission in basis points (SIMD-0291)
+    pub block_reward_amount: Option<u64>, // lamports
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug, Error, Eq, PartialEq)]

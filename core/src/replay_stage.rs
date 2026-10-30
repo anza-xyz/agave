@@ -2,7 +2,6 @@
 use {
     crate::{
         banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
-        banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -459,7 +458,6 @@ pub struct ReplayStageConfig {
     pub tower: Tower,
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
-    pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
@@ -782,7 +780,6 @@ impl ReplayStage {
             mut tower,
             vote_tracker,
             cluster_slots,
-            banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -932,7 +929,7 @@ impl ReplayStage {
                 ForkReplayMode::Parallel(pool)
             };
             let replay_verification_worker_pool =
-                ReplayVerificationWorkerPool::new(replay_transactions_threads.get());
+                ReplayVerificationWorkerPool::new(replay_transactions_threads);
 
             let process_active_banks_context = ProcessActiveBanksContext {
                 bank_forks: bank_forks.clone(),
@@ -1590,7 +1587,6 @@ impl ReplayStage {
                             &mut progress,
                             &retransmit_slots_sender,
                             &mut skipped_slots_info,
-                            &banking_tracer,
                             has_new_vote_been_rooted,
                             migration_status.as_ref(),
                         )
@@ -3031,7 +3027,6 @@ impl ReplayStage {
         progress_map: &mut ProgressMap,
         retransmit_slots_sender: &Sender<Slot>,
         skipped_slots_info: &mut SkippedSlotsInfo,
-        banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
         migration_status: &MigrationStatus,
     ) -> Option<Slot> {
@@ -3143,9 +3138,6 @@ impl ReplayStage {
                 NewBankOptions { vote_only_bank },
             )
             .mark_leader_bank();
-            // make sure parent is frozen for finalized hashes via the above
-            // new()-ing of its child bank
-            banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 bank_forks,

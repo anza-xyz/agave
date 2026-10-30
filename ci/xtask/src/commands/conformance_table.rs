@@ -55,8 +55,7 @@ const FIXTURE_ANCHORS: &[(&str, &str, &str, &str)] = &[
         "test_exec_vm_serialization",
     ),
     ("cost", "solana-cost-model", AGAVE, "test_exec_cost"),
-    // TODO: Re-enable once the shred harness is fixed.
-    // ("shred", "solana-core", AGAVE, "test_exec_shred"),
+    ("shred", "solana-ledger", AGAVE, "test_exec_shred"),
     ("gossip", "solana-gossip", AGAVE, "test_exec_gossip"),
 ];
 
@@ -387,7 +386,7 @@ mod tests {
         let entries = select_entries(&HashSet::new(), &changed, &HashMap::new());
         assert_eq!(
             fixture_dirs(&entries),
-            vec!["txn", "block", "cost", "gossip"]
+            vec!["txn", "block", "cost", "shred", "gossip"]
         );
 
         let changed = changed_harnesses(&["svm-conformance/Cargo.toml".to_string()]);

@@ -158,7 +158,7 @@ impl ProcessActiveBanksContext {
         let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
         let (votor_event_sender, _) = bounded(1024);
         let migration_status = Arc::new(MigrationStatus::default());
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
         Self {
             bank_forks,
             blockstore,
@@ -287,7 +287,7 @@ fn insert_update_parent_slot(
 ) {
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: block_header_parent_slot,
-        parent_block_id: Hash::new_unique(),
+        parent_block_id: BlockId::new_unique(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: update_parent_slot,
@@ -3866,7 +3866,7 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
-        parent_block_id: Hash::default(),
+        parent_block_id: BlockId::default(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
@@ -3969,7 +3969,7 @@ fn test_before_update_soft_dead() {
     let bank = bank_forks.write().unwrap().insert(bank);
     let header = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: 0,
-        parent_block_id: Hash::default(),
+        parent_block_id: BlockId::default(),
     });
     let update_parent = VersionedBlockMarker::from_update_parent(UpdateParentV1 {
         new_parent_slot: 0,
@@ -6360,7 +6360,6 @@ fn test_dumped_slot_not_causing_panic() {
         &mut progress,
     );
 
-    let (banking_tracer, _) = BankingTracer::new(None).unwrap();
     // A vote has not technically been rooted, but it doesn't matter for
     // this test to use true to avoid skipping the leader slot
     let has_new_vote_been_rooted = true;
@@ -6379,7 +6378,6 @@ fn test_dumped_slot_not_causing_panic() {
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
             has_new_vote_been_rooted,
             &MigrationStatus::default(),
         )
@@ -6896,7 +6894,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
     let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
     let shred_version = compute_shred_version(&genesis_config.hash(), None);
-    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+    let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
 
     process_bank_0(
         &bank0,
@@ -7038,7 +7036,6 @@ fn test_skip_leader_slot_for_existing_slot() {
 
     let poh_recorder = Arc::new(poh_recorder);
     let (retransmit_slots_sender, _) = bounded(1024);
-    let (banking_tracer, _) = BankingTracer::new(None).unwrap();
     // A vote has not technically been rooted, but it doesn't matter for
     // this test to use true to avoid skipping the leader slot
     let has_new_vote_been_rooted = true;
@@ -7062,7 +7059,6 @@ fn test_skip_leader_slot_for_existing_slot() {
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
             has_new_vote_been_rooted,
             &MigrationStatus::default(),
         )
@@ -7093,7 +7089,6 @@ fn test_skip_leader_slot_for_existing_slot() {
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
-            &banking_tracer,
             has_new_vote_been_rooted,
             &MigrationStatus::default(),
         )

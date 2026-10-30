@@ -57,10 +57,9 @@ impl SourceBuffer {
         let buffer = Self::new_checked(bank, buffer_address)?;
         let data = buffer.buffer_account.data();
 
-        let offset = UpgradeableLoaderState::size_of_buffer_metadata();
-        let end_offset = data.iter().rposition(|&x| x != 0).map_or(offset, |i| i + 1);
-        let buffer_program_data = &data[offset..end_offset];
-        let hash = solana_sha256_hasher::hash(buffer_program_data);
+        let elf = &data[UpgradeableLoaderState::size_of_buffer_metadata()..];
+        let end_offset = elf.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+        let hash = solana_sha256_hasher::hash(&elf[..end_offset]);
 
         if hash != expected_hash {
             return Err(CoreBpfMigrationError::BuildHashMismatch(
@@ -179,5 +178,53 @@ mod tests {
 
         // Without authority
         test_success(None);
+    }
+
+    #[test]
+    fn test_source_buffer_verified_build_hash() {
+        let bank = create_simple_test_bank(0);
+        let buffer_address = Pubkey::new_unique();
+        let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
+
+        let store_buffer = |elf: &[u8]| {
+            let mut data = vec![0u8; buffer_metadata_size + elf.len()];
+            wincode::serialize_into(
+                &mut data[..buffer_metadata_size],
+                &UpgradeableLoaderState::Buffer {
+                    authority_address: None,
+                },
+            )
+            .unwrap();
+            data[buffer_metadata_size..].copy_from_slice(elf);
+            store_account(&bank, &buffer_address, &data, &bpf_loader_upgradeable::id());
+        };
+
+        // Trailing zeros are excluded from the hash.
+        let elf = [4u8; 200];
+        let expected_hash = solana_sha256_hasher::hash(&elf);
+        let mut padded_elf = elf.to_vec();
+        padded_elf.extend_from_slice(&[0u8; 50]);
+        store_buffer(&padded_elf);
+        SourceBuffer::new_checked_with_verified_build_hash(&bank, &buffer_address, expected_hash)
+            .unwrap();
+        assert_matches!(
+            SourceBuffer::new_checked_with_verified_build_hash(
+                &bank,
+                &buffer_address,
+                Hash::default(),
+            )
+            .unwrap_err(),
+            CoreBpfMigrationError::BuildHashMismatch(hash, _) if hash == expected_hash
+        );
+
+        // Zeroed program data hashes as empty, without reaching into the
+        // buffer metadata.
+        store_buffer(&[0u8; 200]);
+        SourceBuffer::new_checked_with_verified_build_hash(
+            &bank,
+            &buffer_address,
+            solana_sha256_hasher::hash(&[]),
+        )
+        .unwrap();
     }
 }

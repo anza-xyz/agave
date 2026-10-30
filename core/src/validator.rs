@@ -4,10 +4,10 @@ pub use solana_perf::report_target_features;
 use {
     crate::{
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
+        banking_channels::Channels,
         banking_stage::{
             BankingStage, transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        banking_trace::{self, BankingTracer, TraceError},
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -391,7 +391,6 @@ pub struct ValidatorConfig {
     pub no_wait_for_vote_to_start_leader: bool,
     pub wait_to_vote_slot: Option<Slot>,
     pub runtime_config: RuntimeConfig,
-    pub banking_trace_dir_byte_limit: banking_trace::DirByteLimit,
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
     pub block_production_num_workers: NonZeroUsize,
@@ -401,7 +400,7 @@ pub struct ValidatorConfig {
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub unified_scheduler_handler_threads: Option<usize>,
-    pub replay_arenas: Option<usize>,
+    pub execution_arenas: Option<usize>,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
@@ -472,7 +471,6 @@ impl ValidatorConfig {
             accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
             wait_to_vote_slot: None,
             runtime_config: RuntimeConfig::default(),
-            banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
             block_production_num_workers: BankingStage::default_num_workers(),
@@ -483,7 +481,7 @@ impl ValidatorConfig {
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
-            replay_arenas: None,
+            execution_arenas: None,
             // Fix threadpools to small and reasonable sizes; unit tests should
             // not be creating excessive load and benches can configure more
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
@@ -1143,47 +1141,35 @@ impl Validator {
             BankForksControllerHandle::new();
         let bank_forks_controller = Arc::new(bank_forks_controller);
 
-        let (banking_tracer, tracer_thread) =
-            BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
-                &blockstore.banking_trace_path(),
-                exit.clone(),
-                config.banking_trace_dir_byte_limit,
-            )))?;
-        if banking_tracer.is_enabled() {
-            info!(
-                "Enabled banking trace (dir_byte_limit: {})",
-                config.banking_trace_dir_byte_limit
-            );
-        } else {
-            info!("Disabled banking trace");
-        }
-        let banking_tracer_channels = banking_tracer.create_channels();
+        let banking_channels = Channels::new();
 
         // This threshold is the size above which jemalloc will allocate straight from the kernel
         // instead of the arena. The default is 8MB, which is not good for us since accounts can be
         // 10MB.
-        const REPLAY_ARENA_OVERSIZE_THRESHOLD: usize = 16 * 1024 * 1024;
+        const EXECUTION_ARENA_OVERSIZE_THRESHOLD: usize = 16 * 1024 * 1024;
         // Jemalloc allows an allocation to reuse a dirty extent if the allocation is at least
         // 1/64th the size of the extent. Around the epoch boundary we can spike +-3GB. Cap extent
         // size so that the memory allocated to serve spikes stays reusable and doesn't become dirty
         // but unsplittable forever. See jemalloc's lg_extent_max_active_fit.
-        const REPLAY_ARENA_RETAIN_GROW_LIMIT: usize = 64 * 1024 * 1024;
-        let replay_arenas = config.replay_arenas.map(|arena_count| {
-            ArenaGroup::new(
-                arena_count,
-                REPLAY_ARENA_OVERSIZE_THRESHOLD,
-                REPLAY_ARENA_RETAIN_GROW_LIMIT,
+        const EXECUTION_ARENA_RETAIN_GROW_LIMIT: usize = 64 * 1024 * 1024;
+        let execution_arenas = config.execution_arenas.map(|arena_count| {
+            Arc::new(
+                ArenaGroup::new(
+                    arena_count,
+                    EXECUTION_ARENA_OVERSIZE_THRESHOLD,
+                    EXECUTION_ARENA_RETAIN_GROW_LIMIT,
+                )
+                .expect("failed to create execution arenas"),
             )
-            .expect("failed to create replay arenas")
         });
-        let replay_arena = replay_arenas.as_ref().map(|arenas| arenas[0]);
+        let replay_arena = execution_arenas.as_ref().map(|arenas| arenas[0]);
         let scheduler_pool = DefaultSchedulerPool::new(
             config.unified_scheduler_handler_threads,
             config.runtime_config.log_messages_bytes_limit,
             transaction_status_sender.clone(),
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
-            replay_arenas,
+            execution_arenas.clone(),
         );
         bank_forks
             .write()
@@ -1334,7 +1320,6 @@ impl Validator {
                 block_commitment_cache: block_commitment_cache.clone(),
                 blockstore: blockstore.clone(),
                 cluster_info: cluster_info.clone(),
-                poh_recorder: Some(poh_recorder.clone()),
                 genesis_hash: genesis_config.hash(),
                 ledger_path: ledger_path.to_path_buf(),
                 validator_exit: config.validator_exit.clone(),
@@ -1629,7 +1614,7 @@ impl Validator {
         // debug if things go off the rails.
         let (optimistic_parent_sender, optimistic_parent_receiver) = bounded(100);
 
-        let banking_stage_sender_for_bcl = banking_tracer_channels.non_vote_sender.clone();
+        let banking_stage_sender_for_bcl = banking_channels.non_vote_sender.clone();
         let entry_notification_sender = entry_notifier_service
             .as_ref()
             .map(|service| service.sender_cloned());
@@ -1644,7 +1629,6 @@ impl Validator {
             poh_recorder: poh_recorder.clone(),
             leader_schedule_cache: leader_schedule_cache.clone(),
             rpc_subscriptions: rpc_subscriptions.clone(),
-            banking_tracer: banking_tracer.clone(),
             slot_status_notifier: slot_status_notifier.clone(),
             entry_notification_sender: entry_notification_sender.clone(),
             transaction_status_sender: transaction_status_sender.clone(),
@@ -1763,7 +1747,6 @@ impl Validator {
             block_metadata_notifier,
             config.wait_to_vote_slot,
             Some(snapshot_controller.clone()),
-            banking_tracer,
             outstanding_repair_requests.clone(),
             cluster_slots,
             slot_status_notifier,
@@ -1843,8 +1826,7 @@ impl Validator {
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
             config.staked_nodes_overrides.clone(),
-            banking_tracer_channels,
-            tracer_thread,
+            banking_channels,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
             vote_quic_server_config,
@@ -1853,6 +1835,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
+            execution_arenas,
             config.filter_keys.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
@@ -3098,9 +3081,6 @@ pub enum ValidatorError {
 
     #[error("shred version mismatch: actual {actual}, expected {expected}")]
     ShredVersionMismatch { actual: u16, expected: u16 },
-
-    #[error(transparent)]
-    TraceError(#[from] TraceError),
 }
 
 // Return if the validator waited on other nodes to start. In this case
@@ -3208,25 +3188,22 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         .collect();
     let my_id = cluster_info.id();
 
-    for (activated_stake, vote_account) in bank.vote_accounts().values() {
+    let staked_nodes = bank
+        .epoch_staked_nodes(bank.epoch())
+        .expect("epoch stakes for the current epoch must exist");
+
+    for (node_pubkey, activated_stake) in staked_nodes.iter() {
         let activated_stake = *activated_stake;
         total_activated_stake += activated_stake;
 
-        if activated_stake == 0 {
-            continue;
-        }
-        let vote_state_node_pubkey = *vote_account.node_pubkey();
-
-        if peers.contains_key(&vote_state_node_pubkey) {
-            trace!(
-                "observed {vote_state_node_pubkey} in gossip, (activated_stake={activated_stake})"
-            );
+        if peers.contains_key(node_pubkey) {
+            trace!("observed {node_pubkey} in gossip, (activated_stake={activated_stake})");
             online_stake += activated_stake;
-        } else if vote_state_node_pubkey == my_id {
+        } else if *node_pubkey == my_id {
             online_stake += activated_stake; // This node is online
         } else {
             offline_stake += activated_stake;
-            offline_nodes.push((activated_stake, vote_state_node_pubkey));
+            offline_nodes.push((activated_stake, *node_pubkey));
         }
     }
 
@@ -3396,8 +3373,11 @@ mod tests {
             node_pubkey: identity,
             ..VoteStateV4::default()
         };
-        let mut vote_account =
-            AccountSharedData::new(1, VoteStateV4::size_of(), &solana_vote_program::id());
+        let mut vote_account = AccountSharedData::new_with_data(
+            1,
+            vec![0; VoteStateV4::size_of()],
+            &solana_vote_program::id(),
+        );
         vote_account
             .set_state(&VoteStateVersions::new_v4(vote_state.clone()))
             .unwrap();

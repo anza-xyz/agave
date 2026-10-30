@@ -211,8 +211,9 @@ pub(crate) mod external {
             CheckResponseRegion, CheckWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
             PackToCheckWorkerMessage, SharablePubkeys, check_message_flags, processed_codes,
             worker_message_types::{
-                CheckResponse, fee_payer_balance_flags, parsing_and_sanitization_flags,
-                resolve_flags, scheduling_details_flags, status_check_flags,
+                CheckResponse, age_nonce_check_flags, fee_payer_balance_flags,
+                parsing_and_sanitization_flags, resolve_flags, scheduling_details_flags,
+                status_cache_check_flags,
             },
         },
         agave_scheduling_utils::{
@@ -235,8 +236,7 @@ pub(crate) mod external {
             bank_forks::{BankPair, SharableBanks},
         },
         solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-            transaction_meta::TransactionMeta,
+            runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
         },
         solana_svm::{
             account_loader::fee_payer_load_filter,
@@ -362,13 +362,12 @@ pub(crate) mod external {
                 core::iter::repeat_n(Self::initial_check_response(message.flags), batch.len())
                     .collect();
 
-            let sanitize_config = sanitize_config();
+            let mut error_counters = TransactionErrorMetrics::default();
             let mut status_transactions = ArrayVec::<_, MAX_TRANSACTIONS_PER_MESSAGE>::new();
             for (index, ((transaction_ptr, _), response)) in
                 batch.iter().zip(responses.iter_mut()).enumerate()
             {
-                let Ok(transaction) =
-                    SanitizedTransactionView::try_new_sanitized(transaction_ptr, &sanitize_config)
+                let Ok(transaction) = SanitizedTransactionView::try_new_sanitized(transaction_ptr)
                 else {
                     response.parsing_and_sanitization_flags |=
                         parsing_and_sanitization_flags::FAILED;
@@ -381,15 +380,22 @@ pub(crate) mod external {
                     message.flags,
                     &root_bank,
                     &working_bank,
-                )? && message.flags & check_message_flags::STATUS_CHECKS != 0
-                {
-                    status_transactions.push((index, transaction));
+                )? {
+                    if message.flags & check_message_flags::AGE_NONCE_CHECKS != 0 {
+                        Self::check_age_nonce(
+                            &transaction,
+                            response,
+                            &working_bank,
+                            &mut error_counters,
+                        );
+                    }
+                    if message.flags & check_message_flags::STATUS_CACHE_CHECKS != 0 {
+                        status_transactions.push((index, transaction));
+                    }
                 }
             }
 
-            if message.flags & check_message_flags::STATUS_CHECKS != 0 {
-                Self::check_status_checks(&status_transactions, &mut responses, &working_bank);
-            }
+            Self::check_status_cache(&status_transactions, &mut responses, &working_bank);
 
             let responses = resolve_responses_from_iter(&self.allocator, responses.into_iter())
                 .ok_or(ExternalCheckWorkerError::AllocationFailure)?;
@@ -445,7 +451,8 @@ pub(crate) mod external {
 
             if flags
                 & (check_message_flags::CALCULATE_SCHEDULING_DETAILS
-                    | check_message_flags::STATUS_CHECKS)
+                    | check_message_flags::STATUS_CACHE_CHECKS
+                    | check_message_flags::AGE_NONCE_CHECKS)
                 == 0
             {
                 return Ok(None);
@@ -466,7 +473,7 @@ pub(crate) mod external {
                 Self::check_scheduling_details(&transaction, response, working_bank);
             }
 
-            // Status checks still apply when scheduling details failed.
+            // Status and age checks still apply when scheduling details failed.
             Ok(Some(transaction))
         }
 
@@ -526,11 +533,18 @@ pub(crate) mod external {
         }
 
         fn initial_check_response(flags: u16) -> CheckResponse {
-            let initial_status_check_flags = if flags & check_message_flags::STATUS_CHECKS != 0 {
-                status_check_flags::REQUESTED
-            } else {
-                0
-            };
+            let initial_status_cache_check_flags =
+                if flags & check_message_flags::STATUS_CACHE_CHECKS != 0 {
+                    status_cache_check_flags::REQUESTED
+                } else {
+                    0
+                };
+            let initial_age_nonce_check_flags =
+                if flags & check_message_flags::AGE_NONCE_CHECKS != 0 {
+                    age_nonce_check_flags::REQUESTED
+                } else {
+                    0
+                };
             let initial_fee_payer_balance_flags =
                 if flags & check_message_flags::LOAD_FEE_PAYER_BALANCE != 0 {
                     fee_payer_balance_flags::REQUESTED
@@ -552,10 +566,11 @@ pub(crate) mod external {
 
             CheckResponse {
                 parsing_and_sanitization_flags: 0,
-                status_check_flags: initial_status_check_flags,
+                status_cache_check_flags: initial_status_cache_check_flags,
                 fee_payer_balance_flags: initial_fee_payer_balance_flags,
                 resolve_flags: initial_resolve_flags,
                 scheduling_details_flags: initial_scheduling_details_flags,
+                age_nonce_check_flags: initial_age_nonce_check_flags,
                 included_slot: 0,
                 transaction_fee: 0,
                 prioritization_fee: 0,
@@ -579,7 +594,8 @@ pub(crate) mod external {
         }
 
         fn validate_message_flags(flags: u16) -> bool {
-            const ALLOWED_CHECK_FLAGS: u16 = check_message_flags::STATUS_CHECKS
+            const ALLOWED_CHECK_FLAGS: u16 = check_message_flags::STATUS_CACHE_CHECKS
+                | check_message_flags::AGE_NONCE_CHECKS
                 | check_message_flags::LOAD_FEE_PAYER_BALANCE
                 | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
                 | check_message_flags::CALCULATE_SCHEDULING_DETAILS;
@@ -630,47 +646,55 @@ pub(crate) mod external {
             response.allocated_accounts_data_size = cost.allocated_accounts_data_size();
         }
 
-        fn check_status_checks(
+        fn check_age_nonce(
+            transaction: &Tx,
+            response: &mut CheckResponse,
+            working_bank: &Bank,
+            error_counters: &mut TransactionErrorMetrics,
+        ) {
+            response.age_nonce_check_flags |= age_nonce_check_flags::PERFORMED;
+            match working_bank.check_transaction_without_status_cache(
+                transaction,
+                working_bank.max_processing_age(),
+                error_counters,
+            ) {
+                Ok(Some(_)) => {
+                    response.age_nonce_check_flags |= age_nonce_check_flags::VALIDATED_NONCE;
+                }
+                Err(TransactionError::BlockhashNotFound) => {
+                    response.age_nonce_check_flags |=
+                        if transaction.get_durable_nonce(true).is_some() {
+                            age_nonce_check_flags::INVALID_NONCE
+                        } else {
+                            age_nonce_check_flags::TOO_OLD
+                        };
+                }
+                Err(TransactionError::UnsupportedVersion) => {
+                    response.age_nonce_check_flags |= age_nonce_check_flags::UNSUPPORTED_VERSION;
+                }
+                _ => {}
+            }
+        }
+
+        fn check_status_cache(
             transactions: &[(usize, Tx)],
             responses: &mut [CheckResponse],
             working_bank: &Bank,
         ) {
-            let txs: ArrayVec<_, MAX_TRANSACTIONS_PER_MESSAGE> = transactions
-                .iter()
-                .map(|(_, transaction)| transaction)
-                .collect();
-            let mut error_counters = TransactionErrorMetrics::default();
-            let (status_check_results, included_slots) = working_bank
-                .check_transactions_external::<Tx>(
-                    &txs,
-                    &[const { Ok(()) }; MAX_TRANSACTIONS_PER_MESSAGE][..txs.len()],
-                    working_bank.max_processing_age(),
-                    true,
-                    &mut error_counters,
-                );
-            let included_slots = included_slots.expect("requested to collect processed slots");
+            if transactions.is_empty() {
+                return;
+            }
 
-            for (((response_index, _), status_check_result), included_slot) in transactions
-                .iter()
-                .zip(status_check_results)
-                .zip(included_slots)
-            {
-                let check_response = &mut responses[*response_index];
-                check_response.status_check_flags |= status_check_flags::PERFORMED;
-                match status_check_result {
-                    Err(TransactionError::BlockhashNotFound) => {
-                        check_response.status_check_flags |= status_check_flags::TOO_OLD;
-                    }
-                    Err(TransactionError::AlreadyProcessed) => {
-                        check_response.status_check_flags |= status_check_flags::ALREADY_PROCESSED;
-                        check_response.included_slot =
-                            included_slot.expect("included_slot must be set for already processed");
-                    }
-                    Err(TransactionError::UnsupportedVersion) => {
-                        check_response.status_check_flags |=
-                            status_check_flags::UNSUPPORTED_VERSION;
-                    }
-                    _ => {}
+            let included_slots = working_bank.get_processed_slots_from_status_cache(
+                transactions.iter().map(|(_, transaction)| transaction),
+            );
+            for ((response_index, _), included_slot) in transactions.iter().zip(included_slots) {
+                let response = &mut responses[*response_index];
+                response.status_cache_check_flags |= status_cache_check_flags::PERFORMED;
+                if let Some(included_slot) = included_slot {
+                    response.status_cache_check_flags |=
+                        status_cache_check_flags::ALREADY_PROCESSED;
+                    response.included_slot = included_slot;
                 }
             }
         }
@@ -856,15 +880,17 @@ pub(crate) mod external {
             let logon = ClientLogon {
                 worker_count: 1,
                 check_worker_count: 1,
+                simulate_worker_count: 0,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
                 progress_tracker_capacity: 16,
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
-                flags: 0,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
+                pack_to_simulate_worker_capacity: 0,
+                simulate_worker_to_pack_capacity: 0,
             };
             let (_agave_session, client_session) = setup_local_session(logon).unwrap();
             let allocator = client_session.allocator;
@@ -914,7 +940,7 @@ pub(crate) mod external {
             let mut test_frame = setup_check_worker_test_frame();
 
             test_frame.send_message(PackToCheckWorkerMessage {
-                flags: check_message_flags::STATUS_CHECKS,
+                flags: check_message_flags::STATUS_CACHE_CHECKS,
                 batch: SharableTransactionBatchRegion {
                     num_transactions: 0,
                     transactions_offset: 0,
@@ -953,8 +979,10 @@ pub(crate) mod external {
         }
 
         #[test_case(check_message_flags::LOAD_FEE_PAYER_BALANCE; "balance_only")]
-        #[test_case(check_message_flags::STATUS_CHECKS; "status_only")]
-        #[test_case(check_message_flags::STATUS_CHECKS | check_message_flags::LOAD_FEE_PAYER_BALANCE; "both")]
+        #[test_case(check_message_flags::STATUS_CACHE_CHECKS; "status_only")]
+        #[test_case(check_message_flags::AGE_NONCE_CHECKS; "age_nonce_only")]
+        #[test_case(check_message_flags::STATUS_CACHE_CHECKS | check_message_flags::AGE_NONCE_CHECKS; "both_checks")]
+        #[test_case(check_message_flags::STATUS_CACHE_CHECKS | check_message_flags::AGE_NONCE_CHECKS | check_message_flags::LOAD_FEE_PAYER_BALANCE; "all")]
         fn test_happy_path(flags: u16) {
             let mut test_frame = setup_check_worker_test_frame();
             let fee_payer = Keypair::new();
@@ -980,13 +1008,21 @@ pub(crate) mod external {
             assert_eq!(response.processed_code, processed_codes::PROCESSED);
             let responses = test_frame.check_responses(&response.responses);
             assert_eq!(responses.len(), 1);
-            if flags & check_message_flags::STATUS_CHECKS != 0 {
+            if flags & check_message_flags::STATUS_CACHE_CHECKS != 0 {
                 assert_eq!(
-                    responses[0].status_check_flags,
-                    status_check_flags::REQUESTED | status_check_flags::PERFORMED
+                    responses[0].status_cache_check_flags,
+                    status_cache_check_flags::REQUESTED | status_cache_check_flags::PERFORMED
                 );
             } else {
-                assert_eq!(responses[0].status_check_flags, 0);
+                assert_eq!(responses[0].status_cache_check_flags, 0);
+            }
+            if flags & check_message_flags::AGE_NONCE_CHECKS != 0 {
+                assert_eq!(
+                    responses[0].age_nonce_check_flags,
+                    age_nonce_check_flags::REQUESTED | age_nonce_check_flags::PERFORMED
+                );
+            } else {
+                assert_eq!(responses[0].age_nonce_check_flags, 0);
             }
             if flags & check_message_flags::LOAD_FEE_PAYER_BALANCE != 0 {
                 assert_eq!(
@@ -1029,7 +1065,8 @@ pub(crate) mod external {
                 wincode::serialize(&translation_failure).unwrap(),
                 test_serialized_transaction(Hash::new_unique()), // Unknown blockhash.
             ]);
-            let mut flags = check_message_flags::STATUS_CHECKS
+            let mut flags = check_message_flags::STATUS_CACHE_CHECKS
+                | check_message_flags::AGE_NONCE_CHECKS
                 | check_message_flags::LOAD_FEE_PAYER_BALANCE
                 | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES;
             if check_scheduling {
@@ -1056,7 +1093,14 @@ pub(crate) mod external {
                 fee_payer_balance_flags::REQUESTED
             );
             assert_eq!(malformed.resolve_flags, resolve_flags::REQUESTED);
-            assert_eq!(malformed.status_check_flags, status_check_flags::REQUESTED);
+            assert_eq!(
+                malformed.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED
+            );
+            assert_eq!(
+                malformed.age_nonce_check_flags,
+                age_nonce_check_flags::REQUESTED
+            );
 
             assert_eq!(untranslated.parsing_and_sanitization_flags, 0);
             assert_eq!(
@@ -1065,8 +1109,12 @@ pub(crate) mod external {
             );
             assert_eq!(untranslated.fee_payer_balance, 123_456);
             assert_eq!(
-                untranslated.status_check_flags,
-                status_check_flags::REQUESTED
+                untranslated.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED
+            );
+            assert_eq!(
+                untranslated.age_nonce_check_flags,
+                age_nonce_check_flags::REQUESTED
             );
             if check_scheduling {
                 assert_eq!(
@@ -1090,10 +1138,14 @@ pub(crate) mod external {
                 resolve_flags::REQUESTED | resolve_flags::PERFORMED
             );
             assert_eq!(
-                expired.status_check_flags,
-                status_check_flags::REQUESTED
-                    | status_check_flags::PERFORMED
-                    | status_check_flags::TOO_OLD
+                expired.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED | status_cache_check_flags::PERFORMED
+            );
+            assert_eq!(
+                expired.age_nonce_check_flags,
+                age_nonce_check_flags::REQUESTED
+                    | age_nonce_check_flags::PERFORMED
+                    | age_nonce_check_flags::TOO_OLD
             );
         }
 
@@ -1162,7 +1214,8 @@ pub(crate) mod external {
             }
             .serialize_for_tests()
             .unwrap();
-            let mut table_account = AccountSharedData::new(1, table_data.len(), &program::id());
+            let mut table_account =
+                AccountSharedData::new_with_data(1, vec![0; table_data.len()], &program::id());
             table_account.set_data_from_slice(&table_data);
             test_frame.bank.store_account(&table_key, &table_account);
             let make_transaction = |recipient, data_limit| {
@@ -1202,7 +1255,7 @@ pub(crate) mod external {
             test_frame.send_message(PackToCheckWorkerMessage {
                 flags: check_message_flags::CALCULATE_SCHEDULING_DETAILS
                     | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
-                    | check_message_flags::STATUS_CHECKS,
+                    | check_message_flags::STATUS_CACHE_CHECKS,
                 batch: batch.region,
             });
             test_frame.iterate().unwrap();
@@ -1218,8 +1271,8 @@ pub(crate) mod external {
                     | scheduling_details_flags::FAILED
             );
             assert_eq!(
-                responses[0].status_check_flags,
-                status_check_flags::REQUESTED | status_check_flags::PERFORMED
+                responses[0].status_cache_check_flags,
+                status_cache_check_flags::REQUESTED | status_cache_check_flags::PERFORMED
             );
             assert_eq!(
                 responses[0].resolve_flags,
@@ -1274,7 +1327,7 @@ pub(crate) mod external {
                 flags: check_message_flags::LOAD_FEE_PAYER_BALANCE
                     | check_message_flags::LOAD_ADDRESS_LOOKUP_TABLES
                     | check_message_flags::CALCULATE_SCHEDULING_DETAILS
-                    | check_message_flags::STATUS_CHECKS,
+                    | check_message_flags::STATUS_CACHE_CHECKS,
                 batch: batch.region,
             });
             frame.iterate().unwrap();
@@ -1298,7 +1351,10 @@ pub(crate) mod external {
                     | scheduling_details_flags::PERFORMED
                     | scheduling_details_flags::FAILED
             );
-            assert_eq!(response.status_check_flags, status_check_flags::REQUESTED);
+            assert_eq!(
+                response.status_cache_check_flags,
+                status_cache_check_flags::REQUESTED
+            );
         }
 
         #[test]

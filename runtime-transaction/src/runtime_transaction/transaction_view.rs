@@ -1,15 +1,14 @@
 use {
-    super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
+    super::RuntimeTransaction,
     crate::{
         instruction_meta::InstructionMeta,
         transaction_meta::{
-            CachedTransactionMeta, TransactionConfiguration, TransactionMeta,
-            VersionedTransactionConfiguration,
+            CachedTransactionMeta, TransactionMeta, VersionedTransactionConfiguration,
         },
         transaction_with_meta::{StaticTransactionWithMeta, TransactionWithMeta},
     },
     agave_transaction_view::{
-        resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
+        resolved_transaction_view::ResolvedTransactionView,
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
     solana_message::{
@@ -19,7 +18,6 @@ use {
         v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
         v1,
     },
-    solana_program_entrypoint::HEAP_LENGTH,
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
@@ -31,9 +29,7 @@ use {
     std::{borrow::Cow, collections::HashSet},
 };
 
-fn is_simple_vote_transaction<D: TransactionData>(
-    transaction: &SanitizedTransactionView<D>,
-) -> bool {
+fn is_simple_vote_transaction<D: AsRef<[u8]>>(transaction: &SanitizedTransactionView<D>) -> bool {
     let signatures = transaction.signatures();
     let is_legacy_message = matches!(transaction.version(), TransactionVersion::Legacy);
     let instruction_programs = transaction
@@ -43,7 +39,7 @@ fn is_simple_vote_transaction<D: TransactionData>(
     is_simple_vote_transaction_impl(signatures, is_legacy_message, instruction_programs)
 }
 
-impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
+impl<D: AsRef<[u8]>> RuntimeTransaction<SanitizedTransactionView<D>> {
     pub fn try_new(
         transaction: SanitizedTransactionView<D>,
         message_hash: MessageHash,
@@ -54,7 +50,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
     }
 }
 
-impl<'a, D: TransactionData> RuntimeTransaction<&'a SanitizedTransactionView<D>> {
+impl<'a, D: AsRef<[u8]>> RuntimeTransaction<&'a SanitizedTransactionView<D>> {
     pub fn try_new(
         transaction: &'a SanitizedTransactionView<D>,
         message_hash: MessageHash,
@@ -71,13 +67,15 @@ fn from_sanitized_transaction_view<D>(
     is_simple_vote_tx: Option<bool>,
 ) -> Result<CachedTransactionMeta>
 where
-    D: TransactionData,
+    D: AsRef<[u8]>,
 {
     crate::transaction_limits::validate_transaction_limits(
         transaction,
         transaction.data().len() as u64,
     )?;
-    crate::transaction_limits::validate_transaction_config_view(transaction)?;
+    if let Some(config) = transaction.transaction_config() {
+        crate::transaction_limits::validate_transaction_config_view(&config)?;
+    }
 
     let message_hash = match message_hash {
         MessageHash::Precomputed(hash) => hash,
@@ -97,24 +95,10 @@ where
         precompile_signature_details.num_ed25519_instruction_signatures,
         precompile_signature_details.num_secp256r1_instruction_signatures,
     );
-    let versioned_transaction_config =
-        if let Some(transaction_config_view) = transaction.transaction_config() {
-            // Only txv1 has inline configuration; its limits were validated above.
-            VersionedTransactionConfiguration::V1(TransactionConfiguration {
-                priority_fee_lamports: transaction_config_view.priority_fee_lamports().unwrap_or(0),
-                compute_unit_limit: transaction_config_view.compute_unit_limit().unwrap_or(0),
-                loaded_accounts_data_size_limit: transaction_config_view
-                    .loaded_accounts_data_size_limit()
-                    .unwrap_or(0),
-                updated_heap_bytes: transaction_config_view
-                    .requested_heap_size()
-                    .unwrap_or(HEAP_LENGTH as u32),
-            })
-        } else {
-            VersionedTransactionConfiguration::LegacyAndV0(
-                ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?,
-            )
-        };
+    let versioned_transaction_config = VersionedTransactionConfiguration::try_from_view_parts(
+        transaction.transaction_config(),
+        transaction.program_instructions_iter(),
+    )?;
 
     Ok(CachedTransactionMeta {
         message_hash,
@@ -125,7 +109,7 @@ where
     })
 }
 
-impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
+impl<D: AsRef<[u8]>> RuntimeTransaction<ResolvedTransactionView<D>> {
     /// Create a new `RuntimeTransaction<ResolvedTransactionView>` from a
     /// `RuntimeTransaction<SanitizedTransactionView>` that already has
     /// static metadata loaded.
@@ -142,13 +126,13 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
-        crate::transaction_limits::validate_unique_account_keys(transaction.account_keys().iter())?;
+        crate::transaction_limits::validate_unique_account_keys(transaction.account_keys())?;
         let tx = Self { transaction, meta };
         Ok(tx)
     }
 }
 
-fn to_versioned_transaction<D: TransactionData>(
+fn to_versioned_transaction<D: AsRef<[u8]>>(
     view: &SanitizedTransactionView<D>,
 ) -> VersionedTransaction {
     let header = MessageHeader {
@@ -212,9 +196,7 @@ fn to_versioned_transaction<D: TransactionData>(
     }
 }
 
-impl<D: TransactionData> StaticTransactionWithMeta
-    for RuntimeTransaction<SanitizedTransactionView<D>>
-{
+impl<D: AsRef<[u8]>> StaticTransactionWithMeta for RuntimeTransaction<SanitizedTransactionView<D>> {
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         to_versioned_transaction(&self.transaction)
     }
@@ -224,9 +206,7 @@ impl<D: TransactionData> StaticTransactionWithMeta
     }
 }
 
-impl<D: TransactionData> StaticTransactionWithMeta
-    for RuntimeTransaction<ResolvedTransactionView<D>>
-{
+impl<D: AsRef<[u8]>> StaticTransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         to_versioned_transaction(&self.transaction)
     }
@@ -239,16 +219,13 @@ impl<D: TransactionData> StaticTransactionWithMeta
 #[cfg(feature = "dev-context-only-utils")]
 impl<D> From<solana_transaction::Transaction> for RuntimeTransaction<ResolvedTransactionView<D>>
 where
-    D: TransactionData + From<Vec<u8>>,
+    D: AsRef<[u8]> + From<Vec<u8>>,
 {
     fn from(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         let data = D::from(wincode::serialize(&versioned_transaction).unwrap());
-        let sanitized_view = SanitizedTransactionView::try_new_sanitized(
-            data,
-            &crate::sanitize_config::sanitize_config(),
-        )
-        .expect("failed to create SanitizedTransactionView from Transaction");
+        let sanitized_view = SanitizedTransactionView::try_new_sanitized(data)
+            .expect("failed to create SanitizedTransactionView from Transaction");
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,
@@ -264,7 +241,7 @@ where
     }
 }
 
-impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
+impl<D: AsRef<[u8]>> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
     fn as_sanitized_transaction(&self) -> Cow<'_, SanitizedTransaction> {
         let VersionedTransaction {
             signatures,
@@ -328,7 +305,6 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 mod tests {
     use {
         super::*,
-        crate::sanitize_config::sanitize_config,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -352,11 +328,8 @@ mod tests {
         };
 
         let hash = Hash::new_unique();
-        let transaction = SanitizedTransactionView::try_new_sanitized(
-            &serialized_transaction[..],
-            &sanitize_config(),
-        )
-        .unwrap();
+        let transaction =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..]).unwrap();
         let static_runtime_transaction =
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
@@ -388,9 +361,7 @@ mod tests {
             reserved_account_keys: &HashSet<Pubkey>,
         ) {
             let bytes = wincode::serialize(&original_transaction).unwrap();
-            let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
-                    .unwrap();
+            let transaction_view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -456,9 +427,7 @@ mod tests {
         ) {
             let bytes =
                 wincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
-            let transaction_view =
-                SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
-                    .unwrap();
+            let transaction_view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
@@ -545,11 +514,8 @@ mod tests {
                 Hash::new_unique(),
             )))
             .unwrap();
-        let transaction_view = SanitizedTransactionView::try_new_sanitized(
-            &serialized_transaction[..],
-            &sanitize_config(),
-        )
-        .unwrap();
+        let transaction_view =
+            SanitizedTransactionView::try_new_sanitized(&serialized_transaction[..]).unwrap();
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             transaction_view,
             MessageHash::Compute,

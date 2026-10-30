@@ -105,11 +105,8 @@ impl LatestValidatorVote {
             return Err(DeserializedPacketError::VoteTransaction);
         }
 
-        let vote = SanitizedTransactionView::try_new_sanitized(
-            packet_bytes(packet).unwrap(),
-            &solana_runtime_transaction::sanitize_config::sanitize_config(),
-        )
-        .unwrap();
+        let vote =
+            SanitizedTransactionView::try_new_sanitized(packet_bytes(packet).unwrap()).unwrap();
 
         Self::new_from_view(vote, vote_source, deprecate_legacy_vote_ixs)
     }

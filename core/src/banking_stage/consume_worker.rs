@@ -192,22 +192,18 @@ pub(crate) mod external {
         agave_scheduler_bindings::{
             ExecutionResponseRegion, ExecutionWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
             PackToExecutionWorkerMessage, execution_message_flags,
-            worker_message_types::{ExecutionResponse, not_included_reasons},
+            worker_message_types::{ExecutionResponse, execution_statuses, not_included_reasons},
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
             responses_region::execution_responses_from_iter,
             transaction_ptr::{TransactionPtr, TransactionPtrBatch},
         },
-        agave_transaction_view::{
-            resolved_transaction_view::ResolvedTransactionView, sanitize::SanitizeConfig,
-        },
+        agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         arrayvec::ArrayVec,
         solana_cost_model::cost_model::CostModel,
         solana_runtime::bank::Bank,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         std::num::NonZeroUsize,
     };
 
@@ -476,6 +472,7 @@ pub(crate) mod external {
                         Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         Err(err) => Self::reason_from_packet_handling_error(err),
                     },
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 })
@@ -513,6 +510,7 @@ pub(crate) mod external {
                     Err(err) => ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: Self::reason_from_packet_handling_error(err),
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
@@ -532,6 +530,7 @@ pub(crate) mod external {
                 (0..message.batch.num_transactions).map(|_| ExecutionResponse {
                     execution_slot,
                     not_included_reason: reason,
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 }),
@@ -573,7 +572,6 @@ pub(crate) mod external {
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
         ) {
-            let sanitize_config = sanitize_config();
             let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
 
             let mut translation_results = ArrayVec::new();
@@ -584,7 +582,6 @@ pub(crate) mod external {
                     transaction_ptr,
                     bank,
                     transaction_account_lock_limit,
-                    &sanitize_config,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -602,23 +599,18 @@ pub(crate) mod external {
             transaction_ptr: TransactionPtr,
             bank: &Bank,
             transaction_account_lock_limit: usize,
-            sanitize_config: &SanitizeConfig,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
-            translate_to_runtime_view(
-                transaction_ptr,
-                bank,
-                transaction_account_lock_limit,
-                sanitize_config,
+            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limit).map(
+                |(view, deactivation_slot)| {
+                    (
+                        view,
+                        MaxAge {
+                            sanitized_epoch: bank.epoch(),
+                            alt_invalidation_slot: deactivation_slot,
+                        },
+                    )
+                },
             )
-            .map(|(view, deactivation_slot)| {
-                (
-                    view,
-                    MaxAge {
-                        sanitized_epoch: bank.epoch(),
-                        alt_invalidation_slot: deactivation_slot,
-                    },
-                )
-            })
         }
 
         /// Returns `true` if a message is valid and can be processed.
@@ -646,10 +638,15 @@ pub(crate) mod external {
                     compute_units,
                     loaded_accounts_data_size,
                     fee_payer_post_balance,
-                    ..
+                    result,
                 } => ExecutionResponse {
                     execution_slot: bank.slot(),
                     not_included_reason: not_included_reasons::NONE,
+                    execution_status: if result.is_ok() {
+                        execution_statuses::SUCCESS
+                    } else {
+                        execution_statuses::FAILED
+                    },
                     cost_units: CostModel::calculate_cost_for_executed_transaction(
                         tx,
                         *compute_units,
@@ -665,6 +662,7 @@ pub(crate) mod external {
                         transaction_error,
                         execution_flags.all_or_nothing,
                     ),
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 },
@@ -732,7 +730,10 @@ pub(crate) mod external {
             super::*,
             crate::banking_stage::{committer::Committer, tests::create_slow_genesis_config},
             agave_scheduler_bindings::{SharableTransactionBatchRegion, processed_codes},
-            agave_scheduler_handshake::{ClientLogon, setup_local_session},
+            agave_scheduler_handshake::{
+                AgaveSimulateWorkerSession, ClientLogon, ClientSimulateWorkerSession,
+                setup_local_session,
+            },
             agave_scheduling_utils::responses_region::ExecutionResponsesPtr,
             crossbeam_channel::bounded,
             solana_genesis_config::GenesisConfig,
@@ -745,6 +746,7 @@ pub(crate) mod external {
             },
             solana_pubkey::Pubkey,
             solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_signer::Signer,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
             std::{
@@ -774,6 +776,8 @@ pub(crate) mod external {
             receiver: shaq::spsc::Consumer<PackToExecutionWorkerMessage>,
             sender: shaq::spsc::Producer<ExecutionWorkerToPackMessage>,
             should_drain_executes: bool,
+            simulate_workers: Vec<AgaveSimulateWorkerSession>,
+            client_simulate_workers: Option<ClientSimulateWorkerSession>,
         }
 
         impl ExternalTestFrame {
@@ -922,15 +926,17 @@ pub(crate) mod external {
             let logon = ClientLogon {
                 worker_count: 1,
                 check_worker_count: 1,
+                simulate_worker_count: 1,
                 allocator_size: 64 * 1024 * 1024,
                 allocator_handles: 1,
                 tpu_to_pack_capacity: 16,
                 progress_tracker_capacity: 16,
                 pack_to_worker_capacity: 16,
                 worker_to_pack_capacity: 16,
-                flags: 0,
                 pack_to_check_worker_capacity: 16,
                 check_worker_to_pack_capacity: 16,
+                pack_to_simulate_worker_capacity: 16,
+                simulate_worker_to_pack_capacity: 16,
             };
             let (mut agave_session, mut client_session) = setup_local_session(logon).unwrap();
             let agave_worker = agave_session.workers.pop().unwrap();
@@ -966,6 +972,8 @@ pub(crate) mod external {
                 receiver: agave_worker.pack_to_worker,
                 sender: agave_worker.worker_to_pack,
                 should_drain_executes: false,
+                simulate_workers: agave_session.simulate_workers,
+                client_simulate_workers: client_session.simulate_workers,
             }
         }
 
@@ -1028,7 +1036,6 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limit(),
-                        &sanitize_config(),
                     )
                     .ok()
                     .unwrap()
@@ -1080,24 +1087,28 @@ pub(crate) mod external {
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
+                        execution_status: execution_statuses::FAILED,
                         cost_units: 1337,
                         fee_payer_balance: 1_000_000,
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
+                        execution_status: execution_statuses::SUCCESS,
                         cost_units: 1341,
                         fee_payer_balance: 2_000_000,
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::INSUFFICIENT_FUNDS_FOR_FEE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     }
@@ -1131,7 +1142,6 @@ pub(crate) mod external {
                 &simple_tx[..],
                 &bank,
                 bank.get_transaction_account_lock_limit(),
-                &sanitize_config(),
             )
             .ok()
             .unwrap()
@@ -1171,18 +1181,21 @@ pub(crate) mod external {
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
@@ -1438,10 +1451,99 @@ pub(crate) mod external {
             assert_eq!(responses.len(), 1);
             assert_eq!(responses[0].execution_slot, test_frame.bank.slot());
             assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(responses[0].execution_status, execution_statuses::SUCCESS);
             assert!(responses[0].cost_units > 0);
             assert!(responses[0].fee_payer_balance > 0);
             assert_eq!(test_frame.bank.get_balance(&recipient), 1);
 
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_execute_failed_transaction() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let payer = test_frame.mint_keypair.pubkey();
+            let balance = test_frame.bank.get_balance(&payer);
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                balance + 1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(responses[0].execution_status, execution_statuses::FAILED);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_simulation_worker_uses_handshake_queues() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+            let agave_session = test_frame.simulate_workers.pop().unwrap();
+            let client_session = test_frame.client_simulate_workers.take().unwrap();
+            let (record_sender, _record_receiver) = record_channels(false);
+            let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+            let mut worker = ExternalWorker::new(
+                Arc::new(AtomicBool::new(false)),
+                Consumer::new(
+                    Committer::new(None, replay_vote_sender, None),
+                    TransactionRecorder::new(record_sender),
+                    None,
+                ),
+                agave_session.allocator,
+                test_frame.shared_leader_state.clone(),
+            );
+
+            client_session
+                .pack_to_simulate_worker
+                .try_write(PackToExecutionWorkerMessage {
+                    flags: 0,
+                    max_working_slot: test_frame.bank.slot(),
+                    batch: batch.region,
+                })
+                .unwrap();
+            assert_matches!(
+                worker
+                    .iterate_simulation(
+                        &agave_session.pack_to_simulate_worker,
+                        &agave_session.simulate_worker_to_pack,
+                    )
+                    .unwrap(),
+                IterationResult::ProcessedMessage
+            );
+
+            let response = client_session.simulate_worker_to_pack.try_read().unwrap();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
             test_frame.free_batch(batch);
         }
 
