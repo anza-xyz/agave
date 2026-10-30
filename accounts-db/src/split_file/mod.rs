@@ -294,6 +294,7 @@ impl SplitFile {
         }
 
         if self.remove_on_drop.load(Ordering::Relaxed) {
+            self.is_dirty.store(true, Ordering::Relaxed);
             return Err(SplitFileError::FlushButRemoveOnDrop);
         }
 
@@ -1917,5 +1918,24 @@ mod tests {
         // flush() will succeed after disabling remove_on_drop
         split.disable_remove_on_drop();
         split.flush().unwrap();
+    }
+
+    /// A rejected flush must leave pending writes eligible for a later flush.
+    #[test]
+    fn test_rejected_flush_preserves_dirty_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let account = AccountSharedData::new(1, 32, &Pubkey::new_unique());
+        split
+            .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
+            .unwrap();
+        assert!(split.is_dirty.load(Ordering::Relaxed));
+
+        assert_matches!(split.flush(), Err(SplitFileError::FlushButRemoveOnDrop));
+        assert!(split.is_dirty.load(Ordering::Relaxed));
+
+        split.disable_remove_on_drop();
+        split.flush().unwrap();
+        assert!(!split.is_dirty.load(Ordering::Relaxed));
     }
 }
