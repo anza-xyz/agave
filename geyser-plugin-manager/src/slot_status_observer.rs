@@ -123,7 +123,7 @@ mod tests {
         fn notify_first_shred_received(&self, _: Slot) {}
         fn notify_completed(&self, _: Slot) {}
         fn notify_created_bank(&self, _: Slot, _: Slot, _: BankId) {}
-        fn notify_slot_dead(&self, _: Slot, _: Slot, _: String) {}
+        fn notify_slot_dead(&self, _: Slot, _: Slot, _: String, _: BankId) {}
     }
 
     fn recording_notifier() -> (SlotStatusNotifier, Receiver<Status>) {
