@@ -19,7 +19,7 @@ use solana_runtime::loader_utils::{
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
-    borsh::{BorshDeserialize, BorshSerialize, from_slice, to_vec},
+    borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
     solana_account::ReadableAccount,
     solana_account_info::MAX_PERMITTED_DATA_INCREASE,
     solana_client_traits::SyncClient,
@@ -52,7 +52,7 @@ use {
     solana_svm::conformance::programs::keyed_account_for_system_program,
     solana_svm_transaction::svm_message::SVMStaticMessage,
     solana_svm_type_overrides::rand,
-    solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
+    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     std::{
         assert_eq,
         str::FromStr,
@@ -67,14 +67,14 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
-    solana_message::{Message, inner_instruction::InnerInstruction},
+    solana_message::{inner_instruction::InnerInstruction, Message},
     solana_program_runtime::sysvar_cache::SysvarCache,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_client::BankClient,
-        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_default_rent},
+        genesis_utils::{create_genesis_config_with_default_rent, GenesisConfigInfo},
         loader_utils::create_program,
     },
     solana_sbf_rust_invoke_dep::*,
@@ -791,21 +791,17 @@ fn test_return_data_and_log_data_syscall() {
 
         assert!(effects.result.is_none());
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == "Program data: AQID BAUG")
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == "Program data: AQID BAUG"));
 
         assert_eq!(effects.return_data, vec![0x08, 0x01, 0x44]);
 
-        assert!(
-            effects
-                .logs
-                .iter()
-                .any(|log| log == &format!("Program return: {} CAFE", program_id))
-        );
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program return: {} CAFE", program_id)));
     }
 }
 
@@ -3792,11 +3788,9 @@ fn test_program_sbf_processed_inner_instruction() {
         &[instruction2, instruction1, instruction0],
         Some(&mint_keypair.pubkey()),
     );
-    assert!(
-        bank_client
-            .send_and_confirm_message(&[&mint_keypair], message)
-            .is_ok()
-    );
+    assert!(bank_client
+        .send_and_confirm_message(&[&mint_keypair], message)
+        .is_ok());
 }
 
 #[test]
@@ -5579,14 +5573,14 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
     );
 }
 
-#[test]
+#[test_matrix([Some(false), Some(true), None], [false, true])]
 #[cfg(feature = "sbf_rust")]
-fn test_program_sbf_invoke_signed_v2() {
+fn test_program_sbf_invoke_signed_v2(is_signer: Option<bool>, request_signers: bool) {
     agave_logger::setup();
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_v2_ok");
+    let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_signed_v2");
     let invoke_signed_v2_program_id = Pubkey::new_unique();
 
     let mut program_cache = default_program_cache_with_program(
@@ -5628,24 +5622,66 @@ fn test_program_sbf_invoke_signed_v2() {
         10,
     );
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_signed_v2_program_id, &[100], account_metas);
+    // Cover all signers, all non-signers, and mixed signer privileges.
+    for (index, account_meta) in account_metas[1..].iter_mut().enumerate() {
+        account_meta.is_signer = is_signer.unwrap_or(index % 2 == 0);
+    }
+
+    // 1 program account + 10 accounts
+    let mut instruction_data = Vec::with_capacity(11usize.saturating_mul(size_of::<u16>()));
+    instruction_data.extend_from_slice(10u16.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(
+        (1u16..=10)
+            .map(|i| i.to_le_bytes())
+            .collect::<Vec<_>>()
+            .concat()
+            .as_ref(),
+    );
+
+    if request_signers {
+        // Request every account as a signer, independently of the caller's privileges.
+        instruction_data.extend_from_slice(&[1; 10]);
+    }
+
+    let instruction = Instruction::new_with_bytes(
+        invoke_signed_v2_program_id,
+        &instruction_data,
+        account_metas,
+    );
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
     let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
 
-    assert!(effects.result.is_none());
+    if request_signers && is_signer != Some(true) {
+        assert_eq!(effects.result, Some(InstructionError::PrivilegeEscalation));
+        // Check that there was an attempt to invoke the noop program.
+        assert!(!effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program {noop_program_id} invoke [2]")));
+    } else {
+        assert_eq!(effects.result, None);
+        // Check that the noop program was invoked and completed successfully.
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program {noop_program_id} invoke [2]")));
+        assert!(effects
+            .logs
+            .iter()
+            .any(|log| log == &format!("Program {noop_program_id} success")));
+    }
 }
 
 #[test]
 #[cfg(feature = "sbf_rust")]
-fn test_program_sbf_invoke_signed_v2_fail() {
+fn test_program_sbf_invoke_signed_v2_with_invalid_account_indices() {
     agave_logger::setup();
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_v2_fail");
+    let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_signed_v2");
     let invoke_signed_v2_program_id = Pubkey::new_unique();
 
     let mut program_cache = default_program_cache_with_program(
@@ -5687,8 +5723,23 @@ fn test_program_sbf_invoke_signed_v2_fail() {
         10,
     );
 
-    let instruction =
-        Instruction::new_with_bytes(invoke_signed_v2_program_id, &[100], account_metas);
+    // 1 program account + 10 accounts, but the account indices are
+    // invalid (11..=20 instead of 1..=10)
+    let mut instruction_data = Vec::with_capacity(11 * size_of::<u16>());
+    instruction_data.extend_from_slice(10u16.to_le_bytes().as_ref());
+    instruction_data.extend_from_slice(
+        (1u16..=10)
+            .map(|i| (i + 10).to_le_bytes())
+            .collect::<Vec<_>>()
+            .concat()
+            .as_ref(),
+    );
+
+    let instruction = Instruction::new_with_bytes(
+        invoke_signed_v2_program_id,
+        &instruction_data,
+        account_metas,
+    );
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 

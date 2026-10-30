@@ -1,5 +1,5 @@
 [package]
-name = "solana-sbf-rust-invoke-v2-fail"
+name = "solana-sbf-rust-invoke-signed-v2"
 version = { workspace = true }
 description = { workspace = true }
 authors = { workspace = true }

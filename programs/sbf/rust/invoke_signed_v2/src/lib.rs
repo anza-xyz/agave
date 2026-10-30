@@ -1,12 +1,13 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-//! Invokes a noop program using `invoke_signed_v2`` syscall and tries to pass invalid
-//! account indices to the invoked program. The runtime should catch this and return
-//! an error.
+//! Invokes a noop program using the `invoke_signed_v2` syscall, forwarding account
+//! privileges and testing valid and invalid account indices.
 
 use {
-    core::marker::PhantomData, solana_account_info::AccountInfo,
-    solana_program_error::ProgramResult, solana_pubkey::Pubkey,
+    core::{marker::PhantomData, slice::from_raw_parts},
+    solana_account_info::AccountInfo,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
 };
 
 solana_define_syscall::define_syscall!(fn sol_invoke_signed_v2(instruction_addr: u64, signers_seeds_addr: u64, signers_seeds_len: u64) -> u64);
@@ -92,22 +93,33 @@ fn process_instruction(
     instruction_data: &[u8],
 ) -> ProgramResult {
     let to_call = accounts[0].key;
+    let num_accounts = unsafe { *(instruction_data.as_ptr() as *const u16) } as usize;
+    //  Indices of the accounts to pass to the invoked program.
+    let account_indices =
+        unsafe { from_raw_parts(instruction_data.as_ptr().add(2) as *const u16, num_accounts) };
+
+    // Optional signer flags after the account indices override the caller's flags
+    // so tests can request privileges the caller did not grant.
+    let signer_flags = instruction_data
+        .get((num_accounts + 1) * size_of::<u16>()..)
+        .unwrap_or_default();
+
     let cpi_accounts: Vec<CpiAccount> = accounts[1..]
         .iter()
+        .zip(account_indices.iter())
         .enumerate()
-        .map(|(index, account)| {
-            CpiAccount::new(
-                // Passes invalid account indices to the invoked program. The runtime
-                // should catch this and return an error.
-                (index + 10) as u16,
-                account.is_signer,
-                account.is_writable,
-            )
+        .map(|(position, (account, index))| {
+            let is_signer = signer_flags
+                .get(position)
+                .map_or(account.is_signer, |flag| *flag != 0);
+
+            CpiAccount::new(*index, is_signer, account.is_writable)
         })
         .collect();
     let cpi_instruction = CpiInstruction::new(to_call, &cpi_accounts, instruction_data);
 
+    // Invoke the noop program. Invalid account indices are rejected by the runtime.
     let _ = invoke_signed_v2(&cpi_instruction, &[]);
 
-    unreachable!()
+    Ok(())
 }
