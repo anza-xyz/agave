@@ -76,6 +76,12 @@ impl SingleLtHashUpdater for blake3::Hasher {
     }
 }
 
+impl SingleLtHashUpdater for &mut Vec<u8> {
+    fn write_part(&mut self, bytes: &[u8]) {
+        self.extend_from_slice(bytes);
+    }
+}
+
 /// A smaller "checksum" of the LtHash, useful when 2 KiB is too large
 //
 // Developer notes:

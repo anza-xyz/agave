@@ -125,6 +125,10 @@ const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
 /// dropped from it: reading one back from storage copies megabytes
 const MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH: usize = 1024 * 1024;
 
+/// Largest account data that `lt_hash_account_with_scratch()` copies into one buffer to hash.
+/// Above this size, the copy costs more than BLAKE3's slower start on misaligned input.
+const MAX_CONTIGUOUS_HASH_DATA_LEN: usize = 256 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanAccountStorageData {
     /// callback for accounts in storage will not include `data`
@@ -3146,6 +3150,25 @@ impl AccountsDb {
 
         let hasher = Self::write_account_hash_input(account, pubkey, blake3::Hasher::new());
         AccountLtHash(LtHash::with(&hasher))
+    }
+
+    /// Calculates the `AccountLtHash` of `account` like `lt_hash_account()`. Uses `scratch` to
+    /// speed up an account whose hash input spans several 1 KiB BLAKE3 chunks.
+    pub fn lt_hash_account_with_scratch(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        scratch: &mut Vec<u8>,
+    ) -> AccountLtHash {
+        if account.lamports() == 0
+            || !(blake3::CHUNK_LEN..=MAX_CONTIGUOUS_HASH_DATA_LEN).contains(&account.data().len())
+        {
+            return Self::lt_hash_account(account, pubkey);
+        }
+        // BLAKE3 hashes its chunks in parallel only from a chunk-aligned start, and the
+        // lamports prefix misaligns the data, so hash a contiguous copy of the input.
+        scratch.clear();
+        Self::write_account_hash_input(account, pubkey, &mut *scratch);
+        AccountLtHash(LtHash::with(blake3::Hasher::new().update(scratch)))
     }
 
     /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the

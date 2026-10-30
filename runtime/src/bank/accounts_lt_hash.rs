@@ -275,7 +275,11 @@ impl AccountsLtHashAsyncProgress {
                 debug_assert!(worker_index < self.accumulators.len());
                 let accumulator = unsafe { self.accumulators.get_unchecked(worker_index) };
 
-                Self::process(&mut accumulator.lock().unwrap(), update);
+                Self::process(
+                    &mut accumulator.lock().unwrap(),
+                    &mut HASH_SCRATCH[worker_index].lock().unwrap(),
+                    update,
+                );
 
                 // Decrementing the number of pending jobs MUST happen *after*
                 // accumulating the result.  This ensures `finish()` cannot
@@ -369,18 +373,20 @@ impl AccountsLtHashAsyncProgress {
     ///
     /// Note: Since an LtHash is large, `accum_lt_hash` is passed as an in-out parameter.
     /// This it to avoid Rust compiler bug that fails to perform return value optimization.
-    fn process(accum_lt_hash: &mut LtHash, update: AccountsLtHashUpdate) {
+    fn process(accum_lt_hash: &mut LtHash, scratch: &mut Vec<u8>, update: AccountsLtHashUpdate) {
         let AccountsLtHashUpdate {
             address,
             prev_account,
             curr_account,
         } = update;
         if let Some(prev_account) = prev_account {
-            let prev_lt_hash = AccountsDb::lt_hash_account(&prev_account, &address);
+            let prev_lt_hash =
+                AccountsDb::lt_hash_account_with_scratch(&prev_account, &address, scratch);
             accum_lt_hash.mix_out(&prev_lt_hash.0);
         }
         if let Some(curr_account) = curr_account {
-            let curr_lt_hash = AccountsDb::lt_hash_account(&curr_account, &address);
+            let curr_lt_hash =
+                AccountsDb::lt_hash_account_with_scratch(&curr_account, &address, scratch);
             accum_lt_hash.mix_in(&curr_lt_hash.0);
         }
     }
@@ -728,6 +734,10 @@ struct FreelistStats {
     /// the capacity, in bytes, across all the containers in the freelist
     capacity_bytes: usize,
 }
+
+/// Scratch buffer of each hasher thread for hashing accounts, indexed like the accumulators.
+static HASH_SCRATCH: [Mutex<Vec<u8>>; NUM_ACCOUNTS_HASHER_THREADS] =
+    [const { Mutex::new(Vec::new()) }; NUM_ACCOUNTS_HASHER_THREADS];
 
 /// Returns the thread pool for asynchronous accounts hashing.
 ///
@@ -1397,7 +1407,11 @@ mod tests {
                 .collect();
             // Hash the same updates serially, for reference.
             for update in &updates {
-                AccountsLtHashAsyncProgress::process(&mut expected_lt_hash, update.clone());
+                AccountsLtHashAsyncProgress::process(
+                    &mut expected_lt_hash,
+                    &mut Vec::new(),
+                    update.clone(),
+                );
             }
             if spawn {
                 async_progress.add_deduped_count(updates.len());

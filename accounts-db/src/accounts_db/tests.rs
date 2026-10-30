@@ -50,3 +50,31 @@ impl AccountsDb {
         )
     }
 }
+
+/// Hashing a contiguous copy of the input must not change any account's lt hash.
+#[test]
+fn test_lt_hash_account_with_scratch_matches_streamed_input() {
+    let pubkey = Pubkey::new_unique();
+    let mut scratch = Vec::new();
+    for data_len in [
+        0,
+        blake3::CHUNK_LEN - 1,
+        blake3::CHUNK_LEN,
+        3762,
+        MAX_CONTIGUOUS_HASH_DATA_LEN,
+        MAX_CONTIGUOUS_HASH_DATA_LEN + 1,
+    ] {
+        let account = AccountSharedData::from(Account {
+            lamports: 123,
+            data: (0..data_len).map(|i| i as u8).collect(),
+            owner: Pubkey::new_unique(),
+            executable: true,
+            rent_epoch: 0,
+        });
+        assert_eq!(
+            AccountsDb::lt_hash_account_with_scratch(&account, &pubkey, &mut scratch),
+            AccountsDb::lt_hash_account(&account, &pubkey),
+            "data_len={data_len}",
+        );
+    }
+}
