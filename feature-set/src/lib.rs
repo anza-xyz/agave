@@ -2664,7 +2664,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             early_instruction_trace_overflow_detection::id(),
-            "SIMD-582: Early detection of instruction trace overflow",
+            "SIMD-0582: Early detection of instruction trace overflow",
         ),
         (
             unbound_loader_v3_instruction_data::id(),
