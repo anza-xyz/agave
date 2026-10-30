@@ -10314,6 +10314,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-transaction-view",
+ "ahash 0.8.12",
  "bytes",
  "criterion",
  "rand 0.9.4",

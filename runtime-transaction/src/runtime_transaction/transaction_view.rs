@@ -126,7 +126,7 @@ impl<D: AsRef<[u8]>> RuntimeTransaction<ResolvedTransactionView<D>> {
         let transaction =
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
-        crate::transaction_limits::validate_unique_account_keys(transaction.account_keys().iter())?;
+        crate::transaction_limits::validate_unique_account_keys(transaction.account_keys())?;
         let tx = Self { transaction, meta };
         Ok(tx)
     }
