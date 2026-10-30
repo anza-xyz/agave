@@ -77,6 +77,7 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Prebuilt MacOS x86-64 releases are no longer provided.
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
 * **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave
