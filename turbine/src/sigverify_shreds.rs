@@ -1,6 +1,8 @@
 use {
     agave_wake_channel::{Receiver as WakeReceiver, Sender as WakeSender, bounded as wake_bounded},
+    agave_worker_pool::TrySendError,
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
+    itertools::Itertools,
     scopeguard::defer,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -9,6 +11,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
             self,
+            filter::{RETRANSMIT_SHRED_BATCH_SIZE, RetransmitSender},
             layout::{is_retransmitter_signed_variant, set_retransmitter_signature},
         },
         sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
@@ -314,7 +317,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: Sender<Vec<shred::Payload>>,
+    retransmit_sender: RetransmitSender,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: Arc<RepairNonceLocationLookup>,
     num_sigverify_threads: NonZeroUsize,
@@ -378,7 +381,7 @@ fn run_shred_sigverify(
     workers: &ShredSigverifyWorkers,
     self_pubkey: &Pubkey,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &Sender<Vec<shred::Payload>>,
+    retransmit_sender: &RetransmitSender,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
     stats: &mut ShredSigVerifyStats,
@@ -438,15 +441,23 @@ fn run_shred_sigverify(
 
     stats.num_retransmit_shreds += retransmit_shreds.len();
 
-    if let Err(send_err) = retransmit_sender.try_send(retransmit_shreds) {
-        match send_err {
-            crossbeam_channel::TrySendError::Full(shreds) => {
-                stats.num_retransmit_stage_overflow_shreds += shreds.len();
-            }
-            crossbeam_channel::TrySendError::Disconnected(_) => {
-                return Err(ShredSigverifyError::SendError);
+    for shreds in &retransmit_shreds
+        .into_iter()
+        .chunks(RETRANSMIT_SHRED_BATCH_SIZE)
+    {
+        if let Err(send_err) = retransmit_sender.try_send(shreds.collect()) {
+            match send_err {
+                TrySendError::Full(shreds) => {
+                    stats.num_retransmit_stage_overflow_shreds += shreds.len();
+                }
+                TrySendError::Disconnected(_) => {
+                    return Err(ShredSigverifyError::SendError);
+                }
             }
         }
+        stats.max_retransmit_queue_len = stats
+            .max_retransmit_queue_len
+            .max(retransmit_sender.queue_len());
     }
 
     verified_sender.send(verified_shreds)?;
@@ -558,6 +569,8 @@ struct ShredSigVerifyStats {
     worker_stats: WorkerStats,
     num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
+    /// Maximum observed number of queued retransmit batches since the previous report.
+    max_retransmit_queue_len: usize,
     /// This means the OutstandingRequests cache is saturated and we
     /// threw away a verified shred due to being unable to fetch the storage location
     num_unknown_block_location: usize,
@@ -579,6 +592,7 @@ impl ShredSigVerifyStats {
             worker_stats: WorkerStats::default(),
             num_retransmit_stage_overflow_shreds: 0,
             num_retransmit_shreds: 0,
+            max_retransmit_queue_len: 0,
             num_unknown_block_location: 0,
             elapsed_micros: 0,
             verify_micros: 0,
@@ -609,6 +623,7 @@ impl ShredSigVerifyStats {
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
+            ("retransmit_queue_len", self.max_retransmit_queue_len, i64),
             (
                 "num_unknown_block_location",
                 self.num_unknown_block_location,

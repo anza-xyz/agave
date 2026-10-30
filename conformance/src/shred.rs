@@ -9,7 +9,6 @@ use {
     agave_feature_set::FeatureSet,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     agave_votor_messages::migration::MigrationStatus,
-    crossbeam_channel::bounded,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -26,7 +25,7 @@ use {
         blockstore_processor::verify_ticks,
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
-            filter::{ShredFilterContext, ShredRecoveryContext},
+            filter::{ShredFilterContext, ShredRecoveryContext, new_dummy_retransmit_sender},
             wire,
         },
     },
@@ -163,7 +162,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             open_ledger()
         }
     };
-    let (retransmit_sender, _retransmit_rx) = bounded(0);
+    let retransmit_sender = new_dummy_retransmit_sender();
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     // Blockstore stores duplicate proofs at insert time.
