@@ -1025,6 +1025,7 @@ mod tests {
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
+                ..SchedulerConfig::default()
             },
             None,
             None,
@@ -1088,6 +1089,7 @@ mod tests {
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
+                ..SchedulerConfig::default()
             },
             None,
             None,
@@ -1241,6 +1243,7 @@ mod tests {
                 DEFAULT_NUM_WORKERS,
                 SchedulerConfig {
                     scheduler_pacing: SchedulerPacing::Disabled,
+                    ..SchedulerConfig::default()
                 },
                 None,
                 None,

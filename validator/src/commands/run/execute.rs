@@ -589,6 +589,7 @@ pub fn execute(
                 "block_production_pacing_fill_time_millis",
                 SchedulerPacing
             ),
+            ..SchedulerConfig::default()
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),

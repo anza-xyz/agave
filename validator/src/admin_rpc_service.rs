@@ -897,7 +897,10 @@ impl AdminRpc for AdminRpcImpl {
                 .try_send(BankingControlMsg::Internal {
                     block_production_method,
                     num_workers,
-                    config: SchedulerConfig { scheduler_pacing },
+                    config: SchedulerConfig {
+                        scheduler_pacing,
+                        ..SchedulerConfig::default()
+                    },
                 })
                 .is_err()
             {
