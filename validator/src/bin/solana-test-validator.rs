@@ -3,7 +3,7 @@ use {
         admin_rpc_service, cli, commands::FromClapArgMatches, dashboard::Dashboard,
         ledger_lockfile, lock_ledger, println_name_value,
     },
-    agave_votor::vote_history_storage::FileVoteHistoryStorage,
+    agave_votor::vote_history_storage::VoteHistoryStorage,
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
     crossbeam_channel::unbounded,
     itertools::Itertools,
@@ -437,7 +437,7 @@ fn main() {
     genesis.enable_scheduler_bindings = matches.is_present("enable_scheduler_bindings");
 
     let tower_storage = Arc::new(FileTowerStorage::new(ledger_path.clone()));
-    let vote_history_storage = Arc::new(FileVoteHistoryStorage::new(ledger_path.clone()));
+    let vote_history_storage = Arc::new(VoteHistoryStorage::new(ledger_path.clone()));
 
     let admin_service_post_init = genesis.admin_rpc_service_post_init.clone();
     // If geyser_plugin_config value is invalid, the validator will exit when the values are extracted below
@@ -460,7 +460,7 @@ fn main() {
             staked_nodes_overrides: genesis.staked_nodes_overrides.clone(),
             post_init: admin_service_post_init,
             tower_storage: tower_storage.clone(),
-            vote_history_storage: vote_history_storage.clone(),
+            vote_history_storage: Some(vote_history_storage.clone()),
             rpc_to_plugin_manager_sender,
         },
     );

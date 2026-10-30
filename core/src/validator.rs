@@ -40,7 +40,7 @@ use {
     agave_votor::{
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::{VoteHistory, VoteHistoryError},
-        vote_history_storage::{NullVoteHistoryStorage, VoteHistoryStorage},
+        vote_history_storage::VoteHistoryStorage,
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
@@ -163,6 +163,7 @@ use {
         borrow::Cow,
         cmp,
         collections::{HashMap, HashSet},
+        io,
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
@@ -367,7 +368,7 @@ pub struct ValidatorConfig {
     pub require_tower: bool,
     pub require_vote_history: bool,
     pub tower_storage: Arc<dyn TowerStorage>,
-    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub filter_keys: Arc<HashSet<Pubkey>>,
     pub contact_debug_interval: u64,
@@ -446,7 +447,7 @@ impl ValidatorConfig {
             require_tower: false,
             require_vote_history: false,
             tower_storage: Arc::new(NullTowerStorage::default()),
-            vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
+            vote_history_storage: None,
             debug_keys: None,
             filter_keys: Arc::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
@@ -2155,7 +2156,14 @@ fn restore_vote_history(
     identity: &Pubkey,
     vote_account: &Pubkey,
 ) -> Result<VoteHistory, String> {
-    match VoteHistory::restore(config.vote_history_storage.as_ref(), identity) {
+    let res = match &config.vote_history_storage {
+        Some(s) => VoteHistory::restore(s, identity),
+        None => Err(VoteHistoryError::IoError(io::Error::other(
+            "vote-history-storage not available",
+        ))),
+    };
+
+    match res {
         Ok(vote_history) => Ok(vote_history),
         Err(err) => {
             let should_require_vote_history = {

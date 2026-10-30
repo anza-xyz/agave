@@ -60,7 +60,7 @@ pub struct AdminRpcRequestMetadata {
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub tower_storage: Arc<dyn TowerStorage>,
-    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     pub rpc_to_plugin_manager_sender: Option<Sender<GeyserPluginManagerRequest>>,
@@ -988,22 +988,21 @@ impl AdminRpcImpl {
                         &identity_keypair.pubkey(),
                     )
                 };
-                if should_require_vote_history {
-                    let _ = VoteHistory::restore(
-                        meta.vote_history_storage.as_ref(),
-                        &identity_keypair.pubkey(),
-                    )
-                    .map_err(|err| {
-                        jsonrpc_core::error::Error::invalid_params(format!(
-                            "Unable to load vote history file for identity {}: {}. The vote \
-                             account {} has prior Alpenglow votes. Ensure the vote history file \
-                             is present or (dangerous) use --do-not-require-vote-history if you \
-                             know what you're doing",
-                            identity_keypair.pubkey(),
-                            err,
-                            post_init.vote_account
-                        ))
-                    })?;
+                if should_require_vote_history
+                    && let Some(vote_history_storage) = &meta.vote_history_storage
+                {
+                    let _ = VoteHistory::restore(vote_history_storage, &identity_keypair.pubkey())
+                        .map_err(|err| {
+                            jsonrpc_core::error::Error::invalid_params(format!(
+                                "Unable to load vote history file for identity {}: {}. The vote \
+                                 account {} has prior Alpenglow votes. Ensure the vote history \
+                                 file is present or (dangerous) use --do-not-require-vote-history \
+                                 if you know what you're doing",
+                                identity_keypair.pubkey(),
+                                err,
+                                post_init.vote_account
+                            ))
+                        })?;
                 }
             }
 
@@ -1277,9 +1276,7 @@ mod tests {
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
                 tower_storage: Arc::new(NullTowerStorage {}),
-                vote_history_storage: Arc::new(
-                    agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-                ),
+                vote_history_storage: None,
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
                     event_system: agave_event_system::EventSystem::stub(),
                     cluster_info,
@@ -1491,9 +1488,7 @@ mod tests {
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
                 tower_storage: Arc::new(NullTowerStorage {}),
-                vote_history_storage: Arc::new(
-                    agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-                ),
+                vote_history_storage: None,
                 post_init: post_init.clone(),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1579,9 +1574,7 @@ mod tests {
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             tower_storage: Arc::new(NullTowerStorage {}),
-            vote_history_storage: Arc::new(
-                agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-            ),
+            vote_history_storage: None,
             post_init: post_init.clone(),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             rpc_to_plugin_manager_sender: None,
@@ -1675,9 +1668,7 @@ mod tests {
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs,
             tower_storage: Arc::new(NullTowerStorage {}),
-            vote_history_storage: Arc::new(
-                agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-            ),
+            vote_history_storage: None,
             post_init: Arc::new(RwLock::new(None)),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             rpc_to_plugin_manager_sender: None,
