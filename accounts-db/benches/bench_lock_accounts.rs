@@ -1,14 +1,15 @@
 use {
     criterion::{Criterion, Throughput, criterion_group, criterion_main},
     itertools::iproduct,
-    solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
+    solana_accounts_db::{
+        account_locks::{DEFAULT_TX_ACCOUNT_LOCKS, TransactionAccountLockLimits},
+        accounts::Accounts,
+        accounts_db::AccountsDb,
+    },
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
-    solana_transaction::{
-        Transaction,
-        sanitized::{MAX_TX_ACCOUNT_LOCKS, SanitizedTransaction},
-    },
+    solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     std::{hint::black_box, sync::Arc},
 };
 
@@ -92,7 +93,11 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
                     let results = accounts.lock_accounts(
                         black_box(batch.iter()),
                         batch_results.clone(),
-                        MAX_TX_ACCOUNT_LOCKS,
+                        TransactionAccountLockLimits {
+                            legacy: DEFAULT_TX_ACCOUNT_LOCKS,
+                            v0: DEFAULT_TX_ACCOUNT_LOCKS,
+                            v1: DEFAULT_TX_ACCOUNT_LOCKS,
+                        },
                     );
                     accounts.unlock_accounts(batch.iter().zip(&results));
                 }

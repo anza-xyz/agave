@@ -4,10 +4,33 @@ use {
     ahash::{AHashMap, AHashSet},
     solana_message::AccountKeys,
     solana_pubkey::Pubkey,
-    solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
+    solana_transaction::versioned::TransactionVersion,
     solana_transaction_error::{TransactionError, TransactionResult},
     std::{cell::RefCell, collections::hash_map},
 };
+
+/// Default maximum number of accounts a transaction may lock.
+/// The runtime configuration may override this limit.
+pub const DEFAULT_TX_ACCOUNT_LOCKS: usize = 64;
+
+/// Account lock limits selected by transaction format.
+#[derive(Clone, Copy)]
+pub struct TransactionAccountLockLimits {
+    pub legacy: usize,
+    pub v0: usize,
+    pub v1: usize,
+}
+
+impl TransactionAccountLockLimits {
+    pub fn for_version(self, version: TransactionVersion) -> TransactionResult<usize> {
+        match version {
+            TransactionVersion::Legacy(_) => Ok(self.legacy),
+            TransactionVersion::Number(0) => Ok(self.v0),
+            TransactionVersion::Number(1) => Ok(self.v1),
+            _ => Err(TransactionError::UnsupportedVersion),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct AccountLocks {
@@ -154,7 +177,7 @@ pub fn validate_account_locks(
 }
 
 thread_local! {
-    static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(MAX_TX_ACCOUNT_LOCKS));
+    static HAS_DUPLICATES_SET: RefCell<AHashSet<Pubkey>> = RefCell::new(AHashSet::with_capacity(DEFAULT_TX_ACCOUNT_LOCKS));
 }
 
 /// Check for duplicate account keys.
@@ -186,10 +209,26 @@ mod tests {
     use {super::*, solana_message::v0::LoadedAddresses};
 
     #[test]
+    fn test_transaction_account_lock_limits_for_version() {
+        let limits = TransactionAccountLockLimits {
+            legacy: 64,
+            v0: 32,
+            v1: 96,
+        };
+        assert_eq!(limits.for_version(TransactionVersion::LEGACY), Ok(64));
+        assert_eq!(limits.for_version(TransactionVersion::Number(0)), Ok(32));
+        assert_eq!(limits.for_version(TransactionVersion::Number(1)), Ok(96));
+        assert_eq!(
+            limits.for_version(TransactionVersion::Number(2)),
+            Err(TransactionError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
     fn test_validate_account_locks_valid_no_dynamic() {
         let static_keys = &[Pubkey::new_unique(), Pubkey::new_unique()];
         let account_keys = AccountKeys::new(static_keys, None);
-        assert!(validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS).is_ok());
+        assert!(validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS).is_ok());
     }
 
     #[test]
@@ -208,7 +247,7 @@ mod tests {
         let static_keys = &[duplicate_key, Pubkey::new_unique(), duplicate_key];
         let account_keys = AccountKeys::new(static_keys, None);
         assert_eq!(
-            validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS),
+            validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS),
             Err(TransactionError::AccountLoadedTwice)
         );
     }
@@ -221,7 +260,7 @@ mod tests {
             readonly: vec![Pubkey::new_unique()],
         };
         let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
-        assert!(validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS).is_ok());
+        assert!(validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS).is_ok());
     }
 
     #[test]
@@ -248,7 +287,7 @@ mod tests {
         };
         let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
         assert_eq!(
-            validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS),
+            validate_account_locks(account_keys, DEFAULT_TX_ACCOUNT_LOCKS),
             Err(TransactionError::AccountLoadedTwice)
         );
     }

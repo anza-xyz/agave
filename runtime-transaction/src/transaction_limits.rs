@@ -15,7 +15,7 @@ use {
 /// Maximum serialized transaction size for legacy and v0 transactions, in bytes.
 const MAX_LEGACY_AND_V0_TRANSACTION_SIZE: usize = 1232;
 const MAX_V1_SIGNATURES: usize = 12;
-const MAX_V1_ACCOUNTS: usize = 64;
+const MAX_V1_ACCOUNTS: usize = 96;
 
 pub(crate) fn validate_unique_account_keys(account_keys: AccountKeys) -> TransactionResult<()> {
     let mut seen = ahash::HashSet::with_capacity(account_keys.len());
@@ -304,9 +304,13 @@ mod tests {
 
     #[test]
     fn test_v1_signature_and_account_limits() {
-        // Upstream SDK sanitization still rejects the over-limit cases first.
-        // These constructor tests continue to apply when those checks move here.
-        for (signatures, accounts, valid) in [(12, 64, true), (13, 64, false), (12, 65, false)] {
+        for (signatures, accounts, valid) in [
+            (12, 64, true),
+            (13, 64, false),
+            (12, 65, true),
+            (12, 96, true),
+            (12, 97, false),
+        ] {
             let mut tx = transaction(TransactionVersion::V1, vec![]);
             let VersionedMessage::V1(message) = &mut tx.message else {
                 unreachable!();
@@ -314,6 +318,7 @@ mod tests {
             message.header.num_required_signatures = signatures;
             message.account_keys = (0..accounts).map(|_| Pubkey::new_unique()).collect();
             tx.signatures = vec![Signature::default(); usize::from(signatures)];
+            assert_view_constructors(&wincode::serialize(&tx).unwrap(), valid);
             assert_sdk_constructor(tx, valid);
         }
     }

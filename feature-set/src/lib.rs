@@ -21,7 +21,6 @@ pub struct FeatureSnapshot {
     pub disable_fees_sysvar: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
@@ -83,6 +82,7 @@ pub struct FeatureSnapshot {
     pub core_bpf_hash_validation: bool,
     pub loader_v3_remove_extend_program: bool,
     pub remove_runtime_float_ops: bool,
+    pub increase_tx_v1_account_lock_limit: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -97,7 +97,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
             ),
-            increase_tx_account_lock_limit: is_active(&increase_tx_account_lock_limit::ID),
             enable_bpf_loader_set_authority_checked_ix: is_active(
                 &enable_bpf_loader_set_authority_checked_ix::ID,
             ),
@@ -189,6 +188,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
             loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
             remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
+            increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
         }
     }
 }
@@ -321,7 +321,6 @@ impl FeatureSet {
             simplify_alt_bn128_syscall_error_codes: snapshot.simplify_alt_bn128_syscall_error_codes,
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
-            increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
@@ -852,10 +851,6 @@ pub mod remove_deprecated_request_unit_ix {
 
 pub mod disable_rehash_for_rent_epoch {
     solana_pubkey::declare_id!("DTVTkmw3JSofd8CJVJte8PXEbxNQ2yZijvVr3pe2APPj");
-}
-
-pub mod increase_tx_account_lock_limit {
-    solana_pubkey::declare_id!("9LZdXeKGeBV6hRLdxS1rHbHoEUsKqesCC2ZAPTPKJAbK");
 }
 
 pub mod limit_max_instruction_trace_length {
@@ -1581,6 +1576,10 @@ pub mod remove_runtime_float_ops {
     solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
 }
 
+pub mod increase_tx_v1_account_lock_limit {
+    solana_pubkey::declare_id!("8ZVMrzG6pPBREHMbHNyrErKJsXA7b1vg9e1iycSooCeY");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2018,10 +2017,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_deprecated_request_unit_ix::id(),
             "remove support for RequestUnitsDeprecated instruction #27500",
-        ),
-        (
-            increase_tx_account_lock_limit::id(),
-            "increase tx account lock limit to 128 #27241",
         ),
         (
             limit_max_instruction_trace_length::id(),
@@ -2710,6 +2705,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_runtime_float_ops::id(),
             "SIMD-0607: Remove floating point from runtime inflation",
+        ),
+        (
+            increase_tx_v1_account_lock_limit::id(),
+            "Increase transaction v1 account lock limit to 96",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

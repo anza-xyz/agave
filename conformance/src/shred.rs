@@ -39,7 +39,7 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar,
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
-    solana_transaction::sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash},
+    solana_transaction::sanitized::MessageHash,
     std::{
         borrow::Cow,
         cell::{Cell, RefCell},
@@ -220,11 +220,13 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
         // The MTU depends on the transaction version, as in `Bank::verify_transaction`.
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
-            let bad_locks = validate_account_locks(
-                AccountKeys::new(tx.static_account_keys(), None),
-                MAX_TX_ACCOUNT_LOCKS,
-            )
-            .is_err();
+            let bad_locks = bank
+                .get_transaction_account_lock_limits()
+                .for_version(tx.version().into())
+                .and_then(|limit| {
+                    validate_account_locks(AccountKeys::new(tx.static_account_keys(), None), limit)
+                })
+                .is_err();
             let invalid_tx = match (*tx).clone().sanitize() {
                 Ok(view) => RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                     view,

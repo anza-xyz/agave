@@ -5119,6 +5119,132 @@ fn test_duplicate_account_key() {
     assert_eq!(result, Err(TransactionError::AccountLoadedTwice));
 }
 
+#[test_matrix([false, true], [None, Some(32), Some(128)])]
+fn test_transaction_account_lock_limit(feature_active: bool, configured_limit: Option<usize>) {
+    let expected_limit = configured_limit.unwrap_or(64);
+    let expected_v1_limit = configured_limit.unwrap_or(if feature_active { 96 } else { 64 });
+    let (genesis_config, _) = create_genesis_config(500);
+    let mut bank = Bank::new_from_genesis(
+        &genesis_config,
+        Arc::new(RuntimeConfig {
+            transaction_account_lock_limit: configured_limit,
+            ..RuntimeConfig::default()
+        }),
+        vec![],
+        None,
+        BankTestConfig::default().accounts_db_config,
+        None,
+        None,
+        Arc::default(),
+        None,
+        None,
+    );
+    if feature_active {
+        bank.activate_feature(&feature_set::increase_tx_v1_account_lock_limit::id());
+    } else {
+        bank.deactivate_feature(&feature_set::increase_tx_v1_account_lock_limit::id());
+    }
+    let limits = bank.get_transaction_account_lock_limits();
+    assert_eq!(limits.legacy, expected_limit);
+    assert_eq!(limits.v0, expected_limit);
+    assert_eq!(limits.v1, expected_v1_limit);
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let child = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
+    let limits = child.get_transaction_account_lock_limits();
+    assert_eq!(limits.legacy, expected_limit);
+    assert_eq!(limits.v0, expected_limit);
+    assert_eq!(limits.v1, expected_v1_limit);
+}
+
+#[test_case(
+    65,
+    Ok(vec![Err(TransactionError::TooManyAccountLocks)]),
+    Ok(vec![Ok(())]),
+    1_000_000;
+    "above_previous_limit"
+)]
+#[test_case(
+    96,
+    Ok(vec![Err(TransactionError::TooManyAccountLocks)]),
+    Ok(vec![Ok(())]),
+    1_000_000;
+    "at_new_limit"
+)]
+#[test_case(
+    97,
+    Err(TransactionError::SanitizeFailure),
+    Err(TransactionError::SanitizeFailure),
+    0;
+    "above_new_limit"
+)]
+fn test_tx_v1_account_lock_limit_activation(
+    account_locks: usize,
+    expected_before_activation: Result<Vec<Result<()>>>,
+    expected_after_activation: Result<Vec<Result<()>>>,
+    expected_recipient_balance: u64,
+) {
+    let feature_id = feature_set::increase_tx_v1_account_lock_limit::id();
+    let (mut genesis_config, mint_keypair) = create_genesis_config(100_000_000);
+    genesis_config.accounts.remove(&feature_id).unwrap();
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert!(!bank.feature_set.is_active(&feature_id));
+
+    let recipient = Pubkey::new_unique();
+    let lamports = 1_000_000;
+    let mut instruction =
+        system_instruction::transfer(&mint_keypair.pubkey(), &recipient, lamports);
+    // The payer, recipient, and system program already account for three locks.
+    for _ in 3..account_locks {
+        let pubkey = Pubkey::new_unique();
+        bank.store_account_and_update_capitalization(
+            &pubkey,
+            &AccountSharedData::new(lamports, 0, &system_program::id()),
+        );
+        instruction
+            .accounts
+            .push(AccountMeta::new_readonly(pubkey, false));
+    }
+    let message = v1::Message::try_compile_with_config(
+        &mint_keypair.pubkey(),
+        &[instruction],
+        bank.last_blockhash(),
+        v1::TransactionConfig {
+            compute_unit_limit: Some(200_000),
+            loaded_accounts_data_size_limit: Some(64 * 1024 * 1024),
+            ..v1::TransactionConfig::empty()
+        },
+    )
+    .unwrap();
+    assert_eq!(message.account_keys.len(), account_locks);
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V1(message), &[&mint_keypair]).unwrap();
+    assert!(wincode::serialized_size(&tx).unwrap() <= v1::MAX_TRANSACTION_SIZE as u64);
+
+    assert_eq!(
+        bank.try_process_entry_transactions([tx.clone()]),
+        expected_before_activation
+    );
+    assert_eq!(bank.get_balance(&recipient), 0);
+
+    bank.store_account_and_update_capitalization(
+        &feature_id,
+        &feature::create_account(
+            &Feature::default(),
+            genesis_config.rent.minimum_balance(Feature::size_of()),
+        ),
+    );
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(bank.feature_set.is_active(&feature_id));
+
+    // Retry the identical signed transaction after activation at the epoch boundary.
+    assert_eq!(
+        bank.try_process_entry_transactions([tx]),
+        expected_after_activation
+    );
+    assert_eq!(bank.get_balance(&recipient), expected_recipient_balance);
+}
+
 #[test]
 fn test_process_transaction_with_too_many_account_locks() {
     agave_logger::setup();
@@ -5145,7 +5271,7 @@ fn test_process_transaction_with_too_many_account_locks() {
         bank.last_blockhash(),
     );
 
-    let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+    let transaction_account_lock_limit = bank.get_transaction_account_lock_limits().legacy;
     while tx.message.account_keys.len() <= transaction_account_lock_limit {
         tx.message.account_keys.push(solana_pubkey::new_rand());
     }
@@ -5858,7 +5984,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "GNLDTJaxe3AQXCSMwb6HxCETyt35Sc5HjHTN3pMegv41",
+        "5HE3DqVo7K1C6DSASQuTTWvJn85kg6YzzJnMwVdNCefw",
     );
 }
 
