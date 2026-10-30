@@ -1057,6 +1057,16 @@ impl<S: OpaqueStreamerCounter> ConnectionTable<S> {
         num_pruned
     }
 
+    /// Returns true if the peer identified by `key` can open another connection
+    /// without exceeding `max_connections_per_peer`.
+    pub(crate) fn has_connection_capacity(
+        &self,
+        key: &ConnectionTableKey,
+        max_connections_per_peer: usize,
+    ) -> bool {
+        self.table.get(key).map_or(0, Vec::len) < max_connections_per_peer
+    }
+
     pub(crate) fn try_add_connection<F: FnOnce() -> Arc<S>>(
         &mut self,
         key: ConnectionTableKey,
@@ -1582,6 +1592,110 @@ pub mod test {
         );
         assert_eq!(stats.connection_removed.load(Ordering::Relaxed), 1);
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
+    }
+
+    /// Connects `occupants`, which must fill the table that `attacker` is admitted to,
+    /// then checks that further connections from `attacker`, which is one of the
+    /// occupants and at its per-peer limit, are rejected without evicting anyone.
+    async fn check_peer_at_limit_does_not_evict(
+        stakes: HashMap<Pubkey, u64>,
+        qos_config: SwQosConfig,
+        occupants: &[&Keypair],
+        attacker: &Keypair,
+    ) {
+        async fn wait_until(condition: impl Fn() -> bool) {
+            timeout(Duration::from_secs(5), async {
+                while !condition() {
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("condition should be met in time");
+        }
+
+        let SpawnTestServerResult {
+            join_handle,
+            receiver: _receiver,
+            server_address,
+            stats,
+            cancel,
+        } = setup_quic_server(
+            Some(StakedNodes::new(Arc::new(stakes), HashMap::default())),
+            // All test clients connect from localhost.
+            QuicStreamerConfig {
+                max_connections_per_ipaddr_per_min: 100,
+                ..QuicStreamerConfig::default_for_tests()
+            },
+            qos_config,
+        );
+        let mut connections = Vec::new();
+        for &occupant in occupants {
+            connections.push(make_client_endpoint(&server_address, Some(occupant)).await);
+        }
+        wait_until(|| {
+            stats
+                .connection_added_from_staked_peer
+                .load(Ordering::Relaxed)
+                + stats
+                    .connection_added_from_unstaked_peer
+                    .load(Ordering::Relaxed)
+                == occupants.len()
+        })
+        .await;
+
+        const NUM_ATTEMPTS: usize = 8;
+        for _ in 0..NUM_ATTEMPTS {
+            connections.push(make_client_endpoint(&server_address, Some(attacker)).await);
+            // An attempt holds an open-connection slot until the server rejects it, and the
+            // occupants can nearly fill `max_concurrent_connections()`. Wait for the slot to
+            // be released, or the next attempt may be refused before it reaches QoS.
+            wait_until(|| stats.open_connections.load(Ordering::Relaxed) <= occupants.len()).await;
+        }
+        wait_until(|| stats.connection_add_failed.load(Ordering::Relaxed) == NUM_ATTEMPTS).await;
+        assert_eq!(stats.num_evictions_staked.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.num_evictions_unstaked.load(Ordering::Relaxed), 0);
+
+        cancel.cancel();
+        join_handle.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_quic_server_staked_peer_at_limit_does_not_evict() {
+        agave_logger::setup();
+        let victim = Keypair::new();
+        let attacker = Keypair::new();
+        // The higher-staked attacker would win the stake-weighted eviction.
+        let stakes = HashMap::from([(victim.pubkey(), 100_000), (attacker.pubkey(), 1_000_000)]);
+        let qos_config = SwQosConfig {
+            max_staked_connections: 2,
+            ..SwQosConfig::default_for_tests()
+        };
+        let occupants = [&victim, &attacker];
+        check_peer_at_limit_does_not_evict(stakes, qos_config, &occupants, &attacker).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_quic_server_unstaked_peer_at_limit_does_not_evict() {
+        agave_logger::setup();
+        // All unstaked test clients share the localhost IP, and so a single table key.
+        // To get a second key into the unstaked table, the victim is a staked peer that
+        // overflows into it, where it is keyed by pubkey: the filler takes the whole
+        // staked table, and the victim cannot evict it there because the filler has a
+        // higher stake. The test then checks that the unstaked peer, already at its limit,
+        // cannot evict the victim.
+        let filler = Keypair::new();
+        let victim = Keypair::new();
+        // Not in `stakes`, so unstaked.
+        let unstaked = Keypair::new();
+        let stakes = HashMap::from([(filler.pubkey(), 1_000_000), (victim.pubkey(), 100_000)]);
+        let qos_config = SwQosConfig {
+            max_staked_connections: 2,
+            max_unstaked_connections: 2,
+            max_connections_per_staked_peer: 2,
+            ..SwQosConfig::default_for_tests()
+        };
+        let occupants = [&filler, &filler, &victim, &unstaked];
+        check_peer_at_limit_does_not_evict(stakes, qos_config, &occupants, &unstaked).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
