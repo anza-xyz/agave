@@ -10,13 +10,14 @@
 #![cfg(feature = "agave-unstable-api")]
 
 use {
-    agave_wake_channel::{Sender, TrySendError, bounded},
+    agave_wake_channel::{Sender, bounded},
     std::{
-        io,
+        fmt, io,
         num::NonZeroUsize,
         panic,
         thread::{self, JoinHandle},
     },
+    thiserror::Error,
 };
 
 mod results;
@@ -148,11 +149,14 @@ impl<J> WorkerPool<J> {
             .expect("worker threads exited unexpectedly");
     }
 
-    /// Queues `job` without blocking.
+    /// Queues `job` if the queue has room, without blocking.
     ///
-    /// Returns the job if the queue is full or every worker has exited.
+    /// Returns `job` in the error if the queue is full or every worker has exited.
     pub fn try_send(&self, job: J) -> Result<(), TrySendError<J>> {
-        self.job_sender.try_send(job)
+        self.job_sender.try_send(job).map_err(|err| match err {
+            agave_wake_channel::TrySendError::Full(job) => TrySendError::Full(job),
+            agave_wake_channel::TrySendError::Disconnected(job) => TrySendError::Disconnected(job),
+        })
     }
 
     pub fn num_workers(&self) -> usize {
@@ -170,6 +174,35 @@ impl<J> WorkerPool<J> {
         } = self;
         drop(job_sender);
         workers.join()
+    }
+}
+
+#[derive(Error, PartialEq, Eq)]
+pub enum TrySendError<J> {
+    /// The job queue is full.
+    #[error("job queue is full")]
+    Full(J),
+    /// Every worker has exited. Workers exit early only by panicking.
+    #[error("every worker exited")]
+    Disconnected(J),
+}
+
+impl<J> TrySendError<J> {
+    /// Returns the job that failed to queue.
+    pub fn into_inner(self) -> J {
+        match self {
+            Self::Full(job) | Self::Disconnected(job) => job,
+        }
+    }
+}
+
+// Hides the job, so jobs need not implement `Debug`.
+impl<J> fmt::Debug for TrySendError<J> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Full(_) => f.write_str("Full(..)"),
+            Self::Disconnected(_) => f.write_str("Disconnected(..)"),
+        }
     }
 }
 
@@ -202,7 +235,7 @@ impl Drop for Workers {
 mod tests {
     use {
         super::*,
-        std::{collections::HashSet, hint::black_box, sync::mpsc},
+        std::{assert_matches, collections::HashSet, hint::black_box, sync::mpsc},
     };
 
     const NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
@@ -223,6 +256,10 @@ mod tests {
 
     fn panic_job(_job: ()) {
         panic!("worker job panicked");
+    }
+
+    fn wait_for_release(release: mpsc::Receiver<()>) {
+        let _ = release.recv();
     }
 
     fn panic_on_true(should_panic: bool) {
@@ -294,6 +331,30 @@ mod tests {
     }
 
     #[test]
+    fn test_worker_pool_try_send_returns_job_when_queue_is_full() {
+        let config = WorkerPoolConfig::new("solTestPool", NonZeroUsize::MIN);
+        let pool = WorkerPool::spawn(config, |_| wait_for_release).unwrap();
+        let (release_sender, release_receiver) = mpsc::channel();
+        pool.send(release_receiver);
+        // Returns once the only worker takes the first job, so this job fills the queue.
+        pool.send(mpsc::channel().1);
+        assert_matches!(pool.try_send(mpsc::channel().1), Err(TrySendError::Full(_)));
+        release_sender.send(()).unwrap();
+        pool.join().unwrap();
+    }
+
+    #[test]
+    fn test_worker_pool_try_send_returns_job_after_workers_exit() {
+        let config = WorkerPoolConfig::new("solTestPool", NonZeroUsize::MIN);
+        let pool = WorkerPool::spawn(config, |_| panic_job).unwrap();
+        pool.send(());
+        while pool.try_send(()) != Err(TrySendError::Disconnected(())) {
+            thread::yield_now();
+        }
+        assert!(pool.join().is_err());
+    }
+
+    #[test]
     fn test_worker_pool_sets_stack_size() {
         const STACK_SIZE: usize = 16 * 1024 * 1024;
         let config = WorkerPoolConfig {
@@ -342,12 +403,7 @@ mod tests {
     #[test]
     fn test_worker_pool_drop_during_panic_detaches_workers() {
         let config = WorkerPoolConfig::new("solTestPool", NonZeroUsize::MIN);
-        let pool = WorkerPool::spawn(config, |_| {
-            |release: mpsc::Receiver<()>| {
-                let _ = release.recv();
-            }
-        })
-        .unwrap();
+        let pool = WorkerPool::spawn(config, |_| wait_for_release).unwrap();
         let (release_sender, release_receiver) = mpsc::channel();
         pool.send(release_receiver);
         let result = panic::catch_unwind(panic::AssertUnwindSafe(move || {

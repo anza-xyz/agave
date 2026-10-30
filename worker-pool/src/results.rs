@@ -1,5 +1,5 @@
 use {
-    crate::{MakeJobHandler, WorkerPool, WorkerPoolConfig},
+    crate::{MakeJobHandler, TrySendError, WorkerPool, WorkerPoolConfig},
     agave_wake_channel::{Receiver, Sender, bounded},
     std::{io, num::NonZeroUsize, thread},
     thiserror::Error,
@@ -42,6 +42,11 @@ impl<J, O> ResultWorkerPool<J, O> {
     /// Same as [`WorkerPool::send`].
     pub fn send(&self, job: J) {
         self.pool.send(job);
+    }
+
+    /// Same as [`WorkerPool::try_send`].
+    pub fn try_send(&self, job: J) -> Result<(), TrySendError<J>> {
+        self.pool.try_send(job)
     }
 
     /// Blocks until a job output or a panic report arrives.
