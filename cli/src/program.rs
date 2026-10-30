@@ -649,8 +649,9 @@ impl ProgramSubCommands for App<'_, '_> {
                     SubCommand::with_name("extend")
                         .about(
                             "Extend the length of an upgradeable program to deploy larger \
-                             programs. Not needed once SIMD-0433 is active, as upgrades resize \
-                             the program data account automatically",
+                             programs (Deprecated since v4.5: not needed once SIMD-0433 is \
+                             active, as upgrades resize the program data account automatically. \
+                             Returns a transaction error once SIMD-0685 is active)",
                         )
                         .arg(
                             Arg::with_name("program_id")
@@ -1030,6 +1031,13 @@ pub fn parse_program_subcommand(
             }
         }
         ("extend", Some(matches)) => {
+            eprintln!(
+                "Warning: `solana program extend` is deprecated since v4.5. Once SIMD-0433 is \
+                 activated, use `solana program upgrade`, which will resize the program data \
+                 account automatically. Once SIMD-0685 - which depends on SIMD-0433 - is \
+                 activated, this command will result in a transaction error."
+            );
+
             let program_pubkey = pubkey_of(matches, "program_id").unwrap();
             let additional_bytes = value_of(matches, "additional_bytes").unwrap();
             let (payer_signer, payer_pubkey) = signer_of(matches, "payer", wallet_manager)?;
@@ -2439,6 +2447,18 @@ async fn process_extend_program(
 
     if additional_bytes == 0 {
         return Err("Additional bytes must be greater than zero".into());
+    }
+
+    if fetch_feature_set(rpc_client)
+        .await?
+        .snapshot()
+        .loader_v3_remove_extend_program
+    {
+        return Err(
+            "ExtendProgram has been disabled by SIMD-0685. Use `solana program upgrade`, which \
+             resizes the program data account automatically"
+                .into(),
+        );
     }
 
     let program_account = match rpc_client

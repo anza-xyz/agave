@@ -58,6 +58,7 @@ use {
 
 pub struct LoaderV3Features {
     pub set_programdata_to_elf_length: bool,
+    pub remove_extend_program: bool,
     pub allow_prefunded_programdata: bool,
 }
 
@@ -82,16 +83,24 @@ fn test_validator_genesis(
 
     let LoaderV3Features {
         set_programdata_to_elf_length,
+        remove_extend_program,
         allow_prefunded_programdata,
     } = features;
+    // SIMD-0685 depends on SIMD-0433, since without ExtendProgram only
+    // upgrades can grow the program data account.
+    assert!(
+        !remove_extend_program || set_programdata_to_elf_length,
+        "SIMD-0685 requires SIMD-0433"
+    );
     if !set_programdata_to_elf_length {
         genesis.deactivate_features(&[loader_v3_set_program_data_to_elf_length::id()]);
+    }
+    if !remove_extend_program {
+        genesis.deactivate_features(&[loader_v3_remove_extend_program::id()]);
     }
     if !allow_prefunded_programdata {
         genesis.deactivate_features(&[loader_v3_allow_prefunded_programdata::id()]);
     }
-    // SIMD-0685 removes ExtendProgram, which the CLI still issues.
-    genesis.deactivate_features(&[loader_v3_remove_extend_program::id()]);
 
     genesis
 }
@@ -250,6 +259,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -467,6 +477,7 @@ async fn test_cli_program_deploy_no_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -577,6 +588,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     );
@@ -715,6 +727,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     );
@@ -885,6 +898,7 @@ async fn test_cli_program_deploy_local_verifier() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     );
@@ -1025,6 +1039,7 @@ async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enable
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     );
@@ -1128,6 +1143,7 @@ async fn test_cli_program_deploy_with_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -1547,6 +1563,7 @@ async fn test_cli_program_upgrade_auto_extend(
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length,
+            remove_extend_program: set_programdata_to_elf_length,
             allow_prefunded_programdata: true,
         },
     )
@@ -1799,6 +1816,7 @@ async fn test_cli_program_close_program() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -1943,6 +1961,7 @@ async fn test_cli_program_extend_program() {
         &noop_path,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -2107,6 +2126,7 @@ async fn test_cli_program_extend_program_minimum_size() {
         &noop_path,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -2231,6 +2251,7 @@ async fn test_cli_program_write_buffer() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -2644,6 +2665,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     );
@@ -2744,6 +2766,7 @@ async fn test_cli_program_set_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -2932,6 +2955,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -3069,6 +3093,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -3269,6 +3294,7 @@ async fn test_cli_program_show() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -3532,6 +3558,7 @@ async fn test_cli_program_dump() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata: true,
         },
     )
@@ -3843,6 +3870,7 @@ async fn test_cli_program_deploy_prefunded_programdata(allow_prefunded_programda
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
             allow_prefunded_programdata,
         },
     )
@@ -3921,4 +3949,67 @@ async fn test_cli_program_deploy_prefunded_programdata(allow_prefunded_programda
         )
         .await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_extend_program_removed() {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let keypair = Keypair::new();
+    let upgrade_authority = Keypair::new();
+    let program_keypair = Keypair::new();
+    let ExtendProgramTestSetup {
+        test_validator: _test_validator,
+        mut config,
+        rpc_client,
+        programdata_pubkey,
+        program_len: _,
+    } = setup_extend_program_test(
+        &mint_keypair,
+        &keypair,
+        &upgrade_authority,
+        &program_keypair,
+        &noop_path,
+        LoaderV3Features {
+            set_programdata_to_elf_length: true,
+            remove_extend_program: true,
+            allow_prefunded_programdata: true,
+        },
+    )
+    .await;
+
+    let prev_len = rpc_client
+        .get_account(&programdata_pubkey)
+        .await
+        .unwrap()
+        .data
+        .len();
+
+    // Wait one slot to avoid "Program was deployed in this block already" error.
+    wait_n_slots(&rpc_client, 1).await;
+
+    // SIMD-0685: The CLI rejects extend before sending a transaction.
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
+        program_pubkey: program_keypair.pubkey(),
+        payer_signer_index: 0,
+        additional_bytes: MINIMUM_EXTEND_PROGRAM_BYTES,
+    });
+    expect_command_failure(
+        &config,
+        "extend must be rejected by the CLI once SIMD-0685 is active",
+        "ExtendProgram has been disabled by SIMD-0685. Use `solana program upgrade`, which \
+         resizes the program data account automatically",
+    )
+    .await;
+
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    assert_eq!(prev_len, programdata_account.data.len());
 }
