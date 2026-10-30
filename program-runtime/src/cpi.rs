@@ -773,16 +773,22 @@ pub fn translate_signers(
     }
 }
 
-pub fn translate_instruction_c(
+// Translate the shared `SolInstruction` layout before resolving specific account metas.
+fn translate_instruction_common<T>(
     addr: u64,
     invoke_context: &InvokeContext,
+    translate_account_metas: impl FnOnce(
+        &[mem::MaybeUninit<T>],
+        &MemoryMapping,
+        bool,
+    ) -> Result<Vec<AccountMeta>, Error>,
 ) -> Result<Instruction, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
 
     let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
-    let account_metas = translate_slice::<mem::MaybeUninit<SolAccountMeta>>(
+    let account_metas = translate_slice::<mem::MaybeUninit<T>>(
         memory_mapping,
         ix_c.accounts_addr,
         ix_c.accounts_len,
@@ -792,51 +798,68 @@ pub fn translate_instruction_c(
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+    let instruction_data_translation_cost: u64 = (data.len() as u64)
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
 
-    // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+    // Charge for the translated `AccountMeta` (34 bytes) regardless of the input layout
+    // since the translated layout is what will be used for the CPI.
     let account_meta_translation_cost = (ix_c
         .accounts_len
         .saturating_mul(size_of::<AccountMeta>() as u64))
     .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
     .unwrap_or(u64::MAX);
 
-    total_cu_translation_cost =
-        total_cu_translation_cost.saturating_add(account_meta_translation_cost);
+    invoke_context.consume_checked(
+        instruction_data_translation_cost.saturating_add(account_meta_translation_cost),
+    )?;
 
-    invoke_context.consume_checked(total_cu_translation_cost)?;
-
-    let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-    for account_meta in account_metas {
-        // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
-        // contain valid boolean values to prevent UB.
-        let account_meta = unsafe {
-            let ptr = account_meta.as_ptr();
-            if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
-                || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
-            {
-                return Err(Box::new(InstructionError::InvalidArgument));
-            }
-            // SAFETY: VM memory is initialized, and we have validated that the boolean fields
-            // contain valid data.
-            account_meta.assume_init_ref()
-        };
-        let pubkey =
-            translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, check_aligned)?;
-        accounts.push(AccountMeta {
-            pubkey: *pubkey,
-            is_signer: account_meta.is_signer,
-            is_writable: account_meta.is_writable,
-        });
-    }
+    let accounts = translate_account_metas(account_metas, memory_mapping, check_aligned)?;
 
     Ok(Instruction {
         accounts,
         data: data.to_vec(),
         program_id: *program_id,
     })
+}
+
+pub fn translate_instruction_c(
+    addr: u64,
+    invoke_context: &InvokeContext,
+) -> Result<Instruction, Error> {
+    translate_instruction_common::<SolAccountMeta>(
+        addr,
+        invoke_context,
+        |account_metas, memory_mapping, check_aligned| {
+            let mut accounts = Vec::with_capacity(account_metas.len());
+            for account_meta in account_metas {
+                // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
+                // contain valid boolean values to prevent UB.
+                let account_meta = unsafe {
+                    let ptr = account_meta.as_ptr();
+                    if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
+                        || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
+                    {
+                        return Err(Box::new(InstructionError::InvalidArgument));
+                    }
+                    // SAFETY: VM memory is initialized, and we have validated that the boolean fields
+                    // contain valid data.
+                    account_meta.assume_init_ref()
+                };
+                let pubkey = translate_type::<Pubkey>(
+                    memory_mapping,
+                    account_meta.pubkey_addr,
+                    check_aligned,
+                )?;
+                accounts.push(AccountMeta {
+                    pubkey: *pubkey,
+                    is_signer: account_meta.is_signer,
+                    is_writable: account_meta.is_writable,
+                });
+            }
+            Ok(accounts)
+        },
+    )
 }
 
 pub fn translate_accounts_c<'a>(
@@ -910,76 +933,46 @@ pub fn translate_instruction_v2(
     addr: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Instruction, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-    let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
-
-    let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
-    let account_metas = translate_slice::<mem::MaybeUninit<SolAccountMetaV2>>(
-        memory_mapping,
-        ix_c.accounts_addr,
-        ix_c.accounts_len,
-        check_aligned,
-    )?;
-    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?;
-
-    check_instruction_size(ix_c.accounts_len as usize, data.len())?;
-
-    let instruction_data_translation_cost: u64 = (data.len() as u64)
-        .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-        .unwrap_or(u64::MAX);
-
-    // While the `SolAccountMetaV2` struct is 4 bytes (2 for account_index, 1 for is_signer, and
-    // 1 for is_writable), the translation cost is based on the size of the `AccountMeta` struct,
-    // which is 34 bytes. This ensures that the cost calculation remains consistent with the expected
-    // size of the translated account metadata.
-    let account_meta_translation_cost = (ix_c
-        .accounts_len
-        .saturating_mul(size_of::<AccountMeta>() as u64))
-    .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
-    .unwrap_or(u64::MAX);
-
-    invoke_context.consume_checked(
-        instruction_data_translation_cost.saturating_add(account_meta_translation_cost),
-    )?;
-
-    let instruction_context = invoke_context
-        .transaction_context
-        .get_current_instruction_context()?;
-
-    let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-    for account_meta in account_metas {
-        // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
-        // contain valid boolean values to prevent UB.
-        let account_meta = unsafe {
-            let ptr = account_meta.as_ptr();
-            if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
-                || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
-            {
-                return Err(Box::new(InstructionError::InvalidArgument));
-            }
-            // SAFETY: VM memory is initialized, and we have validated that the boolean fields
-            // contain valid data.
-            account_meta.assume_init_ref()
-        };
-
-        let instruction_account =
-            instruction_context.try_borrow_instruction_account(account_meta.account_index)?;
-
-        accounts.push(AccountMeta {
-            pubkey: *invoke_context
+    translate_instruction_common::<SolAccountMetaV2>(
+        addr,
+        invoke_context,
+        |account_metas, _memory_mapping, _check_aligned| {
+            let instruction_context = invoke_context
                 .transaction_context
-                .get_key_of_account_at_index(instruction_account.get_index_in_transaction())?,
-            is_signer: account_meta.is_signer(),
-            is_writable: account_meta.is_writable(),
-        });
-    }
+                .get_current_instruction_context()?;
 
-    Ok(Instruction {
-        accounts,
-        data: data.to_vec(),
-        program_id: *program_id,
-    })
+            let mut accounts = Vec::with_capacity(account_metas.len());
+            for account_meta in account_metas {
+                // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
+                // contain valid boolean values to prevent UB.
+                let account_meta = unsafe {
+                    let ptr = account_meta.as_ptr();
+                    if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
+                        || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
+                    {
+                        return Err(Box::new(InstructionError::InvalidArgument));
+                    }
+                    // SAFETY: VM memory is initialized, and we have validated that the boolean fields
+                    // contain valid data.
+                    account_meta.assume_init_ref()
+                };
+
+                let instruction_account = instruction_context
+                    .try_borrow_instruction_account(account_meta.account_index)?;
+
+                accounts.push(AccountMeta {
+                    pubkey: *invoke_context
+                        .transaction_context
+                        .get_key_of_account_at_index(
+                            instruction_account.get_index_in_transaction(),
+                        )?,
+                    is_signer: account_meta.is_signer(),
+                    is_writable: account_meta.is_writable(),
+                });
+            }
+            Ok(accounts)
+        },
+    )
 }
 
 /// Call process instruction, common to both Rust and C
