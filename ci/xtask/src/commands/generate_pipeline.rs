@@ -389,7 +389,10 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
 
 fn queue_agents() -> HashMap<String, String> {
     let queue = env::var("CI_QUEUE").unwrap_or_else(|_| String::from("default"));
-    HashMap::from([(String::from("queue"), queue)])
+    HashMap::from([
+        (String::from("queue"), queue),
+        (String::from("agent"), String::from("k8s")),
+    ])
 }
 
 fn default_sanity_step() -> buildkite::Step {
