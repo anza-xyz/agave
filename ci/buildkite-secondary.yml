@@ -14,7 +14,7 @@ steps:
       queue: "release-build"
     timeout_in_minutes: 60
   - name: "publish installer"
-    command: "ci/publish-installer.sh"
+    command: "cargo xtask publish-installer"
     agents:
       queue: "release-build"
     timeout_in_minutes: 5
@@ -35,3 +35,18 @@ steps:
       manual:
         permit_on_passed: true
     timeout_in_minutes: 60
+  - wait: ~
+    continue_on_failure: true
+  - name: "sync release channels"
+    if: build.env("TRIGGERED_BUILDKITE_TAG") != null
+    command: >-
+      cargo xtask sync-release-channels
+      --target x86_64-unknown-linux-gnu
+      --target aarch64-apple-darwin
+      --target x86_64-apple-darwin
+    agents:
+      queue: "release-build"
+    retry:
+      manual:
+        permit_on_passed: true
+    timeout_in_minutes: 10

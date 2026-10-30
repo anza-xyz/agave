@@ -19,6 +19,11 @@ else
   CHANNEL_OR_TAG=$CHANNEL
 fi
 
+if [[ $CHANNEL_OR_TAG == stable || $CHANNEL_OR_TAG == beta ]]; then
+  echo "$CHANNEL_OR_TAG is synced from its latest tag by \`cargo xtask sync-release-channels\`"
+  DO_NOT_PUBLISH_TAR=1
+fi
+
 if [[ -z $CHANNEL_OR_TAG ]]; then
   echo +++ Unable to determine channel or tag to publish into, exiting.
   exit 0
