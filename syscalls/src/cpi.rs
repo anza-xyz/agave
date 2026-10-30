@@ -101,6 +101,13 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallInvokeSignedV2 
         _arg5: u64,
     ) -> Result<u64, Error> {
         let check_aligned = invoke_context.get_check_aligned();
+
+        // `invoke_signed_v2` requires check_aligned to be `true` (ABIv1), so return an early
+        // error if it is not.
+        if !check_aligned {
+            return Err(MemoryTranslationError::UnalignedPointer.into());
+        }
+
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let ix_c =
             translate_type::<SolInstruction>(memory_mapping, instruction_addr, check_aligned)?;

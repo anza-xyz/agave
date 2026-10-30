@@ -596,8 +596,11 @@ impl<'a> CallerAccount<'a> {
             "account",
         )?;
 
-        let runtime_account =
-            translate_type_mut_for_cpi::<RuntimeAccount>(memory_mapping, account.vm_addr, false)?;
+        let runtime_account = translate_type_mut_for_cpi::<RuntimeAccount>(
+            memory_mapping,
+            account.vm_addr,
+            check_aligned,
+        )?;
         let lamports = &mut runtime_account.lamports;
         let owner = &mut runtime_account.owner;
 
