@@ -188,7 +188,7 @@ agave-validator = { workspace = true }
 borsh = { workspace = true }
 solana-account = { version = "5.1.1", features = ["wincode"] }
 solana-account-info = "3.1.0"
-solana-client-traits = "6.0.0"
+solana-client-traits = "6.0.1"
 solana-clock = { workspace = true }
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
