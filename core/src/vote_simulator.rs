@@ -17,6 +17,7 @@ use {
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
+    agave_event_system::publisher::Publisher,
     agave_votor_messages::consensus_message::BlockId,
     crossbeam_channel::bounded,
     solana_clock::Slot,
@@ -261,6 +262,7 @@ impl VoteSimulator {
             &mut Vec::new(),
             &drop_bank_sender,
             &mut self.tbft_structs,
+            &mut Publisher::stub(),
         )
     }
 

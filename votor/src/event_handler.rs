@@ -1142,6 +1142,7 @@ mod tests {
                 None,
                 &self.my_pubkey,
                 |_| {},
+                |_| {},
             );
         }
 

@@ -2031,6 +2031,7 @@ mod test {
             &dumped_slots_sender,
             &my_pubkey,
             &leader_schedule_cache,
+            &mut agave_event_system::publisher::Publisher::stub(),
         );
 
         // Simulate making a request

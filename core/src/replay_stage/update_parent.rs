@@ -7,11 +7,13 @@ use {
             DeadSlotLogLevel, DeadSlotNotifications, mark_hard_dead_slot,
             mark_hard_dead_slot_notifications, send_invalid_bank,
         },
+        events::SlotEvent,
     },
     crate::{
         consensus::progress_map::{DeadSlotReason, ProgressMap},
         repair::cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
     },
+    agave_event_system::publisher::Publisher,
     agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
@@ -131,6 +133,7 @@ fn try_restart_slot_from_update_parent(
     source: TransactionHistoryPurgeSource,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    slot_event_publisher: &mut Publisher<SlotEvent>,
 ) -> Result<bool, ReplayStageError> {
     if !migration_status.should_allow_block_markers(slot) {
         return Ok(false);
@@ -212,6 +215,7 @@ fn try_restart_slot_from_update_parent(
                 TransactionHistoryPurgeInput::ReplayStage,
             )
         }),
+        slot_event_publisher,
     )?;
     if let Some(cleared_bank_id) = cleared_bank_id {
         let update_parent = UpdateParentInfo::from_slot_meta(slot, &slot_meta)
@@ -247,6 +251,7 @@ pub(super) fn process_soft_dead_slots(
     migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    slot_event_publisher: &mut Publisher<SlotEvent>,
 ) -> Result<(), ReplayStageError> {
     let soft_dead_slots = progress
         .iter()
@@ -289,6 +294,7 @@ pub(super) fn process_soft_dead_slots(
                 TransactionHistoryPurgeSource::SoftDeadSlot,
                 entry_notification_sender,
                 transaction_status_sender,
+                slot_event_publisher,
             )?;
             continue;
         }
@@ -339,6 +345,7 @@ pub(super) fn handle_update_parent_interrupts(
     migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
+    slot_event_publisher: &mut Publisher<SlotEvent>,
 ) -> Result<(), ReplayStageError> {
     while let Ok(signal) = update_parent_receiver.try_recv() {
         try_restart_slot_from_update_parent(
@@ -353,6 +360,7 @@ pub(super) fn handle_update_parent_interrupts(
             TransactionHistoryPurgeSource::UpdateParentSignal,
             entry_notification_sender,
             transaction_status_sender,
+            slot_event_publisher,
         )?;
     }
     Ok(())
@@ -372,6 +380,7 @@ pub(super) fn handle_abandoned_bank(
     duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
     purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
     tbft_structs: Option<&mut TowerBFTStructures>,
+    slot_event_publisher: &mut Publisher<SlotEvent>,
 ) -> Result<(), ReplayStageError> {
     bank.clear_accounts_lt_hash_async_progress_is_at_end();
     // Handle UpdateParent marker during fast leader handover. The leader
@@ -426,6 +435,11 @@ pub(super) fn handle_abandoned_bank(
             progress,
             &mut dead_slot_context,
         );
+        let _ = slot_event_publisher.publish(&SlotEvent::execution_finished(
+            bank_slot,
+            bank.bank_id().into(),
+            false,
+        ));
         return Ok(());
     }
 
@@ -448,6 +462,7 @@ pub(super) fn handle_abandoned_bank(
                     TransactionHistoryPurgeInput::ReplayStage,
                 )
             }),
+        slot_event_publisher,
     )?;
 
     notify_entry_update_parent(

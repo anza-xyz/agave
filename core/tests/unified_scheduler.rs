@@ -1,4 +1,5 @@
 use {
+    agave_event_system::publisher::Publisher,
     crossbeam_channel::bounded,
     itertools::Itertools,
     log::*,
@@ -162,6 +163,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             &mut Vec::new(),
             &drop_bank_sender1,
             &mut tbft_structs,
+            &mut Publisher::stub(),
         );
     }
 
