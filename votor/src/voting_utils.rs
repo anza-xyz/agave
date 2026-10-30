@@ -119,7 +119,7 @@ pub(crate) struct VotingContext {
     pub(crate) vote_account_pubkey: Pubkey,
     pub(crate) identity_keypair: Arc<Keypair>,
     pub(crate) authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-    pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub(crate) vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub(crate) derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub(crate) own_vote_sender: EvictingSender<VoteMessage>,
@@ -298,11 +298,11 @@ pub(crate) fn insert_vote_and_create_bls_message(
         return Ok(None);
     };
 
-    let saved_vote_history =
-        SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
-    context
-        .vote_history_storage
-        .store(&SavedVoteHistoryVersions::from(saved_vote_history))?;
+    if let Some(s) = &context.vote_history_storage {
+        let saved_vote_history =
+            SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
+        s.store(SavedVoteHistoryVersions::from(saved_vote_history))?;
+    }
 
     // Return vote for sending
     Ok(Some(BLSOp::PushVote {
@@ -371,7 +371,6 @@ pub(crate) fn generate_refresh_vote_message(
 mod tests {
     use {
         super::*,
-        crate::vote_history_storage::NullVoteHistoryStorage,
         agave_votor_messages::consensus_message::{Block, BlockId},
         crossbeam_channel::{Receiver, bounded},
         solana_gossip::contact_info::ContactInfo,
@@ -450,7 +449,7 @@ mod tests {
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(
                 my_keys.vote_keypair.insecure_clone(),
             )])),
-            vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
+            vote_history_storage: None,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: own_reward_aggregates_sender,

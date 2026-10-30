@@ -1,9 +1,8 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
-    super::vote_history_storage::{
-        Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
-    },
+    super::vote_history_storage::{Result, SavedVoteHistory, SavedVoteHistoryVersions},
+    crate::vote_history_storage::VoteHistoryStorage,
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
         vote::Vote,
@@ -311,17 +310,17 @@ impl VoteHistory {
     /// Save the vote history to `vote_history_storage` signed by `node_keypair`
     pub fn save(
         &self,
-        vote_history_storage: &dyn VoteHistoryStorage,
+        vote_history_storage: &VoteHistoryStorage,
         node_keypair: &Keypair,
     ) -> Result<()> {
         let saved_vote_history = SavedVoteHistory::new(self, node_keypair)?;
-        vote_history_storage.store(&SavedVoteHistoryVersions::from(saved_vote_history))?;
+        vote_history_storage.store(SavedVoteHistoryVersions::from(saved_vote_history))?;
         Ok(())
     }
 
     /// Restore the saved vote history from `vote_history_storage` for `node_pubkey`
     pub fn restore(
-        vote_history_storage: &dyn VoteHistoryStorage,
+        vote_history_storage: &VoteHistoryStorage,
         node_pubkey: &Pubkey,
     ) -> Result<Self> {
         vote_history_storage.load(node_pubkey)
@@ -361,10 +360,7 @@ impl VoteHistoryError {
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*, crate::vote_history_storage::FileVoteHistoryStorage,
-        agave_votor_messages::vote::Vote, solana_signer::Signer, tempfile::TempDir,
-    };
+    use {super::*, agave_votor_messages::vote::Vote, solana_signer::Signer, tempfile::TempDir};
 
     // Votes cast since is kept in HashMap, so order is not guaranteed.
     // This function checks that the votes are the same, regardless of order.
@@ -631,7 +627,7 @@ mod test {
         let node_keypair = Keypair::new();
         let mut vote_history = VoteHistory::new(node_keypair.pubkey(), 0);
         let tmp_dir = TempDir::new().unwrap();
-        let vote_history_storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let vote_history_storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
 
         // Add Notarize on 1 and Skip on 2
         let vote_1 = Vote::new_unique_notar(1);
