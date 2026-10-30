@@ -9906,6 +9906,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-snapshots",
+ "agave-transaction-view",
  "agave-votor-messages",
  "base64 0.23.1",
  "bs58",

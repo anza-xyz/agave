@@ -13,6 +13,10 @@ use {
         rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
+    agave_transaction_view::{
+        resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
+        transaction_view::SanitizedTransactionView,
+    },
     agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
@@ -48,7 +52,6 @@ use {
         blockstore_meta::PerfSample,
         leader_schedule_cache::LeaderScheduleCache,
     },
-    solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
     solana_net_utils::Protocol,
     solana_perf::packet::PACKET_DATA_SIZE,
@@ -82,10 +85,7 @@ use {
     solana_signer::Signer,
     solana_storage_bigtable::Error as StorageError,
     solana_svm_transaction::svm_message::SVMStaticMessage,
-    solana_transaction::{
-        sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash},
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
@@ -108,7 +108,6 @@ use {
         state::{Account as TokenAccount, Mint},
     },
     std::{
-        any::type_name,
         cmp::{Reverse, max, min},
         collections::{BinaryHeap, HashMap, HashSet},
         convert::TryFrom,
@@ -3692,7 +3691,9 @@ pub mod rpc_accounts_scan {
 pub mod rpc_full {
     use {
         super::*,
-        solana_message::{SanitizedVersionedMessage, VersionedMessage},
+        agave_transaction_view::message_view::SanitizedMessageView,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
+        solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMStaticTransaction},
         solana_transaction_status::{
             UiInnerInstructions, UiLoadedAddresses, parse_ui_inner_instructions,
         },
@@ -4045,8 +4046,11 @@ pub mod rpc_full {
                     "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
                 ))
             })?;
-            let (wire_transaction, unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+            let wire_transaction = decode_wire(data, binary_encoding)?;
+
+            let sanitized_transaction_view =
+                SanitizedTransactionView::try_new_sanitized(wire_transaction.as_slice())
+                    .map_err(map_transaction_view_error)?;
 
             let preflight_commitment = if skip_preflight {
                 Some(CommitmentConfig::processed())
@@ -4058,12 +4062,8 @@ pub mod rpc_full {
                 min_context_slot,
             })?;
 
-            let transaction = sanitize_transaction(
-                unsanitized_tx,
-                preflight_bank,
-                preflight_bank.get_reserved_account_keys(),
-            )?;
-            let blockhash = *transaction.message().recent_blockhash();
+            let transaction = resolve_transaction_view(sanitized_transaction_view, preflight_bank)?;
+            let blockhash = *transaction.recent_blockhash();
             let message_hash = *transaction.message_hash();
             let signature = *transaction.signature();
 
@@ -4084,7 +4084,7 @@ pub mod rpc_full {
             }
 
             if !skip_preflight {
-                let verification_error = transaction.verify().err();
+                let verification_error = verify_transaction_view_signatures(&transaction).err();
 
                 if verification_error.is_none() && !meta.config.skip_preflight_health_check {
                     match meta.health.check() {
@@ -4204,8 +4204,10 @@ pub mod rpc_full {
                     "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
                 ))
             })?;
-            let (_, mut unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+            let wire_transaction = decode_wire(data, binary_encoding)?;
+            let mut sanitized_transaction_view =
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)?;
 
             let bank = &*meta.get_bank_with_config(RpcContextConfig {
                 commitment,
@@ -4219,9 +4221,7 @@ pub mod rpc_full {
                     ));
                 }
                 let recent_blockhash = bank.last_blockhash();
-                unsanitized_tx
-                    .message
-                    .set_recent_blockhash(recent_blockhash);
+                sanitized_transaction_view.set_recent_blockhash(&recent_blockhash);
                 let last_valid_block_height = bank
                     .get_blockhash_last_valid_block_height(&recent_blockhash)
                     .expect("bank blockhash queue should contain blockhash");
@@ -4231,11 +4231,10 @@ pub mod rpc_full {
                 });
             }
 
-            let transaction =
-                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
+            let transaction = resolve_transaction_view(sanitized_transaction_view, bank)?;
 
             let verification_error = if sig_verify {
-                transaction.verify().err()
+                verify_transaction_view_signatures(&transaction).err()
             } else {
                 None
             };
@@ -4261,7 +4260,7 @@ pub mod rpc_full {
                 post_token_balances,
             } = simulation_result;
 
-            let account_keys = transaction.message().account_keys();
+            let account_keys = transaction.account_keys();
             let number_of_accounts = account_keys.len();
 
             let accounts = if let Some(config_accounts) = config_accounts {
@@ -4339,7 +4338,7 @@ pub mod rpc_full {
                     post_token_balances: post_token_balances.map(|balances| {
                         balances.into_iter().map(|balance| solana_runtime::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
-                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
+                    loaded_addresses: Some(transaction.loaded_addresses_view().map(UiLoadedAddresses::from).unwrap_or_default()),
                 },
             ))
         }
@@ -4503,22 +4502,12 @@ pub mod rpc_full {
             config: Option<RpcContextConfig>,
         ) -> Result<RpcResponse<Option<u64>>> {
             debug!("get_fee_for_message rpc request received");
-            let (_, message) = decode_and_deserialize::<VersionedMessage>(
-                data,
-                TransactionBinaryEncoding::Base64,
-            )?;
+            let message_wire = decode_wire(data, TransactionBinaryEncoding::Base64)?;
+            let message_view = SanitizedMessageView::try_new_sanitized(message_wire)
+                .map_err(|_| Error::invalid_params("invalid transaction message"))?;
+
             let bank = &*meta.get_bank_with_config(config.unwrap_or_default())?;
-            let sanitized_versioned_message = SanitizedVersionedMessage::try_from(message)
-                .map_err(|err| {
-                    Error::invalid_params(format!("invalid transaction message: {err}"))
-                })?;
-            let sanitized_message = SanitizedMessage::try_new(
-                sanitized_versioned_message,
-                bank,
-                bank.get_reserved_account_keys(),
-            )
-            .map_err(|err| Error::invalid_params(format!("invalid transaction message: {err}")))?;
-            let fee = bank.get_fee_for_message(&sanitized_message);
+            let fee = bank.get_fee_for_message_view(&message_view);
             Ok(new_response(bank, fee))
         }
 
@@ -4578,20 +4567,13 @@ const MAX_BASE64_LEGACY_SIZE: usize = 1644; // ceil(1232 / 3) * 4
 // Revisit before V3 which will break this shortcut
 const V1_BASE64_PREFIX_LOWER_BOUND: &[u8] = b"gQ";
 
-fn decode_and_deserialize<T>(
-    encoded: String,
-    encoding: TransactionBinaryEncoding,
-) -> Result<(Vec<u8>, T)>
-where
-    T: for<'a> wincode::SchemaRead<'a, wincode::config::DefaultConfig, Dst = T>,
-{
+fn decode_wire(encoded: String, encoding: TransactionBinaryEncoding) -> Result<Vec<u8>> {
     let (wire_output, max_raw_size) = match encoding {
         TransactionBinaryEncoding::Base58 => {
             inc_new_counter_info!("rpc-base58_encoded_tx", 1);
             if encoded.len() > MAX_BASE58_SIZE {
                 return Err(Error::invalid_params(format!(
-                    "base58 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
-                    type_name::<T>(),
+                    "base58 encoded data too large: {} bytes (max: encoded/raw {}/{})",
                     encoded.len(),
                     MAX_BASE58_SIZE,
                     PACKET_DATA_SIZE,
@@ -4616,8 +4598,7 @@ where
             };
             if encoded.len() > max_encoded_size {
                 return Err(Error::invalid_params(format!(
-                    "base64 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
-                    type_name::<T>(),
+                    "base64 encoded data too large: {} bytes (max: encoded/raw {}/{})",
                     encoded.len(),
                     max_encoded_size,
                     max_raw_size,
@@ -4631,37 +4612,62 @@ where
     };
     if wire_output.len() > max_raw_size {
         return Err(Error::invalid_params(format!(
-            "decoded {} too large: {} bytes (max: {} bytes)",
-            type_name::<T>(),
+            "decoded data too large: {} bytes (max: {} bytes)",
             wire_output.len(),
             max_raw_size
         )));
     }
 
-    wincode::deserialize(&wire_output[..])
-        .map_err(|err| {
-            Error::invalid_params(format!(
-                "failed to deserialize {}: {}",
-                type_name::<T>(),
-                err
-            ))
-        })
-        .map(|output| (wire_output, output))
+    Ok(wire_output)
 }
 
-fn sanitize_transaction(
-    transaction: VersionedTransaction,
-    address_loader: impl AddressLoader,
-    reserved_account_keys: &HashSet<Pubkey>,
-) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-    RuntimeTransaction::try_create(
+fn map_transaction_view_error(err: TransactionViewError) -> Error {
+    let message = match err {
+        TransactionViewError::ParseError => "failed to deserialize transaction".to_string(),
+        TransactionViewError::SanitizeError | TransactionViewError::AddressLookupMismatch => {
+            format!("invalid transaction: {}", TransactionError::SanitizeFailure)
+        }
+    };
+    Error::invalid_params(message)
+}
+
+fn resolve_transaction_view<D: AsRef<[u8]>>(
+    transaction: SanitizedTransactionView<D>,
+    bank: &Bank,
+) -> Result<RuntimeTransaction<ResolvedTransactionView<D>>> {
+    let loaded_addresses = bank
+        .load_addresses_for_view(&transaction)
+        .map(|(loaded_addresses, _deactivation_slot)| loaded_addresses)
+        .map_err(|err| {
+            Error::invalid_params(format!(
+                "invalid transaction: {}",
+                TransactionError::from(err)
+            ))
+        })?;
+    let sanitized_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<D>>::try_new(
         transaction,
         MessageHash::Compute,
         None,
-        address_loader,
-        reserved_account_keys,
+    )
+    .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))?;
+    RuntimeTransaction::<ResolvedTransactionView<D>>::try_new(
+        sanitized_runtime_tx,
+        loaded_addresses,
+        bank.get_reserved_account_keys(),
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
+}
+
+fn verify_transaction_view_signatures<D: AsRef<[u8]>>(
+    transaction: &SanitizedTransactionView<D>,
+) -> std::result::Result<(), TransactionError> {
+    let message_data = transaction.message_data();
+    transaction
+        .signatures()
+        .iter()
+        .zip(transaction.static_account_keys())
+        .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message_data))
+        .ok_or(TransactionError::SignatureFailure)
 }
 
 pub fn create_validator_exit(exit: Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
@@ -4771,7 +4777,6 @@ pub mod tests {
             rpc_service::service_runtime,
             rpc_subscriptions::RpcSubscriptions,
         },
-        agave_reserved_account_keys::ReservedAccountKeys,
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
@@ -4795,7 +4800,7 @@ pub mod tests {
             get_tmp_ledger_path,
         },
         solana_message::{
-            Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
+            Message, MessageHeader, VersionedMessage,
             v0::{self, MessageAddressTableLookup},
             v1,
         },
@@ -4832,7 +4837,10 @@ pub mod tests {
         solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
-        solana_transaction::{Transaction, versioned::TransactionVersion},
+        solana_transaction::{
+            Transaction,
+            versioned::{TransactionVersion, VersionedTransaction},
+        },
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
@@ -7937,7 +7945,7 @@ pub mod tests {
             )
         );
 
-        // sendTransaction will fail due to sanitization failure
+        // sendTransaction will fail due to parse failure (no signatures)
         bad_transaction.signatures.clear();
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
@@ -7947,7 +7955,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid transaction: Transaction failed to sanitize accounts offsets correctly"},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"failed to deserialize transaction"},"id":1}"#.to_string(),
             )
         );
     }
@@ -10131,11 +10139,10 @@ pub mod tests {
         let tx58 = bs58::encode(&tx_ser).into_string();
         let tx58_len = tx58.len();
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
+            decode_wire(tx58, TransactionBinaryEncoding::Base58).unwrap_err(),
             Error::invalid_params(format!(
-                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: \
-                 encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
+                "base58 encoded data too large: {tx58_len} bytes (max: encoded/raw \
+                 {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
             ))
         );
     }
@@ -10150,11 +10157,10 @@ pub mod tests {
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         let tx64_len = tx64.len();
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_SIZE}/{})",
+                "base64 encoded data too large: {tx64_len} bytes (max: encoded/raw \
+                 {MAX_BASE64_SIZE}/{})",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
@@ -10171,11 +10177,10 @@ pub mod tests {
         let tx64_len = tx64.len();
         assert!(tx64_len > MAX_BASE64_LEGACY_SIZE && tx64_len < MAX_BASE64_SIZE);
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_LEGACY_SIZE}/{PACKET_DATA_SIZE})",
+                "base64 encoded data too large: {tx64_len} bytes (max: encoded/raw \
+                 {MAX_BASE64_LEGACY_SIZE}/{PACKET_DATA_SIZE})",
             ))
         );
     }
@@ -10186,55 +10191,49 @@ pub mod tests {
         let tx_ser = vec![0x00u8; too_big];
         let tx58 = bs58::encode(&tx_ser).into_string();
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
+            decode_wire(tx58, TransactionBinaryEncoding::Base58).unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
-                 {PACKET_DATA_SIZE} bytes)"
+                "decoded data too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
             ))
         );
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
-                 {PACKET_DATA_SIZE} bytes)"
+                "decoded data too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
             ))
         );
 
         let tx_ser = vec![0xffu8; PACKET_DATA_SIZE - 2];
         let mut tx64 = BASE64_STANDARD.encode(&tx_ser);
-        let err =
-            decode_and_deserialize::<Transaction>(tx64.clone(), TransactionBinaryEncoding::Base64)
-                .unwrap_err();
+        let err = decode_wire(tx64.clone(), TransactionBinaryEncoding::Base64)
+            .and_then(|wire_transaction| {
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)
+            })
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams,);
-        assert!(
-            err.message
-                .starts_with("failed to deserialize solana_transaction::Transaction")
-        );
+        assert!(err.message.starts_with("failed to deserialize transaction"));
 
         tx64.push('!');
-        let err = decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-            .unwrap_err();
+        let err = decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(err.message.starts_with("invalid base64 encoding:"));
 
         let mut tx58 = bs58::encode(&tx_ser).into_string();
-        let err =
-            decode_and_deserialize::<Transaction>(tx58.clone(), TransactionBinaryEncoding::Base58)
-                .unwrap_err();
+        let err = decode_wire(tx58.clone(), TransactionBinaryEncoding::Base58)
+            .and_then(|wire_transaction| {
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)
+            })
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams,);
-        assert!(
-            err.message
-                .starts_with("failed to deserialize solana_transaction::Transaction")
-        );
+        assert!(err.message.starts_with("failed to deserialize transaction"));
 
         tx58.push('!');
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
+            decode_wire(tx58, TransactionBinaryEncoding::Base58).unwrap_err(),
             Error::invalid_params(
                 "invalid base58 encoding: InvalidCharacter { character: '!', index: 1680 }"
                     .to_string(),
@@ -10250,14 +10249,15 @@ pub mod tests {
         tx_ser[0] = solana_message::v1::V1_PREFIX;
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
-        let err =
-            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err();
+        let err = decode_wire(tx64, TransactionBinaryEncoding::Base64)
+            .and_then(|wire_transaction| {
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)
+            })
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(
-            err.message.starts_with(
-                "failed to deserialize solana_transaction::versioned::VersionedTransaction"
-            ),
+            err.message.starts_with("failed to deserialize transaction"),
             "unexpected error: {}",
             err.message
         );
@@ -10272,11 +10272,9 @@ pub mod tests {
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         assert_eq!(
-            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
-                 bytes (max: {} bytes)",
+                "decoded data too large: {too_big} bytes (max: {} bytes)",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
@@ -10290,52 +10288,113 @@ pub mod tests {
              hD6onjM2M3qZW5C8J6d1pj41MxKmZgPBSha3MyKkNLkAGFASK"
             .to_string();
 
-        let unsanitary_versioned_tx = decode_and_deserialize::<VersionedTransaction>(
-            unsanitary_tx58,
-            TransactionBinaryEncoding::Base58,
-        )
-        .unwrap()
-        .1;
+        let unsanitary_wire_tx =
+            decode_wire(unsanitary_tx58, TransactionBinaryEncoding::Base58).unwrap();
         let expect58 = Error::invalid_params(
             "invalid transaction: Transaction failed to sanitize accounts offsets correctly"
                 .to_string(),
         );
         assert_eq!(
-            sanitize_transaction(
-                unsanitary_versioned_tx,
-                SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set(),
-            )
-            .unwrap_err(),
+            SanitizedTransactionView::try_new_sanitized(unsanitary_wire_tx)
+                .map_err(map_transaction_view_error)
+                .unwrap_err(),
             expect58
         );
     }
 
     #[test]
-    fn test_sanitize_unsupported_transaction_version() {
-        let versioned_tx = VersionedTransaction {
-            signatures: vec![Signature::default()],
-            message: VersionedMessage::V0(v0::Message {
+    fn test_rpc_simulate_transaction_missing_lookup_table() {
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        // Slot hashes is necessary for processing versioned txs.
+        bank.set_sysvar_for_tests(&SlotHashes::default());
+        let versioned_tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(v0::Message {
                 header: MessageHeader {
                     num_required_signatures: 1,
                     ..MessageHeader::default()
                 },
-                account_keys: vec![Pubkey::new_unique()],
+                account_keys: vec![rpc.mint_keypair.pubkey()],
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![],
+                }],
                 ..v0::Message::default()
             }),
-        };
+            &[&rpc.mint_keypair],
+        )
+        .unwrap();
 
-        assert_eq!(
-            sanitize_transaction(
-                versioned_tx,
-                SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set(),
-            )
-            .unwrap_err(),
-            Error::invalid_params(
-                "invalid transaction: Transaction version is unsupported".to_string(),
-            )
+        let request = create_test_request(
+            "simulateTransaction",
+            Some(json!([
+                BASE64_STANDARD.encode(wincode::serialize(&versioned_tx).unwrap()),
+                { "encoding": "base64" },
+            ])),
         );
+        let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, ErrorCode::InvalidParams.code());
+        assert_eq!(
+            message,
+            "invalid transaction: Transaction loads an address table account that doesn't exist"
+        );
+    }
+
+    #[test]
+    fn test_rpc_send_and_simulate_unsupported_encoding() {
+        let rpc = RpcHandler::start();
+        for method in ["sendTransaction", "simulateTransaction"] {
+            let request = create_test_request(method, Some(json!(["", { "encoding": "json" }])));
+            let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+            assert_eq!(code, ErrorCode::InvalidParams.code());
+            assert_eq!(
+                message,
+                "unsupported encoding: json. Supported encodings: base58, base64"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rpc_send_and_simulate_invalid_runtime_transaction() {
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        let transaction = Transaction::new_signed_with_payer(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_price(1),
+                ComputeBudgetInstruction::set_compute_unit_price(2),
+            ],
+            Some(&rpc.mint_keypair.pubkey()),
+            &[&rpc.mint_keypair],
+            bank.last_blockhash(),
+        );
+        let wire_transaction = BASE64_STANDARD.encode(wincode::serialize(&transaction).unwrap());
+
+        for method in ["sendTransaction", "simulateTransaction"] {
+            let request = create_test_request(
+                method,
+                Some(json!([wire_transaction, { "encoding": "base64" }])),
+            );
+            let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+            assert_eq!(code, ErrorCode::InvalidParams.code());
+            assert_eq!(
+                message,
+                "invalid transaction: Transaction contains a duplicate instruction (1) that is \
+                 not allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_fee_for_message_invalid_message() {
+        let rpc = RpcHandler::start();
+        let request = create_test_request(
+            "getFeeForMessage",
+            Some(json!([BASE64_STANDARD.encode([0xffu8; 16])])),
+        );
+        let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, ErrorCode::InvalidParams.code());
+        assert_eq!(message, "invalid transaction message");
     }
 
     #[test]
@@ -10391,6 +10450,34 @@ pub mod tests {
                 },
                 recent_blockhash,
                 account_keys: vec![Pubkey::new_unique()],
+                ..v0::Message::default()
+            });
+
+            let request = create_test_request(
+                "getFeeForMessage",
+                Some(json!([
+                    BASE64_STANDARD.encode(wincode::serialize(&v0_msg).unwrap())
+                ])),
+            );
+            let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
+            assert_eq!(response.value, TEST_SIGNATURE_FEE);
+        }
+
+        {
+            // Address lookup tables are not resolved, so a missing table does
+            // not affect the fee.
+            let v0_msg = VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    ..MessageHeader::default()
+                },
+                recent_blockhash,
+                account_keys: vec![Pubkey::new_unique()],
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![],
+                }],
                 ..v0::Message::default()
             });
 

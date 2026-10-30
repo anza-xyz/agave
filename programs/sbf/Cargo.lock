@@ -7965,6 +7965,7 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-feature-set",
  "agave-snapshots",
+ "agave-transaction-view",
  "agave-votor-messages",
  "base64 0.23.1",
  "bs58",
