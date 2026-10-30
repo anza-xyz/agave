@@ -2221,6 +2221,150 @@ mod tests {
     }
 
     #[test]
+    fn test_caller_account_from_account_meta_v2_with_invalid_pointer() {
+        let mut transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let key = transaction_accounts[1].0;
+        let other_key = Pubkey::new_unique();
+        transaction_accounts.push((other_key, account.clone(), true));
+
+        let account_metas_addr = solana_sbpf::ebpf::MM_HEAP_START;
+        let (_runtime_memory, account_metas, mut regions, account_metadata) =
+            MockAccountMetaV2::new(key, &account).into_regions(account_metas_addr);
+
+        let other_account_metas_addr = account_metas_addr + size_of::<SolAccountMetaV2>() as u64;
+        let (_other_runtime_memory, mut other_account_metas, other_regions, other_account_metadata) =
+            MockAccountMetaV2::new(other_key, &account).into_regions(other_account_metas_addr);
+
+        other_account_metas[0].account_index = 1;
+        regions.extend(other_regions);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1, 2]
+        );
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                vec![account_metadata.clone(), other_account_metadata.clone()],
+                memory_mapping,
+            ))
+            .unwrap();
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
+
+        // Both accounts translate successfully when paired with their own metadata.
+        for (vm_addr, account_meta, metadata) in [
+            (account_metas_addr, &account_metas[0], &account_metadata),
+            (
+                other_account_metas_addr,
+                &other_account_metas[0],
+                &other_account_metadata,
+            ),
+        ] {
+            assert!(
+                CallerAccount::from_account_meta_v2(
+                    &invoke_context,
+                    memory_mapping,
+                    invoke_context.get_check_aligned(),
+                    vm_addr,
+                    account_meta,
+                    metadata,
+                )
+                .is_ok()
+            );
+        }
+
+        // Selecting the first account with the second account's metadata must fail.
+        assert_matches!(
+            CallerAccount::from_account_meta_v2(
+                &invoke_context,
+                memory_mapping,
+                invoke_context.get_check_aligned(),
+                account_metas_addr,
+                &account_metas[0],
+                &other_account_metadata,
+            ),
+            Err(error) if error.downcast_ref::<CpiError>() == Some(&CpiError::InvalidPointer)
+        );
+    }
+
+    #[case(0, 0; "empty_account_metadata")]
+    #[case(1, 1; "index_past_last_account")]
+    #[case(1, u16::MAX; "maximum_account_index")]
+    fn test_caller_account_from_account_meta_v2_with_invalid_account_index(
+        available_accounts: usize,
+        account_index: u16,
+    ) {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let key = transaction_accounts[1].0;
+        let account_metas_addr = solana_sbpf::ebpf::MM_HEAP_START;
+        let (_runtime_memory, mut account_metas, regions, account_metadata) =
+            MockAccountMetaV2::new(key, &account).into_regions(account_metas_addr);
+
+        // Simulate a guest selecting an account outside the serialized account metadata.
+        account_metas[0].account_index = account_index;
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        // Set up the memory context with the serialized account metadata and memory mapping.
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                vec![account_metadata.clone(); available_accounts],
+                memory_mapping,
+            ))
+            .unwrap();
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
+        let check_aligned = invoke_context.get_check_aligned();
+        let account_meta =
+            translate_type::<SolAccountMetaV2>(memory_mapping, account_metas_addr, check_aligned)
+                .unwrap();
+
+        assert_matches!(
+            CallerAccount::from_account_meta_v2(
+                &invoke_context,
+                memory_mapping,
+                check_aligned,
+                account_metas_addr,
+                account_meta,
+                &account_metadata,
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>() == Some(&InstructionError::MissingAccount)
+        );
+    }
+
+    #[test]
     fn test_get_serialized_data() {
         let transaction_accounts =
             transaction_with_one_writable_instruction_account(b"foo".to_vec());
