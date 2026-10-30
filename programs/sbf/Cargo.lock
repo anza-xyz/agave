@@ -7743,6 +7743,7 @@ dependencies = [
  "rand 0.9.4",
  "solana-account",
  "solana-account-info",
+ "solana-account-view 3.0.0",
  "solana-clock",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
@@ -8661,6 +8662,17 @@ dependencies = [
 [[package]]
 name = "solana-sbf-rust-invoke-dep"
 version = "4.5.0-alpha.4"
+
+[[package]]
+name = "solana-sbf-rust-invoke-signed-v2"
+version = "4.5.0-alpha.4"
+dependencies = [
+ "solana-account-info",
+ "solana-define-syscall 3.0.0",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey 4.4.0",
+]
 
 [[package]]
 name = "solana-sbf-rust-invoked"

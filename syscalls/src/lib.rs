@@ -1,6 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 pub use self::{
-    cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
+    cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust, SyscallInvokeSignedV2},
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
@@ -326,6 +326,7 @@ pub fn create_program_runtime_environment(
         feature_set.remaining_compute_units_syscall_enabled;
     let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
     let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let invoke_signed_v2 = feature_set.invoke_signed_v2;
     let min_sbpf_version =
         if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
             SBPFVersion::V0
@@ -447,6 +448,13 @@ pub fn create_program_runtime_environment(
     // Cross-program invocation
     SyscallInvokeSignedC::register(&mut result, "sol_invoke_signed_c")?;
     SyscallInvokeSignedRust::register(&mut result, "sol_invoke_signed_rust")?;
+
+    register_feature_gated_function!(
+        result,
+        invoke_signed_v2,
+        "sol_invoke_signed_v2",
+        SyscallInvokeSignedV2
+    )?;
 
     // Memory allocator
     register_feature_gated_function!(

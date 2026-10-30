@@ -83,6 +83,7 @@ pub struct FeatureSnapshot {
     pub core_bpf_hash_validation: bool,
     pub loader_v3_remove_extend_program: bool,
     pub remove_runtime_float_ops: bool,
+    pub invoke_signed_v2: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -189,6 +190,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
             loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
             remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
+            invoke_signed_v2: is_active(&invoke_signed_v2::ID),
         }
     }
 }
@@ -352,6 +354,7 @@ impl FeatureSet {
             secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
             loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
             loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
+            invoke_signed_v2: snapshot.invoke_signed_v2,
         }
     }
 }
@@ -1581,6 +1584,10 @@ pub mod remove_runtime_float_ops {
     solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
 }
 
+pub mod invoke_signed_v2 {
+    solana_pubkey::declare_id!("inv2LMjJ1j8e5DB36ETnszFcmtYfRZGgk6oJzYr9zK8");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2710,6 +2717,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_runtime_float_ops::id(),
             "SIMD-0607: Remove floating point from runtime inflation",
+        ),
+        (
+            invoke_signed_v2::id(),
+            "SIMD-0670: ABIv1 invoke signed v2 syscall",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

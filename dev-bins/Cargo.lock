@@ -4474,7 +4474,7 @@ version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cababcb62a2e739c7078ae16eda02789a6e3edd21bbdded864e85c38a7914d"
 dependencies = [
- "solana-account-view",
+ "solana-account-view 2.1.0",
  "solana-address 2.9.0",
  "solana-define-syscall 5.3.0",
  "solana-instruction-view",
@@ -5904,6 +5904,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-account-view"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d648359fbdc962a6d4435b8a05b6f4920fa9ea2c12bb92d0284c7eefb81551f"
+dependencies = [
+ "solana-address 2.9.0",
+ "solana-program-error",
+]
+
+[[package]]
 name = "solana-accounts-db"
 version = "4.5.0-alpha.4"
 dependencies = [
@@ -7097,7 +7107,7 @@ version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ab7a27d0c4214b9f7389c3dd00b68c93093a67f1dcc5b7893aebe299bbcbb47"
 dependencies = [
- "solana-account-view",
+ "solana-account-view 2.1.0",
  "solana-address 2.9.0",
  "solana-define-syscall 5.3.0",
  "solana-program-error",
@@ -7657,6 +7667,7 @@ dependencies = [
  "rand 0.9.4",
  "solana-account",
  "solana-account-info",
+ "solana-account-view 3.0.0",
  "solana-clock",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
@@ -9470,7 +9481,7 @@ dependencies = [
  "bytemuck",
  "pinocchio",
  "solana-account-info",
- "solana-account-view",
+ "solana-account-view 2.1.0",
  "solana-address 2.9.0",
  "solana-curve25519",
  "solana-instruction 3.5.1",

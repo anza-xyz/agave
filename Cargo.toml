@@ -381,6 +381,7 @@ solana-account = "5.1.1"
 solana-account-decoder = { path = "account-decoder", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.1"
+solana-account-view = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-address = "2.9.0"
 solana-address-lookup-table-interface = "4.0.0"

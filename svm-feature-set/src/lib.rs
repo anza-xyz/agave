@@ -52,6 +52,7 @@ pub struct SVMFeatureSet {
     pub secp256r1_syscall_enabled: bool,
     pub loader_v3_allow_prefunded_programdata: bool,
     pub loader_v3_remove_extend_program: bool,
+    pub invoke_signed_v2: bool,
 }
 
 impl SVMFeatureSet {
@@ -108,6 +109,7 @@ impl SVMFeatureSet {
             secp256r1_syscall_enabled: true,
             loader_v3_allow_prefunded_programdata: true,
             loader_v3_remove_extend_program: true,
+            invoke_signed_v2: true,
         }
     }
 }
