@@ -111,6 +111,11 @@ const PULL_REQUEST_PERIOD: usize = 5;
 /// Here 150us is rough estimate of time to sigverify 1 Protocol instance.
 const SIGVERIFY_BATCH_CAPACITY: usize = 64;
 
+/// Min number of packets per rayon task in [`ClusterInfo::run_socket_consume`]. Fewer than
+/// twice this many packets would make a single task, so they are sigverified on the calling
+/// thread instead of waking up the thread pool.
+const MIN_SIGVERIFY_PACKETS_PER_TASK: usize = 8;
+
 /// Channel capacity for the gossip sigverify -> listen channel, and max number of
 /// sigverified message sets processed per [`ClusterInfo::run_listen`] iteration.
 ///
@@ -2247,24 +2252,29 @@ impl ClusterInfo {
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
-            thread_pool.install(|| {
-                if packet_buf.len() == 1 {
-                    packet_buf[0]
-                        .par_iter()
-                        .filter_map(|packet| {
-                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
-                        })
-                        .collect()
-                } else {
+            if num_packets < 2 * MIN_SIGVERIFY_PACKETS_PER_TASK {
+                packet_buf
+                    .iter()
+                    .flatten()
+                    .filter_map(|packet| {
+                        verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
+                    })
+                    .collect()
+            } else {
+                thread_pool.install(|| {
                     packet_buf
                         .par_iter()
-                        .flatten()
+                        .flat_map(|packet_batch| {
+                            packet_batch
+                                .par_iter()
+                                .with_min_len(MIN_SIGVERIFY_PACKETS_PER_TASK)
+                        })
                         .filter_map(|packet| {
                             verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
                         })
                         .collect()
-                }
-            })
+                })
+            }
         };
         if !packets_verified.is_empty()
             && let Err(TrySendError::Full(_)) = sender.try_send(packets_verified)
