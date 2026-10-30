@@ -446,8 +446,13 @@ impl Consumer {
                     EntryBytesReserveError::ExceedsSlotLimit => PohRecorderError::MaxHeightReached,
                 });
         let (record_transactions_summary, record_us) = measure_us!(reserved_bytes.map(|_| {
-            self.transaction_recorder
-                .record_transactions(bank.bank_id(), processed_transactions)
+            let summary = self
+                .transaction_recorder
+                .record_transactions(bank.bank_id(), processed_transactions);
+            if summary.result.is_err() {
+                bank.entry_bytes_budget().refund(entry_bytes);
+            }
+            summary
         }));
         execute_and_commit_timings.record_us = record_us;
 
@@ -617,7 +622,10 @@ mod tests {
             bank_forks::BankForks,
             transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
         },
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            runtime_transaction::RuntimeTransaction,
+            transaction_with_meta::StaticTransactionWithMeta,
+        },
         solana_signer::Signer,
         solana_system_interface::program as system_program,
         solana_system_transaction as system_transaction,
@@ -816,6 +824,8 @@ mod tests {
             }
         );
         assert!(commit_transactions_result.is_ok());
+        let consumed_bytes = bank.entry_bytes_budget().consumed();
+        assert!(consumed_bytes > 0);
 
         // When poh is near end of slot, it will be shutdown.
         record_receiver.shutdown();
@@ -862,6 +872,94 @@ mod tests {
         );
 
         assert_eq!(bank.get_balance(&pubkey), 1);
+        assert_eq!(bank.entry_bytes_budget().consumed(), consumed_bytes);
+    }
+
+    #[test]
+    fn test_record_queue_full_refunds_entry_bytes() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            record_receiver,
+            consumer,
+            ..
+        } = setup_test(None);
+        let recipient = Pubkey::new_unique();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &recipient,
+            1,
+            bank.last_blockhash(),
+        )]);
+        for _ in 0..record_receiver.inner().capacity().unwrap() {
+            consumer
+                .transaction_recorder
+                .record_transactions(
+                    bank.bank_id(),
+                    vec![transactions[0].to_versioned_transaction()],
+                )
+                .result
+                .unwrap();
+        }
+        // Preserve bytes belonging to an earlier reservation.
+        bank.entry_bytes_budget().reserve(100).unwrap();
+        let consumed_bytes = bank.entry_bytes_budget().consumed();
+
+        let output = consumer.process_and_record_transactions(&bank, &transactions);
+        let output = output.execute_and_commit_transactions_output;
+        assert_matches!(
+            output.commit_transactions_result,
+            Err(PohRecorderError::ChannelFull)
+        );
+        assert_eq!(
+            output.retryable_transaction_indexes,
+            vec![RetryableIndex::new(0, true)]
+        );
+        assert_eq!(bank.entry_bytes_budget().consumed(), consumed_bytes);
+        assert_eq!(bank.get_balance(&recipient), 0);
+
+        record_receiver.try_recv().unwrap();
+        let output = consumer.process_and_record_transactions(&bank, &transactions);
+        assert!(
+            output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_ok()
+        );
+        assert_eq!(
+            bank.entry_bytes_budget().consumed(),
+            consumed_bytes + SERIALIZED_ENTRIES_OVERHEAD + transactions[0].serialized_size() as u64
+        );
+        assert_eq!(bank.get_balance(&recipient), 1);
+    }
+
+    #[test]
+    fn test_entry_bytes_reservation_failure_preserves_budget() {
+        let TestFrame {
+            mint_keypair,
+            bank,
+            record_receiver,
+            consumer,
+            ..
+        } = setup_test(None);
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )]);
+        let slot_limit = bank.entry_bytes_budget().slot_limit();
+        bank.entry_bytes_budget().reserve(slot_limit).unwrap();
+
+        let output = consumer.process_and_record_transactions(&bank, &transactions);
+        assert_matches!(
+            output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result,
+            Err(PohRecorderError::MaxHeightReached)
+        );
+        assert_eq!(bank.entry_bytes_budget().consumed(), slot_limit);
+        assert!(record_receiver.inner().is_empty());
     }
 
     #[test]

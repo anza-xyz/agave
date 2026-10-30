@@ -27,6 +27,12 @@ impl EntryBytesBudget {
         self.consumed.load(Ordering::Acquire)
     }
 
+    /// Refund bytes from a successful reservation that will not be recorded.
+    /// The caller must refund each reservation at most once.
+    pub fn refund(&self, bytes: u64) {
+        self.consumed.fetch_sub(bytes, Ordering::AcqRel);
+    }
+
     pub fn reserve(&self, bytes: u64) -> std::result::Result<(), EntryBytesReserveError> {
         let mut current = self.consumed.load(Ordering::Acquire);
         loop {
@@ -78,5 +84,17 @@ mod tests {
             Err(EntryBytesReserveError::ExceedsSlotLimit)
         );
         assert_eq!(budget.consumed(), TEST_SLOT_LIMIT - 1);
+    }
+
+    #[test]
+    fn test_refund() {
+        let budget = EntryBytesBudget::new(TEST_SLOT_LIMIT);
+        budget.reserve(400).unwrap();
+        budget.reserve(600).unwrap();
+
+        budget.refund(400);
+        assert_eq!(budget.consumed(), 600);
+        budget.reserve(400).unwrap();
+        assert_eq!(budget.consumed(), TEST_SLOT_LIMIT);
     }
 }
