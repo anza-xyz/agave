@@ -5812,9 +5812,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account"
-version = "5.1.1"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ee649074c8eaec79930b9aad6a6adcf87b2c77a4078bee1bf9a4442166a8da"
+checksum = "a19a89e4abe5053773609fb3653139dd485da0424016365206ea92e549580bbf"
 dependencies = [
  "serde",
  "serde_bytes",
@@ -6306,9 +6306,9 @@ dependencies = [
 
 [[package]]
 name = "solana-client-traits"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f4b2b20eb5df9058f61ecc0f227cafb840cf59873d4bafc9b726f8583fe027f"
+checksum = "62454a466b68beb31f064a363f063079e4297b97182ef866112c3f002d4ac235"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
@@ -7061,8 +7061,6 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ea8442b67a58dd54d5497bfc6cd3106b00f9fe6f6877d33c271c3ec4672eedc"
 dependencies = [
- "bincode",
- "serde",
  "solana-define-syscall 5.3.0",
  "solana-pubkey 4.4.0",
  "wincode",
