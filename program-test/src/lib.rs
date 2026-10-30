@@ -390,6 +390,18 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         ic_msg!(invoke_context, "Program log: {}", message);
     }
 
+    fn sol_log_data(&self, fields: &[&[u8]]) {
+        let invoke_context = get_invoke_context();
+
+        let encoded_data = fields
+            .iter()
+            .map(|field| BASE64_STANDARD.encode(field))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        ic_msg!(invoke_context, "Program data: {}", encoded_data);
+    }
+
     fn sol_invoke_signed(
         &self,
         instruction: &Instruction,
