@@ -899,7 +899,7 @@ pub mod update_hashes_per_tick {
 }
 
 pub mod enable_big_mod_exp_syscall {
-    solana_pubkey::declare_id!("expH2ppKPW2ANEdEmAjfhSEcnBQJfmoX4FjuNpe9ttg");
+    solana_pubkey::declare_id!("expHkkpN92z71GU7EwB7AXCy8Mz4kzDJFpGY1dZV9A7");
 }
 
 pub mod disable_builtin_loader_ownership_chains {
