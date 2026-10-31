@@ -1133,7 +1133,7 @@ impl VerboseDisplay for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         w,
-                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.17}  ◎{:<19.19}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
                         reward.effective_slot,
                         Utc.timestamp_opt(reward.block_time, 0).unwrap(),
@@ -1180,7 +1180,7 @@ impl fmt::Display for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  ◎{:<17.17}  ◎{:<17.17}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
                         build_balance_message(reward.amount, false, false),
                         build_balance_message(reward.post_balance, false, false),
@@ -1403,7 +1403,7 @@ fn show_epoch_rewards(
             format_as!(
                 f,
                 "{},{},{},{},{},{}%,{},{}",
-                "  {:<6}  {:<11}  {:<26}  ◎{:<17.11}  ◎{:<17.11}  {:>13.3}%  {:>14}  {:>10}",
+                "  {:<6}  {:<11}  {:<26}  ◎{:<17.17}  ◎{:<17.17}  {:>13.3}%  {:>14}  {:>10}",
                 fmt,
                 reward.epoch,
                 reward.effective_slot,
@@ -3149,7 +3149,7 @@ impl CliBlock {
                         "-".to_string()
                     },
                     format!(
-                        "{}◎{:<14.9}",
+                        "{}◎{:<14.14}",
                         sign,
                         build_balance_message(reward.lamports.unsigned_abs(), false, false)
                     ),
@@ -3157,7 +3157,7 @@ impl CliBlock {
                         "          -                 -".to_string()
                     } else {
                         format!(
-                            "◎{:<19.9}  {:>13.9}%",
+                            "◎{:<19.19}  {:>13.9}%",
                             build_balance_message(reward.post_balance, false, false),
                             (reward.lamports.abs() as f64
                                 / (reward.post_balance as f64 - reward.lamports as f64))
@@ -3175,7 +3175,7 @@ impl CliBlock {
             let sign = if total_rewards < 0 { "-" } else { "" };
             writeln!(
                 f,
-                "Total Rewards: {}◎{:<12.9}",
+                "Total Rewards: {}◎{:<12.12}",
                 sign,
                 build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
@@ -3650,7 +3650,95 @@ mod tests {
         solana_signer::{Signer, SignerError, null_signer::NullSigner},
         solana_system_interface::instruction::transfer,
         solana_transaction::Transaction,
+        solana_transaction_status::{Reward, RewardType},
     };
+
+    #[test]
+    fn test_epoch_rewards_display_does_not_truncate_balances() {
+        let rewards = CliKeyedEpochRewards {
+            epoch_metadata: None,
+            rewards: vec![CliKeyedEpochReward {
+                address: Pubkey::new_from_array([1u8; 32]).to_string(),
+                reward: Some(CliEpochReward {
+                    epoch: 100,
+                    effective_slot: 100,
+                    amount: 1_234_567_891,
+                    post_balance: 2_345_678_912,
+                    percent_change: 1.0,
+                    apr: None,
+                    commission: None,
+                    block_time: 0,
+                }),
+            }],
+        };
+
+        assert!(format!("{rewards}").contains("◎1.234567891"), "{rewards}");
+        assert!(format!("{rewards}").contains("◎2.345678912"), "{rewards}");
+
+        let mut verbose = String::new();
+        VerboseDisplay::write_str(&rewards, &mut verbose).unwrap();
+        assert!(verbose.contains("◎1.234567891"), "{verbose}");
+        assert!(verbose.contains("◎2.345678912"), "{verbose}");
+    }
+
+    #[test]
+    fn test_show_epoch_rewards_does_not_truncate_balances() {
+        struct EpochRewards<'a>(&'a Option<Vec<CliEpochReward>>);
+        impl fmt::Display for EpochRewards<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                show_epoch_rewards(f, self.0, false)
+            }
+        }
+
+        let output = format!(
+            "{}",
+            EpochRewards(&Some(vec![CliEpochReward {
+                epoch: 100,
+                effective_slot: 100,
+                amount: 123_456_789_012,
+                post_balance: 223_456_789_012,
+                percent_change: 1.0,
+                apr: None,
+                commission: None,
+                block_time: 0,
+            }]))
+        );
+        assert!(output.contains("◎123.456789012"), "{output}");
+        assert!(output.contains("◎223.456789012"), "{output}");
+    }
+
+    #[test]
+    fn test_display_block_meta_does_not_truncate_balances() {
+        struct BlockMeta<'a>(&'a Rewards);
+        impl fmt::Display for BlockMeta<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                CliBlock::display_block_meta(
+                    f,
+                    1,
+                    0,
+                    "blockhash",
+                    "previous_blockhash",
+                    None,
+                    None,
+                    self.0,
+                )
+            }
+        }
+
+        let output = format!(
+            "{}",
+            BlockMeta(&vec![Reward {
+                pubkey: Pubkey::new_from_array([1u8; 32]).to_string(),
+                lamports: 1_234_567_891,
+                post_balance: 2_345_678_912,
+                reward_type: Some(RewardType::Staking),
+                commission: None,
+                commission_bps: None,
+            }])
+        );
+        assert!(output.contains("◎1.234567891"), "{output}");
+        assert!(output.contains("◎2.345678912"), "{output}");
+    }
 
     #[test]
     fn test_return_signers() {
