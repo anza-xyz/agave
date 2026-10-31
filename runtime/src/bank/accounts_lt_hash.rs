@@ -163,6 +163,31 @@ impl Bank {
         }
     }
 
+    /// `prev_accounts` must follow the order of `accounts`.
+    pub(super) fn enqueue_lt_hash_updates_with_prev_versions<'a>(
+        &self,
+        accounts: &impl StorableAccounts<'a>,
+        prev_accounts: Vec<AccountSharedData>,
+    ) {
+        self.accounts_lt_hash_async_progress
+            .add_deduped_count(accounts.len());
+        let updates = prev_accounts
+            .into_iter()
+            .enumerate()
+            .map(|(index, prev_account)| {
+                let address = accounts.pubkey(index);
+                let curr_account = accounts.account(index, |account| {
+                    (account.lamports() != 0).then(|| account.take_account())
+                });
+                AccountsLtHashUpdate {
+                    address: *address,
+                    prev_account: Some(prev_account),
+                    curr_account,
+                }
+            });
+        self.accounts_lt_hash_async_progress.spawn_deduped(updates);
+    }
+
     /// Updates the accounts lt hash.
     ///
     /// When freezing a bank, we compute and update the accounts lt hash.
