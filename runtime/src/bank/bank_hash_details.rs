@@ -102,6 +102,9 @@ impl From<CommittedTransaction> for TransactionCommitDetails {
 pub struct SlotDetails {
     pub slot: Slot,
     pub bank_hash: String,
+    /// Identifies which block was replayed for this slot
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub block_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default, flatten)]
     pub bank_hash_components: Option<BankHashComponents>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -150,6 +153,7 @@ impl SlotDetails {
         Ok(Self {
             slot,
             bank_hash: bank.hash().to_string(),
+            block_id: bank.block_id().map(|id| id.to_string()),
             bank_hash_components,
             transactions: Vec::new(),
         })
@@ -298,6 +302,7 @@ pub mod tests {
                 SlotDetails {
                     slot,
                     bank_hash: format!("bank{slot}"),
+                    block_id: None,
                     bank_hash_components: Some(BankHashComponents {
                         parent_bank_hash: "parent_bank_hash".into(),
                         signature_count: slot + 10,
@@ -323,5 +328,17 @@ pub mod tests {
             serde_json::from_slice(&serialized_bytes).unwrap();
 
         assert_eq!(bank_hash_details, deserialized_bank_hash_details);
+    }
+
+    #[test]
+    fn test_serde_slot_details_block_id() {
+        let with_block_id: SlotDetails =
+            serde_json::from_str(r#"{"slot":1,"bank_hash":"bank1","block_id":"block1"}"#).unwrap();
+        assert_eq!(with_block_id.block_id.as_deref(), Some("block1"));
+
+        // Files written before block_id was recorded still deserialize
+        let without_block_id: SlotDetails =
+            serde_json::from_str(r#"{"slot":1,"bank_hash":"bank1"}"#).unwrap();
+        assert_eq!(without_block_id.block_id, None);
     }
 }
