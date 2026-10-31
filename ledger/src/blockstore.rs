@@ -2841,7 +2841,7 @@ impl Blockstore {
                 if let Some(merkle_root_meta) =
                     merkle_root_metas.get(&(BlockLocation::Original, erasure_set))
                 {
-                    self.check_existing_shred_consistency(
+                    if !self.check_existing_shred_consistency(
                         just_inserted_shreds,
                         slot,
                         BlockLocation::Original,
@@ -2850,7 +2850,9 @@ impl Blockstore {
                         merkle_root,
                         *stricter_shred_validation_from,
                         duplicate_shreds,
-                    );
+                    ) {
+                        return Err(InsertCodingShredError::InvalidShred);
+                    }
                 } else {
                     error!(
                         "Merkle root meta for {erasure_set:?} is missing from blockstore although \
@@ -3087,7 +3089,7 @@ impl Blockstore {
             let merkle_root = precomputed_merkle_root.or_else(|| shred.merkle_root().ok());
             if Self::is_data_shred_present(&shred, slot_meta, index_meta.data()) {
                 if let Some(merkle_root_meta) = merkle_root_metas.get(&(location, erasure_set)) {
-                    self.check_existing_shred_consistency(
+                    if !self.check_existing_shred_consistency(
                         just_inserted_shreds,
                         slot,
                         location,
@@ -3096,7 +3098,9 @@ impl Blockstore {
                         merkle_root,
                         *stricter_shred_validation_from,
                         duplicate_shreds,
-                    );
+                    ) {
+                        return Err(InsertDataShredError::InvalidShred);
+                    }
                 } else {
                     error!(
                         "Merkle root meta for {erasure_set:?} at {location:?} is missing from \
@@ -3349,9 +3353,10 @@ impl Blockstore {
     /// A difference in Merkle root is treated as equivocation. So is a difference in payload,
     /// until SIMD-0504 is effective for the slot.
     ///
-    /// The duplicate proof is stored here, but the slot is not marked dead: the caller
-    /// returns `Exists`, and `window_service` marks the slot dead after the write batch
-    /// commits, if it is still not full.
+    /// Returns true if `shred` is consistent with the stored one. Otherwise returns false
+    /// regardless of whether a duplicate proof already exists for the slot, so the caller
+    /// marks the slot dead in the same write batch. The duplicate proof is stored if it
+    /// does not exist yet.
     fn check_existing_shred_consistency(
         &self,
         just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
@@ -3362,7 +3367,7 @@ impl Blockstore {
         new_merkle_root: Option<Hash>,
         stricter_shred_validation_from: Option<Slot>,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
-    ) {
+    ) -> bool {
         // The FEC set is fixed by the shred index, so a shred with a different
         // Merkle root than its FEC set is a duplicate.
         if !self.check_merkle_root_consistency(
@@ -3374,14 +3379,12 @@ impl Blockstore {
             new_merkle_root,
             duplicate_shreds,
         ) {
-            return;
+            return false;
         }
         // SIMD-0504 allows different but valid leader signatures over the same
         // Merkle root.
-        if stricter_shred_validation_from.is_some_and(|first_slot| slot >= first_slot)
-            || self.has_duplicate_shreds_in_slot(slot)
-        {
-            return;
+        if stricter_shred_validation_from.is_some_and(|first_slot| slot >= first_slot) {
+            return true;
         }
         // A matching Merkle root does not imply a matching payload: the leader
         // may produce several valid signatures over the same root, and the
@@ -3390,23 +3393,26 @@ impl Blockstore {
         let Some(existing_shred) =
             self.get_shred_from_just_inserted_or_db(just_inserted_shreds, shred.id(), location)
         else {
-            return;
+            return true;
         };
         if shred::layout::get_payload_without_retransmitter_signature(&existing_shred)
             == shred::layout::get_payload_without_retransmitter_signature(shred.payload())
         {
-            return;
+            return true;
         }
-        let existing_shred = existing_shred.into_owned();
-        if let Err(err) =
-            self.store_duplicate_slot(slot, existing_shred.clone(), shred.payload().clone())
-        {
-            warn!("Unable to store conflicting payload duplicate proof for {slot}: {err}");
+        if !self.has_duplicate_shreds_in_slot(slot) {
+            let existing_shred = existing_shred.into_owned();
+            if let Err(err) =
+                self.store_duplicate_slot(slot, existing_shred.clone(), shred.payload().clone())
+            {
+                warn!("Unable to store conflicting payload duplicate proof for {slot}: {err}");
+            }
+            duplicate_shreds.push(PossibleDuplicateShred::PayloadConflict(
+                shred.clone(),
+                existing_shred,
+            ));
         }
-        duplicate_shreds.push(PossibleDuplicateShred::PayloadConflict(
-            shred.clone(),
-            existing_shred,
-        ));
+        false
     }
 
     fn should_insert_data_shred(
