@@ -97,13 +97,11 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-/// Sets the upper bound on the number of batches stored in the retransmit
-/// stage ingress channel.
-/// Allows for a max of 16k batches of up to 64 packets each
-/// (PACKETS_PER_BATCH).
-/// This translates to about 1 GB of RAM for packet storage in the worst case.
-/// In reality this means about 200K shreds since most batches are not full.
-const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
+/// Sets the upper bound on the number of batches stored in the retransmit stage ingress channel.
+/// Allows for a max of 2k batches. In practice, one retransmit batch corresponds to one fetch-stage
+/// batch and contains 64 shreds. The 200ms slot time permits 512 FEC sets, each containing 64
+/// shreds. Hence, capacity of channel allows us to buffer up to 4 slots.
+const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 2 * 1024;
 
 /// The maximum number of alpenglow packets that can be processed in a single batch
 pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
