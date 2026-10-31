@@ -429,7 +429,10 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
             block_timer,
             &mut ctx,
         ) {
-            // Give up on this leader window
+            // Give up on this leader window. Reset to the root so the blockhash cannot
+            // change after PoH records its bank ID.
+            let root = ctx.bank_forks.read().unwrap().root_bank();
+            reset_poh_recorder_after_slot(&root, end_slot, &ctx);
             error!(
                 "{my_pubkey}: Unable to produce window {start_slot}-{end_slot}, skipping window: \
                  {e:?}"
@@ -445,11 +448,16 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
 
 /// Resets poh recorder
 fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
+    reset_poh_recorder_after_slot(bank, bank.slot(), ctx);
+}
+
+/// Resets PoH to `bank`, searching for our next leader range strictly after `slot`.
+fn reset_poh_recorder_after_slot(bank: &Arc<Bank>, slot: Slot, ctx: &LeaderContext) {
     trace!("{}: resetting poh to {}", ctx.my_pubkey, bank.slot());
     assert!(ctx.record_receiver.is_shutdown() && ctx.record_receiver.is_safe_to_restart());
     let next_leader_slot = ctx.leader_schedule_cache.next_leader_slot(
         &ctx.my_pubkey,
-        bank.slot(),
+        slot.max(bank.slot()),
         bank,
         Some(ctx.blockstore.as_ref()),
         GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
@@ -1843,6 +1851,174 @@ mod tests {
         let (announced_bank, (message, _)) = entry_receiver.try_recv().unwrap();
         assert_eq!(announced_bank.bank_id(), bank.bank_id());
         assert!(matches!(message, RecorderMessage::SlotStart));
+    }
+
+    #[test]
+    fn test_abandoned_window_refreshes_leader_range() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let my_pubkey = Pubkey::new_unique();
+        let genesis = create_genesis_config_with_leader(10_000, &my_pubkey, 1_000);
+        let root_bank = Bank::new_for_tests(&genesis.genesis_config);
+        root_bank.freeze();
+        let bank_forks = BankForks::new_rw_arc(root_bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+
+        // Our windows are 4..=7 and 16..=19, with another leader in between.
+        let leader = SlotLeader {
+            id: my_pubkey,
+            vote_address: Pubkey::new_unique(),
+        };
+        let mut schedule = vec![SlotLeader::new_unique(); 32];
+        schedule[4..8].fill(leader);
+        schedule[16..20].fill(leader);
+        let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
+        leader_schedule_cache.set_fixed_leader_schedule(Some(FixedSchedule {
+            leader_schedule: Arc::new(LeaderSchedule::new_from_schedule(
+                schedule,
+                NonZeroUsize::MIN,
+            )),
+        }));
+        let leader_schedule_cache = Arc::new(leader_schedule_cache);
+        let exit = Arc::new(AtomicBool::new(false));
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            root_bank.tick_height(),
+            root_bank.last_blockhash(),
+            root_bank.clone(),
+            Some((4, 7)),
+            root_bank.ticks_per_slot(),
+            blockstore.clone(),
+            &leader_schedule_cache,
+            &PohConfig::default(),
+            exit.clone(),
+        );
+        poh_recorder.enable_alpenglow();
+
+        // Model completion of the first block, before replay has allowed the
+        // next block to start. Clearing it advertises the rest of this window.
+        let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, root_bank.clone(), leader, 4);
+        bank.set_tick_height(bank.max_tick_height());
+        bank.freeze();
+        poh_recorder.set_bank_for_test(bank.clone());
+        poh_recorder.clear_bank(true);
+        let shared_leader_state = poh_recorder.shared_leader_state();
+        assert_eq!(
+            shared_leader_state.load().next_leader_slot_range(),
+            Some((5, 7))
+        );
+
+        let (_record_sender, record_receiver) = record_channels(false);
+        let (_window_sender, leader_window_info_receiver) = bounded(1024);
+        let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
+        let (reward_certs_requestor, _reward_receiver) = CertsRequestor::new();
+        let mut ctx = LeaderContext {
+            exit,
+            my_pubkey,
+            leader_window_info_receiver,
+            pending_parent_ready: None,
+            highest_parent_ready: Arc::new(RwLock::new((0, Block::new_unique(0)))),
+            highest_finalized: Arc::new(RwLock::new(None)),
+            blockstore,
+            record_receiver,
+            poh_recorder: Arc::new(RwLock::new(poh_recorder)),
+            leader_schedule_cache,
+            sharable_banks: bank_forks.read().unwrap().sharable_banks(),
+            alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
+            bank_forks: bank_forks.clone(),
+            bank_forks_controller: test_bank_forks_controller(bank_forks.clone()),
+            rpc_subscriptions: None,
+            slot_status_notifier: None,
+            entry_notification_sender: None,
+            transaction_status_sender: None,
+            replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
+            reward_certs_requestor,
+            banking_stage_sender,
+            metrics: LoopMetrics::default(),
+            genesis_cert_block_marker: test_genesis_cert_block_marker(),
+        };
+
+        // The remaining window has already timed out, making the replay-behind
+        // error deterministic without waiting for a wall-clock deadline.
+        let expired_timer = Instant::now()
+            .checked_sub(block_timeout(&bank, 5) + Duration::from_secs(1))
+            .unwrap();
+        let err =
+            produce_window(false, 5, 7, Block::new_unique(4), expired_timer, &mut ctx).unwrap_err();
+        assert!(matches!(err, StartLeaderError::ReplayIsBehind(4, 5)));
+        assert!((5..=7).all(|slot| !ctx.blockstore.has_existing_shreds_for_slot(slot)));
+        assert_eq!(
+            shared_leader_state.load().next_leader_slot_range(),
+            Some((5, 7))
+        );
+
+        // The caller abandons the window after the production error. A normal
+        // reset still selects the skipped slots; it must search past slot 7.
+        let reset_bank = ctx.bank_forks.read().unwrap().working_bank();
+        reset_poh_recorder(&reset_bank, &ctx);
+        assert_eq!(
+            shared_leader_state.load().next_leader_slot_range(),
+            Some((5, 7))
+        );
+        // Replay may already be processing a later bank. It must not become
+        // PoH's reset bank while its final blockhash is still unknown.
+        let replay_bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, leader, 8);
+        assert!(!replay_bank.is_frozen());
+        assert_eq!(
+            ctx.bank_forks.read().unwrap().working_bank().bank_id(),
+            replay_bank.bank_id()
+        );
+        let initial_blockhash = replay_bank.last_blockhash();
+        let reset_bank = ctx.bank_forks.read().unwrap().root_bank();
+        reset_poh_recorder_after_slot(&reset_bank, 7, &ctx);
+        assert_eq!(
+            shared_leader_state.load().next_leader_slot_range(),
+            Some((16, 19))
+        );
+        assert!(shared_leader_state.load().working_bank().is_none());
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            root_bank.bank_id()
+        );
+        assert!(ctx.record_receiver.is_shutdown());
+        assert!(ctx.record_receiver.is_safe_to_restart());
+
+        // Once replay finishes, selecting that bank as parent must reset PoH
+        // to its final blockhash rather than reuse its earlier hash.
+        while replay_bank.tick_height() < replay_bank.max_tick_height() {
+            replay_bank.register_tick_for_test(&Hash::new_unique());
+        }
+        replay_bank.freeze();
+        let final_blockhash = replay_bank.last_blockhash();
+        assert_ne!(initial_blockhash, final_blockhash);
+        create_and_insert_leader_bank(16, replay_bank.clone(), 0, &mut ctx).unwrap();
+        assert_eq!(
+            ctx.poh_recorder.read().unwrap().start_bank_id(),
+            replay_bank.bank_id()
+        );
+        assert_eq!(
+            shared_leader_state.load().working_bank().unwrap().slot(),
+            16
+        );
+        assert_eq!(
+            shared_leader_state.load().next_leader_slot_range(),
+            Some((16, 19))
+        );
+        let transactions = vec![versioned_transfer(1)];
+        let mixin = solana_entry::entry::hash_transactions(&transactions);
+        let bank_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
+        ctx.poh_recorder
+            .write()
+            .unwrap()
+            .record(bank_id, mixin, transactions)
+            .unwrap();
+        let entry = entry_receiver
+            .try_iter()
+            .find_map(|(_, (message, _))| match message {
+                RecorderMessage::Entry(entry) => Some(entry),
+                _ => None,
+            })
+            .unwrap();
+        assert!(entry.verify(&final_blockhash));
     }
 
     #[test]
