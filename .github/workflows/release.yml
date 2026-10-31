@@ -8,6 +8,7 @@ on:
 jobs:
   trigger-buildkite-pipeline:
     if: github.repository_owner == 'anza-xyz'
+    needs: draft-release
     runs-on: ubuntu-26.04
     steps:
       - name: Build env vars JSON
@@ -30,6 +31,7 @@ jobs:
 
   draft-release:
     if: github.repository_owner == 'anza-xyz'
+    needs: publish-crates
     runs-on: ubuntu-26.04
     permissions:
       contents: write
