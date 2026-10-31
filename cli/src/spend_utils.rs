@@ -2,13 +2,13 @@ use {
     crate::{
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
-        compute_budget::{set_compute_unit_limit, simulate_and_update_compute_unit_limit},
+        compute_budget::{
+            ComputeUnitConfig, set_compute_unit_limit, simulate_and_update_compute_unit_limit,
+        },
         stake, vote,
     },
     clap::ArgMatches,
-    solana_clap_utils::{
-        compute_budget::ComputeUnitLimit, input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG,
-    },
+    solana_clap_utils::{input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG},
     solana_cli_output::display::build_balance_message,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
@@ -70,7 +70,7 @@ pub async fn resolve_spend_tx_and_check_account_balance<F>(
     amount: SpendAmount,
     blockhash: &Hash,
     from_pubkey: &Pubkey,
-    compute_unit_limit: ComputeUnitLimit,
+    compute_unit_config: &ComputeUnitConfig,
     build_message: F,
     commitment: CommitmentConfig,
 ) -> Result<(VersionedMessage, u64), CliError>
@@ -84,13 +84,14 @@ where
         blockhash,
         from_pubkey,
         from_pubkey,
-        compute_unit_limit,
+        compute_unit_config,
         build_message,
         commitment,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn resolve_spend_tx_and_check_account_balances<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
@@ -98,7 +99,7 @@ pub async fn resolve_spend_tx_and_check_account_balances<F>(
     blockhash: &Hash,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
-    compute_unit_limit: ComputeUnitLimit,
+    compute_unit_config: &ComputeUnitConfig,
     build_message: F,
     commitment: CommitmentConfig,
 ) -> Result<(VersionedMessage, u64), CliError>
@@ -114,7 +115,7 @@ where
             from_pubkey,
             fee_pubkey,
             0,
-            compute_unit_limit,
+            compute_unit_config,
             build_message,
         )
         .await?;
@@ -173,7 +174,7 @@ where
             from_pubkey,
             fee_pubkey,
             from_rent_exempt_minimum,
-            compute_unit_limit,
+            compute_unit_config,
             build_message,
         )
         .await?;
@@ -205,6 +206,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_spend_message<F>(
     rpc_client: &RpcClient,
     amount: SpendAmount,
@@ -213,7 +215,7 @@ async fn resolve_spend_message<F>(
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
     from_rent_exempt_minimum: u64,
-    compute_unit_limit: ComputeUnitLimit,
+    compute_unit_config: &ComputeUnitConfig,
     build_message: F,
 ) -> Result<(VersionedMessage, SpendAndFee), CliError>
 where
@@ -254,7 +256,8 @@ where
 
             dummy_message.set_recent_blockhash(*blockhash);
             let compute_unit_info = simulate_and_update_compute_unit_limit(
-                &compute_unit_limit,
+                &compute_unit_config.compute_unit_limit,
+                compute_unit_config.compute_unit_price,
                 rpc_client,
                 &mut dummy_message,
             )
@@ -307,7 +310,7 @@ where
     };
     // After build message, update with correct compute units
     if let Some(limit) = compute_unit_info {
-        set_compute_unit_limit(&mut message, limit);
+        set_compute_unit_limit(&mut message, limit, compute_unit_config.compute_unit_price);
     }
     Ok((message, spend_and_fee))
 }
@@ -319,6 +322,7 @@ mod tests {
         serde_json::json,
         solana_account::Account,
         solana_account_decoder::{UiAccountEncoding, encode_ui_account},
+        solana_clap_utils::compute_budget::ComputeUnitLimit,
         solana_message::Message,
         solana_rpc_client_api::{
             request::RpcRequest,
@@ -381,7 +385,10 @@ mod tests {
             &Hash::default(),
             &vote_account_pubkey,
             &fee_payer,
-            ComputeUnitLimit::Default,
+            &ComputeUnitConfig {
+                compute_unit_limit: ComputeUnitLimit::Default,
+                compute_unit_price: None,
+            },
             |lamports| {
                 VersionedMessage::Legacy(Message::new(
                     &[withdraw(

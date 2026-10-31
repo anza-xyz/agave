@@ -400,7 +400,7 @@ pub struct ValidatorConfig {
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
     pub unified_scheduler_handler_threads: Option<usize>,
-    pub replay_arenas: Option<usize>,
+    pub execution_arenas: Option<usize>,
     pub ip_echo_server_threads: NonZeroUsize,
     pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
@@ -481,7 +481,7 @@ impl ValidatorConfig {
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
             unified_scheduler_handler_threads: None,
-            replay_arenas: None,
+            execution_arenas: None,
             // Fix threadpools to small and reasonable sizes; unit tests should
             // not be creating excessive load and benches can configure more
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
@@ -1146,28 +1146,30 @@ impl Validator {
         // This threshold is the size above which jemalloc will allocate straight from the kernel
         // instead of the arena. The default is 8MB, which is not good for us since accounts can be
         // 10MB.
-        const REPLAY_ARENA_OVERSIZE_THRESHOLD: usize = 16 * 1024 * 1024;
+        const EXECUTION_ARENA_OVERSIZE_THRESHOLD: usize = 16 * 1024 * 1024;
         // Jemalloc allows an allocation to reuse a dirty extent if the allocation is at least
         // 1/64th the size of the extent. Around the epoch boundary we can spike +-3GB. Cap extent
         // size so that the memory allocated to serve spikes stays reusable and doesn't become dirty
         // but unsplittable forever. See jemalloc's lg_extent_max_active_fit.
-        const REPLAY_ARENA_RETAIN_GROW_LIMIT: usize = 64 * 1024 * 1024;
-        let replay_arenas = config.replay_arenas.map(|arena_count| {
-            ArenaGroup::new(
-                arena_count,
-                REPLAY_ARENA_OVERSIZE_THRESHOLD,
-                REPLAY_ARENA_RETAIN_GROW_LIMIT,
+        const EXECUTION_ARENA_RETAIN_GROW_LIMIT: usize = 64 * 1024 * 1024;
+        let execution_arenas = config.execution_arenas.map(|arena_count| {
+            Arc::new(
+                ArenaGroup::new(
+                    arena_count,
+                    EXECUTION_ARENA_OVERSIZE_THRESHOLD,
+                    EXECUTION_ARENA_RETAIN_GROW_LIMIT,
+                )
+                .expect("failed to create execution arenas"),
             )
-            .expect("failed to create replay arenas")
         });
-        let replay_arena = replay_arenas.as_ref().map(|arenas| arenas[0]);
+        let replay_arena = execution_arenas.as_ref().map(|arenas| arenas[0]);
         let scheduler_pool = DefaultSchedulerPool::new(
             config.unified_scheduler_handler_threads,
             config.runtime_config.log_messages_bytes_limit,
             transaction_status_sender.clone(),
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
-            replay_arenas,
+            execution_arenas.clone(),
         );
         bank_forks
             .write()
@@ -1833,6 +1835,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.block_production_num_workers,
             config.block_production_scheduler_config.clone(),
+            execution_arenas,
             config.filter_keys.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
@@ -3370,8 +3373,11 @@ mod tests {
             node_pubkey: identity,
             ..VoteStateV4::default()
         };
-        let mut vote_account =
-            AccountSharedData::new(1, VoteStateV4::size_of(), &solana_vote_program::id());
+        let mut vote_account = AccountSharedData::new_with_data(
+            1,
+            vec![0; VoteStateV4::size_of()],
+            &solana_vote_program::id(),
+        );
         vote_account
             .set_state(&VoteStateVersions::new_v4(vote_state.clone()))
             .unwrap();

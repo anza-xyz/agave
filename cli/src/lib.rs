@@ -28,7 +28,7 @@ pub mod cluster_query;
 pub mod compute_budget;
 pub mod feature;
 pub mod inflation;
-pub mod memo;
+mod message_builder;
 pub mod nonce;
 pub mod program;
 pub mod spend_utils;

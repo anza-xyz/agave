@@ -35,10 +35,11 @@ use {
     std::{
         convert::TryFrom,
         fs::{self, File},
+        io::{BufWriter, Seek, SeekFrom, Write},
         ops::ControlFlow,
         path::{Path, PathBuf},
         sync::{
-            Arc, Mutex, OnceLock,
+            Arc, Mutex, MutexGuard, OnceLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -55,6 +56,11 @@ pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
 
 /// Buffer size to use when scaning a meta file.
 const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
+
+/// Writes end up in the kernel's page cache, so the buffer only amortizes write syscalls.
+/// AppendVec observed that gains flatten out above 64 KiB and set this to 256 KiB.
+/// Use the same value and avoid oversized allocations.
+const WRITE_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Account storage backed by split metadata and data files.
 ///
@@ -288,6 +294,7 @@ impl SplitFile {
         }
 
         if self.remove_on_drop.load(Ordering::Relaxed) {
+            self.is_dirty.store(true, Ordering::Relaxed);
             return Err(SplitFileError::FlushButRemoveOnDrop);
         }
 
@@ -323,82 +330,41 @@ impl SplitFile {
         &self,
         accounts: &impl StorableAccounts<'a>,
     ) -> Result<(Vec<LogicalOffset>, u64), SplitFileError> {
+        let mut writer = self.writer()?;
+        let result = writer.write_accounts(accounts)?;
+        writer.finish()?;
+        Ok(result)
+    }
+
+    /// Instantiates a SplitFileWriter, which is used to perform buffered writes.
+    ///
+    /// Ensure that `finish()` is called after writing accounts.
+    ///
+    /// e.g.
+    ///
+    /// ```ignore
+    /// let mut writer = split_file.writer()?;
+    /// let result = writer.write_accounts(accounts)?;
+    /// writer.finish()?;
+    /// ```
+    pub fn writer(&self) -> Result<SplitFileWriter<'_>, SplitFileError> {
         let InnerState::Writable(inner) = &self.inner else {
             return Err(SplitFileError::NotWritable);
         };
-
-        let _write_guard = inner.write_lock.lock().unwrap();
-
-        let mut meta_file_offset = FileOffset(inner.meta_len.load(Ordering::Relaxed));
-        let mut data_file_offset = FileOffset(inner.data_len.load(Ordering::Relaxed));
-        let mut logical_offsets = Vec::with_capacity(accounts.len());
-        let mut logical_stored_size = 0;
-
-        for i in 0..accounts.len() {
-            accounts.account_default_if_zero_lamport(
-                i,
-                |account| -> Result<(), SplitFileError> {
-                    let data_len = DataLen::try_from(account.data().len())?;
-                    let data_ref = if data_len.0 == 0 {
-                        // no data, so nothing to write
-                        DataRef::NoData
-                    } else if should_store_account_data_in_meta_file(data_len) {
-                        // data is small, so will write inline in the meta file
-                        DataRef::Inline(account.data())
-                    } else {
-                        // data is large, so write into the data file now
-                        if inner.data_file.get().is_none() {
-                            // Data file doesn't exist yet, so create it now.
-                            // Cannot use OnceLock::get_or_init() since create is
-                            // fallible, and we want to return a Result.
-                            let (data_path, data_file, data_len) =
-                                create_data_file(inner.meta_path.with_extension(""), inner.uid)?;
-                            debug_assert_eq!(data_path, inner.data_path);
-                            inner.data_len.store(data_len as u64, Ordering::Relaxed);
-                            // SAFETY: data_file was checked above to be None
-                            inner.data_file.set(data_file).unwrap();
-                            data_file_offset = FileOffset(data_len as u64);
-                        }
-                        let write_info = write_data_entry(
-                            // SAFETY: data_file was just initialized
-                            inner.data_file.get().unwrap(),
-                            data_file_offset,
-                            account.pubkey(),
-                            account.data(),
-                        )?;
-                        data_file_offset =
-                            FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
-                        DataRef::External(ExternalDataOffset(write_info.start))
-                    };
-
-                    let write_info = write_meta_entry(
-                        &inner.meta_file,
-                        meta_file_offset,
-                        account.pubkey(),
-                        account.owner(),
-                        account.lamports(),
-                        account.rent_epoch(),
-                        account.executable(),
-                        data_len,
-                        data_ref,
-                    )?;
-                    meta_file_offset =
-                        FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
-                    logical_offsets.push(logical_offset_from_file(write_info.start)?);
-                    logical_stored_size += calculate_logical_stored_size(account.data().len());
-                    Ok(())
-                },
-            )?;
-        }
-
-        inner.meta_len.store(meta_file_offset.0, Ordering::Relaxed);
-        inner.data_len.store(data_file_offset.0, Ordering::Relaxed);
-        let was_dirty = self.is_dirty.swap(true, Ordering::Relaxed);
-        if !was_dirty {
-            SPLIT_FILE_STATS.num_dirty.fetch_add(1, Ordering::Relaxed);
-        }
-
-        Ok((logical_offsets, logical_stored_size))
+        let write_guard = inner.write_lock.lock().unwrap();
+        let meta_file_offset = FileOffset(inner.meta_len.load(Ordering::Relaxed));
+        let data_file_offset = FileOffset(inner.data_len.load(Ordering::Relaxed));
+        let mut meta_file = &inner.meta_file;
+        meta_file.seek(SeekFrom::Start(meta_file_offset.0))?;
+        Ok(SplitFileWriter {
+            split: self,
+            inner,
+            meta_writer: BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, meta_file),
+            data_writer: None,
+            meta_file_offset,
+            data_file_offset,
+            _write_guard: write_guard,
+        })
     }
 
     /// Reads account at `offset` and then calls `callback` with it.
@@ -708,6 +674,124 @@ fn calculate_logical_stored_size(data_len: usize) -> u64 {
     AppendVec::calculate_stored_size(data_len) as u64
 }
 
+/// Writes accounts with a BufWriter.
+pub struct SplitFileWriter<'a> {
+    split: &'a SplitFile,
+    inner: &'a WritableState,
+    meta_writer: BufWriter<&'a File>,
+    data_writer: Option<BufWriter<&'a File>>,
+    meta_file_offset: FileOffset,
+    data_file_offset: FileOffset,
+    // keep this last in the struct to ensure the buffers are dropped before releasing the lock
+    _write_guard: MutexGuard<'a, ()>,
+}
+
+impl SplitFileWriter<'_> {
+    /// Writes `accounts`.
+    ///
+    /// Returns a tuple of:
+    /// - A vec of the logical offsets for where each account was written.
+    /// - The *logical* size required to store `accounts`.
+    ///   This is ultimately the bytes required to store `accounts` into an AppendVec,
+    ///   since that is the number used for shrink/squash, and also when
+    ///   writing accounts into a snapshot archive.
+    ///
+    /// Ensure that `finish()` is called after writing accounts.
+    pub fn write_accounts<'a>(
+        &mut self,
+        accounts: &impl StorableAccounts<'a>,
+    ) -> Result<(Vec<LogicalOffset>, u64), SplitFileError> {
+        let mut logical_offsets = Vec::with_capacity(accounts.len());
+        let mut logical_stored_size = 0;
+        for i in 0..accounts.len() {
+            accounts.account_default_if_zero_lamport(
+                i,
+                |account| -> Result<(), SplitFileError> {
+                    let data_len = DataLen::try_from(account.data().len())?;
+                    let data_ref = if data_len.0 == 0 {
+                        // no data, so nothing to write
+                        DataRef::NoData
+                    } else if should_store_account_data_in_meta_file(data_len) {
+                        // data is small, so will write inline in the meta file
+                        DataRef::Inline(account.data())
+                    } else {
+                        // data is large, so write into the data file now
+                        if self.inner.data_file.get().is_none() {
+                            // Data file doesn't exist yet, so create it now.
+                            // Cannot use OnceLock::get_or_init() since create is
+                            // fallible, and we want to return a Result.
+                            let (data_path, data_file, data_len) = create_data_file(
+                                self.inner.meta_path.with_extension(""),
+                                self.inner.uid,
+                            )?;
+                            debug_assert_eq!(data_path, self.inner.data_path);
+                            // SAFETY: data_file was checked above to be None
+                            self.inner.data_file.set(data_file).unwrap();
+                            let data_len64 = data_len as u64;
+                            self.inner.data_len.store(data_len64, Ordering::Relaxed);
+                            self.data_file_offset = FileOffset(data_len64);
+                        }
+                        if self.data_writer.is_none() {
+                            // Data writer also doesn't exist yet, so create it now.
+                            // SAFETY: data_file was created above and must be Some.
+                            let mut data_file = self.inner.data_file.get().unwrap();
+                            data_file.seek(SeekFrom::Start(self.data_file_offset.0))?;
+                            self.data_writer =
+                                Some(BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, data_file));
+                        }
+                        let write_info = write_data_entry(
+                            // SAFETY: data_writer was just initialized
+                            self.data_writer.as_mut().unwrap(),
+                            self.data_file_offset,
+                            account.pubkey(),
+                            account.data(),
+                        )?;
+                        self.data_file_offset =
+                            FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
+                        DataRef::External(ExternalDataOffset(write_info.start))
+                    };
+                    let write_info = write_meta_entry(
+                        &mut self.meta_writer,
+                        self.meta_file_offset,
+                        account.pubkey(),
+                        account.owner(),
+                        account.lamports(),
+                        account.rent_epoch(),
+                        account.executable(),
+                        data_len,
+                        data_ref,
+                    )?;
+                    self.meta_file_offset =
+                        FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
+                    logical_offsets.push(logical_offset_from_file(write_info.start)?);
+                    logical_stored_size += calculate_logical_stored_size(account.data().len());
+                    Ok(())
+                },
+            )?;
+        }
+        Ok((logical_offsets, logical_stored_size))
+    }
+
+    /// Flushes BufWriters and updates meta/data lens.
+    pub fn finish(mut self) -> Result<(), SplitFileError> {
+        if let Some(data_writer) = &mut self.data_writer {
+            data_writer.flush()?;
+        }
+        self.meta_writer.flush()?;
+        self.inner
+            .data_len
+            .store(self.data_file_offset.0, Ordering::Relaxed);
+        self.inner
+            .meta_len
+            .store(self.meta_file_offset.0, Ordering::Relaxed);
+        let was_dirty = self.split.is_dirty.swap(true, Ordering::Relaxed);
+        if !was_dirty {
+            SPLIT_FILE_STATS.num_dirty.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+}
+
 /// The inner state of a SplitFile, used to distinguish writable from read-only state.
 #[derive(Debug)]
 enum InnerState {
@@ -978,6 +1062,65 @@ mod tests {
                     .unwrap();
             }
         }
+    }
+
+    /// Ensure calling write_accounts() more than once works.
+    ///
+    /// `write_accounts()` conditionally creates the data file once per SplitFile,
+    /// and conditionally creates the data writer once per invocation.
+    /// So call `write_accounts()` twice, both with large accounts, to ensure
+    /// the data file and data writer are created/not created correctly.
+    #[test]
+    fn test_write_accounts_multiple_times() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().join("base");
+        let split = SplitFile::new(&base_path).unwrap();
+
+        let slot = 42; // value isn't used
+        let owner = Pubkey::new_unique();
+        let no_data = 0;
+        let inline_data = no_data + 1;
+        let external_data = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
+        let accounts = [
+            AccountSharedData::new_with_data(11, vec![0xAB; no_data], &owner),
+            AccountSharedData::new_with_data(33, vec![0xCD; external_data], &owner),
+            AccountSharedData::new_with_data(55, vec![0xEF; inline_data], &owner),
+        ];
+
+        // split starts without a data file
+        assert!(split.data_file().is_none());
+
+        let to_store1: Vec<_> = accounts
+            .iter()
+            .map(|account| (Pubkey::new_unique(), account.clone()))
+            .collect();
+        split.write_accounts(&(slot, to_store1.as_slice())).unwrap();
+
+        // after writing the first time, data file is created
+        assert!(split.data_file().is_some());
+
+        // write again, must succeed
+        let to_store2: Vec<_> = accounts
+            .iter()
+            .map(|account| (Pubkey::new_unique(), account.clone()))
+            .collect();
+        split.write_accounts(&(slot, to_store2.as_slice())).unwrap();
+
+        // verify the written accounts
+        let to_store = [to_store1, to_store2].concat();
+        let mut data_reader = new_scan_accounts_reader();
+        data_reader
+            .set_file(split.data_file().unwrap(), split.data_len())
+            .unwrap();
+        let mut i = 0;
+        split
+            .scan_accounts_with_data(&mut data_reader, |_offset, stored_account| {
+                assert_eq!(stored_account.pubkey, &to_store[i].0);
+                assert!(accounts_equal(&stored_account, &to_store[i].1));
+                i += 1;
+                ControlFlow::Continue(())
+            })
+            .unwrap();
     }
 
     /// Ensure the scan_accounts() fns work, with a data file.
@@ -1506,8 +1649,10 @@ mod tests {
         let data_offset =
             data::DATA_HEADER_SIZE.next_multiple_of(data::DATA_ENTRY_OFFSET_ALIGNMENT) as u64;
         let wrong_address = Pubkey::new_unique();
+        let mut data_file = data_file;
+        data_file.seek(SeekFrom::Start(data_offset)).unwrap();
         write_data_entry(
-            data_file,
+            &mut data_file,
             FileOffset(data_offset),
             &wrong_address,
             vec![0; data_len].as_slice(),
@@ -1575,8 +1720,10 @@ mod tests {
         let data_offset =
             data::DATA_HEADER_SIZE.next_multiple_of(data::DATA_ENTRY_OFFSET_ALIGNMENT) as u64;
         let wrong_data_len = expected_data_len - 1;
+        let mut data_file = data_file;
+        data_file.seek(SeekFrom::Start(data_offset)).unwrap();
         write_data_entry(
-            data_file,
+            &mut data_file,
             FileOffset(data_offset),
             &address,
             vec![0; wrong_data_len].as_slice(),
@@ -1771,5 +1918,24 @@ mod tests {
         // flush() will succeed after disabling remove_on_drop
         split.disable_remove_on_drop();
         split.flush().unwrap();
+    }
+
+    /// A rejected flush must leave pending writes eligible for a later flush.
+    #[test]
+    fn test_rejected_flush_preserves_dirty_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let account = AccountSharedData::new(1, 32, &Pubkey::new_unique());
+        split
+            .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
+            .unwrap();
+        assert!(split.is_dirty.load(Ordering::Relaxed));
+
+        assert_matches!(split.flush(), Err(SplitFileError::FlushButRemoveOnDrop));
+        assert!(split.is_dirty.load(Ordering::Relaxed));
+
+        split.disable_remove_on_drop();
+        split.flush().unwrap();
+        assert!(!split.is_dirty.load(Ordering::Relaxed));
     }
 }

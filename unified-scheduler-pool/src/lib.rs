@@ -15,8 +15,9 @@
 
 use {
     agave_jemalloc::{
+        arena_for_worker,
         group::ArenaGroup,
-        jemalloc::{Arena, Jemalloc},
+        jemalloc::{Arena, DisableThreadTcacheOnDrop, Jemalloc},
     },
     assert_matches::assert_matches,
     crossbeam_channel::{
@@ -116,7 +117,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
     block_verification_handler_count: CountOrDefault,
-    handler_thread_arenas: Option<ArenaGroup>,
+    handler_thread_arenas: Option<Arc<ArenaGroup>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
     // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
@@ -133,28 +134,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
-}
-
-// Drop this before jemalloc's thread-local destructor runs. That flushes and disables the
-// handler thread's tcache while the thread is still assigned to its arena, avoiding jemalloc's
-// no-background-thread forced purge path when the last handler thread exits.
-#[derive(Debug)]
-struct DisableHandlerThreadTcacheOnDrop {
-    arena: Arena,
-    thread_index: usize,
-}
-
-impl Drop for DisableHandlerThreadTcacheOnDrop {
-    fn drop(&mut self) {
-        if let Err(error) = Jemalloc::disable_current_thread_tcache() {
-            warn!(
-                "failed to disable unified scheduler handler thread jemalloc tcache before thread \
-                 exit; thread_index: {}; arena_id: {}; error: {error}",
-                self.thread_index,
-                self.arena.id()
-            );
-        }
-    }
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -240,7 +219,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        handler_thread_arenas: Option<ArenaGroup>,
+        handler_thread_arenas: Option<Arc<ArenaGroup>>,
     ) -> Arc<Self> {
         Self::do_new(
             block_verification_handler_count,
@@ -281,7 +260,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        handler_thread_arenas: Option<ArenaGroup>,
+        handler_thread_arenas: Option<Arc<ArenaGroup>>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -1659,10 +1638,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         );
                     }
 
-                    Some(DisableHandlerThreadTcacheOnDrop {
-                        arena,
-                        thread_index,
-                    })
+                    Some(DisableThreadTcacheOnDrop::new(arena))
                 } else {
                     None
                 };
@@ -1732,13 +1708,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         self.handler_threads = (0..handler_context.thread_count)
             .map({
                 |thx| {
-                    let assigned_arena = handler_thread_arenas.map(|arenas| {
-                        let first_handler_arena = usize::from(arenas.len() > 1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        let arena_index =
-                            first_handler_arena + thx % (arenas.len() - first_handler_arena);
-                        arenas[arena_index]
-                    });
+                    let assigned_arena =
+                        handler_thread_arenas.map(|arenas| arena_for_worker(arenas, thx));
                     thread::Builder::new()
                         .name(format!("solScHandle{mode_char}{thx:02}"))
                         .spawn_tracked(handler_main_loop(thx, assigned_arena))
@@ -2171,10 +2142,7 @@ mod tests {
 
         let stats_before_thread_exit = std::thread::spawn(move || {
             arena.bind_current_thread_permanently().unwrap();
-            let _disable_tcache_on_exit = DisableHandlerThreadTcacheOnDrop {
-                arena,
-                thread_index: 0,
-            };
+            let _disable_tcache_on_exit = DisableThreadTcacheOnDrop::new(arena);
 
             const DIRTY_BYTES: usize = 8 * 1024 * 1024;
             let allocation = vec![0u8; DIRTY_BYTES];
@@ -2272,7 +2240,7 @@ mod tests {
             None,
             None,
             None,
-            Some(arenas),
+            Some(Arc::new(arenas)),
         );
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);

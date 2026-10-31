@@ -3877,7 +3877,7 @@ mod tests {
         let (expected_stake_rewards, expected_rewards) = if is_alpenglow {
             (0, 0)
         } else {
-            (374600, 374656)
+            (394300, 394375)
         };
         assert_cached_rewards(
             &bank1,
@@ -3912,9 +3912,9 @@ mod tests {
             expected_rewards,
             expected_points,
         ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 374656, 0)
+            (&no_reward_accounts, &no_reward_accounts, 0, 0, 394375, 0)
         } else {
-            (&voters, &stakers, 4165, 371020, 375234, 9_450_000_000_000)
+            (&voters, &stakers, 4385, 390495, 394984, 9_450_000_000_000)
         };
         let capitalization_after_vat_burn = if is_alpenglow {
             let num_vat_burns = RewardEpochDelegatedStakes::get(&bank2)
@@ -3954,9 +3954,9 @@ mod tests {
             expected_rewards,
             expected_points,
         ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 371535, 0)
+            (&no_reward_accounts, &no_reward_accounts, 0, 0, 391090, 0)
         } else {
-            (&voters, &stakers, 12980, 364020, 377084, 12_810_000_000_000)
+            (&voters, &stakers, 13660, 383170, 396930, 12_810_000_000_000)
         };
         let capitalization_after_vat_burn = if is_alpenglow {
             let num_vat_burns = RewardEpochDelegatedStakes::get(&bank3)

@@ -14,7 +14,7 @@ use {
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
-        resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
+        resolved_transaction_view::ResolvedTransactionView,
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
     core::time::Duration,
@@ -140,7 +140,7 @@ pub(crate) fn precheck_transaction(
 /// Perform sanitization checks and transition from data to an executable
 /// [`RuntimeTransaction`]. This additionally returns the minimum slot for
 /// ALT deactivation, if any. If no minimum slot, Slot::MAX is returned.
-pub(crate) fn translate_to_runtime_view<D: TransactionData>(
+pub(crate) fn translate_to_runtime_view<D: AsRef<[u8]>>(
     data: D,
     bank: &Bank,
     transaction_account_lock_limit: usize,
@@ -155,7 +155,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 /// Load runtime metadata and addresses for an already sanitized transaction.
 /// Returns the minimum ALT deactivation slot, or `Slot::MAX` if none.
 /// Preloaded addresses, when supplied, must belong to this view and bank.
-pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
+pub(crate) fn translate_sanitized_to_runtime_view<D: AsRef<[u8]>>(
     view: SanitizedTransactionView<D>,
     bank: &Bank,
     transaction_account_lock_limit: usize,
@@ -201,7 +201,7 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: TransactionData>(
     Ok((view, deactivation_slot))
 }
 
-fn load_addresses_for_view<D: TransactionData>(
+fn load_addresses_for_view<D: AsRef<[u8]>>(
     view: &SanitizedTransactionView<D>,
     bank: &Bank,
 ) -> Result<(Option<LoadedAddresses>, Slot), PacketHandlingError> {

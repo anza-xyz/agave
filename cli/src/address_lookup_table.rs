@@ -1,7 +1,10 @@
 use {
-    crate::cli::{
-        CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-        message_into_signed_transaction,
+    crate::{
+        cli::{
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            message_into_signed_transaction,
+        },
+        message_builder::MessageBuilder,
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_account::state_traits::StateMutWincode as _,
@@ -17,7 +20,6 @@ use {
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, CliSignature},
     solana_clock::Clock,
     solana_commitment_config::CommitmentConfig,
-    solana_message::{Message, VersionedMessage},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
@@ -593,10 +595,8 @@ async fn process_create_lookup_table(
         create_lookup_table(authority_address, payer_address, recent_slot);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let message = VersionedMessage::Legacy(Message::new(
-        &[create_lookup_table_ix],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message =
+        MessageBuilder::new(vec![create_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let keypairs: Vec<&dyn Signer> = vec![config.signers[0], payer_signer];
     let tx = message_into_signed_transaction(message, &keypairs, blockhash, false)?;
@@ -657,10 +657,8 @@ async fn process_freeze_lookup_table(
     let freeze_lookup_table_ix = freeze_lookup_table(lookup_table_pubkey, authority_address);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let message = VersionedMessage::Legacy(Message::new(
-        &[freeze_lookup_table_ix],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message =
+        MessageBuilder::new(vec![freeze_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -726,10 +724,8 @@ async fn process_extend_lookup_table(
     );
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let message = VersionedMessage::Legacy(Message::new(
-        &[extend_lookup_table_ix],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message =
+        MessageBuilder::new(vec![extend_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -793,10 +789,8 @@ async fn process_deactivate_lookup_table(
         deactivate_lookup_table(lookup_table_pubkey, authority_address);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let message = VersionedMessage::Legacy(Message::new(
-        &[deactivate_lookup_table_ix],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message =
+        MessageBuilder::new(vec![deactivate_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,
@@ -860,10 +854,8 @@ async fn process_close_lookup_table(
         close_lookup_table(lookup_table_pubkey, authority_address, recipient_pubkey);
 
     let blockhash = rpc_client.get_latest_blockhash().await?;
-    let message = VersionedMessage::Legacy(Message::new(
-        &[close_lookup_table_ix],
-        Some(&config.signers[0].pubkey()),
-    ));
+    let message =
+        MessageBuilder::new(vec![close_lookup_table_ix]).build(&config.signers[0].pubkey());
 
     let tx = message_into_signed_transaction(
         message,

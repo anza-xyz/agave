@@ -45,8 +45,8 @@ export RUST_BACKTRACE=1
 export RUSTFLAGS="-D warnings"
 source scripts/ulimit-n.sh
 
-#shellcheck source=ci/common/limit-threads.sh
-source ci/common/limit-threads.sh
+JOBS="$(cargo xtask jobs)"
+export JOBS
 
 # get channel info
 channel_info="$(cargo xtask channel-info --json)"

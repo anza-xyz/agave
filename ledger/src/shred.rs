@@ -538,6 +538,10 @@ impl ErasureSetId {
         self.1
     }
 
+    pub(crate) fn data_shred_indices(&self) -> Range<u32> {
+        self.1..self.1.saturating_add(DATA_SHREDS_PER_FEC_BLOCK as u32)
+    }
+
     // Storage key for ErasureMeta and MerkleRootMeta in blockstore db.
     // Note: ErasureMeta column uses u64 so this will need to be typecast
     pub(crate) fn store_key(&self) -> (Slot, /*fec_set_index:*/ u32) {
@@ -595,6 +599,7 @@ impl Shred {
     dispatch!(fn set_chained_merkle_root(&mut self, chained_merkle_root: &Hash) -> Result<(), Error>);
 
     dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
+    #[cfg(test)]
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
     #[cfg(test)]
     dispatch!(fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
@@ -737,14 +742,6 @@ impl Shred {
         match self.signed_data() {
             Ok(data) => self.signature().verify(pubkey.as_ref(), data.as_ref()),
             Err(_) => false,
-        }
-    }
-
-    // Returns true if the erasure coding of the two shreds mismatch.
-    pub(crate) fn erasure_mismatch(&self, other: &Self) -> Result<bool, Error> {
-        match (self, other) {
-            (Self::ShredCode(shred), Self::ShredCode(other)) => Ok(shred.erasure_mismatch(other)),
-            _ => Err(Error::InvalidShredType),
         }
     }
 

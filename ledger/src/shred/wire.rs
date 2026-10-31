@@ -218,6 +218,16 @@ pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
     })
 }
 
+/// Returns the position of the coding shred in its erasure batch, or an Error
+/// if the shred is a data shred
+#[inline]
+pub(crate) fn get_position(shred: &[u8]) -> Result<u16, Error> {
+    if !matches!(get_shred_type(shred)?, ShredType::Code) {
+        return Err(Error::InvalidShredType);
+    }
+    Ok(peek_header::<CodeLayout>(shred)?.position)
+}
+
 #[inline]
 pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
     Some(ShredId(
@@ -282,7 +292,7 @@ pub fn get_shred_without_retransmitter_signature(packet: &BytesPacket) -> Option
 }
 
 #[inline]
-pub(super) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
+pub(crate) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
     let Ok(shred_variant) = get_shred_variant(shred) else {
         return shred;
     };

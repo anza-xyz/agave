@@ -345,13 +345,31 @@ fn process_loader_upgradeable_instruction(
             }
 
             let owner_id = *program_id;
-            let mut instruction = system_instruction::create_account(
-                &payer_key,
-                &programdata_key,
-                1.max(rent.minimum_balance(programdata_len)),
-                programdata_len as u64,
-                program_id,
-            );
+            let mut instruction = if invoke_context
+                .get_feature_set()
+                .loader_v3_allow_prefunded_programdata
+            {
+                let programdata_lamports = instruction_context
+                    .try_borrow_instruction_account(1)?
+                    .get_lamports();
+                let top_up_lamports = rent
+                    .minimum_balance(programdata_len)
+                    .saturating_sub(programdata_lamports);
+                system_instruction::create_account_allow_prefund(
+                    &programdata_key,
+                    (top_up_lamports > 0).then_some((&payer_key, top_up_lamports)),
+                    programdata_len as u64,
+                    program_id,
+                )
+            } else {
+                system_instruction::create_account(
+                    &payer_key,
+                    &programdata_key,
+                    1.max(rent.minimum_balance(programdata_len)),
+                    programdata_len as u64,
+                    program_id,
+                )
+            };
 
             // pass an extra account to avoid the overly strict UnbalancedInstruction error
             instruction
@@ -576,30 +594,27 @@ fn process_loader_upgradeable_instruction(
             // Update the ProgramData account
             let mut programdata = instruction_context.try_borrow_instruction_account(0)?;
             {
-                programdata.set_data_length(programdata_len)?;
-                programdata.set_state(&UpgradeableLoaderState::ProgramData {
-                    slot: clock.slot,
-                    upgrade_authority_address: authority_key,
-                })?;
-                let dst_slice = programdata
-                    .get_data_mut()?
-                    .get_mut(
-                        programdata_data_offset
-                            ..programdata_data_offset.saturating_add(buffer_data_len),
-                    )
-                    .ok_or(InstructionError::AccountDataTooSmall)?;
                 let buffer = instruction_context.try_borrow_instruction_account(2)?;
-                let src_slice = buffer
+                let elf = buffer
                     .get_data()
                     .get(buffer_data_offset..)
                     .ok_or(InstructionError::AccountDataTooSmall)?;
-                dst_slice.copy_from_slice(src_slice);
+                // `set_data_from_slice` here truncates the data to a zeroed header,
+                // replacing a shared payload rather than cloning it.
+                programdata.set_data_from_slice(
+                    &[0; UpgradeableLoaderState::size_of_programdata_metadata()],
+                )?;
+                // Append the ELF after the zeroed header.
+                programdata.extend_from_slice(elf)?;
             }
-            programdata
-                .get_data_mut()?
-                .get_mut(programdata_data_offset.saturating_add(buffer_data_len)..)
-                .ok_or(InstructionError::AccountDataTooSmall)?
-                .fill(0);
+            // Restore the full length, zero-filling any slack after the ELF.
+            // This is only pre-SIMD-0433. After SIMD-0433 this is a no-op.
+            programdata.set_data_length(programdata_len)?;
+            // Now write the real header back in.
+            programdata.set_state(&UpgradeableLoaderState::ProgramData {
+                slot: clock.slot,
+                upgrade_authority_address: authority_key,
+            })?;
 
             // Fund ProgramData to rent-exemption, spill the rest
             let mut buffer = instruction_context.try_borrow_instruction_account(2)?;
@@ -861,6 +876,14 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
+            if invoke_context
+                .get_feature_set()
+                .loader_v3_remove_extend_program
+            {
+                // SIMD-0685: Remove ExtendProgram
+                ic_logger_msg!(log_collector, "ExtendProgram has been disabled");
+                return Err(InstructionError::InvalidInstructionData);
+            }
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
     }

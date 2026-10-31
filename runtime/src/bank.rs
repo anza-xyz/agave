@@ -74,8 +74,7 @@ use {
             MaxAllowableDrift, calculate_stake_weighted_timestamp,
         },
         stakes::{
-            DelegatedStakes, DeserializableDelegationStakes, EpochBoundaryStakes,
-            SerdeStakesToStakeFormat, Stakes, StakesCache,
+            DelegatedStakes, EpochBoundaryStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
         },
         status_cache::{SlotDelta, StatusCache},
         sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account, from_account},
@@ -84,12 +83,13 @@ use {
     accounts_lt_hash::AccountsLtHashAsyncProgress,
     agave_bls_cert_verify::cert_verify::{self, Error as CertVerifyError},
     agave_feature_set::{self as feature_set, FeatureSet},
+    agave_math_utils::inflation,
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_snapshots::snapshot_hash::SnapshotHash,
     agave_transaction_view::{
+        message_view::SanitizedMessageView,
         resolved_transaction_view::ResolvedTransactionView,
-        transaction_data::TransactionData,
         transaction_version::TransactionVersion,
         transaction_view::{SanitizedTransactionView, UnsanitizedTransactionView},
     },
@@ -147,7 +147,6 @@ use {
     solana_message::{
         AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions, v0::LoadedAddresses,
     },
-    solana_nonce_account::verify_nonce_account,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -259,6 +258,8 @@ mod sysvar_cache;
 pub(crate) mod tests;
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
+const INITIAL_RATE: u64 = 80_000_000_000_000;
+const TERMINAL_RATE: u64 = 15_000_000_000_000;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
 
@@ -521,7 +522,6 @@ pub enum VATHealthError {
         fee_rate_governor(pub),
         epoch_schedule(pub),
         inflation(pub),
-        stakes(pub),
         is_delta(pub),
         accounts_data_len(pub),
         versioned_epoch_stakes(pub),
@@ -552,7 +552,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) fee_rate_governor: FeeRateGovernor,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: DeserializableDelegationStakes,
     /// Transformed into `HashMap<Epoch, VersionedEpochStakes>` in `serde_snapshot` and passed to
     /// `Bank::new_from_snapshot` as separate parameter for performance (conversion is time consuming)
     pub(crate) versioned_epoch_stakes: Vec<(Epoch, DeserializableVersionedEpochStakes)>,
@@ -588,13 +587,6 @@ impl Default for BankFieldsToDeserialize {
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: DeserializableDelegationStakes {
-                vote_accounts: VoteAccounts::default(),
-                stake_delegations: Vec::default(),
-                unused: u64::default(),
-                epoch: Epoch::default(),
-                stake_history: CowStakeHistory::default(),
-            },
             versioned_epoch_stakes: Vec::default(),
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
@@ -2017,18 +2009,20 @@ impl Bank {
         new
     }
 
-    fn load_rent_from_account_for_snapshot_load(
+    fn load_sysvar_for_snapshot_load<T>(
         accounts: &Accounts,
         ancestors: &Ancestors,
-    ) -> Rent {
-        // The serialized rent collector is deprecated. Instead, reconstruct from fields plus
-        // the rent sysvar account state.
-        let rent_sysvar = accounts
-            .load_do_not_populate_read_cache(ancestors, &sysvar::rent::id())
-            .expect("snapshot must contain rent sysvar account")
+        id: &Pubkey,
+    ) -> T
+    where
+        T: wincode::DeserializeOwned<Dst = T>,
+    {
+        let account = accounts
+            .load_do_not_populate_read_cache(ancestors, id)
+            .unwrap_or_else(|| panic!("snapshot must contain sysvar account {id}"))
             .0;
-        from_account::<sysvar::rent::Rent>(&rent_sysvar)
-            .expect("snapshot must contain well-formed rent sysvar account")
+        wincode::deserialize(account.data())
+            .unwrap_or_else(|_| panic!("snapshot must contain well-formed sysvar account {id}"))
     }
 
     /// Complete bank initialization for block execution. Performs epoch
@@ -2121,7 +2115,7 @@ impl Bank {
         leader_for_tests: Option<SlotLeader>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         accounts_data_size_initial: u64,
-        stake_pubkeys: Vec<Pubkey>,
+        pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
         epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     ) -> Self {
         let now = Instant::now();
@@ -2132,25 +2126,38 @@ impl Bank {
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
         let rewards_calculation_thread_pool = rewards_calculation_thread_pool();
-        // The stake delegations come from the stake accounts found while
-        // building the accounts index, not from the list in the snapshot.
-        // Vote accounts, epoch and stake history still come from the snapshot.
+        // Build the stakes cache from accounts-db, not from the copy in the
+        // snapshot. Stake and vote accounts were found while building the
+        // index. Stake history comes from its sysvar, which the cache writes
+        // at every epoch boundary. The feature set does not exist yet, so
+        // the one feature the stake math needs is read from its account.
         //
         // Note that we are disabling the read cache while we populate the stakes cache.
         // The stakes accounts will not be expected to be loaded again.
         // If we populate the read cache with these loads, then we'll just soon have to evict these.
-        let (stakes, stakes_time) = measure_time!(
-            Stakes::load_from_accounts(fields.stakes, stake_pubkeys, |pubkey| {
-                let (account, _slot) = bank_rc
-                    .accounts
-                    .load_do_not_populate_read_cache(&ancestors, pubkey)?;
-                Some(account)
-            })
-            .expect(
-                "Stakes cache is inconsistent with accounts-db. This can indicate a corrupted \
-                 snapshot or bugs in cached accounts or accounts-db.",
-            )
+        let load_account = |pubkey: &Pubkey| {
+            let (account, _slot) = bank_rc
+                .accounts
+                .load_do_not_populate_read_cache(&ancestors, pubkey)?;
+            Some(account)
+        };
+        let stake_history = Self::load_sysvar_for_snapshot_load(
+            &bank_rc.accounts,
+            &ancestors,
+            &stake_history::id(),
         );
+        let new_rate_activation_epoch =
+            load_account(&feature_set::reduce_stake_warmup_cooldown::id())
+                .and_then(|account| feature::state::from_account(&account))
+                .and_then(|feature| feature.activated_at)
+                .map(|activation_slot| fields.epoch_schedule.get_epoch(activation_slot));
+        let (stakes, stakes_time) = measure_time!(Stakes::load_from_accounts(
+            epoch,
+            stake_history,
+            new_rate_activation_epoch,
+            pubkeys_by_owner,
+            load_account,
+        ));
         info!("Loading Stakes took: {stakes_time}");
         assert!(
             fields.versioned_epoch_stakes.is_empty(),
@@ -2190,7 +2197,8 @@ impl Bank {
         );
 
         let stakes_accounts_load_duration = now.elapsed();
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank_rc.accounts, &ancestors);
+        let rent =
+            Self::load_sysvar_for_snapshot_load(&bank_rc.accounts, &ancestors, &sysvar::rent::id());
         let partitioned_rewards_stake_account_stores_per_block = bank_rc
             .accounts
             .accounts_db
@@ -3076,6 +3084,67 @@ impl Bank {
         self.slot_range_duration_in_years(inflation_start_slot, inflation_start_slot + num_slots)
     }
 
+    /// Applies integer decay over `start_slot..end_slot`, splitting the range
+    /// at each slot-time transition.
+    fn integer_inflation_rate_between(
+        &self,
+        anchor_rate: u64,
+        start_slot: Slot,
+        end_slot: Slot,
+        taper_percent: u32,
+    ) -> Option<u64> {
+        if start_slot > end_slot {
+            return None;
+        }
+        let mut rate = anchor_rate;
+        let mut cursor = start_slot;
+        for (transition_slot, _) in self.slot_params.param_transitions() {
+            if transition_slot <= start_slot {
+                continue;
+            }
+            if transition_slot >= end_slot {
+                break;
+            }
+
+            let slots = transition_slot.checked_sub(cursor)?;
+            let ns_per_slot = self.slot_params_at_slot(cursor).ns_per_slot();
+            rate = inflation::decayed_rate(rate, taper_percent, 100, ns_per_slot, slots)?;
+            cursor = transition_slot;
+        }
+        if cursor < end_slot {
+            let slots = end_slot.checked_sub(cursor)?;
+            let ns_per_slot = self.slot_params_at_slot(cursor).ns_per_slot();
+            rate = inflation::decayed_rate(rate, taper_percent, 100, ns_per_slot, slots)?;
+        }
+        Some(rate)
+    }
+
+    /// Decays `INITIAL_RATE` across slot-time regimes, switching from a 15% to
+    /// a 30% taper when SIMD-0550 activates. Returns the annual validator rate
+    /// at the start of this bank's epoch, scaled by `inflation::RATE_SCALE` and
+    /// clamped to `TERMINAL_RATE`.
+    /// Returns `None` if a slot range or fixed-point calculation is invalid.
+    pub fn integer_inflation_rate(&self) -> Option<u64> {
+        let start_slot = self.inflation_start_slot_aligned_to_rewards();
+        let end_slot = self.epoch_schedule().get_first_slot_in_epoch(self.epoch());
+        if let Some(double_disinflation_activation_slot) = self
+            .feature_set
+            .activated_slot(&feature_set::double_disinflation_rate::id())
+        {
+            // SIMD-0607 is active before SIMD-0550, so its anchor uses the
+            // preceding 15% integer schedule.
+            let anchor_slot = double_disinflation_activation_slot.min(end_slot);
+            let anchor_rate = self
+                .integer_inflation_rate_between(INITIAL_RATE, start_slot, anchor_slot, 15)?
+                .max(TERMINAL_RATE);
+            self.integer_inflation_rate_between(anchor_rate, anchor_slot, end_slot, 30)
+                .map(|rate| rate.max(TERMINAL_RATE))
+        } else {
+            self.integer_inflation_rate_between(INITIAL_RATE, start_slot, end_slot, 15)
+                .map(|rate| rate.max(TERMINAL_RATE))
+        }
+    }
+
     /// For a given `capitalization` (total_supply in lamports) and `epoch`, returns the
     /// `epoch inflation rewards` in lamports.
     pub(crate) fn calculate_epoch_inflation_rewards(
@@ -3083,6 +3152,24 @@ impl Bank {
         capitalization: u64,
         epoch: Epoch,
     ) -> u64 {
+        if self.feature_set.snapshot().remove_runtime_float_ops {
+            let rate = self
+                .integer_inflation_rate()
+                .expect("inflation rate calculation failed");
+            let first_slot = self.epoch_schedule().get_first_slot_in_epoch(epoch);
+            let ns_per_slot = self.slot_params_at_slot(first_slot).ns_per_slot();
+            let reward = inflation::epoch_reward(
+                capitalization,
+                rate,
+                self.epoch_schedule().get_slots_in_epoch(epoch),
+                ns_per_slot,
+            )
+            .expect("epoch reward calculation failed");
+            capitalization
+                .checked_add(reward)
+                .expect("capitalization overflow");
+            return reward;
+        }
         let slot_in_year = self.slot_in_year_for_inflation();
         let validator_rate = self.inflation.read().unwrap().validator(slot_in_year);
         let epoch_duration_in_years = self.epoch_duration_in_years(epoch);
@@ -3192,7 +3279,10 @@ impl Bank {
             // that rehash() can be called and *not* modify self.accounts_lt_hash.
             self.finish_accounts_lt_hash_updates();
             *hash = self.hash_internal_state();
-            self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
+            self.rc
+                .accounts
+                .accounts_db
+                .mark_bank_frozen(self.bank_id());
         }
     }
 
@@ -3459,26 +3549,32 @@ impl Bank {
     }
 
     pub fn get_fee_for_message(&self, message: &SanitizedMessage) -> Option<u64> {
-        {
-            let blockhash_queue = self.blockhash_queue.read().unwrap();
-            blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
-        }
-        .or_else(|| {
-            let nonce_address = SVMStaticMessage::get_durable_nonce(message, false)?;
-            let nonce_account = self.get_account(nonce_address)?;
-            verify_nonce_account(&nonce_account, message.recent_blockhash())
-                .map(|nonce_data| nonce_data.get_lamports_per_signature())
-        })?;
-
         let transaction_configuration =
             TransactionConfiguration::try_from_sanitized_message(message, &self.feature_set)
                 .ok()?;
-        Some(solana_fee::calculate_fee(
+        Some(self.get_fee_for_message_with_configuration(message, &transaction_configuration))
+    }
+
+    pub fn get_fee_for_message_view<D: AsRef<[u8]>>(
+        &self,
+        message: &SanitizedMessageView<D>,
+    ) -> Option<u64> {
+        let transaction_configuration =
+            TransactionConfiguration::try_from_message_view(message, &self.feature_set).ok()?;
+        Some(self.get_fee_for_message_with_configuration(message, &transaction_configuration))
+    }
+
+    fn get_fee_for_message_with_configuration(
+        &self,
+        message: &impl SVMStaticMessage,
+        transaction_configuration: &TransactionConfiguration,
+    ) -> u64 {
+        solana_fee::calculate_fee(
             message,
             self.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
             self.fee_features(),
-        ))
+        )
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
@@ -5579,7 +5675,7 @@ impl Bank {
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<ResolvedTransactionView<D>>>
     where
-        D: TransactionData,
+        D: AsRef<[u8]>,
     {
         let max_transaction_size = match tx.version() {
             TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
@@ -5631,7 +5727,7 @@ impl Bank {
 
     /// Load addresses from ALTs (if necessary) and return the
     /// [`LoadedAddresses`] with the minimum deactivation slot.
-    pub fn load_addresses_for_view<D: TransactionData>(
+    pub fn load_addresses_for_view<D: AsRef<[u8]>>(
         &self,
         view: &SanitizedTransactionView<D>,
     ) -> std::result::Result<(Option<LoadedAddresses>, Slot), AddressLoaderError> {
@@ -6114,8 +6210,6 @@ impl Bank {
                 self.get_epoch_rewards_sysvar().active,
             );
         }
-        self.stakes_cache
-            .refresh_delegated_stakes(self.new_warmup_cooldown_rate_epoch());
 
         self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
 
@@ -6138,9 +6232,14 @@ impl Bank {
             );
         }
 
-        // Apply the doubled disinflation rate if it's active at genesis (the
-        // re-anchor is a no-op for `initial` at year zero). Not needed on
+        // Apply inflation feature changes active at genesis. Not needed on
         // snapshot restore: the serialized bank fields carry the result.
+        if self
+            .feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+        {
+            self.apply_integer_inflation_initial_rate();
+        }
         if self
             .feature_set
             .is_active(&feature_set::double_disinflation_rate::id())
@@ -6154,18 +6253,19 @@ impl Bank {
         self.apply_activated_features();
     }
 
-    /// SIMD-0550: double the taper, re-anchoring `initial` so the inflation
-    /// rate stays continuous at the point of activation.
-    fn apply_double_disinflation_rate(&mut self) {
-        let year = self.slot_in_year_for_inflation();
+    /// Align the stored governor's initial rate with SIMD-0607's fixed 8% rate.
+    fn apply_integer_inflation_initial_rate(&mut self) {
         let mut inflation = *self.inflation.read().unwrap();
-        let anchor_rate = inflation.total(year);
-        let taper = feature_set::double_disinflation_rate::TAPER;
-        inflation.taper = taper;
-        inflation.initial = anchor_rate / (1.0 - taper).powf(year);
-        // The lock is shared with parent and sibling banks; replace it instead
-        // of writing through it so every boundary bank anchors off the
-        // pre-activation schedule and other forks never observe the change.
+        inflation.initial = 0.08;
+        self.inflation = Arc::new(RwLock::new(inflation));
+    }
+
+    /// SIMD-0550: update the stored taper. Integer rewards use an activation
+    /// anchor calculated from the preceding 15% schedule.
+    fn apply_double_disinflation_rate(&mut self) {
+        let mut inflation = *self.inflation.read().unwrap();
+        inflation.taper = feature_set::double_disinflation_rate::TAPER;
+        // The lock is shared with parent and sibling banks, so replace it.
         self.inflation = Arc::new(RwLock::new(inflation));
     }
 
@@ -6261,6 +6361,10 @@ impl Bank {
         {
             *self.inflation.write().unwrap() = Inflation::full();
             self.fee_rate_governor.burn_percent = solana_fee_calculator::DEFAULT_BURN_PERCENT;
+        }
+
+        if new_feature_activations.contains(&feature_set::remove_runtime_float_ops::id()) {
+            self.apply_integer_inflation_initial_rate();
         }
 
         if new_feature_activations.contains(&feature_set::double_disinflation_rate::id()) {
@@ -6780,7 +6884,8 @@ impl Bank {
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let mut bank = Self::default_with_bank_rc(bank_rc);
         let ancestors = Ancestors::from(vec![(slot, bank.bank_id())]);
-        let rent = Self::load_rent_from_account_for_snapshot_load(&bank.rc.accounts, &ancestors);
+        let rent =
+            Self::load_sysvar_for_snapshot_load(&bank.rc.accounts, &ancestors, &sysvar::rent::id());
         bank.blockhash_queue = RwLock::new(fields.blockhash_queue);
         bank.ancestors = ancestors;
         bank.hash = RwLock::new(fields.hash);
@@ -6910,8 +7015,6 @@ impl Bank {
                 bank.get_epoch_rewards_sysvar().active,
             );
         }
-        bank.stakes_cache
-            .refresh_delegated_stakes(bank.new_warmup_cooldown_rate_epoch());
 
         // If booting mid-distribution, recalculate reward partitions from the
         // EpochRewards sysvar (mirrors initialize_after_snapshot_restore).

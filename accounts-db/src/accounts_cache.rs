@@ -3,10 +3,10 @@ use {
     dashmap::{DashMap, mapref::entry::Entry},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
-    solana_nohash_hasher::{BuildNoHashHasher, IntMap},
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_pubkey::Pubkey,
     std::{
-        collections::{BTreeMap, BTreeSet},
+        collections::BTreeMap,
         ops::Deref,
         sync::{
             Arc, RwLock,
@@ -240,12 +240,10 @@ impl AccountsCacheIndex {
 #[derive(Debug, Default)]
 pub struct AccountsCache {
     cache: DashMap<BankId, Arc<SlotCache>, BuildNoHashHasher<BankId>>,
-    /// Maps a slot to the id of the bank that stored accounts at it
-    bank_ids: RwLock<IntMap<Slot, BankId>>,
     // Index to find which banks a pubkey is stored in, to speed up lookups in load_latest
     index: AccountsCacheIndex,
     // Rooted banks that still have accounts in the write cache, and the slot each stored at. A
-    // bank enters via `add_root` if it has a slot cache, and is dropped by `remove_slot` when its
+    // bank enters via `add_root` if it has a slot cache, and is dropped by `remove_bank` when its
     // slot cache is flushed. Roots form one chain, so bank id order is slot order.
     unflushed_roots: RwLock<BTreeMap<BankId, Slot>>,
     max_flushed_root: MaxFlushedRoot,
@@ -300,16 +298,6 @@ impl AccountsCache {
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
         let slot_cache = self.bank_cache(bank_id).unwrap_or_else(|| {
-            let slot_bank_id = *self
-                .bank_ids
-                .write()
-                .unwrap()
-                .entry(slot)
-                .or_insert(bank_id);
-            debug_assert_eq!(
-                slot_bank_id, bank_id,
-                "slot {slot} already holds accounts stored by another bank"
-            );
             // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
             // which is dropped after this block ends, minimizing time held by the lock.
             // However, we still want to persist the reference to the `SlotStores` behind
@@ -338,37 +326,17 @@ impl AccountsCache {
         Some((account, slot_cache.slot))
     }
 
-    /// Removes a slot from the accounts cache and returns the set of pubkeys removed from the index.
-    #[must_use]
-    pub fn remove_slot(&self, slot: Slot) -> Option<Vec<Pubkey>> {
-        let slot_cache = {
-            // Held across the cache removal so a concurrent `add_root` can't re-track this bank
-            let mut unflushed_roots = self.unflushed_roots.write().unwrap();
-            let bank_id = self.bank_ids.write().unwrap().remove(&slot)?;
-            // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
-            unflushed_roots.remove(&bank_id);
-            self.cache.remove(&bank_id)?.1
-        };
-        Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
-    }
-
     /// Removes `bank_id`'s cache and returns the set of pubkeys removed from the index.
     #[must_use]
     pub fn remove_bank(&self, bank_id: BankId) -> Option<Vec<Pubkey>> {
         let slot_cache = {
             // Held across the cache removal so a concurrent `add_root` can't re-track this bank
             let mut unflushed_roots = self.unflushed_roots.write().unwrap();
-            // Held across the cache removal so a concurrent `store` can't map the slot in between
-            let mut bank_ids = self.bank_ids.write().unwrap();
             // If this bank was a root, it has now left the cache, so stop tracking it as unflushed.
             unflushed_roots.remove(&bank_id);
-            let slot_cache = self
-                .cache
+            self.cache
                 .remove(&bank_id)
-                .map(|(_, slot_cache)| slot_cache)?;
-            let removed_bank_id = bank_ids.remove(&slot_cache.slot);
-            debug_assert_eq!(removed_bank_id, Some(bank_id));
-            slot_cache
+                .map(|(_, slot_cache)| slot_cache)?
         };
 
         Some(self.index.remove(slot_cache.iter().map(|item| *item.key())))
@@ -424,12 +392,6 @@ impl AccountsCache {
         None
     }
 
-    /// Returns the cache of the bank that stored accounts at `slot`
-    pub fn slot_cache(&self, slot: Slot) -> Option<Arc<SlotCache>> {
-        let bank_id = self.bank_id(slot)?;
-        self.bank_cache(bank_id)
-    }
-
     /// Returns `bank_id`'s cache
     pub fn bank_cache(&self, bank_id: BankId) -> Option<Arc<SlotCache>> {
         self.cache
@@ -437,14 +399,9 @@ impl AccountsCache {
             .map(|result| result.value().clone())
     }
 
-    /// Returns the id of the bank that stored accounts at `slot`
-    pub fn bank_id(&self, slot: Slot) -> Option<BankId> {
-        self.bank_ids.read().unwrap().get(&slot).copied()
-    }
-
     /// A root without a slot cache is not tracked; nothing stores into a slot once it is rooted
     pub fn add_root(&self, bank_id: BankId) -> Option<Slot> {
-        // Held across the lookup so a concurrent `remove_slot` can't leave this root stranded
+        // Held across the lookup so a concurrent `remove_bank` can't leave this root stranded
         let mut unflushed_roots = self.unflushed_roots.write().unwrap();
         if let Some(slot) = self.cache.get(&bank_id).map(|slot_cache| slot_cache.slot) {
             unflushed_roots.insert(bank_id, slot);
@@ -458,10 +415,13 @@ impl AccountsCache {
         self.unflushed_roots.read().unwrap().len()
     }
 
-    /// Returns whether `slot` is a root that has been added but not yet flushed to storage.
-    pub fn contains_unflushed_root(&self, slot: Slot) -> bool {
-        self.bank_id(slot)
-            .is_some_and(|bank_id| self.contains_unflushed_bank(bank_id))
+    /// Returns the id of the bank rooted at `slot`, if that root has not yet been flushed.
+    pub fn unflushed_root_bank_id(&self, slot: Slot) -> Option<BankId> {
+        self.unflushed_roots
+            .read()
+            .unwrap()
+            .iter()
+            .find_map(|(bank_id, root)| (*root == slot).then_some(*bank_id))
     }
 
     /// Returns whether `bank_id` is a root that has been added but not yet flushed to storage.
@@ -469,33 +429,23 @@ impl AccountsCache {
         self.unflushed_roots.read().unwrap().contains_key(&bank_id)
     }
 
-    /// Returns the unflushed roots up to and including `max_root` (or all roots if `None`). The
-    /// returned roots remain tracked as unflushed until `remove_slot` drops each one when its cache
-    /// is flushed.
-    pub fn roots_to_flush(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {
+    /// Returns the unflushed roots up to and including `max_root` (or all roots if `None`), each
+    /// with the id of the bank rooted at it. The returned roots remain tracked as unflushed until
+    /// `remove_bank` drops each one when its cache is flushed.
+    pub fn roots_to_flush(&self, max_root: Option<Slot>) -> BTreeMap<Slot, BankId> {
         // `None` means no upper bound, i.e. every root.
         let max_root = max_root.unwrap_or(Slot::MAX);
         self.unflushed_roots
             .read()
             .unwrap()
-            .values()
-            .take_while(|slot| **slot <= max_root)
-            .copied()
-            .collect()
-    }
-
-    pub fn cached_frozen_slots(&self) -> Vec<Slot> {
-        self.cache
             .iter()
-            .filter_map(|item| {
-                let slot_cache = item.value();
-                slot_cache.is_frozen().then_some(slot_cache.slot)
-            })
+            .take_while(|(_bank_id, slot)| **slot <= max_root)
+            .map(|(bank_id, slot)| (*slot, *bank_id))
             .collect()
     }
 
-    pub fn contains(&self, slot: Slot) -> bool {
-        self.bank_ids.read().unwrap().contains_key(&slot)
+    pub fn contains(&self, bank_id: BankId) -> bool {
+        self.cache.contains_key(&bank_id)
     }
 
     pub fn contains_pubkey(&self, pubkey: &Pubkey) -> bool {
@@ -542,10 +492,6 @@ mod tests {
                 }
                 !should_remove
             });
-            self.bank_ids
-                .write()
-                .unwrap()
-                .retain(|slot, _bank_id| *slot > max_root);
             removed_slots
         }
     }
@@ -569,27 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cached_frozen_slots() {
-        let cache = AccountsCache::default();
-        // Cache is empty, should return nothing
-        assert!(cache.cached_frozen_slots().is_empty());
-        let inserted_slot = 0;
-        cache.store(
-            inserted_slot,
-            BankId::new(inserted_slot),
-            &Pubkey::new_unique(),
-            AccountSharedData::new(1, 0, &Pubkey::default()),
-        );
-
-        // If the cache is told the size limit is 0, it should return nothing, because there's no
-        // frozen slots
-        assert!(cache.cached_frozen_slots().is_empty());
-        cache.slot_cache(inserted_slot).unwrap().mark_slot_frozen();
-        // If the cache is told the size limit is 0, it should return the one frozen slot
-        assert_eq!(cache.cached_frozen_slots(), vec![inserted_slot]);
-    }
-
-    #[test]
     fn test_slot_cache_len_tracks_unique_accounts() {
         let cache = AccountsCache::default();
         let slot = 0;
@@ -602,7 +527,7 @@ mod tests {
             &pubkey,
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
-        let slot_cache = cache.slot_cache(slot).unwrap();
+        let slot_cache = cache.bank_cache(BankId::new(slot)).unwrap();
         assert_eq!(slot_cache.len(), 1);
 
         cache.store(
@@ -697,7 +622,7 @@ mod tests {
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
         // Remove and drop slot 1 — entry should still exist (count goes from 3 to 2)
-        let removed = cache.remove_slot(1);
+        let removed = cache.remove_bank(BankId::new(1));
         assert!(removed.is_some());
         drop(removed);
         assert_eq!(
@@ -708,14 +633,14 @@ mod tests {
 
         // Remove and drop slot 5 — entry should still exist (count goes from 2 to 1)
         // max_bank_id stays stale at 5 because the index doesn't scan for a new max on removal
-        let removed = cache.remove_slot(5);
+        let removed = cache.remove_bank(BankId::new(5));
         assert!(removed.is_some());
         drop(removed);
         assert!(cache.index.max_bank_id_for_pubkey(&pk).is_some());
         assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
 
         // Remove and drop slot 3 — last reference gone, entry removed
-        let removed = cache.remove_slot(3);
+        let removed = cache.remove_bank(BankId::new(3));
         assert!(removed.is_some());
         drop(removed);
         assert!(cache.index.max_bank_id_for_pubkey(&pk).is_none());
@@ -723,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_slot_cleans_up_index() {
+    fn test_remove_bank_cleans_up_index() {
         let cache = AccountsCache::default();
         let pk1 = Pubkey::new_unique();
         let pk2 = Pubkey::new_unique();
@@ -753,13 +678,13 @@ mod tests {
         assert!(cache.index.max_bank_id_for_pubkey(&pk2).is_some());
 
         // Remove slot 1 — pk2 should disappear, pk1 still present (in slot 3)
-        let pubkeys_removed = cache.remove_slot(1);
+        let pubkeys_removed = cache.remove_bank(BankId::new(1));
         assert_eq!(pubkeys_removed, Some(vec![pk2]));
         assert!(cache.index.max_bank_id_for_pubkey(&pk1).is_some());
         assert!(cache.index.max_bank_id_for_pubkey(&pk2).is_none());
 
         // Remove slot 3 — pk1 should also disappear
-        let pubkeys_removed = cache.remove_slot(3);
+        let pubkeys_removed = cache.remove_bank(BankId::new(3));
         assert_eq!(pubkeys_removed, Some(vec![pk1]));
         assert!(cache.index.max_bank_id_for_pubkey(&pk1).is_none());
     }
@@ -848,9 +773,9 @@ mod tests {
             AccountSharedData::new(100, 0, &Pubkey::default()),
         );
         cache.add_root(BankId::new(10));
-        // A flush finishes a slot with `remove_slot`, which drops both its cache and its
+        // A flush finishes a slot with `remove_bank`, which drops both its cache and its
         // unflushed-root tracking; call it directly here to stand in for that flush.
-        let _ = cache.remove_slot(10);
+        let _ = cache.remove_bank(BankId::new(10));
 
         // With the slot gone from the cache and untracked as a root, it is not visible.
         let empty = Ancestors::default();
@@ -873,10 +798,13 @@ mod tests {
 
         // roots_to_flush(Some(5)) returns {1, 3, 5}, excluding 7.
         let to_flush = cache.roots_to_flush(Some(5));
-        assert_eq!(to_flush, BTreeSet::from([1, 3, 5]));
+        assert_eq!(to_flush.into_keys().collect::<Vec<_>>(), [1, 3, 5]);
 
         // roots_to_flush only reads: the tracked roots are unchanged.
-        assert_eq!(cache.roots_to_flush(None), BTreeSet::from([1, 3, 5, 7]));
+        assert_eq!(
+            cache.roots_to_flush(None).into_keys().collect::<Vec<_>>(),
+            [1, 3, 5, 7]
+        );
     }
 
     #[test]
@@ -893,14 +821,17 @@ mod tests {
         }
 
         let to_flush = cache.roots_to_flush(None);
-        assert_eq!(to_flush, BTreeSet::from([2, 4, 6]));
+        assert_eq!(to_flush.into_keys().collect::<Vec<_>>(), [2, 4, 6]);
 
         // roots_to_flush only reads: the tracked roots are unchanged.
-        assert_eq!(cache.roots_to_flush(None), BTreeSet::from([2, 4, 6]));
+        assert_eq!(
+            cache.roots_to_flush(None).into_keys().collect::<Vec<_>>(),
+            [2, 4, 6]
+        );
     }
 
     #[test]
-    fn test_remove_slot_drops_unflushed_root() {
+    fn test_remove_bank_drops_unflushed_root() {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
         cache.store(
@@ -918,8 +849,11 @@ mod tests {
         );
         cache.add_root(BankId::new(2));
 
-        // remove_slot drops slot 1 from both the cache and the tracked roots, leaving slot 2.
-        let _ = cache.remove_slot(1);
-        assert_eq!(cache.roots_to_flush(None), BTreeSet::from([2]));
+        // remove_bank drops slot 1 from both the cache and the tracked roots, leaving slot 2.
+        let _ = cache.remove_bank(BankId::new(1));
+        assert_eq!(
+            cache.roots_to_flush(None).into_keys().collect::<Vec<_>>(),
+            [2]
+        );
     }
 }

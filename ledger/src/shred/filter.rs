@@ -9,12 +9,12 @@ use {
     },
     crate::blockstore,
     agave_feature_set as feature_set,
+    crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::BytesPacket,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     std::{
         sync::{
             Arc,
@@ -181,6 +181,10 @@ pub struct ShredFilterContext {
     // is refreshed together with `shred_limit_context`.
     enforce_correct_proof_size_from: Option<Slot>,
 
+    // Earliest shred slot for which SIMD-0504 `stricter_shred_validation` is
+    // effective, or None while the feature is inactive.
+    stricter_shred_validation_from: Option<Slot>,
+
     pub stats: ShredFetchStats,
 }
 
@@ -212,6 +216,10 @@ impl ShredFilterContext {
                 &feature_set::enforce_correct_proof_size::id(),
                 &root_bank,
             ),
+            stricter_shred_validation_from: feature_first_effective_slot(
+                &feature_set::stricter_shred_validation::id(),
+                &root_bank,
+            ),
             shred_limit_context: ShredLimitContext::new(root_bank),
             stats: ShredFetchStats::default(),
         }
@@ -236,8 +244,19 @@ impl ShredFilterContext {
                 &feature_set::enforce_correct_proof_size::id(),
                 &root_bank,
             );
+            self.stricter_shred_validation_from = feature_first_effective_slot(
+                &feature_set::stricter_shred_validation::id(),
+                &root_bank,
+            );
             self.shred_limit_context = ShredLimitContext::new(root_bank);
         }
+    }
+
+    /// Returns true if SIMD-0504 `stricter_shred_validation` is effective for
+    /// shreds of the given slot.
+    pub(crate) fn is_stricter_shred_validation_active(&self, slot: Slot) -> bool {
+        self.stricter_shred_validation_from
+            .is_some_and(|first_slot| slot >= first_slot)
     }
 
     fn shred_limits(&self, slot: Slot) -> ShredLimits {
@@ -337,6 +356,19 @@ impl ShredFilterContext {
                 if !erasure_config.is_fixed() {
                     self.stats.misaligned_erasure_config += 1;
                     return true;
+                }
+
+                // SIMD-0504: coding shred indices start at fec_set_index, so
+                // the position in the coding batch is fixed by the index.
+                let Ok(position) = layout::get_position(shred) else {
+                    self.stats.erasure_config_bad_deserialize += 1;
+                    return true;
+                };
+                if index.checked_sub(fec_set_index) != Some(u32::from(position)) {
+                    self.stats.misaligned_coding_position += 1;
+                    if self.is_stricter_shred_validation_active(slot) {
+                        return true;
+                    }
                 }
             }
             ShredType::Data => {
@@ -505,14 +537,17 @@ fn check_last_data_shred_index(index: u32) -> bool {
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
     /// Sender to retransmit the recovered shreds
-    retransmit_sender: EvictingSender<Vec<Payload>>,
+    retransmit_sender: Sender<Vec<Payload>>,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
+    /// Scratch space for the parity check of erasure batches, reused across
+    /// recoveries.
+    parity_buffer: Vec<u8>,
 }
 
 impl ShredRecoveryContext {
     pub fn new(
-        retransmit_sender: EvictingSender<Vec<Payload>>,
+        retransmit_sender: Sender<Vec<Payload>>,
         root_bank: Arc<Bank>,
         shred_version: u16,
     ) -> Self {
@@ -520,6 +555,7 @@ impl ShredRecoveryContext {
         Self {
             retransmit_sender,
             shred_filter_ctx,
+            parity_buffer: Vec::new(),
         }
     }
 
@@ -528,6 +564,19 @@ impl ShredRecoveryContext {
     /// have an epoch order tolerance
     pub fn maybe_update(&mut self, root_bank: Arc<Bank>) {
         self.shred_filter_ctx.maybe_update(root_bank);
+    }
+
+    /// Returns true if SIMD-0504 `stricter_shred_validation` is effective for
+    /// shreds of the given slot.
+    pub(crate) fn is_stricter_shred_validation_active(&self, slot: Slot) -> bool {
+        self.shred_filter_ctx
+            .is_stricter_shred_validation_active(slot)
+    }
+
+    /// Returns the first slot for which SIMD-0504 `stricter_shred_validation`
+    /// is effective.
+    pub(crate) fn stricter_shred_validation_from(&self) -> Option<Slot> {
+        self.shred_filter_ctx.stricter_shred_validation_from
     }
 
     /// Submit stats at most every two seconds
@@ -558,6 +607,9 @@ impl ShredRecoveryContext {
     /// which were received from turbine (or repair) and are already sig-verified. It
     /// verifies for recovered shreds too, because rebuilding checks that the Merkle tree
     /// of the erasure batch yields the same Merkle root.
+    ///
+    /// Once SIMD-0504 is active, received shreds may carry different signatures
+    /// over the same Merkle root.
     pub(crate) fn rebuild_erasure_batch<T: IntoIterator<Item = Shred>>(
         &mut self,
         shreds: T,
@@ -566,8 +618,15 @@ impl ShredRecoveryContext {
             .into_iter()
             .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()))
             .collect();
+        let must_match_signatures = !shreds
+            .first()
+            .is_some_and(|shred| self.is_stricter_shred_validation_active(shred.slot()));
 
-        merkle::rebuild_erasure_batch(shreds)
+        merkle::rebuild_erasure_batch_with_buffer(
+            shreds,
+            must_match_signatures,
+            &mut self.parity_buffer,
+        )
     }
 
     /// Checks the reconstructed shreds of the erasure batch.
@@ -637,8 +696,8 @@ mod tests {
     use {
         super::{
             super::{
-                PROOF_ENTRIES_FOR_32_32_BATCH, Shred, make_merkle_shreds_for_tests,
-                override_proof_size,
+                CODING_SHREDS_PER_FEC_BLOCK, PROOF_ENTRIES_FOR_32_32_BATCH, Shred,
+                make_merkle_shreds_for_tests, override_proof_size,
             },
             *,
         },
@@ -647,14 +706,17 @@ mod tests {
             shred::{MAX_CODE_SHREDS_PER_SLOT, tests::*},
         },
         assert_matches::assert_matches,
+        crossbeam_channel::bounded,
         itertools::Itertools,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
+        solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::{
             bank::Bank,
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
+        solana_signer::Signer,
         std::{
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
@@ -890,7 +952,7 @@ mod tests {
         // Feed recovery only coding shreds. Without the custom limit below, this
         // is enough parity to recover the missing data shreds.
         let max_code_shreds_per_slot = coding_shreds[0].index();
-        let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+        let (dummy_retransmit_sender, _) = bounded(0);
         let mut shred_recovery_context =
             ShredRecoveryContext::new(dummy_retransmit_sender, new_test_bank(0), shred_version);
         shred_recovery_context
@@ -917,6 +979,77 @@ mod tests {
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());
+    }
+
+    /// SIMD-0504 allows shreds of a FEC set to carry different signatures over the same Merkle
+    /// root. Recovery must reject such FEC sets until the feature is active for the shred
+    /// slot, and allow after.
+    #[test]
+    fn test_rebuild_erasure_batch_mixed_signatures_feature_gate() {
+        let mut rng = rand::rng();
+        let feature_gate_id = feature_set::stricter_shred_validation::id();
+        let root_bank = root_bank_for_tests([feature_gate_id], []);
+        let root_epoch = root_bank.epoch();
+        let first_slot = first_gated_slot(&root_bank);
+        assert_eq!(
+            first_slot,
+            root_bank.slot()
+                + root_bank
+                    .epoch_schedule()
+                    .get_last_slot_in_epoch(root_epoch)
+                + 1
+        );
+        let (stub_retransmit_sender, _) = bounded(0);
+
+        let mut rebuild_mixed_signatures = |slot: Slot| {
+            let data_size = 1200 * 5;
+            let is_last_in_slot = true;
+            let shreds =
+                make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
+            let shred_version = shreds[0].common_header().version;
+            let (data_shreds, coding_shreds): (Vec<_>, Vec<_>) = shreds
+                .into_iter()
+                .partition(|shred| shred.shred_type() == ShredType::Data);
+            // Drop some data shreds, so the coding shred takes part in the rebuild.
+            let mut subset: Vec<Shred> = data_shreds[..DATA_SHREDS_PER_FEC_BLOCK - 2]
+                .iter()
+                .chain(coding_shreds[0..2].iter())
+                .cloned()
+                .collect();
+            let merkle_root = subset[0].merkle_root().unwrap();
+            // overwrite the signature of one data and one code shred
+            subset[0].set_signature(Keypair::new().sign_message(merkle_root.as_ref()));
+            subset[DATA_SHREDS_PER_FEC_BLOCK - 1]
+                .set_signature(Keypair::new().sign_message(merkle_root.as_ref()));
+
+            let mut shred_recovery_context = ShredRecoveryContext::new(
+                stub_retransmit_sender.clone(),
+                root_bank.clone(),
+                shred_version,
+            );
+            (
+                shred_recovery_context.is_stricter_shred_validation_active(slot),
+                shred_recovery_context.rebuild_erasure_batch(subset),
+            )
+        };
+
+        let (feature_active, result) = rebuild_mixed_signatures(first_slot - 1);
+        assert!(
+            !feature_active,
+            "the feature should not be active in the activation epoch (because turbine)"
+        );
+        assert_matches!(
+            result.err(),
+            Some(Error::InvalidMerkleRoot),
+            "mixed signatures should be rejected until SIMD-0504 is active"
+        );
+
+        let (gate_active, result) = rebuild_mixed_signatures(first_slot);
+        assert!(gate_active, "the feature should be active at this time");
+        assert!(
+            result.is_ok(),
+            "mixed signatures over the same Merkle root should rebuild once SIMD-0504 is active"
+        );
     }
 
     #[test]
@@ -1157,6 +1290,50 @@ mod tests {
         shred_slot: Slot,
     ) -> bool {
         check_feature_activation(feature_slot, shred_slot, &epoch_schedule)
+    }
+
+    /// SIMD-0504 requires `position == index - fec_set_index` for coding shreds.
+    /// A coding shred violating it is counted, and discarded once the feature is
+    /// effective.
+    #[test]
+    fn test_should_discard_shred_misaligned_coding_position() {
+        agave_logger::setup();
+        let mut rng = rand::rng();
+        let feature_id = feature_set::stricter_shred_validation::id();
+        let enforcing_bank = root_bank_for_tests([feature_id], []);
+        let permissive_bank = root_bank_for_tests([], [feature_id]);
+        let slot = first_gated_slot(&enforcing_bank);
+        let data_size = 1200 * 5;
+        let is_last_in_slot = false;
+        let shreds =
+            make_merkle_shreds_for_tests(&mut rng, slot, data_size, is_last_in_slot).unwrap();
+        let shred_version = shreds[0].common_header().version;
+        let shred = shreds
+            .iter()
+            .find(|shred| shred.shred_type() == ShredType::Code)
+            .expect("shredder should produce coding shreds");
+        let mut payload = shred.payload().to_vec();
+        let position = layout::get_position(&payload).expect("coding shred should have a position");
+        let bad_position = (position + 1) % CODING_SHREDS_PER_FEC_BLOCK as u16;
+        payload[87..87 + 2].copy_from_slice(&bad_position.to_le_bytes());
+        assert_eq!(layout::get_position(&payload).unwrap(), bad_position);
+
+        for (root_bank, expect_discard) in [(permissive_bank, false), (enforcing_bank, true)] {
+            let mut shred_filter_context = ShredFilterContext::new(root_bank, shred_version);
+            for shred in &shreds {
+                assert!(!shred_filter_context.should_discard_packet(&to_packet(shred.payload())));
+            }
+            assert_eq!(
+                shred_filter_context.stats.misaligned_coding_position, 0,
+                "shredder output should have aligned coding positions"
+            );
+            assert_eq!(
+                shred_filter_context.should_discard_packet(&to_packet(&payload)),
+                expect_discard,
+                "misaligned coding position is discarded only under the feature gate"
+            );
+            assert_eq!(shred_filter_context.stats.misaligned_coding_position, 1);
+        }
     }
 
     // Shreds produced by the shredder must pass the new checks, otherwise

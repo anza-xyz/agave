@@ -149,11 +149,6 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum BroadcastStageReturnType {
-    ChannelDisconnected,
-}
-
 #[derive(Clone, Debug)]
 pub enum BroadcastStageType {
     Standard,
@@ -261,7 +256,7 @@ impl Drop for Finalizer {
 }
 
 pub struct BroadcastStage {
-    thread_hdls: Vec<JoinHandle<BroadcastStageReturnType>>,
+    thread_hdls: Vec<JoinHandle<()>>,
 }
 
 impl BroadcastStage {
@@ -273,7 +268,7 @@ impl BroadcastStage {
         socket_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         blockstore_sender: &Sender<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>,
         mut broadcast_stage_run: impl BroadcastRun,
-    ) -> BroadcastStageReturnType {
+    ) {
         let mut pinnable_slice = blockstore.new_pinnable_slice();
         let mut write_batch = blockstore.get_write_batch();
         loop {
@@ -286,29 +281,31 @@ impl BroadcastStage {
                 socket_sender,
                 blockstore_sender,
             );
-            let res = Self::handle_error(res, "run");
-            if let Some(res) = res {
-                return res;
+
+            if Self::should_exit_on_error(res, "run") {
+                break;
             }
         }
     }
-    fn handle_error(r: Result<()>, name: &str) -> Option<BroadcastStageReturnType> {
-        if let Err(e) = r {
-            match e {
-                Error::RecvTimeout(RecvTimeoutError::Disconnected)
-                | Error::Send
-                | Error::Recv(RecvError) => {
-                    return Some(BroadcastStageReturnType::ChannelDisconnected);
-                }
-                Error::RecvTimeout(RecvTimeoutError::Timeout)
-                | Error::ClusterInfo(ClusterInfoError::NoPeers) => (), // TODO: Why are the unit-tests throwing hundreds of these?
-                _ => {
-                    inc_new_counter_error!("streamer-broadcaster-error", 1, 1);
-                    error!("{name} broadcaster error: {e:?}");
-                }
+
+    fn should_exit_on_error(result: Result<()>, name: &str) -> bool {
+        let Err(err) = result else { return false };
+
+        match err {
+            Error::RecvTimeout(RecvTimeoutError::Disconnected)
+            | Error::Send
+            | Error::Recv(RecvError) => true,
+            Error::RecvTimeout(RecvTimeoutError::Timeout)
+            | Error::ClusterInfo(ClusterInfoError::NoPeers) => {
+                // TODO: Why are the unit-tests throwing hundreds of these?
+                false
+            }
+            _ => {
+                inc_new_counter_error!("streamer-broadcaster-error", 1, 1);
+                error!("{name} broadcaster error: {err:?}");
+                false
             }
         }
-        None
     }
 
     /// Service to broadcast messages from the leader to layer 1 nodes.
@@ -411,8 +408,9 @@ impl BroadcastStage {
                     sock_variant,
                     &bank_forks,
                 );
-                if let Some(res) = Self::handle_error(res, "solana-broadcaster-transmit") {
-                    return res;
+
+                if Self::should_exit_on_error(res, "solana-broadcaster-transmit") {
+                    break;
                 }
             };
             Builder::new()
@@ -435,9 +433,9 @@ impl BroadcastStage {
                         &mut pinnable_slice,
                         &mut write_batch,
                     );
-                    let res = Self::handle_error(res, "solana-broadcaster-record");
-                    if let Some(res) = res {
-                        return res;
+
+                    if Self::should_exit_on_error(res, "solana-broadcaster-record") {
+                        break;
                     }
                 }
             };
@@ -451,15 +449,17 @@ impl BroadcastStage {
             .name("solBroadcastRtx".to_string())
             .spawn(move || {
                 loop {
-                    if let Some(res) = Self::handle_error(
-                        Self::check_retransmit_signals(
-                            &blockstore,
-                            &retransmit_slots_receiver,
-                            &socket_sender,
-                        ),
+                    let res = Self::check_retransmit_signals(
+                        &blockstore,
+                        &retransmit_slots_receiver,
+                        &socket_sender,
+                    );
+
+                    if Self::should_exit_on_error(
+                        res,
                         "solana-broadcaster-retransmit-check_retransmit_signals",
                     ) {
-                        return res;
+                        break;
                     }
                 }
             })
@@ -514,11 +514,11 @@ impl BroadcastStage {
         Ok(())
     }
 
-    pub fn join(self) -> thread::Result<BroadcastStageReturnType> {
+    pub fn join(self) -> thread::Result<()> {
         for thread_hdl in self.thread_hdls.into_iter() {
             let _ = thread_hdl.join();
         }
-        Ok(BroadcastStageReturnType::ChannelDisconnected)
+        Ok(())
     }
 }
 
