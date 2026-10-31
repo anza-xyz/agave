@@ -13,8 +13,6 @@ use {
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
-        stake_account::StakeAccount,
-        stakes::{DeserializableDelegationStakes, Stakes},
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -41,7 +39,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
     std::{
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
@@ -54,7 +51,7 @@ use {
         thread,
         time::Instant,
     },
-    types::{SerdeAccountsLtHash, UnusedRentCollector},
+    types::{SerdeAccountsLtHash, UnusedRentCollector, UnusedStakes},
     wincode::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         adapter::{DefaultOnEmptyRead, DiscardSeq},
@@ -200,7 +197,7 @@ struct DeserializableVersionedBank {
     _unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    _unused_stakes: DeserializableDelegationStakes,
+    _unused_stakes: UnusedStakes,
     _unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -254,7 +251,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     // Write-only type (its deserialize counterpart is `DeserializableVersionedBank`), so the abi
     // digest only verifies the serialized wire format; there is no roundtrip.
     frozen_abi(
-        abi_digest = "7bTCffg34CBt8zAyc1H81TUazqPTUC1Xtkd597FV7wjr",
+        abi_digest = "G19ADLMnfveR3veGHYpGU4NJNrLKfrLzNgKsFUHut4q1",
         abi_serializer = "wincode",
         test_roundtrip = "no"
     )
@@ -289,7 +286,7 @@ struct SerializableVersionedBank {
     unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: Stakes<StakeAccount<Delegation>>,
+    unused_stakes: UnusedStakes,
     unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -326,7 +323,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             unused_rent_collector: UnusedRentCollector::zeroed(),
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
-            stakes: rhs.stakes,
+            unused_stakes: UnusedStakes::zeroed(),
             unused_accounts: UnusedAccounts::default(),
             unused_epoch_stakes: HashMap::default(),
             is_delta: rhs.is_delta,
@@ -480,13 +477,13 @@ pub struct ExtraFieldsToSerialize {
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
 /// the parts sequentially, matching separate reads).
 ///
-/// Its abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
+/// Its abi digest must equal [`SerializableBankSnapshot`]'s, so the read and write
 /// wire formats can't diverge.
 #[cfg_attr(
     feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
+        abi_digest = "CE7KKmFXTobPRZcv87F26mZEjsN5892Bmz3A7R4CY6SK",
         abi_serializer = "wincode",
         test_roundtrip = "wire_only"
     )
@@ -652,7 +649,7 @@ where
     // Write-only type (its deserialize counterparts are `DeserializableVersionedBank`,
     // `AccountsDbFields` and `ExtraFieldsToDeserialize`), so there is no roundtrip.
     frozen_abi(
-        abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
+        abi_digest = "CE7KKmFXTobPRZcv87F26mZEjsN5892Bmz3A7R4CY6SK",
         abi_serializer = "wincode",
         test_roundtrip = "no"
     )

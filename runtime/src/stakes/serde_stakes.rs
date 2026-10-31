@@ -1,23 +1,12 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
-#[cfg(feature = "stable-abi")]
-use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
-#[cfg(any(test, feature = "stable-abi"))]
-use wincode::SchemaWrite;
 use {
     super::{StakeAccount, Stakes},
-    crate::stake_history::StakeHistory,
-    solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::{Delegation, Stake},
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
-    wincode::SchemaRead,
 };
 
-/// Wrapper struct with custom serialization to support serializing
-/// `Stakes<StakeAccount>` as `Stakes<Stake>` without doing an intermediate
-/// clone of the stake data.
+/// Stake representations accepted when constructing epoch stakes.
 #[derive(Debug, Clone)]
 pub enum SerdeStakesToStakeFormat {
     Stake(Stakes<Stake>),
@@ -59,133 +48,5 @@ impl PartialEq<Self> for SerdeStakesToStakeFormat {
 impl From<Stakes<StakeAccount>> for SerdeStakesToStakeFormat {
     fn from(stakes: Stakes<StakeAccount>) -> Self {
         Self::Account(stakes)
-    }
-}
-
-/// Simplified, intermediate representation of [`Stakes<T>`]
-///
-/// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
-/// deserialization without creating imbl::HashMap (such conversion is deferred until
-/// data is actually needed).
-#[cfg_attr(
-    feature = "stable-abi",
-    derive(SchemaWrite, StableAbi, StableAbiSample)
-)]
-#[derive(Clone, Debug, SchemaRead)]
-#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) struct DeserializableDelegationStakes {
-    pub vote_accounts: VoteAccounts,
-    // Sampled as `StakeAccount`s (as the serialize side does) reduced to the written `Delegation`.
-    #[cfg_attr(
-        feature = "stable-abi",
-        stable_abi_sample(with = "stable_abi_sample_stake_delegations(rng)")
-    )]
-    pub stake_delegations: Vec<(Pubkey, Delegation)>,
-    pub unused: u64,
-    pub epoch: Epoch,
-    pub stake_history: StakeHistory,
-}
-
-#[cfg(feature = "stable-abi")]
-fn stable_abi_sample_stake_delegations(
-    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
-) -> Vec<(Pubkey, Delegation)> {
-    use solana_frozen_abi::stable_abi::{context::SequenceLenMax, sample_collection_sized};
-    let stake_accounts: Vec<(Pubkey, StakeAccount)> =
-        sample_collection_sized(rng, SequenceLenMax(1));
-    stake_accounts
-        .into_iter()
-        .map(|(pubkey, account)| (pubkey, *account.delegation()))
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use {
-        super::*,
-        crate::{serde_snapshot::deserialize_wincode_from, stake_utils, stakes::StakesCache},
-        rand::Rng,
-        solana_rent::Rent,
-        solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
-        solana_vote_program::vote_state,
-    };
-
-    #[test]
-    fn test_stakes_to_delegation_format() {
-        #[derive(Debug, SchemaWrite)]
-        struct SerializableDummy {
-            head: String,
-            stakes: Stakes<StakeAccount>,
-            tail: String,
-        }
-
-        #[derive(Debug, SchemaRead)]
-        struct DeserializableDummy {
-            head: String,
-            stakes: DeserializableDelegationStakes,
-            tail: String,
-        }
-
-        let mut rng = rand::rng();
-        let stakes_cache = StakesCache::new(Stakes {
-            unused: rng.random(),
-            epoch: rng.random(),
-            ..Stakes::default()
-        });
-        for _ in 0..rng.random_range(5usize..10) {
-            let vote_pubkey = solana_pubkey::new_rand();
-            let node_pubkey = solana_pubkey::new_rand();
-            let commission = rng.random_range(0..101);
-            let commission_bps = commission * 100;
-            let vote_account = vote_state::create_v4_account_with_authorized(
-                &node_pubkey,
-                &vote_pubkey,
-                [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-                &vote_pubkey,
-                commission_bps,
-                &vote_pubkey,
-                0,
-                &node_pubkey,
-                rng.random_range(0..1_000_000), // lamports
-            );
-            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, false, false);
-            for _ in 0..rng.random_range(10usize..20) {
-                let stake_pubkey = solana_pubkey::new_rand();
-                let rent = Rent::free();
-                let stake_account = stake_utils::create_stake_account(
-                    &stake_pubkey, // authorized
-                    &vote_pubkey,
-                    &vote_account,
-                    &rent,
-                    rng.random_range(0..1_000_000), // lamports
-                );
-                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, false, false);
-            }
-        }
-        let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();
-        assert!(stakes.vote_accounts.as_ref().len() >= 5);
-        assert!(stakes.stake_delegations.len() >= 50);
-        let dummy = SerializableDummy {
-            head: String::from("dummy-head"),
-            stakes: stakes.clone(),
-            tail: String::from("dummy-tail"),
-        };
-        assert!(dummy.stakes.vote_accounts().as_ref().len() >= 5);
-        let data = wincode::serialize(&dummy).unwrap();
-        let other: DeserializableDummy =
-            deserialize_wincode_from(std::io::Cursor::new(&data)).unwrap();
-        assert_eq!(other.head, dummy.head);
-        assert_eq!(other.tail, dummy.tail);
-
-        assert!(other.stakes.vote_accounts.as_ref().len() >= 5);
-        assert_eq!(other.stakes.vote_accounts, stakes.vote_accounts);
-
-        assert_eq!(other.stakes.epoch, stakes.epoch);
-        assert_eq!(other.stakes.stake_history, stakes.stake_history);
-
-        assert!(other.stakes.stake_delegations.len() >= 50);
-        // DeserializableDelegationStakes doesn't preserve same order of elements as Stakes, compare converted
-        let other_stakes = Stakes::from_deserialized(other.stakes);
-        assert_eq!(other_stakes, dummy.stakes.into());
     }
 }

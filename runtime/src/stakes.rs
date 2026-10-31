@@ -37,7 +37,6 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::DeserializableDelegationStakes;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 #[derive(Debug, Clone, PartialEq, Eq, ToPrimitive)]
 pub enum InvalidCacheEntryReason {
@@ -894,20 +893,6 @@ pub(crate) mod tests {
         solana_vote_program::vote_state,
         test_case::test_matrix,
     };
-
-    impl Stakes<Delegation> {
-        /// Convert deserialized stakes into runtime stakes representation
-        pub(crate) fn from_deserialized(stakes: DeserializableDelegationStakes) -> Self {
-            Self {
-                vote_accounts: stakes.vote_accounts,
-                stake_delegations: ImblHashMap::from_iter(stakes.stake_delegations),
-                delegated_stakes: DelegatedStakes::default(),
-                unused: stakes.unused,
-                epoch: stakes.epoch,
-                stake_history: stakes.stake_history,
-            }
-        }
-    }
 
     //  set up some dummies for a staked node
     pub(crate) fn create_staked_node_accounts_with_activation_and_deactivation_epochs(
