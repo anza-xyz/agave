@@ -516,8 +516,8 @@ where
         connection_manager: M,
     ) -> Result<Self> {
         let connection_cache = Arc::new(
-            ConnectionCache::new(name, connection_manager, DEFAULT_CONNECTION_POOL_SIZE).unwrap(),
-        ); // TODO: Handle error properly, as the ConnectionCache ctor is now fallible.
+            ConnectionCache::new(name, connection_manager, DEFAULT_CONNECTION_POOL_SIZE)?);
+
         Self::new_with_connection_cache(rpc_client, websocket_url, config, connection_cache).await
     }
 
