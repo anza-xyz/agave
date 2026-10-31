@@ -974,6 +974,7 @@ impl ReplayStage {
                 while poh_controller.has_pending_message() && !exit.load(Ordering::Relaxed) {}
             }
 
+            info!("ReplayStage has started");
             loop {
                 // Stop getting entries if we get exit signal
                 if exit.load(Ordering::Relaxed) {
@@ -1493,7 +1494,7 @@ impl ReplayStage {
                                              set-identity, Exiting: {err}"
                                         );
                                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
-                                        return;
+                                        break;
                                     }
                                 };
                                 // Ensure the validator can land votes with the new identity before
@@ -1662,6 +1663,7 @@ impl ReplayStage {
                     wait_receive_time.as_us(),
                 );
             }
+            info!("ReplayStage has stopped");
         };
         let t_replay = Builder::new()
             .name("solReplayStage".to_string())
