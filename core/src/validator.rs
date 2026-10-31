@@ -951,6 +951,8 @@ impl Validator {
             },
         ));
 
+        let bank_notifications_enabled =
+            config.rpc_addrs.is_some() || slot_status_notifier.is_some();
         let dependency_tracker = Arc::new(DependencyTracker::default());
 
         let (
@@ -979,10 +981,7 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
-            config
-                .rpc_addrs
-                .is_some()
-                .then(|| dependency_tracker.clone()),
+            bank_notifications_enabled.then(|| dependency_tracker.clone()),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1277,124 +1276,111 @@ impl Validator {
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
-        let (
-            json_rpc_service,
-            rpc_subscriptions,
-            pubsub_service,
-            rpc_completed_slots_service,
-            sample_performance_service,
-            optimistically_confirmed_bank_tracker,
-            bank_notification_sender,
-        ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
-            assert_eq!(
-                node.info.rpc().map(|addr| socket_addr_space.check(&addr)),
-                node.info
-                    .rpc_pubsub()
-                    .map(|addr| socket_addr_space.check(&addr))
-            );
-            let (bank_notification_sender, bank_notification_receiver) = unbounded();
-            let confirmed_bank_subscribers = if !bank_notification_senders.is_empty() {
-                Some(Arc::new(RwLock::new(bank_notification_senders)))
-            } else {
-                None
-            };
-
-            let rpc_tpu_client_args = {
-                let runtime_handle = tpu_client_next_runtime
-                    .as_ref()
-                    .map(TokioRuntime::handle)
-                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
-
-                RpcTpuClientArgs(
-                    Arc::as_ref(&identity_keypair),
-                    node.sockets.rpc_sts_client,
-                    runtime_handle.clone(),
-                    cancel.clone(),
-                )
-            };
-            let rpc_svc_config = JsonRpcServiceConfig {
-                rpc_addr,
-                rpc_config: config.rpc_config.clone(),
-                snapshot_config: Some(snapshot_controller.snapshot_config().clone()),
-                bank_forks: bank_forks.clone(),
-                block_commitment_cache: block_commitment_cache.clone(),
-                blockstore: blockstore.clone(),
-                cluster_info: cluster_info.clone(),
-                genesis_hash: genesis_config.hash(),
-                ledger_path: ledger_path.to_path_buf(),
-                validator_exit: config.validator_exit.clone(),
-                exit: exit.clone(),
-                override_health_check: rpc_override_health_check.clone(),
-                optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
-                highest_finalized: highest_finalized.clone(),
-                send_transaction_service_config: config.send_transaction_service_config.clone(),
-                max_slots: max_slots.clone(),
-                leader_schedule_cache: leader_schedule_cache.clone(),
-                max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
-                prioritization_fee_cache: prioritization_fee_cache.clone(),
-                rpc_tpu_client_args,
-            };
-            let json_rpc_service =
-                JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
-            let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
-                exit.clone(),
-                max_complete_transaction_status_slot,
-                blockstore.clone(),
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                optimistically_confirmed_bank.clone(),
-                &config.pubsub_config,
-                None,
-            ));
-            let pubsub_service = if !config.rpc_config.full_api {
-                None
-            } else {
-                let (trigger, pubsub_service) = PubSubService::new(
-                    config.pubsub_config.clone(),
-                    &rpc_subscriptions,
-                    rpc_pubsub_addr,
+        let (json_rpc_service, rpc_subscriptions, pubsub_service, sample_performance_service) =
+            if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
+                assert_eq!(
+                    node.info.rpc().map(|addr| socket_addr_space.check(&addr)),
+                    node.info
+                        .rpc_pubsub()
+                        .map(|addr| socket_addr_space.check(&addr))
                 );
-                config
-                    .validator_exit
-                    .write()
-                    .unwrap()
-                    .register_exit(Box::new(move || trigger.cancel()));
+                let rpc_tpu_client_args = {
+                    let runtime_handle = tpu_client_next_runtime
+                        .as_ref()
+                        .map(TokioRuntime::handle)
+                        .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
 
-                Some(pubsub_service)
-            };
+                    RpcTpuClientArgs(
+                        Arc::as_ref(&identity_keypair),
+                        node.sockets.rpc_sts_client,
+                        runtime_handle.clone(),
+                        cancel.clone(),
+                    )
+                };
+                let rpc_svc_config = JsonRpcServiceConfig {
+                    rpc_addr,
+                    rpc_config: config.rpc_config.clone(),
+                    snapshot_config: Some(snapshot_controller.snapshot_config().clone()),
+                    bank_forks: bank_forks.clone(),
+                    block_commitment_cache: block_commitment_cache.clone(),
+                    blockstore: blockstore.clone(),
+                    cluster_info: cluster_info.clone(),
+                    genesis_hash: genesis_config.hash(),
+                    ledger_path: ledger_path.to_path_buf(),
+                    validator_exit: config.validator_exit.clone(),
+                    exit: exit.clone(),
+                    override_health_check: rpc_override_health_check.clone(),
+                    optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
+                    highest_finalized: highest_finalized.clone(),
+                    send_transaction_service_config: config.send_transaction_service_config.clone(),
+                    max_slots: max_slots.clone(),
+                    leader_schedule_cache: leader_schedule_cache.clone(),
+                    max_complete_transaction_status_slot: max_complete_transaction_status_slot
+                        .clone(),
+                    prioritization_fee_cache: prioritization_fee_cache.clone(),
+                    rpc_tpu_client_args,
+                };
+                let json_rpc_service = JsonRpcService::new_with_config(rpc_svc_config)
+                    .map_err(ValidatorError::Other)?;
+                let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
+                    exit.clone(),
+                    max_complete_transaction_status_slot,
+                    blockstore.clone(),
+                    bank_forks.clone(),
+                    block_commitment_cache.clone(),
+                    optimistically_confirmed_bank.clone(),
+                    &config.pubsub_config,
+                    None,
+                ));
+                let pubsub_service = if !config.rpc_config.full_api {
+                    None
+                } else {
+                    let (trigger, pubsub_service) = PubSubService::new(
+                        config.pubsub_config.clone(),
+                        &rpc_subscriptions,
+                        rpc_pubsub_addr,
+                    );
+                    config
+                        .validator_exit
+                        .write()
+                        .unwrap()
+                        .register_exit(Box::new(move || trigger.cancel()));
 
-            let rpc_completed_slots_service =
-                if config.rpc_config.full_api || geyser_plugin_service.is_some() {
-                    let (completed_slots_sender, completed_slots_receiver) =
-                        bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
-                    blockstore.add_completed_slots_signal(completed_slots_sender);
+                    Some(pubsub_service)
+                };
 
-                    Some(RpcCompletedSlotsService::spawn(
-                        completed_slots_receiver,
-                        rpc_subscriptions.clone(),
-                        slot_status_notifier.clone(),
+                let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history
+                {
+                    Some(SamplePerformanceService::new(
+                        bank_forks.clone(),
+                        blockstore.clone(),
                         exit.clone(),
                     ))
                 } else {
                     None
                 };
 
-            let sample_performance_service = if config.rpc_config.enable_rpc_transaction_history {
-                Some(SamplePerformanceService::new(
-                    bank_forks.clone(),
-                    blockstore.clone(),
-                    exit.clone(),
-                ))
+                (
+                    Some(json_rpc_service),
+                    Some(rpc_subscriptions),
+                    pubsub_service,
+                    sample_performance_service,
+                )
             } else {
-                None
+                (None, None, None, None)
             };
 
-            let dependency_tracker = transaction_status_sender
-                .is_some()
-                .then_some(dependency_tracker);
-            let optimistically_confirmed_bank_tracker =
-                Some(OptimisticallyConfirmedBankTracker::new(
-                    bank_notification_receiver,
+        // Geyser consumes bank notifications even when the public RPC service is disabled.
+        let (optimistically_confirmed_bank_tracker, bank_notification_sender) =
+            if bank_notifications_enabled {
+                let (sender, receiver) = unbounded();
+                let confirmed_bank_subscribers = (!bank_notification_senders.is_empty())
+                    .then(|| Arc::new(RwLock::new(bank_notification_senders)));
+                let dependency_tracker = transaction_status_sender
+                    .is_some()
+                    .then_some(dependency_tracker);
+                let tracker = OptimisticallyConfirmedBankTracker::new(
+                    receiver,
                     exit.clone(),
                     bank_forks.clone(),
                     optimistically_confirmed_bank,
@@ -1402,23 +1388,31 @@ impl Validator {
                     confirmed_bank_subscribers,
                     prioritization_fee_cache.clone(),
                     dependency_tracker.clone(),
-                ));
-            let bank_notification_sender_config = Some(BankNotificationSenderConfig {
-                sender: bank_notification_sender,
-                should_send_parents: geyser_plugin_service.is_some(),
-                dependency_tracker,
-            });
-            (
-                Some(json_rpc_service),
-                Some(rpc_subscriptions),
-                pubsub_service,
-                rpc_completed_slots_service,
-                sample_performance_service,
-                optimistically_confirmed_bank_tracker,
-                bank_notification_sender_config,
-            )
+                );
+                let sender = BankNotificationSenderConfig {
+                    sender,
+                    should_send_parents: slot_status_notifier.is_some(),
+                    dependency_tracker,
+                };
+                (Some(tracker), Some(sender))
+            } else {
+                (None, None)
+            };
+
+        let rpc_completed_slots_service = if (rpc_subscriptions.is_some()
+            && config.rpc_config.full_api)
+            || slot_status_notifier.is_some()
+        {
+            let (sender, receiver) = bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
+            blockstore.add_completed_slots_signal(sender);
+            Some(RpcCompletedSlotsService::spawn(
+                receiver,
+                rpc_subscriptions.clone(),
+                slot_status_notifier.clone(),
+                exit.clone(),
+            ))
         } else {
-            (None, None, None, None, None, None, None)
+            None
         };
 
         // CompletedDataSetsService feeds two independent sinks: RPC signatureSubscribe
@@ -3447,8 +3441,21 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn validator_exit() {
+    #[test_case::test_case(true, false, true, false; "rpc_only")]
+    #[test_case::test_case(false, false, false, false; "neither")]
+    #[test_case::test_case(false, true, false, false; "geyser_only")]
+    #[test_case::test_case(true, true, true, false; "rpc_and_geyser")]
+    #[test_case::test_case(true, false, false, false; "minimal_rpc")]
+    #[test_case::test_case(true, true, false, false; "minimal_rpc_and_geyser")]
+    #[test_case::test_case(true, false, true, true; "rpc_with_transaction_history")]
+    #[test_case::test_case(true, true, true, true; "rpc_and_geyser_with_transaction_history")]
+    #[test_case::test_case(false, true, false, true; "geyser_only_with_transaction_history")]
+    fn validator_exit(
+        rpc_enabled: bool,
+        geyser_enabled: bool,
+        full_api: bool,
+        enable_rpc_transaction_history: bool,
+    ) {
         agave_logger::setup();
         let leader_keypair = Keypair::new();
         let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
@@ -3462,10 +3469,18 @@ mod tests {
 
         let voting_keypair = Arc::new(Keypair::new());
         let config = ValidatorConfig {
-            rpc_addrs: Some((
-                validator_node.info.rpc().unwrap(),
-                validator_node.info.rpc_pubsub().unwrap(),
-            )),
+            rpc_addrs: rpc_enabled.then(|| {
+                (
+                    validator_node.info.rpc().unwrap(),
+                    validator_node.info.rpc_pubsub().unwrap(),
+                )
+            }),
+            geyser_plugin_always_enabled: geyser_enabled,
+            rpc_config: JsonRpcConfig {
+                full_api,
+                enable_rpc_transaction_history,
+                ..JsonRpcConfig::default_for_test()
+            },
             ..ValidatorConfig::default_for_test()
         };
         let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
@@ -3488,6 +3503,20 @@ mod tests {
         assert_eq!(
             *start_progress.read().unwrap(),
             ValidatorStartProgress::Running
+        );
+        assert_eq!(validator.json_rpc_service.is_some(), rpc_enabled);
+        assert_eq!(
+            validator.optimistically_confirmed_bank_tracker.is_some(),
+            rpc_enabled || geyser_enabled,
+        );
+        assert_eq!(
+            validator.rpc_completed_slots_service.is_some(),
+            (rpc_enabled && full_api) || geyser_enabled
+        );
+        assert_eq!(validator.geyser_plugin_service.is_some(), geyser_enabled);
+        assert_eq!(
+            validator.sample_performance_service.is_some(),
+            rpc_enabled && enable_rpc_transaction_history
         );
         validator.close();
         remove_dir_all(validator_ledger_path).unwrap();
