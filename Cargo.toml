@@ -403,7 +403,7 @@ solana-clap-v3-utils = { path = "clap-v3-utils", version = "=4.5.0-alpha.4", fea
 solana-cli-config = { path = "cli-config", version = "=4.5.0-alpha.4" }
 solana-cli-output = { path = "cli-output", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-client = { path = "client", version = "=4.5.0-alpha.4" }
-solana-client-traits = "6.0.0"
+solana-client-traits = "6.0.1"
 solana-clock = "4.0.0"
 solana-cluster-type = "3.2.1"
 solana-commitment-config = "3.1.1"
