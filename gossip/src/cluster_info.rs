@@ -78,7 +78,7 @@ use {
     solana_vote::vote_parser,
     std::{
         borrow::Borrow,
-        collections::{HashMap, HashSet},
+        collections::{HashMap, HashSet, hash_map::Entry},
         fmt::Debug,
         fs::{self, File},
         io::{BufReader, BufWriter, Write},
@@ -1744,12 +1744,41 @@ impl ClusterInfo {
             let now = Instant::now();
             self.check_pull_request(now, &mut rng, &mut packet_batch)
         });
+        if output_size_limit == 0 {
+            return packet_batch;
+        }
+        // Weight each source once so a peer can't inflate priority by splitting a
+        // pull round into more filters; all of a source's filters are served together.
+        let mut sources = Vec::new();
+        let mut requests_by_source = HashMap::<Pubkey, Vec<usize>>::new();
+        for (k, request) in requests.iter().enumerate() {
+            match requests_by_source.entry(request.pubkey) {
+                Entry::Occupied(mut entry) => entry.get_mut().push(k),
+                Entry::Vacant(entry) => {
+                    sources.push(request.pubkey);
+                    entry.insert(vec![k]);
+                }
+            }
+        }
+        // Prioritize higher-staked peers; weighted shuffle keeps faulty high-stake
+        // nodes from consuming the whole budget. Lazy, so only sources that fit are sampled.
+        let mut shuffle = WeightedShuffle::new(
+            "handle-pull-requests",
+            sources
+                .iter()
+                .map(|source| stakes.get(source).copied().unwrap_or_default()),
+        );
+        let mut shuffle_rng = ChaCha8Rng::from_rng(&mut rng);
+        let shuffled_requests = shuffle
+            .shuffle(&mut shuffle_rng)
+            .flat_map(|k| requests_by_source[&sources[k]].iter())
+            .map(|&k| &requests[k]);
         let now = timestamp();
         let self_id = self.id();
         let pull_responses = {
             let _st = ScopedTimer::from(&self.stats.generate_pull_responses);
             self.gossip.generate_pull_responses(
-                &requests,
+                shuffled_requests,
                 output_size_limit,
                 now,
                 |value| {
