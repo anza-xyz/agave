@@ -2,17 +2,14 @@
 //! Format validity is established separately by SDK / transaction-view sanitization.
 
 use {
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_config_view::TransactionConfigView,
+    ahash::HashSetExt as _,
     solana_compute_budget::compute_budget_limits::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
-    solana_message::v1,
-    solana_pubkey::Pubkey,
+    solana_message::{AccountKeys, v1},
     solana_svm_transaction::svm_transaction::SVMStaticTransaction,
     solana_transaction::versioned::TransactionVersion,
     solana_transaction_context::{MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_TRACE_LENGTH},
     solana_transaction_error::{TransactionError, TransactionResult},
-    std::collections::HashSet,
 };
 
 /// Maximum serialized transaction size for legacy and v0 transactions, in bytes.
@@ -20,11 +17,9 @@ const MAX_LEGACY_AND_V0_TRANSACTION_SIZE: usize = 1232;
 const MAX_V1_SIGNATURES: usize = 12;
 const MAX_V1_ACCOUNTS: usize = 64;
 
-pub(crate) fn validate_unique_account_keys<'a>(
-    account_keys: impl IntoIterator<Item = &'a Pubkey>,
-) -> TransactionResult<()> {
-    let mut seen = HashSet::new();
-    if account_keys.into_iter().any(|key| !seen.insert(key)) {
+pub(crate) fn validate_unique_account_keys(account_keys: AccountKeys) -> TransactionResult<()> {
+    let mut seen = ahash::HashSet::with_capacity(account_keys.len());
+    if account_keys.iter().any(|key| !seen.insert(key)) {
         Err(TransactionError::AccountLoadedTwice)
     } else {
         Ok(())
@@ -68,16 +63,10 @@ pub(crate) fn validate_transaction_config(config: &v1::TransactionConfig) -> Tra
     validate_heap_size(config.heap_size)
 }
 
-// TransactionConfigView is not publicly exported by transaction-view, so accept
-// the enclosing view and access its config without materializing an SDK config.
 pub(crate) fn validate_transaction_config_view(
-    transaction: &SanitizedTransactionView<impl TransactionData>,
+    config: &TransactionConfigView<'_>,
 ) -> TransactionResult<()> {
-    validate_heap_size(
-        transaction
-            .transaction_config()
-            .and_then(|config| config.requested_heap_size()),
-    )
+    validate_heap_size(config.requested_heap_size())
 }
 
 fn validate_heap_size(requested_heap_size: Option<u32>) -> TransactionResult<()> {
@@ -111,6 +100,7 @@ mod tests {
             sanitized::{MessageHash, SanitizedTransaction},
             versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
         },
+        std::collections::HashSet,
     };
 
     fn transaction(

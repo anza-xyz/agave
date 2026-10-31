@@ -19,6 +19,11 @@ use {
         validator::BlockProductionMethod,
     },
     agave_banking_stage_ingress_types::{BankingPacketReceiver, SchedulerPriorityFloor},
+    agave_jemalloc::{
+        arena_for_worker,
+        group::ArenaGroup,
+        jemalloc::{Arena, DisableThreadTcacheOnDrop},
+    },
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
     crossbeam_channel::{Receiver, Sender, bounded},
     futures::{StreamExt, stream::FuturesUnordered},
@@ -88,6 +93,16 @@ const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 /// Returns the packet's payload, or None if the packet is discarded.
 fn packet_bytes(packet: &BytesPacket) -> Option<Bytes> {
     (!packet.meta().discard()).then(|| packet.buffer().clone())
+}
+
+fn bind_arena(assigned_arena: Option<Arena>) -> Option<DisableThreadTcacheOnDrop> {
+    assigned_arena.map(|arena| {
+        arena
+            .bind_current_thread_permanently()
+            .expect("failed to bind banking worker thread to jemalloc arena");
+
+        DisableThreadTcacheOnDrop::new(arena)
+    })
 }
 
 #[derive(Debug, Default)]
@@ -315,6 +330,7 @@ impl BankingStageStats {
 pub struct BankingStage {
     banking_shutdown_signal: CancellationToken,
     worker_exit_signal: Arc<AtomicBool>,
+    worker_thread_arenas: Option<Arc<ArenaGroup>>,
     banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
     tpu_vote_receiver: BankingPacketReceiver,
     gossip_vote_receiver: BankingPacketReceiver,
@@ -343,6 +359,7 @@ impl BankingStage {
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
+        worker_thread_arenas: Option<Arc<ArenaGroup>>,
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
@@ -363,6 +380,7 @@ impl BankingStage {
         let manager = BankingStage {
             banking_shutdown_signal: banking_shutdown_signal.clone(),
             worker_exit_signal: Arc::new(AtomicBool::new(false)),
+            worker_thread_arenas,
             banking_control_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -540,6 +558,10 @@ impl BankingStage {
         let mut worker_metrics = Vec::with_capacity(num_workers);
         for (index, work_receiver) in work_receivers.into_iter().enumerate() {
             let id = index as u32;
+            let assigned_arena = self
+                .worker_thread_arenas
+                .as_ref()
+                .map(|arenas| arena_for_worker(arenas, index));
             let consume_worker = ConsumeWorker::new(
                 exit.clone(),
                 work_receiver,
@@ -556,7 +578,9 @@ impl BankingStage {
             threads.push(
                 Builder::new()
                     .name(format!("solCoWorker{id:02}"))
-                    .spawn(|| {
+                    .spawn(move || {
+                        let _disable_tcache_on_exit = bind_arena(assigned_arena);
+
                         if let Err(err) = consume_worker.run() {
                             error!("Internal consume worker error; err={err}");
                         }
@@ -710,6 +734,10 @@ mod external {
             ) in workers.into_iter().enumerate()
             {
                 let id = index as u32;
+                let assigned_arena = self
+                    .worker_thread_arenas
+                    .as_ref()
+                    .map(|arenas| arena_for_worker(arenas, index));
                 let consume_worker = ExternalWorker::new(
                     self.worker_exit_signal.clone(),
                     Consumer::new(
@@ -726,6 +754,8 @@ mod external {
                     Builder::new()
                         .name(format!("solECoWorker{id:02}"))
                         .spawn(move || {
+                            let _disable_tcache_on_exit = bind_arena(assigned_arena);
+
                             if let Err(err) =
                                 consume_worker.run_execution_worker(pack_to_worker, worker_to_pack)
                             {
@@ -997,6 +1027,7 @@ mod tests {
                 scheduler_pacing: SchedulerPacing::Disabled,
             },
             None,
+            None,
             replay_vote_sender,
             None,
             bank_forks,
@@ -1058,6 +1089,7 @@ mod tests {
             SchedulerConfig {
                 scheduler_pacing: SchedulerPacing::Disabled,
             },
+            None,
             None,
             replay_vote_sender,
             None,
@@ -1210,6 +1242,7 @@ mod tests {
                 SchedulerConfig {
                     scheduler_pacing: SchedulerPacing::Disabled,
                 },
+                None,
                 None,
                 replay_vote_sender,
                 None,

@@ -754,8 +754,11 @@ mod tests {
         account_address: Pubkey,
         nonce_state: nonce::state::State,
     ) -> AccountSharedData {
-        let mut account =
-            AccountSharedData::new(1, nonce::state::State::size(), &system_program::id());
+        let mut account = AccountSharedData::new_with_data(
+            1,
+            vec![0; nonce::state::State::size()],
+            &system_program::id(),
+        );
         account
             .set_state(&nonce::versions::Versions::new(nonce_state))
             .unwrap();

@@ -31,7 +31,9 @@ dev-context-only-utils = [
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-math-utils = { workspace = true }
 agave-snapshots = { workspace = true }
+agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
 base64 = { workspace = true }
 bs58 = { workspace = true }
@@ -73,7 +75,6 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
-solana-poh = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -119,6 +120,7 @@ solana-bls-signatures = { workspace = true }
 solana-client = { path = "../client" }
 solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-context-only-utils"] }

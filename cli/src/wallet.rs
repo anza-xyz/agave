@@ -5,8 +5,8 @@ use {
             log_instruction_custom_error, message_into_signed_transaction,
             request_and_confirm_airdrop,
         },
-        compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
-        memo::WithMemo,
+        compute_budget::ComputeUnitConfig,
+        message_builder::MessageBuilder,
         nonce::check_nonce_account,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
     },
@@ -31,7 +31,6 @@ use {
         stdout::writeln_stdout,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_message::{Message, VersionedMessage},
     solana_offchain_message::OffchainMessage,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -1018,37 +1017,37 @@ pub async fn process_transfer(
     };
     let build_message = |lamports| {
         let ixs = if let Some((base_pubkey, seed, program_id, from_pubkey)) = with_seed.as_ref() {
-            vec![system_instruction::transfer_with_seed(
+            MessageBuilder::new(vec![system_instruction::transfer_with_seed(
                 from_pubkey,
                 base_pubkey,
                 seed.clone(),
                 program_id,
                 to,
                 lamports,
-            )]
+            )])
             .with_memo(memo)
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
                 compute_unit_limit,
             })
         } else {
-            vec![system_instruction::transfer(&from_pubkey, to, lamports)]
-                .with_memo(memo)
-                .with_compute_unit_config(&ComputeUnitConfig {
-                    compute_unit_price,
-                    compute_unit_limit,
-                })
+            MessageBuilder::new(vec![system_instruction::transfer(
+                &from_pubkey,
+                to,
+                lamports,
+            )])
+            .with_memo(memo)
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price,
+                compute_unit_limit,
+            })
         };
 
         if let Some(nonce_account) = &nonce_account {
-            VersionedMessage::Legacy(Message::new_with_nonce(
-                ixs,
-                Some(&fee_payer.pubkey()),
-                nonce_account,
-                &nonce_authority.pubkey(),
-            ))
+            ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+                .build(&fee_payer.pubkey())
         } else {
-            VersionedMessage::Legacy(Message::new(&ixs, Some(&fee_payer.pubkey())))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -1059,7 +1058,10 @@ pub async fn process_transfer(
         &recent_blockhash,
         &from_pubkey,
         &fee_payer.pubkey(),
-        compute_unit_limit,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )

@@ -929,7 +929,7 @@ impl ReplayStage {
                 ForkReplayMode::Parallel(pool)
             };
             let replay_verification_worker_pool =
-                ReplayVerificationWorkerPool::new(replay_transactions_threads.get());
+                ReplayVerificationWorkerPool::new(replay_transactions_threads);
 
             let process_active_banks_context = ProcessActiveBanksContext {
                 bank_forks: bank_forks.clone(),

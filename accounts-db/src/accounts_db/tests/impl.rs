@@ -97,7 +97,7 @@ fn generate_index_for_storage(
 ) {
     let mut reader = accounts_file::new_scan_accounts_reader();
     storage.accounts.set_file_on_reader(&mut reader).unwrap();
-    db.generate_index_for_slot(&mut reader, accum, 0, storage);
+    db.generate_index_for_slot(&mut reader, accum, 0, storage, &[]);
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn test_generate_index_with_direct_io() {
             store.write_accounts(&(slot, &accounts[..])).unwrap();
             db.storage.insert(Arc::new(store));
         }
-        let info = db.generate_index(None, false);
+        let info = db.generate_index(None, false, &[]);
         let alive = Vec::from_iter((0..NUM_SLOTS).map(|slot| {
             let storage = db.get_storage_for_slot(slot).unwrap();
             (storage.num_alive_accounts(), storage.num_alive_bytes())
@@ -201,7 +201,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     let append_vec = Arc::new(append_vec);
     db.storage.insert(Arc::clone(&append_vec));
     assert!(!db.accounts_index.contains(&pubkey));
-    let result = db.generate_index(None, false);
+    let result = db.generate_index(None, false, &[]);
 
     // The zero-lamport account stays alive in the index; its pubkey is added to
     // `uncleaned_pubkeys` for clean to handle
@@ -227,30 +227,43 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 }
 
 #[test]
-fn test_generate_index_collects_stake_pubkeys() {
+fn test_generate_index_collects_pubkeys_by_owner() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let stake_owner = solana_sdk_ids::stake::id();
+    let vote_owner = solana_sdk_ids::vote::id();
     let staked = Pubkey::from([1; 32]);
     let closed = Pubkey::from([2; 32]);
     let other = Pubkey::from([3; 32]);
+    let voter = Pubkey::from([4; 32]);
     let stake_account = AccountSharedData::new(1, 0, &stake_owner);
     let closed_account = AccountSharedData::new(0, 0, &stake_owner);
     let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let vote_account = AccountSharedData::new(1, 0, &vote_owner);
 
-    // Write the same accounts in two slots so the list has repeats.
+    // Write the same accounts in two slots so the lists have repeats.
     let data = [
         (&staked, &stake_account),
         (&closed, &closed_account),
         (&other, &other_account),
+        (&voter, &vote_account),
     ];
     for slot in [0, 1] {
         let store = db.create_store(slot, 1000);
         store.write_accounts(&(slot, &data[..])).unwrap();
         db.storage.insert(Arc::new(store));
     }
+    // The newest version of `staked` has another owner. Old versions still
+    // count.
+    let store = db.create_store(2, 1000);
+    store
+        .write_accounts(&(2, &[(&staked, &other_account)][..]))
+        .unwrap();
+    db.storage.insert(Arc::new(store));
 
-    let result = db.generate_index(None, false);
-    assert_eq!(result.stake_pubkeys, vec![staked]);
+    let result = db.generate_index(None, false, &[stake_owner, vote_owner]);
+    assert_eq!(result.pubkeys_by_owner.len(), 2);
+    assert_eq!(result.pubkeys_by_owner[&stake_owner], vec![staked]);
+    assert_eq!(result.pubkeys_by_owner[&vote_owner], vec![voter]);
 }
 
 #[test]
@@ -687,15 +700,18 @@ fn test_remove_unrooted_slot_cached() {
     let ancestors = Ancestors::from(vec![unrooted_slot]);
     assert!(!db.contains(&key));
     db.store_for_tests((unrooted_slot, &[(&key, &account0)][..]));
-    assert!(db.accounts_cache.contains(unrooted_slot));
-    assert!(!db.accounts_cache.contains_unflushed_root(unrooted_slot));
+    assert!(db.accounts_cache.contains(BankId::new(unrooted_slot)));
+    assert!(
+        !db.accounts_cache
+            .contains_unflushed_bank(BankId::new(unrooted_slot))
+    );
     assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
     // Purge the slot
     db.remove_unrooted_slots(&[(unrooted_slot, unrooted_bank_id)]);
     assert!(db.do_load_for_tests(&ancestors, &key).is_none());
-    assert!(db.accounts_cache.slot_cache(unrooted_slot).is_none());
+    assert!(db.slot_cache_for_tests(unrooted_slot).is_none());
     assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_none());
     assert!(!db.contains(&key));
 
@@ -703,6 +719,38 @@ fn test_remove_unrooted_slot_cached() {
     let account0 = AccountSharedData::new(2, 0, &key);
     db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
     db.assert_load_account(unrooted_slot, key, 2);
+}
+
+/// Two banks can store at the same slot; purging one leaves the other's cache intact.
+#[test]
+fn test_purge_slot_keeps_other_bank_at_same_slot() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let slot = 9;
+    let removed_bank_id = BankId::new(1);
+    let kept_bank_id = BankId::new(2);
+    let key = Pubkey::new_unique();
+    let removed_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let kept_account = AccountSharedData::new(2, 0, &Pubkey::default());
+    let removed_ancestors = Ancestors::from(vec![(slot, removed_bank_id)]);
+    let kept_ancestors = Ancestors::from(vec![(slot, kept_bank_id)]);
+    db.store_accounts_unfrozen(
+        (slot, [(&key, &removed_account)].as_slice()),
+        removed_bank_id,
+        &removed_ancestors,
+    );
+    db.store_accounts_unfrozen(
+        (slot, [(&key, &kept_account)].as_slice()),
+        kept_bank_id,
+        &kept_ancestors,
+    );
+
+    db.purge_slot(removed_bank_id, false);
+    assert!(!db.accounts_cache.contains(removed_bank_id));
+    assert!(db.do_load_for_tests(&removed_ancestors, &key).is_none());
+    assert_eq!(
+        db.do_load_for_tests(&kept_ancestors, &key),
+        Some((kept_account, slot))
+    );
 }
 
 /// Cache writes populate the secondary indexes but not the primary index. When a cache-only
@@ -762,6 +810,13 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
     let pubkeys: Vec<_> = (0..num_accounts).map(|_| Pubkey::new_unique()).collect();
     let accounts: Vec<_> = pubkeys.iter().map(|pubkey| (pubkey, &account)).collect();
     db.store_for_tests((slot, accounts.as_slice()));
+    // Another version of the slot, stored by a different bank
+    let other_bank_id = BankId::new(2);
+    db.store_accounts_unfrozen(
+        (slot, accounts.as_slice()),
+        other_bank_id,
+        &Ancestors::from(vec![(slot, other_bank_id)]),
+    );
 
     let mut visited = 0;
     let result = db.scan_accounts(
@@ -780,6 +835,39 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
     );
     assert_eq!(result, expected_result);
     assert_eq!(visited, expected_visits);
+}
+
+/// A scan whose bank is removed while walking the index must not go on to emit the cache-only
+/// accounts of the next step.
+#[test]
+fn test_scan_accounts_stays_aborted_across_steps() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let rooted: Vec<_> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let rooted: Vec<_> = rooted.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((1, rooted.as_slice()));
+    db.add_root_and_flush_write_cache(1);
+    let cached: Vec<_> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let cached: Vec<_> = cached.iter().map(|pubkey| (pubkey, &account)).collect();
+    db.store_for_tests((2, cached.as_slice()));
+
+    let bank_id = BankId::new(2);
+    let mut visited = 0;
+    let result = db.scan_accounts(
+        &Ancestors::from(vec![2, 1]),
+        bank_id,
+        |scan_result| {
+            if scan_result.is_some() {
+                visited += 1;
+                if visited == 1 {
+                    db.scan_tracker.mark_banks_removed([bank_id]);
+                }
+            }
+        },
+        &ScanConfig::default(),
+    );
+    assert_eq!(result, Err(ScanError::SlotRemoved { slot: 2, bank_id }));
+    assert_eq!(visited, 1);
 }
 
 /// An index scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
@@ -1435,7 +1523,7 @@ fn test_clean_converts_zero_lamport_single_ref_account_to_tombstone_after_shrink
     // Build the index from the storage, the way startup does. Every account gets a single index
     // entry, including the zero lamport ones, and the storage's alive bytes are derived from the
     // accounts it holds. `verify` checks each index entry against the account it points at.
-    accounts_db.generate_index(None, true);
+    accounts_db.generate_index(None, true, &[]);
 
     // index generation does not mark tombstones
     assert_eq!(storage1.num_tombstones(), 0);
@@ -3415,7 +3503,7 @@ fn test_store_flush_load_cached() {
     let account0 = AccountSharedData::new(1, 0, &key);
     let slot = 0;
     db.store_for_tests((slot, &[(&key, &account0)][..]));
-    db.mark_slot_frozen(slot);
+    db.mark_bank_frozen(BankId::new(slot));
 
     // No root was added yet, requires an ancestor to find
     // the account
@@ -3450,7 +3538,7 @@ fn test_flush_accounts_cache() {
     db.store_for_tests((root5, &[(&key5, &account0)][..]));
     db.store_for_tests((root6, &[(&key6, &account0)][..]));
     for slot in &[unrooted_slot, root5, root6] {
-        db.mark_slot_frozen(*slot);
+        db.mark_bank_frozen(BankId::new(*slot));
     }
     db.add_root_for_tests(root5);
     db.add_root_for_tests(root6);
@@ -3467,7 +3555,7 @@ fn test_flush_accounts_cache() {
     assert!(db.do_load_for_tests(&ancestors, &unrooted_key).is_some());
     assert!(db.contains(&unrooted_key));
     assert_eq!(db.accounts_cache.num_slots(), 1);
-    assert!(db.accounts_cache.slot_cache(unrooted_slot).is_some());
+    assert!(db.slot_cache_for_tests(unrooted_slot).is_some());
     assert_eq!(
         db.do_load_for_tests(&Ancestors::default(), &key5),
         Some((account0.clone(), root5))
@@ -3507,7 +3595,7 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
         let key = Pubkey::new_unique();
         db.store_for_tests((i as Slot, &[(&key, &account0)][..]));
         keys.push(key);
-        db.mark_slot_frozen(i as Slot);
+        db.mark_bank_frozen(BankId::new(i as Slot));
         if i < num_roots {
             db.add_root_for_tests(i as Slot);
         }
@@ -3526,15 +3614,13 @@ fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize
         assert_eq!(db.accounts_cache.num_slots(), num_unrooted);
         for root_slot in 0..num_roots {
             assert!(
-                db.accounts_cache.slot_cache(root_slot as Slot).is_none(),
+                db.slot_cache_for_tests(root_slot as Slot).is_none(),
                 "root_slot {root_slot} should have been flushed from cache"
             );
         }
         for unrooted_slot in num_roots..total_slots {
             assert!(
-                db.accounts_cache
-                    .slot_cache(unrooted_slot as Slot)
-                    .is_some(),
+                db.slot_cache_for_tests(unrooted_slot as Slot).is_some(),
                 "unrooted_slot {unrooted_slot} should remain in cache"
             );
         }
@@ -3670,6 +3756,59 @@ fn test_read_only_accounts_cache_skips_zero_lamport() {
         .unwrap();
     assert_eq!((account.lamports(), slot), (0, 1));
     assert_eq!(db.read_only_accounts_cache.cache_len(), 0);
+}
+
+#[test]
+fn test_flush_stores_large_accounts_in_read_cache() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+
+    let large_key = Pubkey::new_unique();
+    let small_key = Pubkey::new_unique();
+    let large_account =
+        AccountSharedData::new(1, MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH, &Pubkey::default());
+    let small_account = AccountSharedData::new(
+        1,
+        MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH - 1,
+        &Pubkey::default(),
+    );
+    db.store_for_tests((
+        1,
+        &[(&large_key, &large_account), (&small_key, &small_account)][..],
+    ));
+    db.add_root_and_flush_write_cache(1);
+
+    // Only the large account is stored in the read cache by flush
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+    assert_eq!(
+        db.read_only_accounts_cache.load(&large_key, |_| true),
+        Some((large_account, 1))
+    );
+
+    // Load the small account into the read cache
+    db.do_load_for_tests(&Ancestors::default(), &small_key)
+        .unwrap();
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 2);
+
+    // Flushing new versions replaces the large account's read cache entry; smaller accounts are
+    // dropped
+    let large_account =
+        AccountSharedData::new(2, MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH, &Pubkey::default());
+    let small_account = AccountSharedData::new(
+        2,
+        MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH - 1,
+        &Pubkey::default(),
+    );
+    db.store_for_tests((
+        2,
+        &[(&large_key, &large_account), (&small_key, &small_account)][..],
+    ));
+    db.add_root_and_flush_write_cache(2);
+
+    assert_eq!(db.read_only_accounts_cache.cache_len(), 1);
+    assert_eq!(
+        db.read_only_accounts_cache.load(&large_key, |_| true),
+        Some((large_account, 2))
+    );
 }
 
 #[test]
@@ -3905,9 +4044,9 @@ fn test_select_pubkeys_to_store() {
     let account = AccountSharedData::new(1, 0, &Pubkey::default());
 
     // The same account is written in all three roots.
-    let roots = BTreeSet::from([5, 10, 15]);
+    let roots = BTreeMap::from([5, 10, 15].map(|slot| (slot, BankId::new(slot))));
     let shared = Pubkey::new_unique();
-    for &slot in &roots {
+    for &slot in roots.keys() {
         db.accounts_cache
             .store(slot, BankId::new(slot), &shared, account.clone());
     }
@@ -4158,7 +4297,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     // remain in the cache
     db.flush_accounts_cache(true, Some(new_root));
     assert_eq!(db.accounts_cache.num_slots(), 1);
-    assert!(db.accounts_cache.slot_cache(1).is_some());
+    assert!(db.slot_cache_for_tests(1).is_some());
 
     // Intra cache cleaning should not clean the entry for `account_key` from slot 0,
     // even though it was updated in slot `2` because of the ongoing scan
@@ -4407,7 +4546,9 @@ fn setup_accounts_db_cache_clean(
         }
     }
 
-    let _ = accounts_db.accounts_cache.remove_slot(stall_slot);
+    let _ = accounts_db
+        .accounts_cache
+        .remove_bank(BankId::new(stall_slot));
 
     // If there's <= max_cache_slots(), no slots should be flushed
     if accounts_db.accounts_cache.num_slots() <= max_cache_slots() {
@@ -4967,8 +5108,8 @@ fn test_partial_clean() {
     db.print_accounts_stats("post-clean1");
 
     // Assert that cache entries are still present
-    assert!(!db.accounts_cache.slot_cache(0).unwrap().is_empty());
-    assert!(!db.accounts_cache.slot_cache(1).unwrap().is_empty());
+    assert!(!db.slot_cache_for_tests(0).unwrap().is_empty());
+    assert!(!db.slot_cache_for_tests(1).unwrap().is_empty());
 
     // root slot 0
     db.add_root_and_flush_write_cache(0);
@@ -6437,7 +6578,7 @@ fn test_new_zero_lamport_accounts_skipped() {
         &ancestors,
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
-    assert!(accounts_db.accounts_cache.slot_cache(slot).is_none());
+    assert!(accounts_db.slot_cache_for_tests(slot).is_none());
 
     // 2. Insert a zero-lamport (pubkey1) together with non-zero lamport accounts
     //    (pubkey2, pubkey3) in the same slot and verify only the non-zero lamport pubkeys are
@@ -6458,8 +6599,7 @@ fn test_new_zero_lamport_accounts_skipped() {
     assert!(!accounts_db.accounts_index.contains(&pubkey1));
     assert!(
         !accounts_db
-            .accounts_cache
-            .slot_cache(slot)
+            .slot_cache_for_tests(slot)
             .unwrap()
             .contains_key(&pubkey1)
     );
@@ -6468,16 +6608,14 @@ fn test_new_zero_lamport_accounts_skipped() {
     assert!(!accounts_db.accounts_index.contains(&pubkey2));
     assert!(
         accounts_db
-            .accounts_cache
-            .slot_cache(slot)
+            .slot_cache_for_tests(slot)
             .unwrap()
             .contains_key(&pubkey2)
     );
     assert!(!accounts_db.accounts_index.contains(&pubkey3));
     assert!(
         accounts_db
-            .accounts_cache
-            .slot_cache(slot)
+            .slot_cache_for_tests(slot)
             .unwrap()
             .contains_key(&pubkey3)
     );

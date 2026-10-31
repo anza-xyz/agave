@@ -79,6 +79,10 @@ pub struct FeatureSnapshot {
     pub pass_input_metadata_in_vm_r3_r5: bool,
     pub secp256r1_syscall_enabled: bool,
     pub single_program_runtime_environment: bool,
+    pub loader_v3_allow_prefunded_programdata: bool,
+    pub core_bpf_hash_validation: bool,
+    pub loader_v3_remove_extend_program: bool,
+    pub remove_runtime_float_ops: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -179,6 +183,12 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
             secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
             single_program_runtime_environment: is_active(&single_program_runtime_environment::ID),
+            loader_v3_allow_prefunded_programdata: is_active(
+                &loader_v3_allow_prefunded_programdata::ID,
+            ),
+            core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
+            loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
+            remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
         }
     }
 }
@@ -340,6 +350,8 @@ impl FeatureSet {
             unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
             pass_input_metadata_in_vm_r3_r5: snapshot.pass_input_metadata_in_vm_r3_r5,
             secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
+            loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
+            loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
         }
     }
 }
@@ -1170,7 +1182,7 @@ pub mod move_precompile_verification_to_svm {
     solana_pubkey::declare_id!("9ypxGLzkMxi89eDerRKXWDXe44UY2z4hBig4mDhNq5Dp");
 }
 
-pub mod enable_transaction_loading_failure_fees {
+pub mod relax_transaction_loading_constraints {
     solana_pubkey::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
 }
 
@@ -1312,6 +1324,10 @@ pub mod enforce_fixed_fec_set {
 
 pub mod enforce_correct_proof_size {
     solana_pubkey::declare_id!("turbzzBJLGMJJikLvgCCJu9e1hTmfxwarrbLndYAsK5");
+}
+
+pub mod stricter_shred_validation {
+    solana_pubkey::declare_id!("s5o4YoA9zUrw9j4v335ncdG5PpznDBsrgM6CvUGrasA");
 }
 
 pub mod provide_instruction_data_offset_in_vm_r2 {
@@ -1520,7 +1536,7 @@ pub mod relax_fee_payer_constraint {
 }
 
 pub mod double_disinflation_rate {
-    solana_pubkey::declare_id!("55oikhjJ2LUi1xdgJ17ueRyHFURZEw32asT3iAKfh7gg");
+    solana_pubkey::declare_id!("ddibiks7RHZR69QXYMCmk4EZNt6WckspTqEEWv6cS38");
     /// Taper (yearly disinflation rate) applied from activation onward.
     pub const TAPER: f64 = 0.30;
 }
@@ -1551,6 +1567,22 @@ pub mod secp256r1_syscall_enabled {
 
 pub mod single_program_runtime_environment {
     solana_pubkey::declare_id!("Hh4mTuC2AVFALH78RjiL8Rih1CcLxXpm4ehXCJNsUei1");
+}
+
+pub mod loader_v3_allow_prefunded_programdata {
+    solana_pubkey::declare_id!("63Zvc4ixE2NQsP1ef9R5AWQyty96BhRp7NiSuejUmXGM");
+}
+
+pub mod core_bpf_hash_validation {
+    solana_pubkey::declare_id!("FCsQnd4V52NESBhVURWYSWBbmLFzgxEZVC2WngzHzp1u");
+}
+
+pub mod loader_v3_remove_extend_program {
+    solana_pubkey::declare_id!("5Ach9H8V5NCNDQg7Md6HnJmVttF3tzHwiWWucnnFd4jz");
+}
+
+pub mod remove_runtime_float_ops {
+    solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2310,8 +2342,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0159: Move precompile verification into SVM",
         ),
         (
-            enable_transaction_loading_failure_fees::id(),
-            "SIMD-0082: Enable fees for some additional transaction failures",
+            relax_transaction_loading_constraints::id(),
+            "SIMD-0191: Relax Transaction Loading Constraints",
         ),
         (
             deprecate_legacy_vote_ixs::id(),
@@ -2474,6 +2506,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_correct_proof_size::id(),
             "SIMD-0317: Enforce the Merkle proof size of a fixed 32:32 FEC set",
+        ),
+        (
+            stricter_shred_validation::id(),
+            "SIMD-0504: Stricter shred validation",
         ),
         (
             provide_instruction_data_offset_in_vm_r2::id(),
@@ -2649,7 +2685,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             early_instruction_trace_overflow_detection::id(),
-            "SIMD-582: Early detection of instruction trace overflow",
+            "SIMD-0582: Early detection of instruction trace overflow",
         ),
         (
             unbound_loader_v3_instruction_data::id(),
@@ -2666,6 +2702,22 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             single_program_runtime_environment::id(),
             "SIMD-0688: Single Program Runtime Environment",
+        ),
+        (
+            loader_v3_allow_prefunded_programdata::id(),
+            "SIMD-0684: Loader V3 Allow Prefunded ProgramData",
+        ),
+        (
+            core_bpf_hash_validation::id(),
+            "SIMD-0690: Hash validation in Core BPF program migrations and upgrades",
+        ),
+        (
+            loader_v3_remove_extend_program::id(),
+            "SIMD-0685: Loader V3 Remove ExtendProgram",
+        ),
+        (
+            remove_runtime_float_ops::id(),
+            "SIMD-0607: Remove floating point from runtime inflation",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

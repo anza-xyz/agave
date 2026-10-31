@@ -192,6 +192,7 @@ impl SigVerifier {
     }
 
     fn run(mut self, exit: Arc<AtomicBool>) {
+        info!("BlsSigverifier has started");
         let mut datagrams_buffer = Vec::new();
         let mut votes_buffer = HashMap::new();
         while !exit.load(Ordering::Relaxed) {
@@ -204,7 +205,6 @@ impl SigVerifier {
                 SOFT_RECEIVE_CAP,
                 &mut datagrams_buffer,
             ) else {
-                error!("sigverifier input channel disconnected: Exiting.");
                 break;
             };
             if self.migration_status.is_pre_feature_activation() {
@@ -230,6 +230,7 @@ impl SigVerifier {
             }
         }
         self.stats.do_report(self.sharable_banks.root().slot());
+        info!("BlsSigverifier has stoped");
     }
 
     fn verify_and_send_inputs(

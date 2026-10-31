@@ -36,7 +36,11 @@ fn process_instruction(
         &instruction.data,
         transaction_accounts,
         instruction.accounts,
-        loader_v3_features,
+        // SIMD-0685 removes ExtendProgram, which these tests exercise.
+        LoaderV3Features {
+            remove_extend_program: false,
+            ..loader_v3_features
+        },
         expected_result,
         |invoke_context| {
             invoke_context.program_cache_for_tx_batch.replenish(
@@ -1084,4 +1088,19 @@ fn test_extend_program_near_max_headroom_requirement() {
             programdata_len + (headroom as usize),
         );
     }
+}
+
+#[test]
+fn test_extend_program_simd_0685() {
+    // With SIMD-0685 enabled, the instruction should be rejected.
+    let instruction = extend_program(&Pubkey::new_unique(), None, MINIMUM_EXTEND_PROGRAM_BYTES);
+    process_instruction_with_setup(
+        &instruction.program_id,
+        &instruction.data,
+        Vec::new(),
+        Vec::new(),
+        LoaderV3Features::all_enabled(),
+        Err(InstructionError::InvalidInstructionData),
+        |_invoke_context| {},
+    );
 }

@@ -111,9 +111,10 @@ impl AccountsFile {
         let split = SplitFile::new(&append_vec_file_info.path)?;
         let mut reader = new_scan_accounts_reader();
         reader.set_file(&append_vec_file_info.file, append_vec_file_info.size)?;
+        let mut writer = split.writer()?;
         let mut first_error = None;
         AppendVec::scan_reader(&mut reader, |account| {
-            let result = split.write_accounts(&(0, slice::from_ref(&&account), 0));
+            let result = writer.write_accounts(&(0, slice::from_ref(&&account), 0));
             match result {
                 Ok(_) => ControlFlow::Continue(()),
                 Err(err) => {
@@ -125,6 +126,7 @@ impl AccountsFile {
         if let Some(first_error) = first_error {
             return Err(first_error.into());
         }
+        writer.finish()?;
 
         // SAFETY: `split` is *not* read-only, so must return Some.
         let split = split.reopen_as_readonly()?.unwrap();

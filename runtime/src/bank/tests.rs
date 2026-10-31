@@ -28,10 +28,7 @@ use {
         snapshot_utils::create_tmp_accounts_dir_for_tests,
         stake_history::StakeHistory,
         stake_utils,
-        stakes::{
-            DeserializableDelegationStakes, InvalidCacheEntryReason, SerdeStakesToStakeFormat,
-            Stakes, StakesCache,
-        },
+        stakes::{InvalidCacheEntryReason, SerdeStakesToStakeFormat, Stakes, StakesCache},
         sysvar_account::{create_account, from_account},
     },
     agave_feature_set::{self as feature_set, FeatureSet},
@@ -140,7 +137,7 @@ use {
     },
     solana_transaction_context::MAX_INSTRUCTION_TRACE_LENGTH,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
     solana_vote_program::{
         vote_instruction,
@@ -4139,6 +4136,45 @@ fn test_assign_from_nonce_account_fail() {
     assert_eq!(bank.process_transaction(&tx), expect);
 }
 
+fn new_sanitized_message_view(message: VersionedMessage) -> SanitizedMessageView<Vec<u8>> {
+    SanitizedMessageView::try_new_sanitized(wincode::serialize(&message).unwrap()).unwrap()
+}
+
+#[test]
+fn test_get_fee_for_message_view() {
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let payer = mint_keypair.pubkey();
+    let transfer = system_instruction::transfer(&payer, &Pubkey::new_unique(), 1);
+
+    let message = Message::new(
+        &[
+            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+            transfer.clone(),
+        ],
+        Some(&payer),
+    );
+    let view = new_sanitized_message_view(VersionedMessage::Legacy(message.clone()));
+    let fee = bank.get_fee_for_message_view(&view);
+    assert!(fee.is_some());
+    assert_eq!(
+        fee,
+        bank.get_fee_for_message(&new_sanitized_message(message))
+    );
+
+    // invalid compute budget configuration
+    let message = Message::new(
+        &[
+            ComputeBudgetInstruction::set_compute_unit_price(1),
+            ComputeBudgetInstruction::set_compute_unit_price(2),
+            transfer,
+        ],
+        Some(&payer),
+    );
+    let view = new_sanitized_message_view(VersionedMessage::Legacy(message));
+    assert_eq!(bank.get_fee_for_message_view(&view), None);
+}
+
 #[test]
 fn test_nonce_must_be_advanceable() {
     let mut bank = create_simple_test_bank(100_000_000);
@@ -5416,7 +5452,6 @@ fn test_bank_hash_consistency() {
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
     let feature_set = FeatureSet::all_enabled();
-
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
@@ -5507,14 +5542,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "2cZPDxSwRoohpRQ9v6U6jkLVsdq4pGAvhrrGmwkLgETe",
+                "8LtbxAW7FG3s6kVBTRUNswhcqhryNLiv8qEeqeBLSPqv",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "EwSi5Y5VX6w3WZph6aVdwELkiDHGLmBymLmKrhGj9yYt",
+                "52ETLNaAvEorMWrbVjt2JRyrLcxyHpEYHvZpC2iYEMU6",
             );
             break;
         }
@@ -5522,8 +5557,30 @@ fn test_bank_hash_consistency() {
     }
 }
 
+/// The stake and vote pubkeys a snapshot load would collect while building
+/// the accounts index.
+fn pubkeys_by_owner(
+    stakes: &Stakes<StakeAccount<Delegation>>,
+) -> ahash::HashMap<Pubkey, Vec<Pubkey>> {
+    [
+        (
+            solana_sdk_ids::stake::id(),
+            stakes.stake_delegations().keys().copied().collect(),
+        ),
+        (
+            solana_sdk_ids::vote::id(),
+            stakes.vote_accounts().inner().keys().copied().collect(),
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
 /// Tests determinism of a bank hash across snapshot restores and epoch
 /// boundaries.
+///
+/// The genesis config includes all feature accounts, so adding or rekeying a
+/// feature requires updating the expected hash.
 #[test]
 fn test_bank_hash_deterministic_with_stakes_cache() {
     const NUM_VALIDATORS: usize = 128;
@@ -5602,27 +5659,15 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
     // additions, and removals.
     let restored_stakes = {
         let stakes = bank0.stakes_cache.stakes();
-        let deserialized_stakes = DeserializableDelegationStakes {
-            vote_accounts: stakes.vote_accounts().clone(),
-            stake_delegations: vec![],
-            unused: 0,
-            epoch: 0,
-            stake_history: stakes.history().clone(),
-        };
-        let stake_pubkeys = stakes
-            .stake_delegations()
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-        Stakes::load_from_accounts(deserialized_stakes, stake_pubkeys, |pubkey| {
-            bank0.get_account(pubkey)
-        })
-        .unwrap()
+        Stakes::load_from_accounts(
+            0,
+            stakes.history().clone(),
+            bank0.new_warmup_cooldown_rate_epoch(),
+            pubkeys_by_owner(&stakes),
+            |pubkey| bank0.get_account(pubkey),
+        )
     };
     bank0.stakes_cache = StakesCache::new(restored_stakes);
-    bank0
-        .stakes_cache
-        .refresh_delegated_stakes(bank0.new_warmup_cooldown_rate_epoch());
 
     for (validator_index, validator_keypairs) in validator_keypairs.iter().enumerate() {
         let vote_pubkey = validator_keypairs.vote_keypair.pubkey();
@@ -5813,7 +5858,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "6VMpEsyjnigd1UeCSkyYLcqrmQkkd79Q279vBjibWPwG",
+        "6WMxop52YBCUKAASStRhDFoqrWGRksx4hQtU8xn4MLd9",
     );
 }
 
@@ -6934,10 +6979,277 @@ fn test_rent_feature_gates_epoch_transition() {
 }
 
 #[test]
+fn test_simd_0607_historical_slot_time_decay() {
+    const SLOTS_PER_EPOCH: Slot = 32;
+    const TRANSITION_SLOT: Slot = SLOTS_PER_EPOCH;
+    const END_SLOT: Slot = 2 * SLOTS_PER_EPOCH;
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    let mut feature_set = FeatureSet::default();
+    feature_set.activate(&feature_set::reduce_slot_time_to_200ms::id(), 1);
+    bank.feature_set = Arc::new(feature_set);
+    bank.refresh_slot_params();
+
+    // The feature activates at slot 1, but 200 ms slots begin at the next
+    // epoch boundary. Decay before that boundary uses the legacy slot time.
+    assert_eq!(
+        bank.slot_params_at_slot(TRANSITION_SLOT - 1),
+        LEGACY_SLOT_PARAMS
+    );
+    assert_eq!(bank.slot_params_at_slot(TRANSITION_SLOT), SLOT_PARAMS_200MS);
+
+    let rate_at_transition = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        LEGACY_SLOT_PARAMS.ns_per_slot(),
+        TRANSITION_SLOT,
+    )
+    .unwrap();
+    let expected_rate = inflation::decayed_rate(
+        rate_at_transition,
+        15,
+        100,
+        SLOT_PARAMS_200MS.ns_per_slot(),
+        END_SLOT - TRANSITION_SLOT,
+    );
+    assert_eq!(
+        bank.integer_inflation_rate_between(INITIAL_RATE, 0, END_SLOT, 15),
+        expected_rate
+    );
+    assert_eq!(
+        bank.integer_inflation_rate_between(INITIAL_RATE, 0, 0, 15),
+        Some(INITIAL_RATE)
+    );
+}
+
+#[test]
+fn test_simd_0607_activation_and_double_disinflation_anchor() {
+    let (mut genesis_config, _) = solana_genesis_config::create_genesis_config(1_000_000_000);
+    genesis_config.inflation = Inflation::full();
+    activate_feature(
+        &mut genesis_config,
+        feature_set::full_inflation::devnet_and_testnet::id(),
+    );
+    let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let capitalization = 1_000_000_000_000_000;
+
+    let legacy_reward = bank.calculate_epoch_inflation_rewards(capitalization, 0);
+    let legacy_expected = (bank
+        .inflation()
+        .validator(bank.slot_in_year_for_inflation())
+        * capitalization as f64
+        * bank.epoch_duration_in_years(0)) as u64;
+    assert_eq!(legacy_reward, legacy_expected);
+
+    let balance = genesis_config
+        .rent
+        .minimum_balance(Feature::size_of())
+        .max(1);
+    let feature_id = feature_set::remove_runtime_float_ops::id();
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, balance),
+    );
+
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    assert!(
+        bank.feature_set
+            .is_active(&feature_set::remove_runtime_float_ops::id())
+    );
+    let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(bank.epoch());
+    let anchor = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        bank.ns_per_slot_at_slot(0),
+        first_slot,
+    )
+    .unwrap()
+    .max(TERMINAL_RATE);
+    assert_eq!(bank.integer_inflation_rate(), Some(anchor));
+    assert_eq!(
+        bank.calculate_epoch_inflation_rewards(capitalization, 0),
+        inflation::epoch_reward(
+            capitalization,
+            anchor,
+            bank.epoch_schedule().get_slots_in_epoch(0),
+            bank.ns_per_slot_at_slot(0),
+        )
+        .unwrap()
+    );
+
+    let feature_id = feature_set::double_disinflation_rate::id();
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, balance),
+    );
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let double_disinflation_activation_slot =
+        bank.epoch_schedule().get_first_slot_in_epoch(bank.epoch());
+    let anchor = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        bank.ns_per_slot_at_slot(0),
+        double_disinflation_activation_slot,
+    )
+    .unwrap()
+    .max(TERMINAL_RATE);
+    assert_eq!(bank.integer_inflation_rate(), Some(anchor));
+
+    goto_end_of_slot(bank.clone());
+    bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+    let expected = inflation::decayed_rate(
+        anchor,
+        30,
+        100,
+        bank.ns_per_slot_at_slot(double_disinflation_activation_slot),
+        bank.epoch_schedule().get_slots_in_epoch(2),
+    )
+    .map(|rate| rate.max(TERMINAL_RATE));
+    assert_eq!(bank.integer_inflation_rate(), expected);
+}
+
+#[test]
+fn test_simd_0607_snapshot_replay_bank_hash() {
+    let (mut genesis_config, _) = create_genesis_config(1_000_000_000);
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    while !bank.is_complete() {
+        bank.register_default_tick_for_test();
+    }
+    bank.set_block_id(Some(BlockId::from(Hash::from([7u8; 32]))));
+    let leader = *bank.leader();
+
+    let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+    let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+    let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+    let snapshot_config = SnapshotConfig {
+        bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+        full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.path().to_path_buf(),
+        use_direct_io: false,
+        use_registered_io_uring_buffers: false,
+        ..SnapshotConfig::default()
+    };
+    let archive = bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
+    let (_accounts_tempdir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+    let restored = bank_from_snapshot_archives(
+        &[accounts_dir],
+        &archive,
+        None,
+        &snapshot_config,
+        &genesis_config,
+        &RuntimeConfig::default(),
+        None,
+        Some(leader),
+        None,
+        false,
+        ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        None,
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(bank.hash(), restored.hash());
+    assert_eq!(
+        bank.integer_inflation_rate(),
+        restored.integer_inflation_rate()
+    );
+
+    let first_slot = bank.epoch_schedule().get_first_slot_in_epoch(1);
+    let direct =
+        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), first_slot);
+    let (restored, restored_forks) = restored.wrap_with_bank_forks_for_tests();
+    let replayed = Bank::new_from_parent_with_bank_forks(
+        &restored_forks,
+        restored,
+        SlotLeader::default(),
+        first_slot,
+    );
+    assert_eq!(
+        direct.integer_inflation_rate(),
+        replayed.integer_inflation_rate()
+    );
+    goto_end_of_slot(direct.clone());
+    goto_end_of_slot(replayed.clone());
+    assert_eq!(direct.hash(), replayed.hash());
+}
+
+#[test]
+#[should_panic(expected = "capitalization overflow")]
+fn test_simd_0607_capitalization_overflow() {
+    let (mut genesis_config, _) = create_genesis_config(1_000_000);
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
+    let bank = Bank::new_for_tests(&genesis_config);
+    bank.calculate_epoch_inflation_rewards(u64::MAX, 0);
+}
+
+#[test]
+fn test_simd_0607_uses_specified_initial_rate_on_testnet() {
+    let (mut genesis_config, _) = solana_genesis_config::create_genesis_config(1_000_000);
+    genesis_config.cluster_type = ClusterType::Testnet;
+    genesis_config.inflation = Inflation::full();
+    genesis_config.inflation.initial = 0.15;
+    activate_feature(
+        &mut genesis_config,
+        feature_set::full_inflation::devnet_and_testnet::id(),
+    );
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    assert_eq!(bank.inflation().initial, 0.15);
+
+    let feature_id = feature_set::remove_runtime_float_ops::id();
+    let balance = genesis_config
+        .rent
+        .minimum_balance(Feature::size_of())
+        .max(1);
+    bank.store_account(
+        &feature_id,
+        &feature::create_account(&Feature { activated_at: None }, balance),
+    );
+    goto_end_of_slot(bank.clone());
+    let activated_bank = new_from_parent_next_epoch(bank.clone(), &bank_forks, 1);
+
+    assert_eq!(bank.inflation().initial, 0.15);
+    assert_eq!(activated_bank.inflation().initial, 0.08);
+    let elapsed_slots = activated_bank
+        .epoch_schedule()
+        .get_first_slot_in_epoch(activated_bank.epoch());
+    let expected_rate = inflation::decayed_rate(
+        INITIAL_RATE,
+        15,
+        100,
+        activated_bank.ns_per_slot_at_slot(0),
+        elapsed_slots,
+    )
+    .unwrap()
+    .max(TERMINAL_RATE);
+    assert_eq!(activated_bank.integer_inflation_rate(), Some(expected_rate));
+}
+
+#[test]
 fn test_double_disinflation_rate_epoch_transition() {
     let feature_id = feature_set::double_disinflation_rate::id();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
     genesis_config.accounts.remove(&feature_id).unwrap();
+    genesis_config.inflation = Inflation::full();
+    activate_feature(
+        &mut genesis_config,
+        feature_set::full_inflation::devnet_and_testnet::id(),
+    );
+    activate_feature(
+        &mut genesis_config,
+        feature_set::remove_runtime_float_ops::id(),
+    );
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     assert!(
@@ -6945,7 +7257,7 @@ fn test_double_disinflation_rate_epoch_transition() {
         "feature should be inactive before activation"
     );
 
-    // Advance an epoch so the re-anchor happens at a non-zero `year`.
+    // Activate SIMD-0550 after SIMD-0607, at a nonzero inflation year.
     goto_end_of_slot(bank.clone());
     bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
 
@@ -6967,99 +7279,19 @@ fn test_double_disinflation_rate_epoch_transition() {
         "feature should be active after epoch transition"
     );
 
-    // The re-anchor must not leak through the fork-shared inflation lock: the
-    // parent keeps the pre-activation schedule, and a sibling boundary bank
-    // must anchor off the pre-activation schedule, not the first child's.
-    let parent_inflation = *parent.inflation.read().unwrap();
-    assert_eq!(
-        parent_inflation.taper.to_bits(),
-        old_inflation.taper.to_bits()
-    );
-    assert_eq!(
-        parent_inflation.initial.to_bits(),
-        old_inflation.initial.to_bits()
-    );
+    // The taper update must not leak through the fork-shared inflation lock.
+    assert_eq!(parent.inflation(), old_inflation);
     let sibling = Bank::new_from_parent(parent, SlotLeader::default(), bank.slot() + 1);
-    let sibling_inflation = *sibling.inflation.read().unwrap();
-    let bank_inflation = *bank.inflation.read().unwrap();
-    assert_eq!(
-        sibling_inflation.taper.to_bits(),
-        bank_inflation.taper.to_bits()
-    );
-    assert_eq!(
-        sibling_inflation.initial.to_bits(),
-        bank_inflation.initial.to_bits()
-    );
+    let inflation = bank.inflation();
+    assert_eq!(sibling.inflation(), inflation);
+    let mut expected_inflation = old_inflation;
+    expected_inflation.taper = feature_set::double_disinflation_rate::TAPER;
+    assert_eq!(inflation, expected_inflation);
 
-    let year = bank.slot_in_year_for_inflation();
-    assert!(year > 0.0);
-    let taper = feature_set::double_disinflation_rate::TAPER;
-    let anchor_rate = old_inflation.total(year);
-    let inflation = *bank.inflation.read().unwrap();
-    assert_eq!(inflation.taper.to_bits(), taper.to_bits());
-    assert_eq!(
-        inflation.initial.to_bits(),
-        (anchor_rate / (1.0 - taper).powf(year)).to_bits(),
-        "initial should be re-anchored so the curve passes through the old rate"
-    );
-    assert_eq!(
-        inflation.terminal.to_bits(),
-        old_inflation.terminal.to_bits()
-    );
-    assert_eq!(
-        inflation.foundation.to_bits(),
-        old_inflation.foundation.to_bits()
-    );
-    assert_eq!(
-        inflation.foundation_term.to_bits(),
-        old_inflation.foundation_term.to_bits()
-    );
-
-    // The re-anchored curve matches the old rate at the activation boundary
-    // (up to f64 division/multiplication round-trip) and decays faster after.
-    assert!((inflation.total(year) - anchor_rate).abs() <= anchor_rate * f64::EPSILON);
-    assert!(inflation.total(year + 1.0) < old_inflation.total(year + 1.0));
-
-    // The re-anchored schedule survives crossing another epoch boundary.
+    // The updated taper survives crossing another epoch boundary.
     goto_end_of_slot(bank.clone());
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
-    let later_inflation = *bank.inflation.read().unwrap();
-    assert_eq!(later_inflation.taper.to_bits(), inflation.taper.to_bits());
-    assert_eq!(
-        later_inflation.initial.to_bits(),
-        inflation.initial.to_bits()
-    );
-}
-
-#[test]
-fn test_double_disinflation_re_anchor_conformance() {
-    let taper = feature_set::double_disinflation_rate::TAPER;
-    let old = Inflation::full();
-    for year in [0.5, 2.0, 5.5, 8.0] {
-        let anchor = old.total(year);
-        let mut re_anchored = old;
-        re_anchored.taper = taper;
-        re_anchored.initial = anchor / (1.0 - taper).powf(year);
-        // Continuous at the boundary (up to f64 divide/multiply round-trip),
-        // strictly faster decay beyond it, never below the terminal floor.
-        assert!((re_anchored.total(year) - anchor).abs() <= anchor * f64::EPSILON);
-        assert!(re_anchored.total(year + 1.0) < old.total(year + 1.0));
-        assert!(re_anchored.total(year + 1.0) >= old.terminal);
-    }
-
-    // Activation after the old schedule has already reached the terminal
-    // floor: the re-anchored curve must stay at the floor.
-    let year = 50.0;
-    let anchor = old.total(year);
-    assert_eq!(anchor.to_bits(), old.terminal.to_bits());
-    let mut re_anchored = old;
-    re_anchored.taper = taper;
-    re_anchored.initial = anchor / (1.0 - taper).powf(year);
-    assert!((re_anchored.total(year) - old.terminal).abs() <= old.terminal * f64::EPSILON);
-    assert_eq!(
-        re_anchored.total(year + 1.0).to_bits(),
-        old.terminal.to_bits()
-    );
+    assert_eq!(bank.inflation(), inflation);
 }
 
 #[test]
@@ -7073,18 +7305,10 @@ fn test_double_disinflation_rate_active_at_genesis() {
             .is_active(&feature_set::double_disinflation_rate::id())
     );
 
-    // The doubled taper applies from genesis; `year` is zero there, so the
-    // re-anchor leaves `initial` at the genesis rate.
-    let inflation = bank.inflation();
-    assert_eq!(
-        inflation.taper.to_bits(),
-        feature_set::double_disinflation_rate::TAPER.to_bits()
-    );
-    assert_eq!(inflation.initial.to_bits(), old_inflation.initial.to_bits());
-    assert_eq!(
-        inflation.terminal.to_bits(),
-        old_inflation.terminal.to_bits()
-    );
+    // The doubled taper applies from genesis without changing `initial`.
+    let mut expected_inflation = old_inflation;
+    expected_inflation.taper = feature_set::double_disinflation_rate::TAPER;
+    assert_eq!(bank.inflation(), expected_inflation);
 }
 
 #[test]
@@ -8307,23 +8531,9 @@ fn test_get_inflation_start_slot_mainnet() {
 
 #[test]
 fn test_get_inflation_num_slots_with_activations() {
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = create_genesis_config_with_leader(42, &solana_pubkey::new_rand(), 42);
+    let (mut genesis_config, _) = solana_genesis_config::create_genesis_config(42);
     let slots_per_epoch = 32;
     genesis_config.epoch_schedule = EpochSchedule::new(slots_per_epoch);
-    genesis_config
-        .accounts
-        .remove(&feature_set::pico_inflation::id())
-        .unwrap();
-    genesis_config
-        .accounts
-        .remove(&feature_set::full_inflation::devnet_and_testnet::id())
-        .unwrap();
-    for pair in feature_set::FULL_INFLATION_FEATURE_PAIRS.iter() {
-        genesis_config.accounts.remove(&pair.vote_id).unwrap();
-        genesis_config.accounts.remove(&pair.enable_id).unwrap();
-    }
 
     let (bank0, _bank_forks) =
         Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -12159,6 +12369,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
     // Reconstruct bank from corrupted fields.
     // Use `None` to ensure new_from_snapshot computes the leader, which
     // exercises the slot 0 `highest_staked_node()` path.
+    let pubkeys_by_owner = pubkeys_by_owner(&bank.stakes_cache.stakes());
     let new_bank = Bank::new_from_snapshot(
         BankRc {
             accounts: Arc::clone(&bank.rc.accounts),
@@ -12171,12 +12382,7 @@ fn test_new_from_snapshot_uses_rent_from_sysvar() {
         None,
         None,
         bank.load_accounts_data_size(),
-        bank.stakes_cache
-            .stakes()
-            .stake_delegations()
-            .keys()
-            .copied()
-            .collect::<Vec<_>>(),
+        pubkeys_by_owner,
         epoch_stakes,
     );
 
@@ -12213,6 +12419,7 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
         .map(|(epoch, stakes)| (epoch, stakes.into()))
         .collect();
 
+    let pubkeys_by_owner = pubkeys_by_owner(&bank.stakes_cache.stakes());
     let new_bank = Bank::new_from_snapshot(
         BankRc {
             accounts: Arc::clone(&bank.rc.accounts),
@@ -12225,12 +12432,7 @@ fn test_new_from_snapshot_hashes_per_tick_changed() {
         None,
         None,
         bank.load_accounts_data_size(),
-        bank.stakes_cache
-            .stakes()
-            .stake_delegations()
-            .keys()
-            .copied()
-            .collect::<Vec<_>>(),
+        pubkeys_by_owner,
         epoch_stakes,
     );
 
@@ -12398,14 +12600,6 @@ fn test_new_for_txn_tests_system_transfer() {
         );
     }
 
-    let stakes = DeserializableDelegationStakes {
-        vote_accounts: VoteAccounts::default(),
-        stake_delegations: vec![],
-        unused: 0,
-        epoch,
-        stake_history: StakeHistory::default(),
-    };
-
     let fields = BankFieldsToDeserialize {
         blockhash_queue,
         hash: Hash::default(),
@@ -12428,7 +12622,6 @@ fn test_new_for_txn_tests_system_transfer() {
         fee_rate_governor: FeeRateGovernor::default(),
         epoch_schedule: epoch_schedule.clone(),
         inflation: Inflation::default(),
-        stakes,
         versioned_epoch_stakes: vec![],
         is_delta: false,
         accounts_data_len: 0,
@@ -12579,14 +12772,6 @@ fn test_new_for_block_tests_with_vote_account() {
         );
     }
 
-    let stakes_deser = DeserializableDelegationStakes {
-        vote_accounts: VoteAccounts::default(),
-        stake_delegations: vec![],
-        unused: 0,
-        epoch,
-        stake_history: StakeHistory::default(),
-    };
-
     let fields = BankFieldsToDeserialize {
         blockhash_queue,
         hash: Hash::default(),
@@ -12609,7 +12794,6 @@ fn test_new_for_block_tests_with_vote_account() {
         fee_rate_governor: FeeRateGovernor::default(),
         epoch_schedule: epoch_schedule.clone(),
         inflation: Inflation::default(),
-        stakes: stakes_deser,
         versioned_epoch_stakes: vec![],
         is_delta: false,
         accounts_data_len: 0,
