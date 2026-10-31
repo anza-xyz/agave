@@ -54,7 +54,7 @@ use {
     },
     solana_metrics::inc_new_counter_info,
     solana_net_utils::Protocol,
-    solana_perf::packet::PACKET_DATA_SIZE,
+    solana_perf::{packet::PACKET_DATA_SIZE, sigverify::verify_transaction_view_signatures},
     solana_program_pack::Pack,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_rpc_client_api::{
@@ -4096,7 +4096,8 @@ pub mod rpc_full {
             }
 
             if !skip_preflight {
-                let verification_error = verify_transaction_view_signatures(&transaction).err();
+                let verification_error = (!verify_transaction_view_signatures(&transaction))
+                    .then_some(TransactionError::SignatureFailure);
 
                 if verification_error.is_none() && !meta.config.skip_preflight_health_check {
                     match meta.health.check() {
@@ -4246,7 +4247,8 @@ pub mod rpc_full {
             let transaction = resolve_transaction_view(sanitized_transaction_view, bank)?;
 
             let verification_error = if sig_verify {
-                verify_transaction_view_signatures(&transaction).err()
+                (!verify_transaction_view_signatures(&transaction))
+                    .then_some(TransactionError::SignatureFailure)
             } else {
                 None
             };
@@ -4668,18 +4670,6 @@ fn resolve_transaction_view<D: AsRef<[u8]>>(
         bank.get_reserved_account_keys(),
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
-}
-
-fn verify_transaction_view_signatures<D: AsRef<[u8]>>(
-    transaction: &SanitizedTransactionView<D>,
-) -> std::result::Result<(), TransactionError> {
-    let message_data = transaction.message_data();
-    transaction
-        .signatures()
-        .iter()
-        .zip(transaction.static_account_keys())
-        .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message_data))
-        .ok_or(TransactionError::SignatureFailure)
 }
 
 pub fn create_validator_exit(exit: Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
