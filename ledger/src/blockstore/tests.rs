@@ -1866,7 +1866,7 @@ fn test_should_insert_data_shred() {
 }
 
 /// A shred arriving at an occupied index is a duplicate only if its Merkle root
-/// differs: then the proof is stored, but the slot is not marked dead at insert time.
+/// differs: then the proof is stored and the not-full slot is marked dead.
 #[test]
 fn test_existing_shred_index_with_different_merkle_root() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -1903,8 +1903,8 @@ fn test_existing_shred_index_with_different_merkle_root() {
     assert_eq!(duplicate_proof.shred1, *original_shred.payload());
     assert_eq!(duplicate_proof.shred2, *duplicate_shred.payload());
     assert!(
-        !blockstore.is_dead(slot),
-        "window_service marks the slot dead once the write batch is committed"
+        blockstore.is_dead(slot),
+        "duplicate slot that is not full must be marked dead at insert time"
     );
 }
 
@@ -2410,7 +2410,7 @@ fn test_check_insert_coding_shred() {
 
 /// A shred at an occupied index with the same Merkle root but a different leader
 /// signature is a duplicate until SIMD-0504 is effective for the slot: the proof is
-/// stored, but the slot is not marked dead.
+/// stored and the insert fails with `InvalidShred`.
 #[test_case(None, true; "before activation")]
 #[test_case(Some(1), false; "after activation")]
 fn test_existing_shred_index_with_different_signature(
@@ -2458,22 +2458,21 @@ fn test_existing_shred_index_with_different_signature(
             &mut pinnable_slice,
         )
         .unwrap();
-    assert!(
-        matches!(
-            blockstore.check_insert_coding_shred(
-                Cow::Borrowed(&conflicting_shred),
-                &mut shred_insertion_tracker,
-                is_trusted,
-                ShredSource::Turbine,
-                None,
-                &mut pinnable_slice,
-            ),
-            Err(InsertCodingShredError::Exists)
-        ),
-        "The newly inserted shred should be recognized as a duplicate."
+    let insert_result = blockstore.check_insert_coding_shred(
+        Cow::Borrowed(&conflicting_shred),
+        &mut shred_insertion_tracker,
+        is_trusted,
+        ShredSource::Turbine,
+        None,
+        &mut pinnable_slice,
     );
 
     if !is_treated_as_duplicate {
+        assert_matches!(
+            insert_result,
+            Err(InsertCodingShredError::Exists),
+            "The newly inserted shred should be recognized as already present."
+        );
         assert!(
             shred_insertion_tracker.duplicate_shreds.is_empty(),
             "No duplicate should be tracked"
@@ -2484,6 +2483,11 @@ fn test_existing_shred_index_with_different_signature(
         );
         return;
     }
+    assert_matches!(
+        insert_result,
+        Err(InsertCodingShredError::InvalidShred),
+        "The newly inserted shred should be recognized as a duplicate."
+    );
     assert_eq!(
         shred_insertion_tracker.duplicate_shreds,
         vec![PossibleDuplicateShred::PayloadConflict(
@@ -2496,14 +2500,14 @@ fn test_existing_shred_index_with_different_signature(
     assert_eq!(duplicate_proof.shred2, *conflicting_shred.payload());
     assert!(
         !blockstore.is_dead(slot),
-        "window_service marks the slot dead once the write batch is committed"
+        "the caller of check_insert_coding_shred marks the slot dead"
     );
 }
 
 /// A byzantine leader may sign an erasure batch in which two coding shreds at
 /// different erasure positions share an index. Both pass sigverify and share the
 /// Merkle root and the signature, yet their payloads differ, so the second one
-/// to arrive is a duplicate: the proof is stored, but the slot is not marked dead.
+/// to arrive is a duplicate: the proof is stored and the insert fails with `InvalidShred`.
 #[test_case(false; "honest shred first")]
 #[test_case(true; "relabeled shred first")]
 fn test_existing_coding_shred_index_with_different_position(relabeled_first: bool) {
@@ -2580,7 +2584,7 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
             None,
             &mut pinnable_slice,
         ),
-        Err(InsertCodingShredError::Exists)
+        Err(InsertCodingShredError::InvalidShred)
     ));
 
     assert_eq!(
@@ -2595,7 +2599,7 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
     assert_eq!(duplicate_proof.shred2, *conflicting_shred.payload());
     assert!(
         !blockstore.is_dead(slot),
-        "window_service marks the slot dead once the write batch is committed"
+        "the caller of check_insert_coding_shred marks the slot dead"
     );
 }
 
