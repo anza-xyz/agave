@@ -63,6 +63,7 @@ use {
         kind::{Code, Data, ShredLayout as _},
     },
     bitflags::bitflags,
+    bytes::BufMut,
     itertools::Either,
     num_enum::{IntoPrimitive, TryFromPrimitive},
     serde::{Deserialize, Serialize},
@@ -73,7 +74,7 @@ use {
     solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sha256_hasher::hashv,
+    solana_sha256_hasher::Hasher,
     solana_signature::Signature,
     std::{fmt::Debug, mem::MaybeUninit, ops::Range},
     thiserror::Error,
@@ -511,13 +512,15 @@ impl ShredId {
 
     pub fn seed(&self, leader: &Pubkey) -> [u8; 32] {
         let ShredId(slot, index, shred_type) = self;
-        hashv(&[
-            &slot.to_le_bytes(),
-            &u8::from(*shred_type).to_le_bytes(),
-            &index.to_le_bytes(),
-            AsRef::<[u8]>::as_ref(leader),
-        ])
-        .to_bytes()
+        let mut bytes = [0u8; 8 + 1 + 4 + 32];
+        let mut cursor = bytes.as_mut_slice();
+        cursor.put_u64_le(*slot);
+        cursor.put_u8(u8::from(*shred_type));
+        cursor.put_u32_le(*index);
+        cursor.put_slice(leader.as_ref());
+        let mut hasher = Hasher::default();
+        hasher.hash(&bytes);
+        hasher.result().to_bytes()
     }
 }
 
@@ -1246,6 +1249,24 @@ mod tests {
             bs58::encode(key.seed(&leader)).into_string(),
             "G1gmFe1QUM8nhDApk6BqvPgw3TQV2Qc5bpKppa96qbVb"
         );
+        // Preserve the original seed bytes across integer boundaries and leaders.
+        for slot in [0, 1 << 32, u64::MAX] {
+            for index in [0, 1 << 16, u32::MAX] {
+                for shred_type in [ShredType::Data, ShredType::Code] {
+                    for leader in [[0; 32], [255; 32], std::array::from_fn(|i| i as u8)] {
+                        let leader = Pubkey::new_from_array(leader);
+                        let expected = solana_sha256_hasher::hashv(&[
+                            &slot.to_le_bytes(),
+                            &[u8::from(shred_type)],
+                            &index.to_le_bytes(),
+                            leader.as_ref(),
+                        ])
+                        .to_bytes();
+                        assert_eq!(ShredId(slot, index, shred_type).seed(&leader), expected);
+                    }
+                }
+            }
+        }
     }
 
     fn verify_shred_layout(shred: &Shred, packet: &BytesPacket) {
