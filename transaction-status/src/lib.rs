@@ -194,6 +194,7 @@ fn build_simple_ui_transaction_status_meta(
         return_data: OptionSerializer::Skip,
         compute_units_consumed: OptionSerializer::Skip,
         cost_units: OptionSerializer::Skip,
+        loaded_accounts_data_size: OptionSerializer::Skip,
     }
 }
 
@@ -233,6 +234,7 @@ fn parse_ui_transaction_status_meta(
         ),
         compute_units_consumed: OptionSerializer::or_skip(meta.compute_units_consumed),
         cost_units: OptionSerializer::or_skip(meta.cost_units),
+        loaded_accounts_data_size: OptionSerializer::or_skip(meta.loaded_accounts_data_size),
     }
 }
 
@@ -968,6 +970,7 @@ mod test {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         };
         #[rustfmt::skip]
         let expected_json_output_value: serde_json::Value = serde_json::from_str(
@@ -1062,6 +1065,7 @@ mod test {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         };
 
         let confirmed_tx = ConfirmedTransactionWithStatusMeta {
