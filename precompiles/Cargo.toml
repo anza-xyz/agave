@@ -20,9 +20,9 @@ agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-ed25519-dalek = "=1.0.1"
 libsecp256k1 = { workspace = true, features = ["hmac"] }
 openssl = { workspace = true }
+solana-ed25519 = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-message = { workspace = true }
@@ -38,6 +38,7 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-precompiles = { path = ".", features = ["agave-unstable-api"] }
 bytemuck = { workspace = true }
 criterion = { workspace = true }
+ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 solana-instruction = { workspace = true }

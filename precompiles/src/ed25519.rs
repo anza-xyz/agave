@@ -1,6 +1,6 @@
 use {
     agave_feature_set::FeatureSet,
-    ed25519_dalek::ed25519::signature::Signature,
+    solana_ed25519::ed_sigs::{Signature, VerificationKey},
     solana_ed25519_program::{
         Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
         SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
@@ -48,8 +48,15 @@ pub fn verify(
             SIGNATURE_SERIALIZED_SIZE,
         )?;
 
+        // A signature whose `s` has any of its top three bits set is rejected
+        // as `InvalidSignature` before the pubkey is parsed, so that a
+        // malformed pubkey never masks it with `InvalidPublicKey`.
+        // `verify_dalek` below rejects every remaining non-canonical `s`.
+        if signature[SIGNATURE_SERIALIZED_SIZE - 1] & 0b1110_0000 != 0 {
+            return Err(PrecompileError::InvalidSignature);
+        }
         let signature =
-            Signature::from_bytes(signature).map_err(|_| PrecompileError::InvalidSignature)?;
+            Signature::from_slice(signature).map_err(|_| PrecompileError::InvalidSignature)?;
 
         // Parse out pubkey
         let pubkey = get_data_slice(
@@ -60,8 +67,8 @@ pub fn verify(
             PUBKEY_SERIALIZED_SIZE,
         )?;
 
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey)
-            .map_err(|_| PrecompileError::InvalidPublicKey)?;
+        let publickey =
+            VerificationKey::try_from(pubkey).map_err(|_| PrecompileError::InvalidPublicKey)?;
 
         // Parse out message
         let message = get_data_slice(
@@ -71,8 +78,10 @@ pub fn verify(
             offsets.message_data_offset,
             offsets.message_data_size as usize,
         )?;
+        // Strict (non-cofactored, canonical-`R`) verification, accept/reject
+        // identical to `ed25519_dalek::VerifyingKey::verify_strict`.
         publickey
-            .verify_strict(message, &signature)
+            .verify_dalek(&signature, message)
             .map_err(|_| PrecompileError::InvalidSignature)?;
     }
     Ok(())
@@ -110,9 +119,9 @@ pub mod tests {
         super::*,
         crate::test_verify_with_alignment,
         bytemuck::bytes_of,
-        ed25519_dalek::Signer as EdSigner,
         hex,
         rand::Rng,
+        solana_ed25519::ed_sigs::SigningKey,
         solana_ed25519_program::{
             DATA_START, new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction,
         },
@@ -333,12 +342,10 @@ pub mod tests {
         agave_logger::setup();
 
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = SigningKey::from_bytes(&secret_bytes);
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey: [u8; 32] = privkey.verification_key().into();
         let mut instruction =
             new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
@@ -379,9 +386,7 @@ pub mod tests {
         agave_logger::setup();
 
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = SigningKey::from_bytes(&secret_bytes);
         let messages: [&[u8]; 3] = [b"hello", b"IBRL", b"goodbye"];
         let data_start =
             messages.len() * SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
@@ -409,8 +414,8 @@ pub mod tests {
 
         let mut instruction = offsets_to_ed25519_instruction(&offsets);
 
-        let pubkey = privkey.public.as_ref();
-        instruction.data.extend_from_slice(pubkey);
+        let pubkey: [u8; 32] = privkey.verification_key().into();
+        instruction.data.extend_from_slice(&pubkey);
 
         for message in messages {
             let signature = privkey.sign(message).to_bytes();
@@ -455,14 +460,12 @@ pub mod tests {
     fn test_ed25519_malleability() {
         agave_logger::setup();
 
-        // sig created via ed25519_dalek: both pass
+        // sig created via solana_ed25519: both pass
         let secret_bytes: [u8; 32] = rand::random();
-        let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        let privkey = ed25519_dalek::Keypair { secret, public };
+        let privkey = SigningKey::from_bytes(&secret_bytes);
         let message_arr = b"hello";
         let signature = privkey.sign(message_arr).to_bytes();
-        let pubkey = privkey.public.to_bytes();
+        let pubkey: [u8; 32] = privkey.verification_key().into();
         let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
@@ -509,5 +512,125 @@ pub mod tests {
             )
             .is_err()
         );
+    }
+
+    /// Precompile `verify` must accept exactly what
+    /// `ed25519_dalek::VerifyingKey::verify_strict` accepts (the precompile
+    /// used to call `verify_strict` directly).
+    #[test]
+    fn test_ed25519_consistent_with_dalek_verify_strict() {
+        use ed25519_dalek::Signer as _;
+
+        let feature_set = FeatureSet::all_enabled();
+        let mut rng = rand::rng();
+
+        let check = |pubkey: &[u8; 32], signature: &[u8; 64], message: &[u8]| {
+            let instruction = new_ed25519_instruction_raw(pubkey, signature, message);
+            let precompile = test_verify_with_alignment(
+                verify,
+                &instruction.data,
+                &[&instruction.data],
+                &feature_set,
+            )
+            .is_ok();
+            let dalek = ed25519_dalek::VerifyingKey::from_bytes(pubkey)
+                .and_then(|vk| {
+                    vk.verify_strict(message, &ed25519_dalek::Signature::from_bytes(signature))
+                })
+                .is_ok();
+            assert_eq!(precompile, dalek, "pubkey={pubkey:?} sig={signature:?}");
+            precompile
+        };
+
+        for _ in 0..64 {
+            let secret_bytes: [u8; 32] = rand::random();
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+            let pubkey = signing_key.verifying_key().to_bytes();
+            let mut message = vec![0u8; rng.random_range(0..256)];
+            rng.fill(message.as_mut_slice());
+            let mut signature = signing_key.sign(&message).to_bytes();
+
+            assert!(check(&pubkey, &signature, &message));
+
+            // Tamper with a byte of the signature, pubkey or message.
+            let index = rng.random_range(0..64);
+            signature[index] = signature[index].wrapping_add(1);
+            assert!(!check(&pubkey, &signature, &message));
+            signature[index] = signature[index].wrapping_sub(1);
+
+            let mut bad_pubkey = pubkey;
+            let index = rng.random_range(0..32);
+            bad_pubkey[index] = bad_pubkey[index].wrapping_add(1);
+            check(&bad_pubkey, &signature, &message);
+
+            if !message.is_empty() {
+                let index = rng.random_range(0..message.len());
+                message[index] = message[index].wrapping_add(1);
+                assert!(!check(&pubkey, &signature, &message));
+            }
+
+            // Non-canonical `s` (s + l) must be rejected.
+            let mut s_plus_l = signature;
+            let l: [u8; 32] = [
+                0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
+                0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x10,
+            ];
+            let mut carry = 0u16;
+            for i in 0..32 {
+                let sum = u16::from(s_plus_l[32 + i]) + u16::from(l[i]) + carry;
+                s_plus_l[32 + i] = sum as u8;
+                carry = sum >> 8;
+            }
+            assert!(!check(&pubkey, &s_plus_l, &message));
+
+            // Random pubkeys / signatures: mostly off-curve or invalid, both
+            // implementations must agree on each one.
+            let random_pubkey: [u8; 32] = rand::random();
+            let random_signature: [u8; 64] = rand::random();
+            check(&random_pubkey, &random_signature, &message);
+            check(&random_pubkey, &signature, &message);
+            check(&pubkey, &random_signature, &message);
+        }
+
+        // Small-order public keys and `R` values (every encoding of the 8-torsion
+        // points) must be rejected by both implementations whatever the
+        // message, including non-canonical encodings.
+        let small_order: Vec<[u8; 32]> = [
+            "0100000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000080",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+            "0100000000000000000000000000000000000000000000000000000000000080",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ]
+        .into_iter()
+        .map(|point| hex::decode(point).unwrap().try_into().unwrap())
+        .collect();
+        let secret_bytes: [u8; 32] = rand::random();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+        let pubkey = signing_key.verifying_key().to_bytes();
+        let message = b"small order";
+        let signature = signing_key.sign(message).to_bytes();
+        for point in small_order {
+            // Small-order (or invalid) public key.
+            assert!(!check(&point, &signature, message));
+            // Small-order (or invalid) `R`, with `s = 0` and a random `s`.
+            let mut sig = [0u8; 64];
+            sig[..32].copy_from_slice(&point);
+            assert!(!check(&pubkey, &sig, message));
+            let s: [u8; 32] = rand::random();
+            sig[32..].copy_from_slice(&s);
+            sig[63] &= 0x0f;
+            assert!(!check(&pubkey, &sig, message));
+        }
     }
 }
