@@ -635,6 +635,7 @@ impl Tvu {
             cluster_info.clone(),
             votor_egress,
             highest_finalized,
+            vote_history_storage,
         );
 
         let warm_quic_cache_service =

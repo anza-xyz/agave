@@ -239,7 +239,6 @@ impl Votor {
             vote_account_pubkey: vote_account,
             identity_keypair,
             authorized_voter_keypairs,
-            vote_history_storage,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: own_reward_aggregates_sender,
