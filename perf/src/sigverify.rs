@@ -34,18 +34,7 @@ fn verify_packet(packet: &mut BytesPacket, reject_non_vote: bool) -> bool {
         if reject_non_vote && !is_simple_vote_tx {
             (is_simple_vote_tx, false)
         } else {
-            let signatures = view.signatures();
-            if signatures.is_empty() {
-                (is_simple_vote_tx, false)
-            } else {
-                let message = view.message_data();
-                let static_account_keys = view.static_account_keys();
-                let verified = signatures
-                    .iter()
-                    .zip(static_account_keys.iter())
-                    .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message));
-                (is_simple_vote_tx, verified)
-            }
+            (is_simple_vote_tx, verify_transaction_view_signatures(&view))
         }
     };
 
@@ -54,6 +43,18 @@ fn verify_packet(packet: &mut BytesPacket, reject_non_vote: bool) -> bool {
     }
 
     verified
+}
+
+/// Returns true if every signature on the sanitized transaction verifies
+/// against its corresponding static account key. Short circuit on first bad signature
+pub fn verify_transaction_view_signatures<D: AsRef<[u8]>>(
+    view: &SanitizedTransactionView<D>,
+) -> bool {
+    let message = view.message_data();
+    view.signatures()
+        .iter()
+        .zip(view.static_account_keys())
+        .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message))
 }
 
 pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
