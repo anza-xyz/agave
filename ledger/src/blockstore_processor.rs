@@ -334,9 +334,13 @@ impl BlockstoreProcessorError {
     }
 }
 
-/// Callback for accessing bank state after each slot is confirmed while
-/// processing the blockstore
-pub type ProcessSlotCallback = Arc<dyn Fn(&Bank) + Sync + Send>;
+/// Callback for accessing bank state after each slot is replayed, frozen and
+/// verified while processing the blockstore, with the number of entries replayed
+pub type ProcessSlotCallback = Arc<dyn Fn(&Bank, u64) + Sync + Send>;
+
+/// Callback for each bank created while processing the blockstore, before any
+/// of its entries are replayed
+pub type NewBankCallback = Arc<dyn Fn(&Bank) + Sync + Send>;
 
 #[derive(Default, Clone)]
 pub struct ProcessOptions {
@@ -347,6 +351,7 @@ pub struct ProcessOptions {
     pub skip_inter_slot_verification: bool,
     pub halt_at_slot: Option<Slot>,
     pub slot_callback: Option<ProcessSlotCallback>,
+    pub new_bank_callback: Option<NewBankCallback>,
     pub new_hard_forks: Option<Vec<Slot>>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub limit_load_slot_count_from_snapshot: Option<usize>,
@@ -1989,6 +1994,9 @@ fn process_next_slots(
                     vote_only_bank: migration_status.should_bank_be_vote_only(*next_slot),
                 },
             );
+            if let Some(new_bank_callback) = &opts.new_bank_callback {
+                new_bank_callback(&next_bank);
+            }
             set_alpenglow_ticks(&next_bank, migration_status);
             trace!(
                 "New bank for slot {}, parent slot is {}",
@@ -2519,7 +2527,7 @@ pub fn process_single_slot(
     }
 
     if let Some(slot_callback) = &opts.slot_callback {
-        slot_callback(bank);
+        slot_callback(bank, progress.num_entries as u64);
     }
 
     if blockstore.is_primary_access() {
@@ -4586,6 +4594,384 @@ pub mod tests {
 
         // Check that bank forks has the correct banks
         verify_fork_infos(&bank_forks);
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum StartupReplayEvent {
+        Created {
+            slot: Slot,
+            parent: Slot,
+            bank_id: solana_runtime::bank::BankId,
+        },
+        Frozen {
+            slot: Slot,
+            bank_id: solana_runtime::bank::BankId,
+            entry_count: u64,
+            executed_transaction_count: u64,
+        },
+    }
+
+    // Records the startup replay callbacks a geyser host would turn into
+    // CreatedBank and block metadata notifications.
+    fn record_startup_replay_events(
+        opts: &mut ProcessOptions,
+    ) -> Arc<Mutex<Vec<StartupReplayEvent>>> {
+        let events = Arc::<Mutex<Vec<StartupReplayEvent>>>::default();
+        opts.new_bank_callback = Some(Arc::new({
+            let events = events.clone();
+            move |bank: &Bank| {
+                assert!(!bank.is_frozen());
+                events.lock().unwrap().push(StartupReplayEvent::Created {
+                    slot: bank.slot(),
+                    parent: bank.parent_slot(),
+                    bank_id: bank.bank_id(),
+                });
+            }
+        }));
+        opts.slot_callback = Some(Arc::new({
+            let events = events.clone();
+            move |bank: &Bank, entry_count: u64| {
+                assert!(bank.is_frozen());
+                events.lock().unwrap().push(StartupReplayEvent::Frozen {
+                    slot: bank.slot(),
+                    bank_id: bank.bank_id(),
+                    entry_count,
+                    executed_transaction_count: bank.executed_transaction_count(),
+                });
+            }
+        }));
+        events
+    }
+
+    fn startup_replay_slots(events: &[StartupReplayEvent], created: bool) -> Vec<Slot> {
+        let mut slots: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                StartupReplayEvent::Created { slot, .. } if created => Some(*slot),
+                StartupReplayEvent::Frozen { slot, .. } if !created => Some(*slot),
+                _ => None,
+            })
+            .collect();
+        slots.sort_unstable();
+        slots
+    }
+
+    // Every frozen bank was announced as created first, under the same bank id,
+    // and its entry count is the number of entries stored for its slot.
+    fn assert_frozen_after_created(events: &[StartupReplayEvent], blockstore: &Blockstore) {
+        for (i, event) in events.iter().enumerate() {
+            let StartupReplayEvent::Frozen {
+                slot,
+                bank_id,
+                entry_count,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            assert!(
+                events[..i].iter().any(|created| matches!(
+                    created,
+                    StartupReplayEvent::Created { slot: s, bank_id: b, .. }
+                        if s == slot && b == bank_id
+                )),
+                "slot {slot} frozen before it was created: {events:?}"
+            );
+            assert_eq!(
+                *entry_count,
+                blockstore.get_slot_entries(*slot, 0).unwrap().len() as u64
+            );
+        }
+    }
+
+    #[test]
+    fn test_startup_replay_bank_callbacks() {
+        agave_logger::setup();
+        /*
+          slot 0
+            |    \
+          slot 1  slot 3 (one tick missing: fails verification)
+          (txs)
+            |
+          slot 2 (ticks only: zero transactions)
+        */
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_tower_genesis_config(10_000);
+        let ticks_per_slot = genesis_config.ticks_per_slot;
+        let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+        let txs = vec![
+            system_transaction::transfer(&mint_keypair, &Keypair::new().pubkey(), 1, blockhash),
+            system_transaction::transfer(&mint_keypair, &Keypair::new().pubkey(), 1, blockhash),
+        ];
+        let tx_entry = next_entry(&blockhash, 1, txs);
+        let mut entries = vec![tx_entry.clone()];
+        entries.extend(create_ticks(ticks_per_slot, 0, tx_entry.hash));
+        let slot1_last_hash = entries.last().unwrap().hash;
+        blockstore
+            .write_entries(
+                1,
+                0,
+                0,
+                ticks_per_slot,
+                Some(0),
+                true,
+                &Arc::new(Keypair::new()),
+                entries,
+                0,
+            )
+            .unwrap();
+        fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 2, 1, slot1_last_hash);
+        blockstore
+            .write_entries(
+                3,
+                0,
+                0,
+                ticks_per_slot,
+                Some(0),
+                true,
+                &Arc::new(Keypair::new()),
+                create_ticks(ticks_per_slot - 1, 0, blockhash),
+                0,
+            )
+            .unwrap();
+
+        let mut opts = ProcessOptions {
+            run_verification: true,
+            ..ProcessOptions::default()
+        };
+        let events = record_startup_replay_events(&mut opts);
+
+        // Nothing drains the transaction status channel while the blockstore is
+        // processed, so transaction notifications lag the bank callbacks the way
+        // a slow TransactionStatusService would: the callbacks must not wait.
+        let (transaction_status_sender, transaction_status_receiver) =
+            crossbeam_channel::unbounded();
+        let transaction_status_sender = TransactionStatusSender {
+            sender: transaction_status_sender,
+            dependency_tracker: None,
+        };
+        let exit = Arc::default();
+        let (bank_forks, _) = crate::bank_forks_utils::load_bank_forks_from_genesis(
+            &genesis_config,
+            &blockstore,
+            Vec::new(),
+            &opts,
+            Some(&transaction_status_sender),
+            None,
+            None,
+            exit,
+        )
+        .unwrap();
+        bank_forks.write().unwrap().install_scheduler_pool(
+            DefaultSchedulerPool::new_for_verification(
+                None,
+                None,
+                Some(transaction_status_sender.clone()),
+                None,
+                None,
+            ),
+        );
+        let leader_schedule_cache =
+            LeaderScheduleCache::new_from_bank(&bank_forks.read().unwrap().root_bank());
+        process_blockstore_from_root(
+            &blockstore,
+            &bank_forks,
+            compute_shred_version(&genesis_config.hash(), None),
+            &leader_schedule_cache,
+            &opts,
+            Some(&transaction_status_sender),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!transaction_status_receiver.is_empty());
+        assert_eq!(
+            frozen_bank_slots(&bank_forks.read().unwrap()),
+            vec![0, 1, 2]
+        );
+
+        let events = events.lock().unwrap();
+        // Bank 0 is built from genesis, not replayed: never announced. Slot 3 was
+        // created but failed verification: never frozen.
+        assert_eq!(startup_replay_slots(&events, true), vec![1, 2, 3]);
+        assert_eq!(startup_replay_slots(&events, false), vec![1, 2]);
+        assert_frozen_after_created(&events, &blockstore);
+        let bank_forks = bank_forks.read().unwrap();
+        for event in events.iter() {
+            match event {
+                StartupReplayEvent::Created { slot, parent, .. } => {
+                    assert_eq!(*parent, if *slot == 2 { 1 } else { 0 });
+                }
+                StartupReplayEvent::Frozen {
+                    slot,
+                    bank_id,
+                    executed_transaction_count,
+                    ..
+                } => {
+                    assert_eq!(*bank_id, bank_forks[*slot].bank_id());
+                    assert_eq!(*executed_transaction_count, if *slot == 1 { 2 } else { 0 });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_startup_replay_bank_callbacks_exclude_root() {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_tower_genesis_config(123);
+        let ticks_per_slot = 1;
+        genesis_config.ticks_per_slot = ticks_per_slot;
+        let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut last_hash = blockhash;
+        for i in 0..4 {
+            last_hash =
+                fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, i + 1, i, last_hash);
+        }
+
+        // Start from a root at slot 2, the way a validator starts from a
+        // snapshot: slots 0 to 2 are not replayed and must not be announced.
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let mut opts = ProcessOptions {
+            run_verification: true,
+            ..ProcessOptions::default()
+        };
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let mut parent = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+        process_bank_0(
+            &parent,
+            compute_shred_version(&genesis_config.hash(), None),
+            &blockstore,
+            &replay_verification_worker_pool,
+            &opts,
+            None,
+            None,
+            &MigrationStatus::default(),
+        )
+        .unwrap();
+        for slot in 1..=2 {
+            let last_blockhash = parent.last_blockhash();
+            let child = Bank::new_from_parent(
+                parent.clone_without_scheduler(),
+                SlotLeader::default(),
+                slot,
+            );
+            let bank = bank_forks.write().unwrap().insert(child);
+            confirm_full_slot(
+                &blockstore,
+                &bank,
+                compute_shred_version(&genesis_config.hash(), None),
+                &replay_verification_worker_pool,
+                &opts,
+                &mut ConfirmationProgress::new(last_blockhash),
+                None,
+                None,
+                &mut ExecuteTimings::default(),
+                &MigrationStatus::default(),
+            )
+            .unwrap();
+            bank.freeze();
+            parent = bank;
+        }
+        bank_forks.write().unwrap().set_root(2, None, None);
+
+        let events = record_startup_replay_events(&mut opts);
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&parent);
+        process_blockstore_from_root(
+            &blockstore,
+            &bank_forks,
+            compute_shred_version(&genesis_config.hash(), None),
+            &leader_schedule_cache,
+            &opts,
+            None,
+            None,
+            None, // snapshot_controller
+        )
+        .unwrap();
+
+        let events = events.lock().unwrap();
+        assert_eq!(startup_replay_slots(&events, true), vec![3, 4]);
+        assert_eq!(startup_replay_slots(&events, false), vec![3, 4]);
+        assert_frozen_after_created(&events, &blockstore);
+    }
+
+    #[test]
+    fn test_startup_replay_bank_hash_mismatch_sends_no_metadata() {
+        let GenesisConfigInfo { genesis_config, .. } = create_tower_genesis_config(10_000);
+        let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        // Two forks off slot 0: slot 1 fails its bank hash check, slot 2 does not.
+        for slot in [1, 2] {
+            fill_blockstore_slot_with_ticks(
+                &blockstore,
+                genesis_config.ticks_per_slot,
+                slot,
+                0,
+                blockhash,
+            );
+        }
+
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
+        let mut opts = ProcessOptions {
+            run_verification: true,
+            ..ProcessOptions::default()
+        };
+        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let shred_version = compute_shred_version(&genesis_config.hash(), None);
+        process_bank_0(
+            &bank0,
+            shred_version,
+            &blockstore,
+            &replay_verification_worker_pool,
+            &opts,
+            None,
+            None,
+            &MigrationStatus::default(),
+        )
+        .unwrap();
+        let events = record_startup_replay_events(&mut opts);
+
+        for (slot, expected_hash) in [(1, Some(Hash::new_unique())), (2, None)] {
+            let bank =
+                Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), slot);
+            if let Some(expected_hash) = expected_hash {
+                bank.set_expected_bank_hash(expected_hash);
+            }
+            let bank = BankWithScheduler::new_without_scheduler(Arc::new(bank));
+            let result = process_single_slot(
+                &blockstore,
+                &bank,
+                shred_version,
+                &replay_verification_worker_pool,
+                &opts,
+                &mut ConfirmationProgress::new(bank0.last_blockhash()),
+                None,
+                None,
+                None,
+                &mut ExecuteTimings::default(),
+                &MigrationStatus::default(),
+            );
+            if expected_hash.is_some() {
+                assert_matches!(
+                    result,
+                    Err(BlockstoreProcessorError::BankHashMismatch(1, ..))
+                );
+                assert!(events.lock().unwrap().is_empty());
+            } else {
+                result.unwrap();
+            }
+        }
+        assert_eq!(
+            startup_replay_slots(&events.lock().unwrap(), false),
+            vec![2]
+        );
     }
 
     #[test]
