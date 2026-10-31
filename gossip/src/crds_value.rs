@@ -114,7 +114,7 @@ impl CrdsValueLabel {
 impl CrdsValue {
     /// Verify the signature, short-circuiting on a previously-verified value
     /// hash and otherwise reusing a cached decompressed verifying key. Both
-    /// caches are populated only after `verify_strict` succeeds, so neither can
+    /// caches are populated only after `verify_dalek` succeeds, so neither can
     /// be seeded with arbitrary entries to evict useful ones.
     pub(crate) fn verify_with_cache(&self, cache: &SigVerifyCache) -> bool {
         if cache.verified_values.contains(&self.hash) {

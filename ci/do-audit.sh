@@ -18,15 +18,6 @@ while [[ -n $1 ]]; do
 done
 
 default_cargo_audit_extra_args=(
-  # Crate:     ed25519-dalek
-  # Version:   1.0.1
-  # Title:     Double Public Key Signing Function Oracle Attack on `ed25519-dalek`
-  # Date:      2022-06-11
-  # ID:        RUSTSEC-2022-0093
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2022-0093
-  # Solution:  Upgrade to >=2
-  --ignore RUSTSEC-2022-0093
-
   # Crate:     idna
   # Version:   0.1.5
   # Title:     `idna` accepts Punycode labels that do not produce any non-ASCII when decoded
@@ -37,15 +28,6 @@ default_cargo_audit_extra_args=(
   # need to solve this dependant tree:
   # jsonrpc-core-client v18.0.0 -> jsonrpc-client-transports v18.0.0 -> url v1.7.2 -> idna v0.1.5
   --ignore RUSTSEC-2024-0421
-
-  # Crate:     curve25519-dalek
-  # Version:   3.2.1
-  # Title:     Timing variability in `curve25519-dalek`'s `Scalar29::sub`/`Scalar52::sub`
-  # Date:      2024-06-18
-  # ID:        RUSTSEC-2024-0344
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0344
-  # Solution:  Upgrade to >=4.1.3
-  --ignore RUSTSEC-2024-0344
 
   # Crate:     crypto-bigint
   # Version:   0.5.5

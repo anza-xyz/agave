@@ -48,11 +48,10 @@ pub fn verify(
             SIGNATURE_SERIALIZED_SIZE,
         )?;
 
-        // `ed25519::Signature::from_bytes` used to reject (before parsing the
-        // pubkey) any `s` with the top three bits set, which is a cheap partial
-        // non-canonical check. `verify_dalek` rejects every non-canonical `s`,
-        // but keep the early check so the error variant stays the same when
-        // both the pubkey and the signature are malformed.
+        // A signature whose `s` has any of its top three bits set is rejected
+        // as `InvalidSignature` before the pubkey is parsed, so that a
+        // malformed pubkey never masks it with `InvalidPublicKey`.
+        // `verify_dalek` below rejects every remaining non-canonical `s`.
         if signature[SIGNATURE_SERIALIZED_SIZE - 1] & 0b1110_0000 != 0 {
             return Err(PrecompileError::InvalidSignature);
         }
