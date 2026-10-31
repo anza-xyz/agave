@@ -3128,8 +3128,8 @@ fn test_purge_unconfirmed_duplicate_slot() {
     assert!(bank7.get_signature_status(&vote_tx.signatures[0]).is_none());
     assert!(bank7.get_signature_status(&transfer_sig).is_none());
 
-    // Getting balance should return the old balance (accounts were cleared)
-    assert_eq!(bank7.get_balance(&sender), old_balance);
+    // A removed bank's write cache stays until the bank drops
+    assert_eq!(bank7.get_balance(&sender), old_balance - transfer_amount);
 
     // Purging slot 4 should purge only slot 4
     let mut descendants = bank_forks.read().unwrap().descendants();

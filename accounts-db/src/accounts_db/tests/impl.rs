@@ -676,7 +676,8 @@ fn test_purge_unrooted_slot_writes_through_surviving_entry() {
     // Purge the unrooted slot 1 from the cache. `purge_slot_cache` removes only the slot-1
     // entry, leaving the slot-0 entry as a single-ref dirty entry; the pubkey leaves the cache
     // entirely, so its write-through is deferred to clean; nothing is written yet.
-    db.remove_unrooted_slots(&[(1, BankId::new(1))]);
+    db.mark_banks_removed(&[(1, BankId::new(1))]);
+    db.purge_slot(BankId::new(1), false);
     assert!(
         is_dirty_in_mem(&pubkey),
         "still dirty until clean writes it through"
@@ -708,8 +709,13 @@ fn test_remove_unrooted_slot_cached() {
     assert!(db.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
-    // Purge the slot
-    db.remove_unrooted_slots(&[(unrooted_slot, unrooted_bank_id)]);
+    // Marking the bank removed leaves its cache in place until the bank drops
+    db.mark_banks_removed(&[(unrooted_slot, unrooted_bank_id)]);
+    db.assert_load_account(unrooted_slot, key, 1);
+    assert!(db.slot_cache_for_tests(unrooted_slot).is_some());
+
+    // Dropping the bank purges its cache
+    db.purge_slot(unrooted_bank_id, false);
     assert!(db.do_load_for_tests(&ancestors, &key).is_none());
     assert!(db.slot_cache_for_tests(unrooted_slot).is_none());
     assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_none());
@@ -754,7 +760,7 @@ fn test_purge_slot_keeps_other_bank_at_same_slot() {
 }
 
 /// Cache writes populate the secondary indexes but not the primary index. When a cache-only
-/// account is dropped via `remove_unrooted_slots` before it is ever flushed, its secondary-index
+/// account's bank is removed and dropped before it is ever flushed, its secondary-index
 /// entry must be reclaimed; otherwise it leaks because there is no primary entry to drive the
 /// usual `handle_dead_keys` purge.
 #[test]
@@ -782,7 +788,8 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
 
     // Dropping the unrooted slot defers the key to clean, and the following clean must reclaim
     // the secondary entry, not leak it.
-    db.remove_unrooted_slots(&[(slot, bank_id)]);
+    db.mark_banks_removed(&[(slot, bank_id)]);
+    db.purge_slot(bank_id, false);
     assert!(!db.accounts_cache.contains_pubkey(&pubkey));
     db.clean_accounts_for_tests();
     assert_eq!(
@@ -792,12 +799,12 @@ fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
     );
 }
 
-/// A scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
+/// A scan whose bank is removed via `mark_banks_removed` mid-scan aborts at the next account
 /// instead of scanning to completion.
 /// Removing some *other* bank must not abort the scan.
 #[test_case(BankId::new(1), Err(ScanError::SlotRemoved { slot: 1, bank_id: BankId::new(1) }), 1; "abort_bank_aborts_scan")]
 #[test_case(BankId::new(2), Ok(()), 10; "abort_other_bank_no_effect")]
-fn test_remove_unrooted_slots_aborts_ongoing_scan(
+fn test_mark_banks_removed_aborts_ongoing_scan(
     removed_bank_id: BankId,
     expected_result: Result<(), ScanError>,
     expected_visits: usize,
@@ -827,7 +834,7 @@ fn test_remove_unrooted_slots_aborts_ongoing_scan(
                 visited += 1;
                 if visited == 1 {
                     // dump the fork mid-scan, as ReplayStage does for a duplicate fork
-                    db.remove_unrooted_slots(&[(slot, removed_bank_id)]);
+                    db.mark_banks_removed(&[(slot, removed_bank_id)]);
                 }
             }
         },
@@ -870,7 +877,7 @@ fn test_scan_accounts_stays_aborted_across_steps() {
     assert_eq!(visited, 1);
 }
 
-/// An index scan whose bank is removed via `remove_unrooted_slots` mid-scan aborts at the next account
+/// An index scan whose bank is removed via `mark_banks_removed` mid-scan aborts at the next account
 /// instead of scanning to completion.
 #[test]
 fn test_index_scan_accounts_aborts_when_bank_removed() {
@@ -915,7 +922,7 @@ fn test_index_scan_accounts_aborts_when_bank_removed() {
     assert_eq!(visited, 1);
 }
 
-/// A pubkey deferred to clean by `remove_unrooted_slots` can be stored again, rooted and flushed
+/// A pubkey deferred to clean by dropping a removed bank can be stored again, rooted and flushed
 /// before the next clean handles it. The key is alive in the primary index at that point and no
 /// longer in the write cache, clean must not purge its secondary index entry.
 #[test]
@@ -932,7 +939,8 @@ fn test_purged_pubkey_restored_before_clean_keeps_secondary_index() {
     // Store the pubkey in an unrooted slot, then purge that slot. The pubkey is deferred to
     // clean, and has no primary index entry at all.
     db.store_for_tests((1, &[(&pubkey, &account)][..]));
-    db.remove_unrooted_slots(&[(1, BankId::new(1))]);
+    db.mark_banks_removed(&[(1, BankId::new(1))]);
+    db.purge_slot(BankId::new(1), false);
     assert!(!db.accounts_index.contains(&pubkey));
 
     // Store the pubkey again and flush it to storage, which creates an entry in the accounts index
