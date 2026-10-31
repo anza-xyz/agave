@@ -4,7 +4,9 @@ use {
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
-            ShredFlags, max_ticks_per_n_shreds,
+            ShredFlags,
+            filter::new_dummy_retransmit_sender,
+            max_ticks_per_n_shreds,
             merkle::{
                 finish_erasure_batch_for_tests, sign_with_duplicate_coding_index_for_tests,
                 sign_with_flipped_resigned_for_tests, sign_with_invalid_parity_for_tests,
@@ -4952,7 +4954,7 @@ fn test_recovery() {
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let mut metrics = BlockstoreInsertionMetrics::default();
 
-    let (dummy_retransmit_sender, _) = bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
         (
             Cow::Owned(shred),
@@ -5028,7 +5030,7 @@ fn test_skip_alt_recovery() {
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let alternate_location = BlockLocation::Alternate {
         block_id: Hash::new_unique(),
     };
@@ -5084,7 +5086,7 @@ impl RecoveryTestBlockstore {
     fn new(ledger_path: &Path) -> Self {
         let genesis_config = create_genesis_config(2).genesis_config;
         let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (dummy_retransmit_sender, _) = bounded(0);
+        let dummy_retransmit_sender = new_dummy_retransmit_sender();
         let shred_version = 0;
         Self {
             blockstore: Blockstore::open(ledger_path).unwrap(),
@@ -5690,7 +5692,7 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
             )
         })
         .collect();
-    let (dummy_retransmit_sender, _) = bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let mut metrics = BlockstoreInsertionMetrics::default();
     blockstore
         .do_insert_shreds(
