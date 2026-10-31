@@ -1,4 +1,5 @@
 use {
+    crate::vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
@@ -18,7 +19,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::sync::{mpsc, mpsc::error::TrySendError},
+    tokio::sync::mpsc::{self, error::TrySendError},
 };
 
 /// Max new packets per slot in steady state:
@@ -67,10 +68,19 @@ const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum BLSOp {
-    PushVote { vote: Arc<VoteMessage> },
-    PushCertificates { certificates: Vec<Arc<Certificate>> },
-    RefreshVotes { votes: Vec<Arc<VoteMessage>> },
-    RefreshCertificates { certificates: Vec<Arc<Certificate>> },
+    PushVote {
+        vote: Arc<VoteMessage>,
+        saved_vote_history: Option<SavedVoteHistoryVersions>,
+    },
+    PushCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
+    RefreshVotes {
+        votes: Vec<Arc<VoteMessage>>,
+    },
+    RefreshCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
 }
 
 #[derive(Debug)]
@@ -205,6 +215,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         egress: mpsc::Sender<Bytes>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+        vote_history_storage: Arc<dyn VoteHistoryStorage>,
     ) -> Self {
         let mut standstill_queue = StandstillRefreshQueue::default();
         let thread_hdl = Builder::new()
@@ -224,7 +235,13 @@ impl VotingService {
                         Err(RecvTimeoutError::Disconnected) => break,
                         Err(RecvTimeoutError::Timeout) => continue,
                     };
-                    Self::handle_bls_op(&cluster_info, bls_op, &egress, &mut standstill_queue);
+                    Self::handle_bls_op(
+                        &cluster_info,
+                        bls_op,
+                        &egress,
+                        &mut standstill_queue,
+                        &vote_history_storage,
+                    );
                 }
                 info!("AlpenglowVotingService has stopped");
             })
@@ -313,9 +330,19 @@ impl VotingService {
         bls_op: BLSOp,
         egress: &mpsc::Sender<Bytes>,
         standstill_queue: &mut StandstillRefreshQueue,
+        vote_history_storage: &Arc<dyn VoteHistoryStorage>,
     ) {
         match bls_op {
-            BLSOp::PushVote { vote } => {
+            BLSOp::PushVote {
+                vote,
+                saved_vote_history,
+            } => {
+                if let Some(saved_vote_history) = saved_vote_history
+                    && let Err(e) = vote_history_storage.store(&saved_vote_history)
+                {
+                    error!("voting_service: storing vote history failed with {e}");
+                    return;
+                }
                 let msg = VersionedWireConsensusMessage::new_from_vote(
                     Arc::unwrap_or_clone(vote),
                     cluster_info.my_shred_version(),
@@ -362,7 +389,11 @@ impl VotingService {
 mod tests {
     use {
         super::*,
-        crate::peer_list_updater::PeerListService,
+        crate::{
+            peer_list_updater::PeerListService,
+            vote_history::VoteHistory,
+            vote_history_storage::{NullVoteHistoryStorage, SavedVoteHistory},
+        },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
@@ -628,6 +659,7 @@ mod tests {
                 cluster_info.clone(),
                 egress,
                 Arc::new(RwLock::new(None)),
+                Arc::new(NullVoteHistoryStorage::default()),
             ),
             peer_list_service,
             validator_keypairs,
@@ -635,7 +667,17 @@ mod tests {
         )
     }
 
-    #[test_case(BLSOp::PushVote { vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)) }, None)]
+    #[test_case(BLSOp::PushVote {
+        vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)),
+        saved_vote_history: Some(SavedVoteHistory::new(
+            &VoteHistory::new(Pubkey::default(), 0),
+            &solana_signer::null_signer::NullSigner::new(&Pubkey::default()),
+        ).unwrap().into()),
+    }, None)]
+    #[test_case(BLSOp::PushVote {
+        vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)),
+        saved_vote_history: None,
+    }, None)]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
         cert_type: CertificateType::Skip(5),
@@ -654,7 +696,7 @@ mod tests {
         agave_logger::setup();
 
         let expected_message = expected_message.unwrap_or_else(|| match &bls_op {
-            BLSOp::PushVote { vote } => ConsensusMessage::Vote((**vote).clone()),
+            BLSOp::PushVote { vote, .. } => ConsensusMessage::Vote((**vote).clone()),
             BLSOp::RefreshVotes { votes } => ConsensusMessage::Vote((*votes[0]).clone()),
             _ => panic!("expected message is required for certificate operations"),
         });
