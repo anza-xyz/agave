@@ -201,10 +201,10 @@ impl PruneData {
     }
 
     fn verify_data(&self, use_prefix: bool) -> bool {
-        let data = if !use_prefix {
-            self.signable_data_without_prefix()
-        } else {
+        let data = if use_prefix {
             self.signable_data_with_prefix()
+        } else {
+            self.signable_data_without_prefix()
         };
         self.get_signature()
             .verify(self.pubkey().as_ref(), data.borrow())
@@ -261,8 +261,7 @@ impl Signable for PruneData {
     }
 
     fn signable_data(&self) -> Cow<'static, [u8]> {
-        // Continue to return signable data without a prefix until cluster has upgraded
-        self.signable_data_without_prefix()
+        self.signable_data_with_prefix()
     }
 
     fn get_signature(&self) -> Signature {
@@ -276,7 +275,7 @@ impl Signable for PruneData {
     // override Signable::verify default
     fn verify(&self) -> bool {
         // Try to verify PruneData with both prefixed and non-prefixed data
-        self.verify_data(false) || self.verify_data(true)
+        self.verify_data(true) || self.verify_data(false)
     }
 }
 
@@ -794,7 +793,8 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
-        prune_data.sign(&keypair);
+        let data = prune_data.signable_data_without_prefix();
+        prune_data.set_signature(keypair.sign_message(data.borrow()));
 
         let is_valid = prune_data.verify();
         assert!(is_valid, "Signature should be valid without prefix");
@@ -806,10 +806,11 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
-        // Manually set the signature with prefixed data
+        prune_data.sign(&keypair);
+
         let prefixed_data = prune_data.signable_data_with_prefix();
         let signature_with_prefix = keypair.sign_message(prefixed_data.borrow());
-        prune_data.set_signature(signature_with_prefix);
+        assert_eq!(prune_data.get_signature(), signature_with_prefix);
 
         let is_valid = prune_data.verify();
         assert!(is_valid, "Signature should be valid with prefix");
@@ -859,7 +860,8 @@ pub(crate) mod tests {
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
         // Sign with non-prefixed data
-        prune_data.sign(&keypair);
+        let data = prune_data.signable_data_without_prefix();
+        prune_data.set_signature(keypair.sign_message(data.borrow()));
         let is_valid_non_prefixed = prune_data.verify();
         assert!(
             is_valid_non_prefixed,
