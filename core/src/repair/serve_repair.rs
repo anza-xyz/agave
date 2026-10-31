@@ -10,7 +10,6 @@ use {
     crate::{
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{
-            duplicate_repair_status::get_ancestor_hash_repair_sample_size,
             outstanding_requests::OutstandingRequests,
             repair_handler::RepairHandler,
             repair_service::{OutstandingShredRepairs, RepairInfo, RepairStats},
@@ -36,7 +35,6 @@ use {
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::{ContactInfo, Protocol},
         ping_pong::{self, Pong},
-        weighted_shuffle::WeightedShuffle,
     },
     solana_hash::{HASH_BYTES, Hash},
     solana_keypair::{Keypair, signable::Signable},
@@ -1895,52 +1893,6 @@ impl ServeRepair {
         Ok((out, peer.serve_repair, peer.pubkey))
     }
 
-    pub(crate) fn repair_request_ancestor_hashes_sample_peers(
-        &self,
-        slot: Slot,
-        cluster_slots: &ClusterSlots,
-        repair_validators: &Option<HashSet<Pubkey>>,
-        repair_protocol: Protocol,
-        my_pubkey: &Pubkey,
-    ) -> Result<Vec<(Pubkey, SocketAddr)>> {
-        let repair_peers: Vec<_> = self.repair_peers(repair_validators, my_pubkey);
-        if repair_peers.is_empty() {
-            return Err(ClusterInfoError::NoPeers.into());
-        }
-        let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
-        let peers = WeightedShuffle::new("repair_request_ancestor_hashes", weights)
-            .shuffle(&mut rand::rng())
-            .map(|i| index[i])
-            .filter_map(|i| {
-                let addr = repair_peers[i].serve_repair(repair_protocol)?;
-                Some((*repair_peers[i].pubkey(), addr))
-            })
-            .take(get_ancestor_hash_repair_sample_size())
-            .collect();
-        Ok(peers)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn repair_request_duplicate_compute_best_peer(
-        &self,
-        slot: Slot,
-        cluster_slots: &ClusterSlots,
-        repair_validators: &Option<HashSet<Pubkey>>,
-        my_pubkey: &Pubkey,
-    ) -> Option<(Pubkey, SocketAddr)> {
-        let repair_peers: Vec<_> = self.repair_peers(repair_validators, my_pubkey);
-        if repair_peers.is_empty() {
-            return None;
-        }
-        let (weights, index) = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
-        let k = WeightedIndex::new(weights).ok()?.sample(&mut rand::rng());
-        let n = index[k];
-        Some((
-            *repair_peers[n].pubkey(),
-            repair_peers[n].serve_repair(Protocol::UDP)?,
-        ))
-    }
-
     pub(crate) fn map_repair_request(
         &self,
         repair_request: &ShredRepairType,
@@ -2084,7 +2036,6 @@ mod tests {
         super::*,
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
-        crossbeam_channel::bounded,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -2747,13 +2698,11 @@ mod tests {
             .root_bank()
             .epoch_schedule()
             .clone();
-        let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = bounded(1024);
         RepairInfo {
             bank_forks,
             cluster_info,
             cluster_slots,
             epoch_schedule,
-            ancestor_duplicate_slots_sender,
             repair_validators,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
         }

@@ -2,16 +2,13 @@
 
 use {
     super::{
-        ProcessActiveBanksContext, ReplayStage, ReplayStageError, TowerBFTStructures,
+        ProcessActiveBanksContext, ReplayStage, ReplayStageError,
         dead_slots::{
             DeadSlotLogLevel, DeadSlotNotifications, mark_hard_dead_slot,
             mark_hard_dead_slot_notifications, send_invalid_bank,
         },
     },
-    crate::{
-        consensus::progress_map::{DeadSlotReason, ProgressMap},
-        repair::cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
-    },
+    crate::consensus::progress_map::{DeadSlotReason, ProgressMap},
     agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
@@ -369,9 +366,6 @@ pub(super) fn handle_abandoned_bank(
     bank_forks: &RwLock<BankForks>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-    purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-    tbft_structs: Option<&mut TowerBFTStructures>,
 ) -> Result<(), ReplayStageError> {
     bank.clear_accounts_lt_hash_async_progress_is_at_end();
     // Handle UpdateParent marker during fast leader handover. The leader
@@ -414,11 +408,7 @@ pub(super) fn handle_abandoned_bank(
                 .is_some()
             });
     if !update_parent_ready {
-        let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-            duplicate_slots_to_repair,
-            purge_repair_slot_counter,
-            tbft_structs,
-        );
+        let mut dead_slot_context = process_active_banks_context.dead_slot_context();
         mark_hard_dead_slot(
             bank,
             "error: replay abandoned bank for an unusable UpdateParent".to_string(),

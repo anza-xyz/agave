@@ -5,7 +5,6 @@ use {
         epoch_specs::EpochSpecs,
     },
     agave_votor_messages::migration::MigrationStatus,
-    crossbeam_channel::Sender,
     log::error,
     solana_clock::Slot,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
@@ -37,8 +36,6 @@ pub struct DuplicateShredHandler {
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     epoch_specs: Box<dyn EpochSpecs>,
     cached_slots_in_epoch: u64,
-    // Used to notify duplicate consensus state machine
-    duplicate_slots_sender: Sender<Slot>,
     shred_version: u16,
     /// Alpenglow migration status
     migration_status: Arc<MigrationStatus>,
@@ -78,7 +75,6 @@ impl DuplicateShredHandler {
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         epoch_specs: Box<dyn EpochSpecs>,
-        duplicate_slots_sender: Sender<Slot>,
         shred_version: u16,
         migration_status: Arc<MigrationStatus>,
     ) -> Self {
@@ -90,7 +86,6 @@ impl DuplicateShredHandler {
             blockstore,
             leader_schedule_cache,
             epoch_specs,
-            duplicate_slots_sender,
             shred_version,
             migration_status,
         }
@@ -145,18 +140,6 @@ impl DuplicateShredHandler {
                     shred1.into_payload(),
                     shred2.into_payload(),
                 )?;
-
-                // Notify the Tower duplicate-consensus state machine. ReplayStage stops
-                // consuming this channel once Alpenglow is enabled, while duplicate proofs are
-                // still stored during the mixed epoch for slashing.
-                if !self.migration_status.is_alpenglow_enabled()
-                    && self.duplicate_slots_sender.len() * 2
-                        < self.duplicate_slots_sender.capacity().unwrap_or(usize::MAX)
-                {
-                    self.duplicate_slots_sender
-                        .try_send(slot)
-                        .map_err(|_| Error::DuplicateSlotSenderFailure)?;
-                }
             }
             self.consumed.insert(slot, true);
         }
@@ -235,8 +218,6 @@ mod tests {
             epoch_specs::TestEpochSpecs,
             protocol::DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
         },
-        crossbeam_channel::bounded,
-        itertools::Itertools,
         solana_keypair::Keypair,
         solana_ledger::{
             genesis_utils::GenesisConfigInfo,
@@ -371,13 +352,11 @@ mod tests {
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
-        let (sender, receiver) = bounded(1024);
         let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
-            sender,
             shred_version,
             migration_status,
         );
@@ -387,10 +366,6 @@ mod tests {
             duplicate_shred_handler.handle(chunk);
         }
         assert_eq!(blockstore.has_duplicate_shreds_in_slot(slot), expect_stored);
-        assert_eq!(
-            receiver.try_iter().collect_vec(),
-            if expect_stored { vec![slot] } else { vec![] }
-        );
     }
 
     #[test]
@@ -430,7 +405,6 @@ mod tests {
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
-        let (sender, receiver) = bounded(1024);
         let start_slot: Slot = 10;
 
         let migration_status = bank_forks_arc.read().unwrap().migration_status();
@@ -438,7 +412,6 @@ mod tests {
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
-            sender,
             shred_version,
             migration_status.clone(),
         );
@@ -469,10 +442,6 @@ mod tests {
         }
         assert!(blockstore.has_duplicate_shreds_in_slot(start_slot));
         assert!(blockstore.has_duplicate_shreds_in_slot(start_slot + 1));
-        assert_eq!(
-            receiver.try_iter().collect_vec(),
-            vec![start_slot, start_slot + 1]
-        );
 
         // Test all kinds of bad proofs.
         for error in [
@@ -495,7 +464,6 @@ mod tests {
                         duplicate_shred_handler.handle(chunk);
                     }
                     assert!(!blockstore.has_duplicate_shreds_in_slot(start_slot + 2));
-                    assert!(receiver.is_empty());
                 }
             }
         }
@@ -517,7 +485,6 @@ mod tests {
             duplicate_shred_handler.handle(chunk);
         }
         assert!(blockstore.has_duplicate_shreds_in_slot(alpenglow_slot));
-        assert!(receiver.is_empty());
     }
 
     #[test]
@@ -557,13 +524,11 @@ mod tests {
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
-        let (sender, receiver) = bounded(1024);
         let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
-            sender,
             shred_version,
             migration_status,
         );
@@ -583,7 +548,6 @@ mod tests {
             duplicate_shred_handler.handle(chunk);
         }
         assert!(!blockstore.has_duplicate_shreds_in_slot(start_slot));
-        assert!(receiver.is_empty());
 
         // This proof will be rejected because the slot is too far away in the future.
         let future_slot =
@@ -601,7 +565,6 @@ mod tests {
             duplicate_shred_handler.handle(chunk);
         }
         assert!(!blockstore.has_duplicate_shreds_in_slot(future_slot));
-        assert!(receiver.is_empty());
 
         // Send in two proofs, the first proof showing up will be accepted, the following
         // proofs will be discarded.
@@ -617,12 +580,10 @@ mod tests {
         // handle chunk 0 of the first proof.
         duplicate_shred_handler.handle(chunks.next().unwrap());
         assert!(!blockstore.has_duplicate_shreds_in_slot(start_slot));
-        assert!(receiver.is_empty());
         // Now send in the rest of the first proof, it will succeed.
         for chunk in chunks {
             duplicate_shred_handler.handle(chunk);
         }
         assert!(blockstore.has_duplicate_shreds_in_slot(start_slot));
-        assert_eq!(receiver.try_iter().collect_vec(), vec![start_slot]);
     }
 }

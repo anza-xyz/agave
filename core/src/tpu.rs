@@ -10,8 +10,7 @@ use {
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
         cluster_info_vote_listener::{
-            ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
-            VoteTracker,
+            ClusterInfoVoteListener, GossipVerifiedVoteHashSender, VoteTracker,
         },
         fetch_stage::FetchStage,
         forwarding_stage::{
@@ -140,7 +139,6 @@ impl Tpu {
         replay_vote_receiver: ReplayVoteReceiver,
         replay_vote_sender: ReplayVoteSender,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
-        duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
         tpu_forwarding_client_config: ForwardingClientConfig,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
@@ -300,7 +298,6 @@ impl Tpu {
             replay_vote_receiver,
             blockstore.clone(),
             bank_notification_sender,
-            duplicate_confirmed_slot_sender,
         );
 
         let banking_stage = BankingStage::new_num_threads(

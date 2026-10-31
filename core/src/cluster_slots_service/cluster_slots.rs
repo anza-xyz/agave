@@ -436,21 +436,6 @@ impl ClusterSlots {
         self.with_root_epoch(|b| b.schedule.get_epoch_and_slot_index(slot).0)
     }
 
-    #[cfg(test)]
-    // patches the given node_id into the internal structures
-    // to pretend as if it has submitted epoch slots for a given slot.
-    // If the node was not previously registered in validator_stakes,
-    // an override_stake amount should be provided.
-    pub(crate) fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
-        let mut epoch_slot = EpochSlots {
-            from: node_id,
-            ..Default::default()
-        };
-        epoch_slot.fill(&[slot], 0);
-        let current_root = self.current_slot.load(Ordering::Relaxed);
-        self.update_internal(current_root, vec![epoch_slot]);
-    }
-
     pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
         if repair_peers.is_empty() {
             return vec![];
@@ -488,28 +473,6 @@ impl ClusterSlots {
             .zip(stakes)
             .map(|(a, b)| (a / 2 + b / 2).max(1u64))
             .collect()
-    }
-
-    pub(crate) fn compute_weights_exclude_nonfrozen(
-        &self,
-        slot: Slot,
-        repair_peers: &[ContactInfo],
-    ) -> (Vec<u64>, Vec<usize>) {
-        let Some(slot_peers) = self.lookup(slot) else {
-            return (vec![], vec![]);
-        };
-        let mut weights = Vec::with_capacity(repair_peers.len());
-        let mut indices = Vec::with_capacity(repair_peers.len());
-
-        for (index, peer) in repair_peers.iter().enumerate() {
-            if let Some(stake) = slot_peers.get_support_by_pubkey(peer.pubkey())
-                && stake > 0
-            {
-                weights.push(stake.max(1));
-                indices.push(index);
-            }
-        }
-        (weights, indices)
     }
 }
 
@@ -745,44 +708,6 @@ mod tests {
             vec![42 / 2, 1],
             "weights should be halved, but never zero"
         );
-    }
-
-    #[test]
-    fn test_best_completed_slot_peer() {
-        let cs = ClusterSlots::default();
-        let contact_infos: Vec<_> = std::iter::repeat_with(|| {
-            ContactInfo::new(
-                Pubkey::new_unique(),
-                0, // wallclock
-                0, // shred_version
-            )
-        })
-        .take(2)
-        .collect();
-        let slot = 9;
-
-        // None of these validators have completed slot 9, so should
-        // return nothing
-        let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
-        assert!(w.is_empty());
-        assert!(i.is_empty());
-
-        // Give second validator max stake
-        let validator_stakes: HashMap<_, _> = [
-            (*contact_infos[0].pubkey(), 42),
-            (*contact_infos[1].pubkey(), u64::MAX / 2),
-        ]
-        .into_iter()
-        .collect();
-        cs.fake_epoch_info_for_tests(validator_stakes);
-
-        // Mark the first validator as completed slot 9, should pick that validator,
-        // even though it only has minimal stake, while the other validator has
-        // max stake
-        cs.insert_node_id(slot, *contact_infos[0].pubkey());
-        let (w, i) = cs.compute_weights_exclude_nonfrozen(slot, &contact_infos);
-        assert_eq!(w, [42]);
-        assert_eq!(i, [0]);
     }
 
     #[test]

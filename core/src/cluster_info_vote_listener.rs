@@ -2,7 +2,6 @@ use {
     crate::{
         consensus::vote_stake_tracker::VoteStakeTracker,
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
-        replay_stage::DUPLICATE_THRESHOLD,
         result::{Error, Result},
     },
     agave_bls_sigverify::pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
@@ -51,10 +50,8 @@ pub type VerifiedVoteTransactionsSender = Sender<Vec<Transaction>>;
 pub type VerifiedVoteTransactionsReceiver = Receiver<Vec<Transaction>>;
 pub type GossipVerifiedVoteHashSender = Sender<(Pubkey, Slot, Hash)>;
 pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
-pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;
-pub type DuplicateConfirmedSlotsReceiver = Receiver<ThresholdConfirmedSlots>;
 
-const THRESHOLDS_TO_CHECK: [f64; 2] = [DUPLICATE_THRESHOLD, VOTE_THRESHOLD_SIZE];
+const THRESHOLDS_TO_CHECK: [f64; 1] = [VOTE_THRESHOLD_SIZE];
 const MAX_VOTE_SLOT_DISTANCE_FROM_ROOT: Slot = 50_000;
 const MAX_VOTE_HASHES_PER_PUBKEY_PER_SLOT: u8 = 2;
 
@@ -66,7 +63,6 @@ struct ConfirmationNotifiers {
     gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
     verified_voter_slots_sender: EvictingSender<VerifiedVotorSlotsMessage>,
     bank_notification_sender: Option<BankNotificationSenderConfig>,
-    duplicate_confirmed_slot_sender: Option<DuplicateConfirmedSlotsSender>,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -445,7 +441,6 @@ impl ClusterInfoVoteListener {
         replay_votes_receiver: ReplayVoteReceiver,
         blockstore: Arc<Blockstore>,
         bank_notification_sender: Option<BankNotificationSenderConfig>,
-        duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
     ) -> Self {
         let migration_status = bank_forks.read().unwrap().migration_status();
         let process_thread = Builder::new()
@@ -456,7 +451,6 @@ impl ClusterInfoVoteListener {
                     gossip_verified_vote_hash_sender,
                     verified_voter_slots_sender,
                     bank_notification_sender,
-                    duplicate_confirmed_slot_sender: Some(duplicate_confirmed_slot_sender),
                     migration_status,
                 };
                 let _ = Self::process_votes_loop(
@@ -671,14 +665,7 @@ impl ClusterInfoVoteListener {
             ));
         }
 
-        let reached_duplicate_confirmed = reached_threshold_results[0];
-        let reached_optimistic_confirmed = reached_threshold_results[1];
-
-        if reached_duplicate_confirmed
-            && let Some(ref sender) = notifiers.duplicate_confirmed_slot_sender
-        {
-            let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
-        }
+        let reached_optimistic_confirmed = reached_threshold_results[0];
 
         if reached_optimistic_confirmed {
             new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
@@ -1070,7 +1057,6 @@ mod tests {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
         let mut replay_vote_buffer = VoteBuffer::new();
@@ -1189,7 +1175,6 @@ mod tests {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
         let mut replay_vote_buffer = VoteBuffer::new();
@@ -1316,12 +1301,10 @@ mod tests {
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = bounded(1024);
         let (verified_voter_slots_sender, verified_voter_slots_receiver) =
             EvictingSender::new_bounded(1024);
-        let (duplicate_confirmed_slot_sender, duplicate_confirmed_slot_receiver) = bounded(1024);
         let notifiers = ConfirmationNotifiers {
             gossip_verified_vote_hash_sender,
             verified_voter_slots_sender,
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: Some(duplicate_confirmed_slot_sender),
             migration_status: migration_status.clone(),
         };
         let mut replay_vote_buffer = VoteBuffer::new();
@@ -1351,10 +1334,8 @@ mod tests {
         assert!(!latest_vote_slot_per_validator.is_empty());
         assert!(!gossip_verified_vote_hash_receiver.is_empty());
         assert!(!verified_voter_slots_receiver.is_empty());
-        assert!(!duplicate_confirmed_slot_receiver.is_empty());
         for _ in gossip_verified_vote_hash_receiver.try_iter() {}
         for _ in verified_voter_slots_receiver.try_iter() {}
-        for _ in duplicate_confirmed_slot_receiver.try_iter() {}
 
         // Any partial Tower vote state becomes irrelevant at the transition.
         replay_vote_buffer.bank_votes.insert(
@@ -1393,7 +1374,6 @@ mod tests {
         assert!(latest_vote_slot_per_validator.is_empty());
         assert!(gossip_verified_vote_hash_receiver.is_empty());
         assert!(verified_voter_slots_receiver.is_empty());
-        assert!(duplicate_confirmed_slot_receiver.is_empty());
     }
 
     #[test]
@@ -1451,7 +1431,6 @@ mod tests {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
         let mut replay_vote_buffer = VoteBuffer::new();
@@ -1541,7 +1520,6 @@ mod tests {
                 gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
                 verified_voter_slots_sender: verified_voter_slots_sender.clone(),
                 bank_notification_sender: None,
-                duplicate_confirmed_slot_sender: None,
                 migration_status: Arc::new(MigrationStatus::default()),
             };
             let mut replay_vote_buffer = VoteBuffer::new();
@@ -1902,7 +1880,6 @@ mod tests {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
         ClusterInfoVoteListener::filter_and_confirm_with_new_votes(
@@ -1953,7 +1930,6 @@ mod tests {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
         ClusterInfoVoteListener::filter_and_confirm_with_new_votes(
@@ -2072,7 +2048,6 @@ mod tests {
             gossip_verified_vote_hash_sender: gossip_verified_vote_hash_sender.clone(),
             verified_voter_slots_sender: verified_voter_slots_sender.clone(),
             bank_notification_sender: None,
-            duplicate_confirmed_slot_sender: None,
             migration_status: Arc::new(MigrationStatus::default()),
         };
         ClusterInfoVoteListener::track_new_votes_and_notify_confirmations(
