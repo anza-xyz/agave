@@ -1598,7 +1598,12 @@ pub mod replace_ata_with_p_ata {
     pub const PROGRAM_BUFFER: Pubkey =
         Pubkey::from_str_const("pataAAkF439TTjwRqmxRkTTEfZemRdoriXusez4PQ6S");
 
-    pub const BUILD_HASH: Hash = Hash::new_from_array([0; 32]);
+    // Bytes of the SHA256 hash for the p-ata program data.
+    //   - hash: 4e008052b0a7ac695482474946700abe70e9cfd03d178aa8887b02674e7f7d9e
+    pub const BUILD_HASH: Hash = Hash::new_from_array([
+        78, 0, 128, 82, 176, 167, 172, 105, 84, 130, 71, 73, 70, 112, 10, 190, 112, 233, 207, 208,
+        61, 23, 138, 168, 136, 123, 2, 103, 78, 127, 125, 158,
+    ]);
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
