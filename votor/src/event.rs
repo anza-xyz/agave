@@ -61,6 +61,10 @@ pub enum VotorEvent {
     /// The given slot has reached the safe to skip status
     SafeToSkip(Slot),
 
+    /// The slot received a Skip certificate while no block in it has a NotarizeFallback,
+    /// Notarize or FinalizeFast certificate. Replay of the slot can be cancelled.
+    SkipCertifiedWithoutNotar(Slot),
+
     /// We are the leader for this window and have reached the parent ready status
     /// Produce the window
     ProduceWindow(LeaderWindowInfo),
@@ -84,6 +88,7 @@ impl VotorEvent {
             VotorEvent::Block(completed_block) => completed_block.slot <= root,
             VotorEvent::Timeout(s)
             | VotorEvent::SafeToSkip(s)
+            | VotorEvent::SkipCertifiedWithoutNotar(s)
             | VotorEvent::TimeoutCrashedLeader(s)
             | VotorEvent::FirstShred(s)
             | VotorEvent::SafeToNotar(Block {

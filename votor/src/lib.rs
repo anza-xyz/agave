@@ -4,6 +4,7 @@
 extern crate log;
 
 pub mod aggregate_accumulator;
+pub mod cancelled_replay_slots;
 pub mod commitment;
 pub mod common;
 pub mod consensus_metrics;
