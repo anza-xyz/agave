@@ -1,7 +1,9 @@
 use {
     agave_event_system::stream_policy::StreamPolicy,
     agave_votor::{
-        event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
+        event::VotorEvent,
+        vote_history::{VoteHistory, VoteHistoryError},
+        vote_history_storage::VoteHistoryStorage,
     },
     crossbeam_channel::Sender,
     jsonrpc_core::{BoxFuture, ErrorCode, MetaIoHandler, Metadata, Result},
@@ -38,6 +40,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
+        io,
         net::{IpAddr, SocketAddr},
         num::NonZeroUsize,
         path::{Path, PathBuf},
@@ -988,21 +991,25 @@ impl AdminRpcImpl {
                         &identity_keypair.pubkey(),
                     )
                 };
-                if should_require_vote_history
-                    && let Some(vote_history_storage) = &meta.vote_history_storage
-                {
-                    let _ = VoteHistory::restore(vote_history_storage, &identity_keypair.pubkey())
-                        .map_err(|err| {
-                            jsonrpc_core::error::Error::invalid_params(format!(
-                                "Unable to load vote history file for identity {}: {}. The vote \
+                if should_require_vote_history {
+                    let res = if let Some(vote_history_storage) = &meta.vote_history_storage {
+                        VoteHistory::restore(vote_history_storage, &identity_keypair.pubkey())
+                    } else {
+                        Err(VoteHistoryError::IoError(io::Error::other(
+                            "VoteHistory not available",
+                        )))
+                    };
+                    res.map_err(|err| {
+                        jsonrpc_core::error::Error::invalid_params(format!(
+                            "Unable to load vote history file for identity {}: {}. The vote \
                                  account {} has prior Alpenglow votes. Ensure the vote history \
                                  file is present or (dangerous) use --do-not-require-vote-history \
                                  if you know what you're doing",
-                                identity_keypair.pubkey(),
-                                err,
-                                post_init.vote_account
-                            ))
-                        })?;
+                            identity_keypair.pubkey(),
+                            err,
+                            post_init.vote_account
+                        ))
+                    })?;
                 }
             }
 
