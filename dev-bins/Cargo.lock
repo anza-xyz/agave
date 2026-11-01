@@ -2443,7 +2443,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3919,9 +3919,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.5"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
+checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
 dependencies = [
  "hashbrown 0.17.0",
 ]
@@ -4160,7 +4160,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5281,7 +5281,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5339,7 +5339,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7236,7 +7236,7 @@ dependencies = [
  "itertools 0.15.0",
  "lazy-lru",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "mockall",
  "num_enum",
  "parking_lot 0.12.5",
@@ -7841,7 +7841,7 @@ dependencies = [
  "jsonrpc-pubsub",
  "libc",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "rayon",
  "regex",
  "serde",
@@ -8921,7 +8921,7 @@ dependencies = [
  "futures-util",
  "itertools 0.15.0",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "quinn",
  "rustls",
  "solana-clock",
@@ -9071,7 +9071,7 @@ dependencies = [
  "itertools 0.15.0",
  "lazy-lru",
  "log",
- "lru 0.18.5",
+ "lru 0.19.0",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
@@ -9747,7 +9747,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10674,7 +10674,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
