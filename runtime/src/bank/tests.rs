@@ -12899,3 +12899,31 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
         bank.calculate_capitalization_for_tests()
     );
 }
+
+#[test]
+fn test_request_replay_cancel_rejects_execution_without_blocking() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(!bank.is_replay_cancel_requested());
+
+    // Hold an execution guard, like an in-flight transaction would. Unlike
+    // `quiesce_transaction_execution`, requesting a replay cancel must not wait for it.
+    let in_flight_guard = bank.try_enter_transaction_execution().unwrap();
+    std::thread::scope(|scope| {
+        let (done_sender, done_receiver) = bounded(1);
+        let bank = &bank;
+        scope.spawn(move || {
+            bank.request_replay_cancel();
+            done_sender.send(()).unwrap();
+        });
+        done_receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("request_replay_cancel must not wait for in-flight execution");
+    });
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_none());
+
+    drop(in_flight_guard);
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_none());
+}

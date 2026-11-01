@@ -25,6 +25,7 @@ use {
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
     solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
     solana_client::connection_cache::ConnectionCache,
+    solana_cost_model::transaction_cost::TrackedCost,
     solana_entry::{
         block_component::{
             BlockComponent, BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedBlockMarker,
@@ -67,27 +68,38 @@ use {
             GenesisConfigInfo, ValidatorVoteKeypairs, bootstrap_validator_stake_lamports,
             create_genesis_config_with_tower_leader,
         },
+        installed_scheduler_pool::SchedulingContext,
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
         },
     },
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
     solana_signature::Signature,
     solana_svm_timings::ExecuteTimings,
+    solana_svm_transaction::svm_transaction::SVMStaticTransaction,
     solana_system_transaction as system_transaction,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    solana_transaction_error::TransactionError,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::VersionedTransactionWithStatusMeta,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_logic::{OrderedTaskId, Task},
+    solana_unified_scheduler_pool::{
+        DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
+        TaskHandler,
+    },
     solana_vote::vote_transaction,
     solana_vote_program::vote_state::{
         self, TowerSync, VoteStateV4, VoteStateVersions, handler::VoteStateHandler,
     },
     std::{
+        collections::BTreeSet,
         fs::remove_dir_all,
         iter,
-        sync::{Arc, Barrier, Mutex, RwLock, atomic::AtomicU64},
+        sync::{
+            Arc, Barrier, Mutex, RwLock,
+            atomic::{AtomicU64, AtomicUsize},
+        },
     },
     tempfile::tempdir,
     test_case::test_case,
@@ -515,6 +527,7 @@ fn test_child_slots_of_same_parent() {
             transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -549,6 +562,7 @@ fn test_child_slots_of_same_parent() {
             transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -1263,6 +1277,519 @@ fn test_dead_slot_on_complete_bank_replay_err() {
 #[test]
 fn test_dead_slot_on_complete_bank_verify_err() {
     do_test_dead_slot_on_complete_bank(CompleteBankFailure::VerifyError);
+}
+
+#[test]
+fn test_cancelled_replay_is_discarded_without_dead_mark() {
+    static HANDLED_TASKS: AtomicUsize = AtomicUsize::new(0);
+    const NUM_TXS: usize = 50;
+
+    // Executes every transaction slowly, like a block crafted to be expensive to replay.
+    #[derive(Debug)]
+    struct StallingHandler;
+    impl TaskHandler for StallingHandler {
+        fn handle(
+            timings: &mut ExecuteTimings,
+            scheduling_context: &SchedulingContext,
+            task: &Task,
+            handler_context: &HandlerContext,
+        ) -> TransactionResult<TrackedCost> {
+            HANDLED_TASKS.fetch_add(1, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(100));
+            DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
+        }
+    }
+
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        validator_keypairs,
+        ..
+    } = vote_simulator;
+    let funded_keypair = validator_keypairs
+        .values()
+        .next()
+        .unwrap()
+        .node_keypair
+        .insecure_clone();
+    let cancelled_replay_slots = CancelledReplaySlots::default();
+
+    let slot = 1;
+    let bank = {
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        bank_forks
+            .write()
+            .unwrap()
+            .install_scheduler_pool(
+                SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
+                    None, None, None, None, None,
+                ),
+            );
+        let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+        bank_forks.write().unwrap().insert(bank)
+    };
+    progress.insert(
+        slot,
+        ForkProgress::new(bank.last_blockhash(), None, None, 0, 0, None),
+    );
+    {
+        let entries = make_complete_slot_entries(&bank, vec![]);
+        let shreds = entries_to_test_shreds(&entries, slot, bank.parent_slot(), true, 0);
+        blockstore.insert_shreds(shreds, false).unwrap();
+    }
+
+    // Transfers from the same payer conflict, so they are executed one after the other.
+    let txs = (0..NUM_TXS).map(|task_id| {
+        let tx = system_transaction::transfer(
+            &funded_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        (ReplayTransaction::from(tx), task_id as OrderedTaskId)
+    });
+    bank.schedule_transaction_executions(txs).unwrap();
+
+    // Replay waits for the scheduler, like it does at the block footer.
+    let replay_wait = {
+        let bank = bank.clone_with_scheduler();
+        std::thread::spawn(move || bank.wait_for_completed_scheduler())
+    };
+    while HANDLED_TASKS.load(Ordering::Relaxed) == 0 {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // Votor observes a Skip certificate without NotarizeFallback-or-stronger for the slot.
+    cancelled_replay_slots.insert(slot);
+    bank.request_replay_cancel();
+
+    // Cancelling unblocks replay before the remaining transactions execute.
+    let (result, _timings) = replay_wait.join().unwrap().unwrap();
+    assert_eq!(result, Err(TransactionError::CommitCancelled));
+    assert!(HANDLED_TASKS.load(Ordering::Relaxed) < NUM_TXS);
+
+    // The replay error for the cancelled bank doesn't mark the slot dead.
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore.clone(),
+        replay_vote_sender,
+    );
+    let replay_result = ReplaySlotFromBlockstore {
+        is_slot_dead: false,
+        bank_slot: slot,
+        replay_result: Some(Err(BlockstoreProcessorError::InvalidTransaction(
+            TransactionError::CommitCancelled,
+        ))),
+    };
+    let new_frozen_slots = ReplayStage::process_replay_results(
+        &process_active_banks_context,
+        &mut progress,
+        &mut Vec::new(),
+        &mut LatestValidatorVotesForFrozenBanks::default(),
+        &mut DuplicateSlotsToRepair::default(),
+        &mut PurgeRepairSlotCounter::default(),
+        None,
+        &[replay_result],
+        &Pubkey::new_unique(),
+    )
+    .unwrap();
+    assert!(new_frozen_slots.is_empty());
+    assert_eq!(progress.dead_reason(slot), None);
+    assert!(!blockstore.is_dead(slot));
+    assert!(replay_vote_receiver.try_recv().is_err());
+    assert!(bank_forks.read().unwrap().get(slot).is_some());
+
+    // The next replay iteration discards the bank, keeping the slot's shreds.
+    ReplayStage::process_cancelled_banks(
+        &Pubkey::new_unique(),
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        &cancelled_replay_slots,
+    );
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
+    assert!(!progress.contains_key(&slot));
+    assert!(!blockstore.is_dead(slot));
+    assert!(blockstore.is_full(slot));
+
+    let generate_new_bank_forks = |progress: &mut ProgressMap| {
+        ReplayStage::generate_new_bank_forks(
+            NewBankForksContext {
+                blockstore: &blockstore,
+                bank_forks: &bank_forks,
+                leader_schedule_cache: &leader_schedule_cache,
+                rpc_subscriptions: None,
+                slot_status_notifier: &None,
+                transaction_status_sender: None,
+                migration_status: &MigrationStatus::default(),
+                my_pubkey: &Pubkey::new_unique(),
+                cancelled_replay_slots: &cancelled_replay_slots,
+            },
+            progress,
+            &mut ReplayLoopTiming::default(),
+        )
+        .unwrap();
+    };
+
+    // The bank is not recreated while its slot is cancelled.
+    generate_new_bank_forks(&mut progress);
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
+
+    // Sanity check that the cancellation is the only reason the bank isn't recreated.
+    assert!(cancelled_replay_slots.remove(slot));
+    generate_new_bank_forks(&mut progress);
+    let recreated_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert!(!recreated_bank.is_replay_cancel_requested());
+}
+
+#[test]
+fn test_process_cancelled_banks_only_discards_cancelled_replay_banks() {
+    let ReplayBlockstoreComponents {
+        blockstore: _blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+    let cancelled_replay_slots = CancelledReplaySlots::default();
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let new_bank = |slot| Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
+
+    let frozen_slot = 1;
+    let leader_slot = 2;
+    let dead_slot = 3;
+    let flagged_slot = 4;
+    let cancelled_slot = 5;
+    let other_slot = 6;
+    {
+        let frozen_bank = new_bank(frozen_slot);
+        frozen_bank.freeze();
+        let leader_bank = new_bank(leader_slot).mark_leader_bank();
+        let replay_banks = [dead_slot, flagged_slot, cancelled_slot, other_slot].map(new_bank);
+        let mut bank_forks = bank_forks.write().unwrap();
+        for bank in [frozen_bank, leader_bank].into_iter().chain(replay_banks) {
+            bank_forks.insert(bank);
+        }
+    }
+    for slot in [
+        frozen_slot,
+        leader_slot,
+        dead_slot,
+        flagged_slot,
+        cancelled_slot,
+        other_slot,
+    ] {
+        progress.insert(
+            slot,
+            ForkProgress::new(Hash::default(), None, None, 0, 0, None),
+        );
+    }
+    progress.get_mut(&dead_slot).unwrap().dead_reason = Some(DeadSlotReason::Hard);
+    for slot in [frozen_slot, leader_slot, dead_slot, cancelled_slot] {
+        cancelled_replay_slots.insert(slot);
+    }
+    // Votor flagged the bank, then resumed the slot before replay discarded the bank.
+    bank_forks
+        .read()
+        .unwrap()
+        .get(flagged_slot)
+        .unwrap()
+        .request_replay_cancel();
+
+    ReplayStage::process_cancelled_banks(
+        &Pubkey::new_unique(),
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        &cancelled_replay_slots,
+    );
+
+    let bank_forks = bank_forks.read().unwrap();
+    for slot in [frozen_slot, leader_slot, dead_slot, other_slot] {
+        let bank = bank_forks.get(slot).unwrap();
+        assert!(!bank.is_replay_cancel_requested(), "slot {slot}");
+        assert!(progress.contains_key(&slot), "slot {slot}");
+    }
+    for slot in [flagged_slot, cancelled_slot] {
+        assert!(bank_forks.get(slot).is_none(), "slot {slot}");
+        assert!(!progress.contains_key(&slot), "slot {slot}");
+    }
+}
+
+/// Returns the entries of a complete slot on top of `bank`'s parent, with each transaction in its
+/// own entry, so that transactions which conflict with each other form a valid block.
+fn make_complete_slot_entries_one_tx_per_entry(bank: &Bank, txs: Vec<Transaction>) -> Vec<Entry> {
+    let hashes_per_tick = bank.hashes_per_tick().unwrap();
+    let num_tx_ticks = txs.len() as u64;
+    assert!(num_tx_ticks <= bank.ticks_per_slot());
+    let mut prev_hash = bank.last_blockhash();
+    let mut entries = Vec::new();
+    for tx in txs {
+        let tx_entry = entry::next_entry(&prev_hash, hashes_per_tick - 1, vec![tx]);
+        let tick = entry::next_entry(&tx_entry.hash, 1, vec![]);
+        prev_hash = tick.hash;
+        entries.extend([tx_entry, tick]);
+    }
+    entries.extend(entry::create_ticks(
+        bank.ticks_per_slot() - num_tx_ticks,
+        hashes_per_tick,
+        prev_hash,
+    ));
+    entries
+}
+
+/// Votor cancels replay of a slot, then resumes it once a block in the slot gets a
+/// NotarizeFallback-or-stronger certificate. Replay must recreate the bank and replay the block
+/// from its first shred, reaching the same bank hash as a replay that was never cancelled.
+///
+/// If `resume_before_replay_handles_cancel`, the slot is resumed after votor flagged the
+/// bank but before replay processed the resulting error: replay must still discard the flagged
+/// bank instead of marking the slot dead.
+#[test_case(false; "resume_after_bank_discarded")]
+#[test_case(true; "resume_before_replay_handles_cancel")]
+fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel: bool) {
+    const NUM_TXS: usize = 4;
+    /// The block's transactions before this one commit before replay is cancelled.
+    const STALLED_TX_INDEX: usize = 2;
+    // Keyed by signature rather than by bank id: bank ids are only unique within a bank tree, and
+    // both test cases share these statics when they run in the same process.
+    /// Transactions that stall until they are removed from this set.
+    static STALLED_TXS: Mutex<BTreeSet<Signature>> = Mutex::new(BTreeSet::new());
+    /// Stalled transactions that started executing.
+    static STARTED_TXS: Mutex<BTreeSet<Signature>> = Mutex::new(BTreeSet::new());
+
+    // Stalls execution of the transactions in `STALLED_TXS`, like a block crafted to be expensive
+    // to replay.
+    #[derive(Debug)]
+    struct StallingHandler;
+    impl TaskHandler for StallingHandler {
+        fn handle(
+            timings: &mut ExecuteTimings,
+            scheduling_context: &SchedulingContext,
+            task: &Task,
+            handler_context: &HandlerContext,
+        ) -> TransactionResult<TrackedCost> {
+            let signature = *task.transaction().signature();
+            if STALLED_TXS.lock().unwrap().contains(&signature) {
+                STARTED_TXS.lock().unwrap().insert(signature);
+                while STALLED_TXS.lock().unwrap().contains(&signature) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+            DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
+        }
+    }
+
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        validator_keypairs,
+        ..
+    } = vote_simulator;
+    bank_forks
+        .write()
+        .unwrap()
+        .install_scheduler_pool(
+            SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
+                None, None, None, None, None,
+            ),
+        );
+    let cancelled_replay_slots = CancelledReplaySlots::default();
+    // Not the leader of `slot`, so that the slot is replayed from the blockstore.
+    let my_pubkey = Pubkey::new_unique();
+    let slot = 1;
+
+    // Transfers from the same payer conflict, so they are executed one after the other.
+    let stalled_signature = {
+        let funded_keypair = &validator_keypairs.values().next().unwrap().node_keypair;
+        let bank0 = bank_forks.read().unwrap().root_bank();
+        let txs: Vec<_> = (0..NUM_TXS)
+            .map(|_| {
+                system_transaction::transfer(
+                    funded_keypair,
+                    &Pubkey::new_unique(),
+                    1,
+                    bank0.last_blockhash(),
+                )
+            })
+            .collect();
+        let stalled_signature = txs[STALLED_TX_INDEX].signatures[0];
+        let entries = make_complete_slot_entries_one_tx_per_entry(&bank0, txs);
+        // Chain to the parent's block id, which is in the blockstore.
+        let chained_merkle_root = blockstore
+            .get_last_shred_merkle_root(bank0.slot())
+            .unwrap()
+            .unwrap();
+        let shreds = Shredder::new(slot, bank0.slot(), 0, 0)
+            .unwrap()
+            .make_merkle_shreds_from_entries(
+                &Keypair::new(),
+                &entries,
+                true, // is_last_in_slot
+                chained_merkle_root,
+                0, // next_shred_index
+                0, // next_code_index
+                &mut ProcessShredsStats::default(),
+            );
+        blockstore.insert_shreds(shreds, false).unwrap();
+        stalled_signature
+    };
+
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+        bank_forks.clone(),
+        blockstore.clone(),
+        replay_vote_sender,
+    );
+    let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
+    let my_shred_version = cluster_info_for_tests().my_shred_version();
+    // The steps of a replay-loop iteration that create, discard and replay banks.
+    let generate_new_bank_forks = |progress: &mut ProgressMap| {
+        ReplayStage::generate_new_bank_forks(
+            NewBankForksContext {
+                blockstore: &blockstore,
+                bank_forks: &bank_forks,
+                leader_schedule_cache: &leader_schedule_cache,
+                rpc_subscriptions: None,
+                slot_status_notifier: &None,
+                transaction_status_sender: None,
+                migration_status: &MigrationStatus::default(),
+                my_pubkey: &my_pubkey,
+                cancelled_replay_slots: &cancelled_replay_slots,
+            },
+            progress,
+            &mut ReplayLoopTiming::default(),
+        )
+        .unwrap();
+    };
+    let process_cancelled_banks = |progress: &mut ProgressMap| {
+        ReplayStage::process_cancelled_banks(
+            &my_pubkey,
+            &bank_forks,
+            progress,
+            &mut Vec::new(),
+            &cancelled_replay_slots,
+        );
+    };
+    let process_active_banks = |progress: &mut ProgressMap| {
+        ReplayStage::process_active_banks(
+            my_shred_version,
+            &process_active_banks_context,
+            progress,
+            &mut Vec::new(),
+            &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &mut PurgeRepairSlotCounter::default(),
+            None,
+            &my_pubkey,
+            &Pubkey::new_unique(),
+            &mut ReplayLoopTiming::default(),
+            &finalization_cert_sender,
+        )
+        .unwrap()
+    };
+
+    // Reference: replay the block without cancelling it, then discard the bank.
+    let expected_hash = {
+        generate_new_bank_forks(&mut progress);
+        assert_eq!(process_active_banks(&mut progress), vec![slot]);
+        let bank = bank_forks.read().unwrap().get(slot).unwrap();
+        assert!(bank.is_frozen());
+        ReplayStage::clear_slots([slot], &bank_forks, &mut progress, &mut Vec::new());
+        bank.hash()
+    };
+
+    // Replay of the block stalls until votor cancels it.
+    generate_new_bank_forks(&mut progress);
+    let cancelled_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    STALLED_TXS.lock().unwrap().insert(stalled_signature);
+    let new_frozen_slots = std::thread::scope(|scope| {
+        let replay = scope.spawn(|| process_active_banks(&mut progress));
+        while !STARTED_TXS.lock().unwrap().contains(&stalled_signature) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        // Votor observes a Skip certificate without NotarizeFallback-or-stronger for the slot.
+        cancelled_replay_slots.insert(slot);
+        cancelled_bank.request_replay_cancel();
+        if resume_before_replay_handles_cancel {
+            // A NotarizeFallback-or-stronger certificate for a block in the slot follows quickly.
+            assert!(cancelled_replay_slots.remove(slot));
+        }
+
+        STALLED_TXS.lock().unwrap().remove(&stalled_signature);
+        replay.join().unwrap()
+    });
+
+    // The cancelled replay committed the transactions before the stalled one, but doesn't freeze
+    // the bank or mark the slot dead.
+    assert!(new_frozen_slots.is_empty());
+    assert!(!cancelled_bank.is_frozen());
+    assert_eq!(
+        cancelled_bank.executed_transaction_count(),
+        STALLED_TX_INDEX as u64
+    );
+    assert_eq!(progress.dead_reason(slot), None);
+    assert!(!blockstore.is_dead(slot));
+    assert!(
+        !replay_vote_receiver
+            .try_iter()
+            .any(|message| matches!(message, ReplayVoteMessage::InvalidBank { .. }))
+    );
+
+    // The next replay iteration discards the flagged bank, even if the slot is no longer
+    // cancelled.
+    process_cancelled_banks(&mut progress);
+    assert!(bank_forks.read().unwrap().get(slot).is_none());
+    assert!(!progress.contains_key(&slot));
+
+    if !resume_before_replay_handles_cancel {
+        generate_new_bank_forks(&mut progress);
+        assert!(bank_forks.read().unwrap().get(slot).is_none());
+
+        // A NotarizeFallback-or-stronger certificate for a block in the slot arrives.
+        assert!(cancelled_replay_slots.remove(slot));
+    }
+
+    // Replay recreates the bank, and replays the block from its first shred. Re-executing the
+    // transactions the cancelled bank committed must not conflict with leftovers of that bank (e.g.
+    // its status cache entries), so that the block reaches the same hash.
+    generate_new_bank_forks(&mut progress);
+    let recreated_bank = bank_forks.read().unwrap().get(slot).unwrap();
+    assert_ne!(recreated_bank.bank_id(), cancelled_bank.bank_id());
+    assert!(!recreated_bank.is_replay_cancel_requested());
+    assert!(!progress.contains_key(&slot));
+    process_cancelled_banks(&mut progress);
+    assert_eq!(process_active_banks(&mut progress), vec![slot]);
+
+    assert!(recreated_bank.is_frozen());
+    assert_eq!(recreated_bank.hash(), expected_hash);
+    {
+        let replay_progress = progress.get(&slot).unwrap().replay_progress.read().unwrap();
+        assert_eq!(replay_progress.num_txs, NUM_TXS);
+        assert_eq!(
+            replay_progress.num_shreds,
+            blockstore.meta(slot).unwrap().unwrap().consumed
+        );
+    }
+    assert_eq!(progress.dead_reason(slot), None);
+    assert!(!blockstore.is_dead(slot));
 }
 
 #[test]
@@ -2884,7 +3411,7 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
     assert!(bank_forks.read().unwrap().get(1).is_none());
     assert!(bank1.get_signature_status(&transfer_signature).is_some());
 
-    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
+    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new());
 
     assert!(bank1.get_signature_status(&transfer_signature).is_none());
 }
@@ -2918,7 +3445,7 @@ fn test_clear_slots_propagates_transaction_status_disconnect() {
         ),
     ] {
         assert_matches!(
-            ReplayStage::clear_slots(
+            ReplayStage::clear_slots_and_tx_history(
                 [1],
                 &bank_forks,
                 &mut progress,
@@ -3274,6 +3801,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -3309,6 +3837,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -3345,6 +3874,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -3380,6 +3910,7 @@ fn test_purge_unconfirmed_duplicate_slots_and_reattach() {
             transaction_status_sender: None,
             migration_status: &MigrationStatus::default(),
             my_pubkey: &Pubkey::default(),
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -3554,6 +4085,7 @@ fn test_headerless_update_parent(transaction_status_disconnected: bool) {
             transaction_status_sender: Some(&transaction_status_sender),
             migration_status: &migration_status,
             my_pubkey: &my_pubkey,
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
@@ -4240,6 +4772,7 @@ fn test_replay_own_update_full() {
             transaction_status_sender: None,
             migration_status: &migration_status,
             my_pubkey: &my_pubkey,
+            cancelled_replay_slots: &CancelledReplaySlots::default(),
         },
         &mut progress,
         &mut replay_timing,
