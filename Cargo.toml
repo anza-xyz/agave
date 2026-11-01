@@ -274,7 +274,6 @@ chrono = { version = "0.4.45", default-features = false }
 chrono-humanize = "0.2.3"
 clap = { version = "2.33.1", default-features = false, features = ["suggestions"] }
 console = "0.16.6"
-const_format = "0.2.36"
 criterion = "0.8.2"
 crossbeam-channel = "0.5.17"
 crossbeam-queue = "0.3.14"

@@ -59,7 +59,7 @@ use {
         rc::Rc,
         str::FromStr,
         sync::{
-            Arc,
+            Arc, LazyLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
@@ -69,6 +69,13 @@ use {
 };
 
 const DEFAULT_RPC_PORT_STR: &str = "8899";
+
+static DELINQUENT_SLOT_DISTANCE_HELP: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Minimum slot distance from the tip to consider a validator delinquent [default: \
+         {DELINQUENT_VALIDATOR_SLOT_DISTANCE}]"
+    )
+});
 
 pub trait ClusterQuerySubCommands {
     fn cluster_query_subcommands(self) -> Self;
@@ -380,12 +387,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .takes_value(true)
                         .value_name("SLOT_DISTANCE")
                         .validator(is_slot)
-                        .help(concatcp!(
-                            "Minimum slot distance from the tip to consider a validator \
-                             delinquent [default: ",
-                            DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-                            "]",
-                        )),
+                        .help(DELINQUENT_SLOT_DISTANCE_HELP.as_str()),
                 ),
         )
         .subcommand(
