@@ -3582,12 +3582,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
 
 [[package]]
-name = "hxdmp"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a17b27f28a7466846baca75f0a5244e546e44178eb7f1c07a3820f413e91c6b0"
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9264,11 +9258,11 @@ dependencies = [
  "anyhow",
  "bytes",
  "dashmap",
- "hxdmp",
  "itertools 0.15.0",
  "log",
  "nix",
  "pcap-file",
+ "pretty-hex",
  "quinn",
  "rand 0.9.4",
  "shuttle",

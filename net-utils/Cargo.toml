@@ -20,7 +20,7 @@ name = "solana_net_utils"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:anyhow", "dep:pcap-file", "dep:hxdmp"]
+dev-context-only-utils = ["dep:anyhow", "dep:pcap-file", "dep:pretty-hex"]
 shuttle-test = ["dep:shuttle", "solana-svm-type-overrides/shuttle-test"]
 stable-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
@@ -29,11 +29,11 @@ agave-xdp = { workspace = true }
 anyhow = { workspace = true, optional = true }
 bytes = { workspace = true }
 dashmap = { workspace = true, features = ["raw-api"] }
-hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["net", "socket", "fs", "mman", "signal"] }
 pcap-file = { version = "2.0.0", optional = true }
+pretty-hex = { workspace = true, optional = true }
 quinn = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true, optional = true }
