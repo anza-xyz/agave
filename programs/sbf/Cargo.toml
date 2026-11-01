@@ -126,7 +126,7 @@ solana-compute-budget = { path = "../../compute-budget", version = "=4.5.0-alpha
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=4.5.0-alpha.4" }
 solana-cpi = "=3.1.0"
 solana-curve25519 = "=4.0.1"
-solana-define-syscall = "=3.0.0"
+solana-define-syscall = "=5.3.0"
 solana-fee = { path = "../../fee", version = "=4.5.0-alpha.4" }
 solana-hash = { version = "=4.7.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "4.0.0"
