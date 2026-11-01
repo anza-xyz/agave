@@ -99,6 +99,11 @@ Release channels have their own copy of this changelog:
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 * The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
   support parsing and signing txv1 transactions may no longer work with the CLI.
+* **`solana program deploy` no longer generates an ephemeral keypair signer as a
+  default fallback**. Users must explicitly call `--generate-ephemeral-program-id`
+  if this behavior is desired. This affects both `solana program deploy` and `solana
+  program deploy --buffer <BUFFER>`. This prevents users from creating keypairs they
+  can no longer recover unless they opt in.
 
 #### Changes
 
