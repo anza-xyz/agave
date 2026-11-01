@@ -846,6 +846,20 @@ impl RepairPeers {
         &self.peers[index]
     }
 
+    fn evict(&mut self, identity: &Pubkey) -> bool {
+        let Some(index) = self.peers.iter().position(|peer| &peer.pubkey == identity) else {
+            return true;
+        };
+        let mut weights: Vec<_> = self.weighted_index.weights().collect();
+        weights.remove(index);
+        let Ok(weighted_index) = WeightedIndex::new(weights) else {
+            return false;
+        };
+        self.peers.remove(index);
+        self.weighted_index = weighted_index;
+        true
+    }
+
     fn is_valid_for(&self, weight_source: RepairPeerWeightSource) -> bool {
         self.asof.elapsed() < REPAIR_PEERS_CACHE_TTL && self.weight_source == weight_source
     }
@@ -972,14 +986,16 @@ impl ServeRepair {
         identity_keypair: &Keypair,
         weight_source: RepairPeerWeightSource,
     ) -> Result<&'a RepairPeers> {
-        if let Some(entry) = peers_cache.get(&slot)
+        let identity = identity_keypair.pubkey();
+        if let Some(entry) = peers_cache.get_mut(&slot)
             && entry.is_valid_for(weight_source)
+            && entry.evict(&identity)
         {
             return Ok(peers_cache.get(&slot).unwrap());
         }
 
         peers_cache.pop(&slot);
-        let repair_peers = self.repair_peers(repair_validators, &identity_keypair.pubkey());
+        let repair_peers = self.repair_peers(repair_validators, &identity);
         let weights = self.repair_peer_weights(slot, cluster_slots, &repair_peers, weight_source);
         let repair_peers =
             RepairPeers::new(Instant::now(), weight_source, &repair_peers, &weights)?;
@@ -2101,7 +2117,10 @@ mod tests {
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_perf::packet::{PacketFlags, deserialize_slice_from_packet},
         solana_pubkey::Pubkey,
-        solana_runtime::bank::Bank,
+        solana_runtime::{
+            bank::Bank,
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
+        },
         solana_time_utils::timestamp,
         std::{
             io::Cursor,
@@ -2757,6 +2776,73 @@ mod tests {
             repair_validators,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
         }
+    }
+
+    #[test]
+    fn test_repair_peers_cache_evicts_new_identity() {
+        let validator_keypairs = [
+            ValidatorVoteKeypairs::new_rand(),
+            ValidatorVoteKeypairs::new_rand(),
+        ];
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_with_vote_accounts(10_000, &validator_keypairs, vec![1, 1]);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let cluster_info = Arc::new(new_test_cluster_info());
+        let peer_ids: HashSet<_> = validator_keypairs
+            .iter()
+            .map(|keypairs| keypairs.node_keypair.pubkey())
+            .collect();
+        for peer_id in &peer_ids {
+            let mut peer = ContactInfo::new_localhost(peer_id, timestamp());
+            peer.set_serve_repair(Protocol::UDP, socketaddr!(Ipv4Addr::LOCALHOST, 1234))
+                .unwrap();
+            cluster_info.insert_info(peer);
+        }
+        let cluster_slots = ClusterSlots::default_for_tests();
+        let serve_repair = ServeRepair::new_for_test(
+            cluster_info.clone(),
+            bank_forks,
+            Arc::new(RwLock::new(HashSet::default())),
+        );
+        let mut peers_cache = LruCache::new(100);
+
+        let identity = cluster_info.keypair();
+        let repair_peers = serve_repair
+            .repair_peers_from_cache(
+                0,
+                &cluster_slots,
+                &Some(peer_ids.clone()),
+                &mut peers_cache,
+                &identity,
+                RepairPeerWeightSource::CurrentEpochStake,
+            )
+            .unwrap();
+        assert_eq!(
+            repair_peers
+                .peers
+                .iter()
+                .map(|peer| peer.pubkey)
+                .collect::<HashSet<_>>(),
+            peer_ids
+        );
+        let cached_at = repair_peers.asof;
+
+        let new_identity = validator_keypairs[0].node_keypair.insecure_clone();
+        cluster_info.set_keypair(Arc::new(new_identity));
+        let identity = cluster_info.keypair();
+        let repair_peers = serve_repair
+            .repair_peers_from_cache(
+                0,
+                &cluster_slots,
+                &Some(peer_ids.clone()),
+                &mut peers_cache,
+                &identity,
+                RepairPeerWeightSource::CurrentEpochStake,
+            )
+            .unwrap();
+        assert_eq!(repair_peers.asof, cached_at);
+        assert_eq!(repair_peers.peers.len(), 1);
+        assert_ne!(repair_peers.peers[0].pubkey, identity.pubkey());
     }
 
     #[test]
