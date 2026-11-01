@@ -19,7 +19,6 @@ use {
             BankingControlMsg, BankingStage,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        consensus::tower_storage::TowerStorage,
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
@@ -59,7 +58,6 @@ pub struct AdminRpcRequestMetadata {
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-    pub tower_storage: Arc<dyn TowerStorage>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
@@ -101,6 +99,7 @@ pub struct AdminRpcContactInfo {
     pub tpu: SocketAddr,
     pub tpu_quic: Option<SocketAddr>,
     pub tpu_forwards: SocketAddr,
+    /// Retained for compatibility with the legacy admin RPC contact-info schema.
     pub tpu_vote: SocketAddr,
     pub rpc: SocketAddr,
     pub rpc_pubsub: SocketAddr,
@@ -1209,7 +1208,6 @@ mod tests {
         },
         solana_core::{
             admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-            consensus::tower_storage::NullTowerStorage,
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -1292,7 +1290,6 @@ mod tests {
                 validator_exit,
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
-                tower_storage: Arc::new(NullTowerStorage {}),
                 vote_history_storage: Arc::new(
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
@@ -1506,7 +1503,6 @@ mod tests {
                 validator_exit: validator_config.validator_exit.clone(),
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-                tower_storage: Arc::new(NullTowerStorage {}),
                 vote_history_storage: Arc::new(
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
@@ -1547,7 +1543,6 @@ mod tests {
                 HashSet::from_iter(vec![
                     KeyUpdaterType::Tpu,
                     KeyUpdaterType::TpuForwards,
-                    KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
                     KeyUpdaterType::RpcService,
                     KeyUpdaterType::Votor,
@@ -1594,7 +1589,6 @@ mod tests {
             validator_exit,
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-            tower_storage: Arc::new(NullTowerStorage {}),
             vote_history_storage: Arc::new(
                 agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
             ),
@@ -1690,7 +1684,6 @@ mod tests {
             validator_exit,
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs,
-            tower_storage: Arc::new(NullTowerStorage {}),
             vote_history_storage: Arc::new(
                 agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
             ),

@@ -69,15 +69,6 @@ pub struct TpuSockets {
 // Conservatively allow 20 TPS per validator.
 pub const MAX_VOTES_PER_SECOND: u64 = 20;
 
-/// Compatibility-only key updater for the removed TPU vote server.
-struct NoopTpuVoteKeyUpdater;
-
-impl solana_tls_utils::NotifyKeyUpdate for NoopTpuVoteKeyUpdater {
-    fn update_key(&self, _key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-}
-
 /// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
 /// be conservative max of obsersed on mnb during high-load events.
 const TPU_CHANNEL_SIZE: usize = 50_000;
@@ -324,7 +315,6 @@ impl Tpu {
         let mut key_notifiers = key_notifiers.write().unwrap();
         key_notifiers.add(KeyUpdaterType::Tpu, key_updater);
         key_notifiers.add(KeyUpdaterType::TpuForwards, forwards_key_updater);
-        key_notifiers.add(KeyUpdaterType::TpuVote, Arc::new(NoopTpuVoteKeyUpdater));
         key_notifiers.add(KeyUpdaterType::Forward, client_updater);
 
         Self {

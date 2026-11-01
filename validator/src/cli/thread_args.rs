@@ -21,7 +21,6 @@ pub struct DefaultThreadArgs {
     pub tpu_sigverify_threads: String,
     pub tpu_transaction_forward_receive_threads: String,
     pub tpu_transaction_receive_threads: String,
-    pub tpu_vote_transaction_receive_threads: String,
     pub tvu_receive_threads: String,
     pub tvu_retransmit_threads: String,
     pub tvu_sigverify_threads: String,
@@ -46,8 +45,6 @@ impl Default for DefaultThreadArgs {
                 TpuTransactionForwardReceiveThreadArgs::bounded_default().to_string(),
             tpu_transaction_receive_threads: TpuTransactionReceiveThreads::bounded_default()
                 .to_string(),
-            tpu_vote_transaction_receive_threads:
-                TpuVoteTransactionReceiveThreads::bounded_default().to_string(),
             tvu_receive_threads: TvuReceiveThreadsArg::bounded_default().to_string(),
             tvu_retransmit_threads: TvuRetransmitThreadsArg::bounded_default().to_string(),
             tvu_sigverify_threads: TvuShredSigverifyThreadsArg::bounded_default().to_string(),
@@ -71,9 +68,6 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
             &defaults.tpu_transaction_forward_receive_threads,
         ),
         new_thread_arg::<TpuTransactionReceiveThreads>(&defaults.tpu_transaction_receive_threads),
-        new_thread_arg::<TpuVoteTransactionReceiveThreads>(
-            &defaults.tpu_vote_transaction_receive_threads,
-        ),
         new_thread_arg::<TvuReceiveThreadsArg>(&defaults.tvu_receive_threads),
         new_thread_arg::<TvuRetransmitThreadsArg>(&defaults.tvu_retransmit_threads),
         new_thread_arg::<TvuShredSigverifyThreadsArg>(&defaults.tvu_sigverify_threads),
@@ -103,7 +97,6 @@ pub struct NumThreadConfig {
     pub tpu_sigverify_threads: NonZeroUsize,
     pub tpu_transaction_forward_receive_threads: NonZeroUsize,
     pub tpu_transaction_receive_threads: NonZeroUsize,
-    pub tpu_vote_transaction_receive_threads: NonZeroUsize,
     pub tvu_receive_threads: NonZeroUsize,
     pub tvu_retransmit_threads: NonZeroUsize,
     pub tvu_sigverify_threads: NonZeroUsize,
@@ -152,11 +145,6 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         tpu_transaction_receive_threads: value_t_or_exit!(
             matches,
             TpuTransactionReceiveThreads::NAME,
-            NonZeroUsize
-        ),
-        tpu_vote_transaction_receive_threads: value_t_or_exit!(
-            matches,
-            TpuVoteTransactionReceiveThreads::NAME,
             NonZeroUsize
         ),
         tvu_receive_threads: value_t_or_exit!(matches, TvuReceiveThreadsArg::NAME, NonZeroUsize),
@@ -335,18 +323,6 @@ impl ThreadArg for TpuTransactionReceiveThreads {
 
     fn default() -> usize {
         solana_streamer::quic::default_num_tpu_transaction_receive_threads()
-    }
-}
-
-struct TpuVoteTransactionReceiveThreads;
-impl ThreadArg for TpuVoteTransactionReceiveThreads {
-    const NAME: &'static str = "tpu_vote_transaction_receive_threads";
-    const LONG_NAME: &'static str = "tpu-vote-transaction-receive-threads";
-    const HELP: &'static str =
-        "Number of threads to use for receiving transactions on the TPU vote port";
-
-    fn default() -> usize {
-        solana_streamer::quic::default_num_tpu_vote_transaction_receive_threads()
     }
 }
 
