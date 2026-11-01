@@ -25,7 +25,6 @@ use {
     },
     crossbeam_utils::CachePadded,
     dashmap::DashMap,
-    derive_where::derive_where,
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
@@ -789,9 +788,6 @@ mod chained_channel {
         }
     }
 
-    // P doesn't need to be `: Clone`, yet rustc derive can't handle it.
-    // see https://github.com/rust-lang/rust/issues/26925
-    #[derive_where(Clone)]
     pub(super) struct ChainedChannelReceiver<P, C: Clone> {
         receiver: Receiver<ChainedChannel<P, C>>,
         aux_receiver: Receiver<P>,
@@ -836,6 +832,16 @@ mod chained_channel {
                     self.aux_receiver = idle_channel;
                     None
                 }
+            }
+        }
+    }
+
+    impl<P, C: Clone> Clone for ChainedChannelReceiver<P, C> {
+        fn clone(&self) -> Self {
+            Self {
+                receiver: self.receiver.clone(),
+                aux_receiver: self.aux_receiver.clone(),
+                context: self.context.clone(),
             }
         }
     }

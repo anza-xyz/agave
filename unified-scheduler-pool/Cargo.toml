@@ -25,7 +25,6 @@ assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true }
-derive-where = { workspace = true }
 derive_more = { workspace = true }
 log = { workspace = true }
 scopeguard = { workspace = true }
