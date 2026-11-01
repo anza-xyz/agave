@@ -2876,16 +2876,11 @@ impl AccountsDb {
         // we know that there are no longer any ongoing scans on this bank, because scans require
         // and hold a reference to the bank at the tip of the fork they're scanning. Hence it's
         // safe to remove this bank_id from the `removed_bank_ids` list at this point.
-        if self
-            .scan_tracker
+        self.scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
-            .remove(&bank_id)
-        {
-            // If this slot was already cleaned up, no need to do any further cleans
-            return;
-        }
+            .remove(&bank_id);
 
         self.purge_slots(std::iter::once(bank_id));
     }
@@ -3092,10 +3087,9 @@ impl AccountsDb {
             // root slot `S`, then try to dump some other version of slot `S`, the
             // dumping has to finish first
             //
-            // Also note roots are never removed via `remove_unrooted_slot()`, so
+            // Also note roots are never removed via `mark_banks_removed()`, so
             // it's safe to filter them out here as they won't need deletion from
-            // self.scan_tracker.removed_bank_ids in
-            // `purge_slots_from_cache()`.
+            // self.scan_tracker.removed_bank_ids in `purge_slot()`.
             .filter(|bank_id| {
                 self.accounts_cache.contains(*bank_id)
                     && !self.accounts_cache.contains_unflushed_bank(*bank_id)
@@ -3109,7 +3103,7 @@ impl AccountsDb {
             .report("external_purge_slots_stats", Some(1000));
     }
 
-    pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
+    pub fn mark_banks_removed(&self, remove_slots: &[(Slot, BankId)]) {
         assert!(
             remove_slots.iter().all(|(_, bank_id)| {
                 debug_assert!(
@@ -3121,21 +3115,14 @@ impl AccountsDb {
             "Trying to remove accounts for rooted slots {remove_slots:?}"
         );
 
-        // Mark down these slots are about to be purged so that new attempts to scan these
-        // banks fail, and any ongoing scans over these slots abort promptly, releasing the
-        // bank references their callers hold
+        // Mark down these banks are about to be purged so that new attempts to scan these
+        // banks fail, and any ongoing scans over these banks abort promptly, releasing the
+        // bank references their callers hold. Their write cache is purged when they drop.
         self.scan_tracker.mark_banks_removed(
             remove_slots
                 .iter()
                 .map(|(_slot, remove_bank_id)| *remove_bank_id),
         );
-
-        let remove_unrooted_purge_stats = PurgeStats::default();
-        self.purge_slots_from_cache(
-            remove_slots.iter().map(|(_, bank_id)| *bank_id),
-            &remove_unrooted_purge_stats,
-        );
-        remove_unrooted_purge_stats.report("remove_unrooted_slots_purge_slots_stats", None);
     }
 
     /// Calculates the `AccountLtHash` of `account`

@@ -8215,11 +8215,11 @@ fn test_remove_unrooted_before_scan() {
                 for k in pubkeys_to_modify.iter() {
                     assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                 }
-                bank_at_fork_tip.remove_unrooted_slots(&slots_on_fork);
+                bank_at_fork_tip.mark_banks_removed(&slots_on_fork);
 
-                // Accounts on this fork should not be found after removal
+                // Point loads still see the removed fork until its banks drop; scans fail
                 for k in pubkeys_to_modify.iter() {
-                    assert!(bank_at_fork_tip.load(&ancestors, k).is_none());
+                    assert!(bank_at_fork_tip.load(&ancestors, k).is_some());
                 }
                 if bank_to_scan_sender.send(bank_at_fork_tip.clone()).is_err() {
                     return;
@@ -8270,7 +8270,7 @@ fn test_remove_unrooted_scan_then_recreate_same_slot_before_scan() {
                         prev_bank.slot(),
                         start.elapsed().as_millis()
                     );
-                    // Although we dumped the slots last iteration via `remove_unrooted_slots()`,
+                    // Although we dumped the slots last iteration via `mark_banks_removed()`,
                     // we've recreated those slots this iteration, so they should be findable
                     // again
                     for k in pubkeys_to_modify.iter() {
@@ -8291,7 +8291,7 @@ fn test_remove_unrooted_scan_then_recreate_same_slot_before_scan() {
                     // Wait for scan to finish before starting next iteration
                     assert_eq!(finished_scan_bank_id.unwrap(), prev_bank.bank_id());
                 }
-                bank_at_fork_tip.remove_unrooted_slots(&slots_on_fork);
+                bank_at_fork_tip.mark_banks_removed(&slots_on_fork);
                 prev_bank = bank_at_fork_tip;
             }
         },
@@ -8302,7 +8302,7 @@ fn test_remove_unrooted_scan_then_recreate_same_slot_before_scan() {
 }
 
 #[test]
-fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
+fn test_remove_unrooted_scan_interleaved_with_mark_banks_removed() {
     test_store_scan_consistency(
         |bank0,
          bank_to_scan_sender,
@@ -8321,7 +8321,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                         10,
                         step_size,
                     );
-                // Although we dumped the slots last iteration via `remove_unrooted_slots()`,
+                // Although we dumped the slots last iteration via `mark_banks_removed()`,
                 // we've recreated those slots this iteration, so they should be findable
                 // again
                 for k in pubkeys_to_modify.iter() {
@@ -8336,10 +8336,9 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 }
 
                 // Remove 1 < `step_size` of the *latest* slots while the scan is happening.
-                // This should create inconsistency between the account balances of accounts
-                // stored in that slot, and the accounts stored in earlier slots
+                // Removing the tip bank aborts the scan if it is still running
                 let slot_to_remove = slots_on_fork.pop().unwrap();
-                bank_at_fork_tip.remove_unrooted_slots(&[slot_to_remove]);
+                bank_at_fork_tip.mark_banks_removed(&[slot_to_remove]);
 
                 // Wait for scan to finish before starting next iteration
                 let finished_scan_bank_id = scan_finished_receiver.recv();
@@ -8351,7 +8350,7 @@ fn test_remove_unrooted_scan_interleaved_with_remove_unrooted_slots() {
                 // Remove the rest of the slots before the next iteration. The last slot
                 // was already popped and removed above.
                 for (slot, bank_id) in slots_on_fork {
-                    bank_at_fork_tip.remove_unrooted_slots(&[(slot, bank_id)]);
+                    bank_at_fork_tip.mark_banks_removed(&[(slot, bank_id)]);
                 }
             }
         },

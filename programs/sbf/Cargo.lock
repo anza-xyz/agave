@@ -161,13 +161,13 @@ name = "agave-fs"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-io-uring",
+ "agave-memory",
  "io-uring",
  "libc",
  "log",
  "slab",
  "smallvec",
  "tempfile",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -238,6 +238,15 @@ name = "agave-math-utils"
 version = "4.5.0-alpha.4"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "agave-memory"
+version = "4.5.0-alpha.4"
+dependencies = [
+ "allocator-api2",
+ "libc",
+ "log",
 ]
 
 [[package]]

@@ -561,8 +561,8 @@ mod test {
         );
     }
 
-    /// A conflicting shred at an occupied index stores the proof at insert time, and
-    /// `run_check_duplicate` marks the not-full Alpenglow slot dead afterwards.
+    /// A conflicting shred at an occupied index stores the proof and marks the non-full
+    /// slot dead at insert time.
     #[test]
     fn test_run_check_duplicate_marks_existing_index_conflict_dead() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -598,7 +598,10 @@ mod test {
             )
             .unwrap();
         assert!(blockstore.has_duplicate_shreds_in_slot(slot));
-        assert!(!blockstore.is_dead(slot));
+        assert!(
+            blockstore.is_dead(slot),
+            "duplicate slot that is not full must be marked dead at insert time"
+        );
 
         let keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
