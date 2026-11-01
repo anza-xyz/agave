@@ -97,7 +97,6 @@ agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
-memoffset = { workspace = true }
 rand_chacha = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
