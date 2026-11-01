@@ -172,7 +172,7 @@ impl VoteHistoryStorage {
                         }
                     };
                     let pubkey = saved_vote_history.pubkey();
-                    let filename = filename(&path, &pubkey);
+                    let filename = vote_history_storage_filename(&path, &pubkey);
                     trace!("store: {}", filename.display());
                     let new_filename = filename.with_extension("bin.new");
 
@@ -231,7 +231,7 @@ impl VoteHistoryStorage {
 }
 
 fn load_from_file(path: &Path, node_pubkey: &Pubkey) -> Result<VoteHistory> {
-    let filename = filename(path, node_pubkey);
+    let filename = vote_history_storage_filename(path, node_pubkey);
     trace!("load {}", filename.display());
 
     // Ensure to create parent dir here, because restore() precedes save() always.
@@ -255,7 +255,7 @@ impl Drop for VoteHistoryStorage {
 }
 
 #[cfg_attr(test, qualifier_attr::qualifiers(pub(crate)))]
-fn filename(path: &Path, node_pubkey: &Pubkey) -> PathBuf {
+fn vote_history_storage_filename(path: &Path, node_pubkey: &Pubkey) -> PathBuf {
     path.join(format!("vote_history-{node_pubkey}"))
         .with_extension("bin")
 }
@@ -439,7 +439,7 @@ mod test {
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
         assert_eq!(
-            filename(tmp_dir.path(), &pubkey),
+            vote_history_storage_filename(tmp_dir.path(), &pubkey),
             PathBuf::from(format!(
                 "{}/vote_history-{}.bin",
                 tmp_dir.path().display(),
@@ -471,9 +471,9 @@ mod test {
         let error = storage.load(&Pubkey::new_unique()).err().unwrap();
         assert!(matches!(error, VoteHistoryError::IoError(_)));
         // Move Vote history to a wrong location should fail
-        let original_path = filename(tmp_dir.path(), &pubkey);
+        let original_path = vote_history_storage_filename(tmp_dir.path(), &pubkey);
         let new_pubkey = Pubkey::new_unique();
-        let new_path = filename(tmp_dir.path(), &new_pubkey);
+        let new_path = vote_history_storage_filename(tmp_dir.path(), &new_pubkey);
         // Copy the old file to new_path
         fs::copy(&original_path, &new_path).unwrap();
         let error = storage.load(&new_pubkey).err().unwrap();
@@ -486,7 +486,11 @@ mod test {
         let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let pubkey = Pubkey::new_unique();
 
-        fs::write(filename(tmp_dir.path(), &pubkey), [1, 2, 3]).unwrap();
+        fs::write(
+            vote_history_storage_filename(tmp_dir.path(), &pubkey),
+            [1, 2, 3],
+        )
+        .unwrap();
 
         let error = storage.load(&pubkey).err().unwrap();
         assert!(matches!(error, VoteHistoryError::DeserializeError(_)));

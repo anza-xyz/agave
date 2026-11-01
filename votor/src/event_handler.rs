@@ -1052,7 +1052,8 @@ mod tests {
             event::{LeaderWindowInfo, RepairEventReceiver},
             slot_clock::SharedAlpenglowSlotClock,
             vote_history_storage::{
-                SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage, filename,
+                SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
+                vote_history_storage_filename,
             },
             voting_service::BLSOp,
         },
@@ -1647,7 +1648,7 @@ mod tests {
                 .set_keypair(Arc::new(new_identity.insecure_clone()));
 
             self.send_set_identity_event();
-            filename(self.test_dir.path(), &new_identity.pubkey())
+            vote_history_storage_filename(self.test_dir.path(), &new_identity.pubkey())
         }
     }
 
