@@ -2,6 +2,7 @@
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     super::vote_history::*,
+    crossbeam_channel::{Receiver, Sender, bounded},
     log::trace,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -9,12 +10,15 @@ use {
     std::{
         fs::{self, File},
         io::{self, BufReader, BufWriter},
-        path::PathBuf,
+        path::{Path, PathBuf},
+        result,
+        sync::Mutex,
+        thread::{self, Builder, JoinHandle},
     },
     wincode::{SchemaRead, SchemaWrite},
 };
 
-pub type Result<T> = std::result::Result<T, VoteHistoryError>;
+pub type Result<T> = result::Result<T, VoteHistoryError>;
 
 // With four notarize-fallback certificates and a skip certificate per slot,
 // parent-ready sets grow quadratically. A 30,000-slot vote history can encode
@@ -122,76 +126,138 @@ impl SavedVoteHistory {
     }
 }
 
-pub trait VoteHistoryStorage: Sync + Send {
-    fn load(&self, node_pubkey: &Pubkey) -> Result<VoteHistory>;
-    fn store(&self, saved_vote_history: &SavedVoteHistoryVersions) -> Result<()>;
+pub fn vote_history_storage_not_available() -> Result<VoteHistory> {
+    Err(VoteHistoryError::IoError(io::Error::other(
+        "VoteHistory not available",
+    )))
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct NullVoteHistoryStorage {}
-
-impl VoteHistoryStorage for NullVoteHistoryStorage {
-    fn load(&self, _node_pubkey: &Pubkey) -> Result<VoteHistory> {
-        Err(VoteHistoryError::IoError(io::Error::other(
-            "NullVoteHistoryStorage::load() not available",
-        )))
-    }
-
-    fn store(&self, _saved_vote_history: &SavedVoteHistoryVersions) -> Result<()> {
-        Ok(())
-    }
+enum StorageRequest {
+    Store(SavedVoteHistoryVersions),
+    Load {
+        node_pubkey: Pubkey,
+        reply: Sender<Result<VoteHistory>>,
+    },
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct FileVoteHistoryStorage {
-    pub vote_history_path: PathBuf,
+struct State {
+    handle: JoinHandle<()>,
+    sender: Sender<StorageRequest>,
 }
 
-impl FileVoteHistoryStorage {
-    pub fn new(vote_history_path: PathBuf) -> Self {
-        Self { vote_history_path }
-    }
-
-    pub fn filename(&self, node_pubkey: &Pubkey) -> PathBuf {
-        self.vote_history_path
-            .join(format!("vote_history-{node_pubkey}"))
-            .with_extension("bin")
+impl State {
+    fn shutdown(self) -> thread::Result<()> {
+        // Disconnect before joining so the receiver drains the queue and exits.
+        drop(self.sender);
+        self.handle.join()
     }
 }
 
-impl VoteHistoryStorage for FileVoteHistoryStorage {
-    fn load(&self, node_pubkey: &Pubkey) -> Result<VoteHistory> {
-        let filename = self.filename(node_pubkey);
-        trace!("load {}", filename.display());
+pub struct VoteHistoryStorage {
+    worker: Mutex<Option<State>>,
+}
 
-        // Ensure to create parent dir here, because restore() precedes save() always
-        fs::create_dir_all(filename.parent().unwrap())?;
+impl VoteHistoryStorage {
+    pub fn new(path: PathBuf) -> Self {
+        let (sender, receiver): (Sender<StorageRequest>, Receiver<StorageRequest>) = bounded(1024);
+        let handle = Builder::new()
+            .name("solVotorIO".to_string())
+            .spawn(move || {
+                for request in receiver {
+                    let saved_vote_history = match request {
+                        StorageRequest::Store(history) => history,
+                        StorageRequest::Load { node_pubkey, reply } => {
+                            let _ = reply.send(load_from_file(&path, &node_pubkey));
+                            continue;
+                        }
+                    };
+                    let pubkey = saved_vote_history.pubkey();
+                    let filename = vote_history_storage_filename(&path, &pubkey);
+                    trace!("store: {}", filename.display());
+                    let new_filename = filename.with_extension("bin.new");
 
-        // New format
-        let file = File::open(&filename)?;
-        let mut stream = BufReader::new(file);
-
-        let saved_vote_history: SavedVoteHistoryVersions =
-            wincode::config::deserialize_from(&mut stream, vote_history_wincode_config())?;
-        saved_vote_history.try_into_vote_history(node_pubkey)
-    }
-
-    fn store(&self, saved_vote_history: &SavedVoteHistoryVersions) -> Result<()> {
-        let pubkey = saved_vote_history.pubkey();
-        let filename = self.filename(&pubkey);
-        trace!("store: {}", filename.display());
-        let new_filename = filename.with_extension("bin.new");
-
-        {
-            // overwrite anything if exists
-            let mut file = File::create(&new_filename)?;
-            saved_vote_history.serialize_into(&mut file)?;
-            // file.sync_all() hurts performance; pipeline sync-ing and submitting votes to the cluster!
+                    {
+                        // overwrite anything if exists
+                        let mut file = File::create(&new_filename).unwrap();
+                        saved_vote_history.serialize_into(&mut file).unwrap();
+                        // file.sync_all() hurts performance; pipeline sync-ing and submitting votes to the cluster!
+                    }
+                    fs::rename(&new_filename, &filename).unwrap();
+                    // Syncing the parent directory hurts performance same as the above sync.
+                }
+            })
+            .unwrap();
+        Self {
+            worker: Mutex::new(Some(State { handle, sender })),
         }
-        fs::rename(&new_filename, &filename)?;
-        // self.path.parent().sync_all() hurts performance same as the above sync
+    }
+
+    pub fn shutdown(&self) -> thread::Result<()> {
+        let mut worker = self.worker.lock().unwrap();
+        match worker.take() {
+            Some(worker) => worker.shutdown(),
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn load(&self, node_pubkey: &Pubkey) -> Result<VoteHistory> {
+        let (reply, result) = bounded(1);
+        self.send(StorageRequest::Load {
+            node_pubkey: *node_pubkey,
+            reply,
+        })?;
+        result.recv().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "vote history worker stopped before replying",
+            )
+        })?
+    }
+
+    pub(crate) fn store(&self, saved_vote_history: SavedVoteHistoryVersions) -> Result<()> {
+        self.send(StorageRequest::Store(saved_vote_history))
+    }
+
+    fn send(&self, request: StorageRequest) -> Result<()> {
+        let worker = self.worker.lock().unwrap();
+        let worker = worker.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "vote history storage shut down")
+        })?;
+        worker.sender.send(request).map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "vote history worker stopped")
+        })?;
         Ok(())
     }
+}
+
+fn load_from_file(path: &Path, node_pubkey: &Pubkey) -> Result<VoteHistory> {
+    let filename = vote_history_storage_filename(path, node_pubkey);
+    trace!("load {}", filename.display());
+
+    // Ensure to create parent dir here, because restore() precedes save() always.
+    fs::create_dir_all(filename.parent().unwrap())?;
+
+    let file = File::open(&filename)?;
+    let mut stream = BufReader::new(file);
+    let saved_vote_history: SavedVoteHistoryVersions =
+        wincode::config::deserialize_from(&mut stream, vote_history_wincode_config())?;
+    saved_vote_history.try_into_vote_history(node_pubkey)
+}
+
+impl Drop for VoteHistoryStorage {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.get_mut().unwrap().take()
+            && worker.shutdown().is_err()
+        {
+            log::error!("vote history storage worker panicked");
+        }
+    }
+}
+
+#[cfg_attr(test, qualifier_attr::qualifiers(pub(crate)))]
+fn vote_history_storage_filename(path: &Path, node_pubkey: &Pubkey) -> PathBuf {
+    path.join(format!("vote_history-{node_pubkey}"))
+        .with_extension("bin")
 }
 
 #[cfg(test)]
@@ -215,6 +281,81 @@ mod test {
     const GENESIS_STATE_SIZE: usize = 88;
     // Notar + four NotarFallback votes + SkipFallback, including all indexes.
     const MAX_LOCAL_VOTE_STATE_SIZE_PER_SLOT: usize = 450;
+
+    #[test]
+    fn test_load_missing_history_keeps_worker_running() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = VoteHistoryStorage::new(tmp_dir.path().join("history"));
+        let keypair = Keypair::new();
+        assert!(matches!(
+            storage.load(&keypair.pubkey()),
+            Err(VoteHistoryError::IoError(error))
+                if error.kind() == io::ErrorKind::NotFound
+        ));
+
+        let history = VoteHistory::new(keypair.pubkey(), 42);
+        storage
+            .store(SavedVoteHistory::new(&history, &keypair).unwrap().into())
+            .unwrap();
+        assert_eq!(storage.load(&keypair.pubkey()).unwrap(), history);
+    }
+
+    #[test]
+    fn test_shutdown_drains_vote_history() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let keypair = Keypair::new();
+        for root in 0..16 {
+            let history = VoteHistory::new(keypair.pubkey(), root);
+            storage
+                .store(SavedVoteHistory::new(&history, &keypair).unwrap().into())
+                .unwrap();
+        }
+
+        storage.shutdown().unwrap();
+        let reader = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        assert_eq!(reader.load(&keypair.pubkey()).unwrap().root(), 15);
+        storage.shutdown().unwrap();
+        assert!(matches!(
+            storage.load(&keypair.pubkey()),
+            Err(VoteHistoryError::IoError(error))
+                if error.kind() == io::ErrorKind::BrokenPipe
+        ));
+        let history = VoteHistory::new(keypair.pubkey(), 16);
+        assert!(matches!(
+            storage.store(SavedVoteHistory::new(&history, &keypair).unwrap().into()),
+            Err(VoteHistoryError::IoError(error))
+                if error.kind() == io::ErrorKind::BrokenPipe
+        ));
+    }
+
+    #[test]
+    fn test_drop_drains_vote_history() {
+        let tmp_dir = TempDir::new().unwrap();
+        let keypair = Keypair::new();
+        {
+            let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+            let history = VoteHistory::new(keypair.pubkey(), 42);
+            storage
+                .store(SavedVoteHistory::new(&history, &keypair).unwrap().into())
+                .unwrap();
+        }
+
+        let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        assert_eq!(storage.load(&keypair.pubkey()).unwrap().root(), 42);
+    }
+
+    #[test]
+    fn test_shutdown_reports_worker_panic() {
+        let tmp_dir = TempDir::new().unwrap();
+        let storage = VoteHistoryStorage::new(tmp_dir.path().join("missing-directory"));
+        let keypair = Keypair::new();
+        let history = VoteHistory::new(keypair.pubkey(), 0);
+        storage
+            .store(SavedVoteHistory::new(&history, &keypair).unwrap().into())
+            .unwrap();
+        assert!(storage.shutdown().is_err());
+    }
 
     #[allow(clippy::arithmetic_side_effects)]
     fn estimate_max_vote_history_size(slots: usize) -> usize {
@@ -263,7 +404,7 @@ mod test {
     #[test]
     fn test_file_vote_history_storage_30k_normal_slots_without_finalization() {
         let tmp_dir = TempDir::new().unwrap();
-        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let keypair = Keypair::new();
         let mut vote_history = VoteHistory::new(keypair.pubkey(), 0);
 
@@ -285,7 +426,7 @@ mod test {
         assert!(saved_vote_history.data.len() <= VOTE_HISTORY_PREALLOCATION_SIZE_LIMIT);
 
         storage
-            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .store(SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
         assert_eq!(storage.load(&keypair.pubkey()).unwrap(), vote_history);
     }
@@ -294,11 +435,11 @@ mod test {
     fn test_file_vote_history_storage() {
         agave_logger::setup();
         let tmp_dir = TempDir::new().unwrap();
-        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
         assert_eq!(
-            storage.filename(&pubkey),
+            vote_history_storage_filename(tmp_dir.path(), &pubkey),
             PathBuf::from(format!(
                 "{}/vote_history-{}.bin",
                 tmp_dir.path().display(),
@@ -309,7 +450,7 @@ mod test {
         let mut vote_history = VoteHistory::new(pubkey, 0);
         let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
         let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
-        storage.store(&saved_vote_history_versions).unwrap();
+        storage.store(saved_vote_history_versions).unwrap();
         let restored_vote_history = storage.load(&pubkey).unwrap();
         assert_eq!(restored_vote_history.root(), 0);
 
@@ -318,7 +459,7 @@ mod test {
         vote_history.add_vote(Vote::new_skip_vote(2));
         let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
         let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
-        storage.store(&saved_vote_history_versions).unwrap();
+        storage.store(saved_vote_history_versions).unwrap();
         let restored_vote_history = storage.load(&pubkey).unwrap();
         assert_eq!(restored_vote_history.root(), 1);
         assert_eq!(
@@ -330,9 +471,9 @@ mod test {
         let error = storage.load(&Pubkey::new_unique()).err().unwrap();
         assert!(matches!(error, VoteHistoryError::IoError(_)));
         // Move Vote history to a wrong location should fail
-        let original_path = storage.filename(&pubkey);
+        let original_path = vote_history_storage_filename(tmp_dir.path(), &pubkey);
         let new_pubkey = Pubkey::new_unique();
-        let new_path = storage.filename(&new_pubkey);
+        let new_path = vote_history_storage_filename(tmp_dir.path(), &new_pubkey);
         // Copy the old file to new_path
         fs::copy(&original_path, &new_path).unwrap();
         let error = storage.load(&new_pubkey).err().unwrap();
@@ -340,28 +481,16 @@ mod test {
     }
 
     #[test]
-    fn test_null_vote_history_storage() {
-        let storage = NullVoteHistoryStorage::default();
-        let keypair = Keypair::new();
-        let pubkey = keypair.pubkey();
-        // NullVoteHistoryStorage::load() always fails
-        assert!(storage.load(&pubkey).is_err());
-
-        let vote_history = VoteHistory::new(pubkey, 0);
-        let saved_vote_history = SavedVoteHistory::new(&vote_history, &keypair).unwrap();
-        let saved_vote_history_versions = SavedVoteHistoryVersions::from(saved_vote_history);
-        // NullVoteHistoryStorage::save() always succeeds
-        storage.store(&saved_vote_history_versions).unwrap();
-        assert!(storage.load(&pubkey).is_err());
-    }
-
-    #[test]
     fn test_load_corrupt_vote_history_storage_returns_deserialize_error() {
         let tmp_dir = TempDir::new().unwrap();
-        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let pubkey = Pubkey::new_unique();
 
-        fs::write(storage.filename(&pubkey), [1, 2, 3]).unwrap();
+        fs::write(
+            vote_history_storage_filename(tmp_dir.path(), &pubkey),
+            [1, 2, 3],
+        )
+        .unwrap();
 
         let error = storage.load(&pubkey).err().unwrap();
         assert!(matches!(error, VoteHistoryError::DeserializeError(_)));
@@ -370,7 +499,7 @@ mod test {
     #[test]
     fn test_load_signed_corrupt_vote_history_data_returns_deserialize_error() {
         let tmp_dir = TempDir::new().unwrap();
-        let storage = FileVoteHistoryStorage::new(tmp_dir.path().to_path_buf());
+        let storage = VoteHistoryStorage::new(tmp_dir.path().to_path_buf());
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
         let data = Vec::new();
@@ -380,7 +509,7 @@ mod test {
             node_pubkey: pubkey,
         };
         storage
-            .store(&SavedVoteHistoryVersions::from(saved_vote_history))
+            .store(SavedVoteHistoryVersions::from(saved_vote_history))
             .unwrap();
 
         let error = storage.load(&pubkey).err().unwrap();

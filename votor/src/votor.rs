@@ -123,7 +123,7 @@ pub struct VotorConfig {
     pub vote_account: Pubkey,
     pub wait_to_vote_slot: Option<Slot>,
     pub vote_history: VoteHistory,
-    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     pub generated_cert_types: Arc<GeneratedCertTypes>,
 
     // Shared state
@@ -165,12 +165,13 @@ pub(crate) struct SharedContext {
     pub(crate) alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub(crate) leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub(crate) highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
-    pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub(crate) vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     pub(crate) repair_event_sender: RepairEventSender,
     pub(crate) latest_switch_request: LatestSwitchRequest,
 }
 
 pub struct Votor {
+    vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     event_handler: EventHandler,
     consensus_pool_service: ConsensusPoolService,
     timer_manager: Arc<PlRwLock<TimerManager>>,
@@ -239,7 +240,7 @@ impl Votor {
             vote_account_pubkey: vote_account,
             identity_keypair,
             authorized_voter_keypairs,
-            vote_history_storage,
+            vote_history_storage: vote_history_storage.clone(),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: own_reward_aggregates_sender,
@@ -305,6 +306,7 @@ impl Votor {
         let consensus_pool_service = ConsensusPoolService::new(consensus_pool_context);
 
         Self {
+            vote_history_storage,
             event_handler,
             consensus_pool_service,
             timer_manager,
@@ -314,7 +316,6 @@ impl Votor {
 
     pub fn join(self) -> thread::Result<()> {
         self.consensus_pool_service.join()?;
-
         // Loop till we manage to unwrap the Arc and then we can join.
         let mut timer_manager = self.timer_manager;
         loop {
@@ -330,6 +331,10 @@ impl Votor {
             }
         }
         self.metrics.join()?;
-        self.event_handler.join()
+        self.event_handler.join()?;
+        if let Some(storage) = self.vote_history_storage {
+            storage.shutdown()?;
+        }
+        Ok(())
     }
 }

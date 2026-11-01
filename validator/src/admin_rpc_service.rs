@@ -1,7 +1,9 @@
 use {
     agave_event_system::stream_policy::StreamPolicy,
     agave_votor::{
-        event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
+        event::VotorEvent,
+        vote_history::VoteHistory,
+        vote_history_storage::{VoteHistoryStorage, vote_history_storage_not_available},
     },
     crossbeam_channel::Sender,
     jsonrpc_core::{BoxFuture, ErrorCode, MetaIoHandler, Metadata, Result},
@@ -60,7 +62,7 @@ pub struct AdminRpcRequestMetadata {
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub tower_storage: Arc<dyn TowerStorage>,
-    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    pub vote_history_storage: Option<Arc<VoteHistoryStorage>>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     pub rpc_to_plugin_manager_sender: Option<Sender<GeyserPluginManagerRequest>>,
@@ -372,6 +374,12 @@ impl AdminRpc for AdminRpcImpl {
 
                 info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
+
+                if let Some(s) = meta.vote_history_storage.as_ref()
+                    && let Err(e) = s.shutdown()
+                {
+                    error!("Shutting down VoteHistoryStorage failed with {e:?}");
+                }
 
                 if !meta.validator_exit_backpressure.is_empty() {
                     let service_names = meta.validator_exit_backpressure.keys();
@@ -989,21 +997,21 @@ impl AdminRpcImpl {
                     )
                 };
                 if should_require_vote_history {
-                    let _ = VoteHistory::restore(
-                        meta.vote_history_storage.as_ref(),
-                        &identity_keypair.pubkey(),
-                    )
-                    .map_err(|err| {
-                        jsonrpc_core::error::Error::invalid_params(format!(
-                            "Unable to load vote history file for identity {}: {}. The vote \
-                             account {} has prior Alpenglow votes. Ensure the vote history file \
-                             is present or (dangerous) use --do-not-require-vote-history if you \
-                             know what you're doing",
-                            identity_keypair.pubkey(),
-                            err,
-                            post_init.vote_account
-                        ))
-                    })?;
+                    meta.vote_history_storage
+                        .as_ref()
+                        .map(|s| VoteHistory::restore(s, &identity_keypair.pubkey()))
+                        .unwrap_or_else(vote_history_storage_not_available)
+                        .map_err(|err| {
+                            jsonrpc_core::error::Error::invalid_params(format!(
+                                "Unable to load vote history file for identity {}: {}. The vote \
+                                 account {} has prior Alpenglow votes. Ensure the vote history \
+                                 file is present or (dangerous) use --do-not-require-vote-history \
+                                 if you know what you're doing",
+                                identity_keypair.pubkey(),
+                                err,
+                                post_init.vote_account
+                            ))
+                        })?;
                 }
             }
 
@@ -1277,9 +1285,7 @@ mod tests {
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
                 tower_storage: Arc::new(NullTowerStorage {}),
-                vote_history_storage: Arc::new(
-                    agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-                ),
+                vote_history_storage: None,
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
                     event_system: agave_event_system::EventSystem::stub(),
                     cluster_info,
@@ -1491,9 +1497,7 @@ mod tests {
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
                 tower_storage: Arc::new(NullTowerStorage {}),
-                vote_history_storage: Arc::new(
-                    agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-                ),
+                vote_history_storage: None,
                 post_init: post_init.clone(),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1579,9 +1583,7 @@ mod tests {
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             tower_storage: Arc::new(NullTowerStorage {}),
-            vote_history_storage: Arc::new(
-                agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-            ),
+            vote_history_storage: None,
             post_init: post_init.clone(),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             rpc_to_plugin_manager_sender: None,
@@ -1675,9 +1677,7 @@ mod tests {
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs,
             tower_storage: Arc::new(NullTowerStorage {}),
-            vote_history_storage: Arc::new(
-                agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
-            ),
+            vote_history_storage: None,
             post_init: Arc::new(RwLock::new(None)),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             rpc_to_plugin_manager_sender: None,
