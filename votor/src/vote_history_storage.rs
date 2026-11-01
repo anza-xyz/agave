@@ -126,6 +126,12 @@ impl SavedVoteHistory {
     }
 }
 
+pub fn vote_history_storage_not_available() -> Result<VoteHistory> {
+    Err(VoteHistoryError::IoError(io::Error::other(
+        "VoteHistory not available",
+    )))
+}
+
 enum StorageRequest {
     Store(SavedVoteHistoryVersions),
     Load {

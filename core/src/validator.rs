@@ -40,7 +40,7 @@ use {
     agave_votor::{
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::{VoteHistory, VoteHistoryError},
-        vote_history_storage::VoteHistoryStorage,
+        vote_history_storage::{VoteHistoryStorage, vote_history_storage_not_available},
     },
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
@@ -163,7 +163,6 @@ use {
         borrow::Cow,
         cmp,
         collections::{HashMap, HashSet},
-        io,
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
         num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
@@ -2156,14 +2155,12 @@ fn restore_vote_history(
     identity: &Pubkey,
     vote_account: &Pubkey,
 ) -> Result<VoteHistory, String> {
-    let res = match &config.vote_history_storage {
-        Some(s) => VoteHistory::restore(s, identity),
-        None => Err(VoteHistoryError::IoError(io::Error::other(
-            "vote-history-storage not available",
-        ))),
-    };
-
-    match res {
+    match config
+        .vote_history_storage
+        .as_ref()
+        .map(|s| VoteHistory::restore(s, identity))
+        .unwrap_or_else(vote_history_storage_not_available)
+    {
         Ok(vote_history) => Ok(vote_history),
         Err(err) => {
             let should_require_vote_history = {
