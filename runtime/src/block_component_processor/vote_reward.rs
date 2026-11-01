@@ -72,12 +72,8 @@ struct VoteState {
     vote_pubkey: Pubkey,
     /// Reference to actual `VoteStateHandler`.
     handler: VoteStateHandler,
-    /// How many lamports were stored in the account.
-    lamports: u64,
-    /// How much space the account takes up.
-    space: usize,
-    /// Who owns the account.
-    owner: Pubkey,
+    /// The account as the bank holds it before the update.
+    prev_account: AccountSharedData,
 }
 
 impl VoteState {
@@ -106,17 +102,16 @@ impl VoteState {
         Some(Self {
             vote_pubkey,
             handler,
-            lamports: account.lamports(),
-            space: account.account().data().len(),
-            owner: *account.owner(),
+            prev_account: account.account().clone(),
         })
     }
 
-    fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
-        match self.handler.serialize_padded(self.space) {
+    fn serialize(&self) -> Option<(Pubkey, AccountSharedData)> {
+        let prev = &self.prev_account;
+        match self.handler.serialize_padded(prev.data().len()) {
             Ok(data) => {
                 let mut updated_account =
-                    AccountSharedData::new_with_data(self.lamports, data, &self.owner);
+                    AccountSharedData::new_with_data(prev.lamports(), data, prev.owner());
                 updated_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 Some((self.vote_pubkey, updated_account))
             }
@@ -374,7 +369,7 @@ fn update_accounts(
     vote_accounts: &HashMap<Pubkey, (u64, VoteAccount)>,
     mut updated_accounts: HashMap<Pubkey, VoteState>,
     validators: impl Iterator<Item = Pubkey>,
-) -> Result<Vec<(Pubkey, AccountSharedData)>, CalcVoteRewardUpdateVoteStatesError> {
+) -> Result<UpdatedAccounts, CalcVoteRewardUpdateVoteStatesError> {
     let mut leader_reward = 0;
     for validator in validators {
         let Some(mut vote_state) = VoteState::try_new(vote_accounts, validator) else {
@@ -415,10 +410,20 @@ fn update_accounts(
         }
     }
 
-    Ok(updated_accounts
+    let (accounts, prev_accounts) = updated_accounts
         .into_values()
-        .filter_map(|vote_state| vote_state.serialize())
-        .collect())
+        .filter_map(|vote_state| Some((vote_state.serialize()?, vote_state.prev_account)))
+        .unzip();
+    Ok(UpdatedAccounts {
+        accounts,
+        prev_accounts,
+    })
+}
+
+struct UpdatedAccounts {
+    accounts: Vec<(Pubkey, AccountSharedData)>,
+    /// The bank's version of each account before the update, in the order of `accounts`.
+    prev_accounts: Vec<AccountSharedData>,
 }
 
 /// Calculates voting rewards based on the `reward_cert` and updates fields in the vote account
@@ -449,7 +454,10 @@ pub(super) fn calc_vote_rewards_update_vote_states(
     });
     let vote_accounts = bank.vote_accounts();
 
-    let updated_accounts = match (&reward_state, &final_cert_state) {
+    let UpdatedAccounts {
+        accounts,
+        prev_accounts,
+    } = match (&reward_state, &final_cert_state) {
         (None, None) => return Ok(0),
         (Some(state), None) => update_accounts(
             &reward_state,
@@ -474,8 +482,10 @@ pub(super) fn calc_vote_rewards_update_vote_states(
         )?,
     };
 
-    bank.store_accounts((bank.slot(), updated_accounts.as_slice()), None);
-    Ok(updated_accounts.len())
+    // The stakes cache holds the same vote accounts as accounts-db, so the store skips
+    // loading them.
+    bank.store_accounts_with_prev_versions((bank.slot(), accounts.as_slice()), prev_accounts);
+    Ok(accounts.len())
 }
 
 /// Computes the voting reward in Lamports.
@@ -600,7 +610,7 @@ mod tests {
         crate::{
             bank_forks::BankForks,
             genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_leader_ex,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_leader_ex,
                 create_genesis_config_with_vote_accounts, create_validator,
             },
             inflation_rewards::{MAX_BPS, commission_split_preserve_lamports},
@@ -608,6 +618,7 @@ mod tests {
             validated_block_finalization::ValidatedBlockFinalizationCert,
         },
         agave_feature_set::FeatureSet,
+        agave_snapshots::snapshot_hash::SnapshotHash,
         agave_votor_messages::{
             certificate::{CertSignature, FastFinalizeCert},
             consensus_message::Block,
@@ -835,6 +846,64 @@ mod tests {
                 + expected_leader_reward_per_validator * validator_pubkeys_to_reward.len() as u64,
             leader_reward
         );
+    }
+
+    /// The footer store takes the vote accounts' previous versions from the stakes cache, so
+    /// the bank's accounts lt hash must still match one calculated from the accounts index.
+    #[test]
+    fn vote_reward_store_keeps_accounts_lt_hash() {
+        let validator_keypairs = (0..4)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let GenesisConfigInfo {
+            mut genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![LAMPORTS_PER_SOL * 100; validator_keypairs.len()],
+        );
+        genesis_config.epoch_schedule = EpochSchedule::without_warmup();
+        genesis_config.rent = Rent::default();
+        let validators = validator_keypairs
+            .iter()
+            .map(|v| v.vote_keypair.pubkey())
+            .collect::<Vec<_>>();
+        let slot_leader = SlotLeader {
+            id: validator_keypairs[0].node_keypair.pubkey(),
+            vote_address: validators[0],
+        };
+
+        let (mut bank, _bank_forks) = new_bank_for_tests(slot_leader, &genesis_config);
+        let first_slot = bank
+            .epoch_schedule
+            .get_first_slot_in_epoch(bank.epoch() + 1)
+            + NUM_SLOTS_FOR_REWARD;
+        for slot in first_slot..first_slot + 2 {
+            bank = new_bank_from_parent(bank, slot);
+            // A transaction changes a vote account before the footer stores it.
+            bank.transfer(slot - first_slot + 1, &mint_keypair, &validators[0])
+                .unwrap();
+            calc_vote_rewards_update_vote_states(
+                &bank,
+                Some(ValidatedRewardCert::new_for_tests(
+                    slot - NUM_SLOTS_FOR_REWARD,
+                    validators.clone(),
+                )),
+                None,
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as i64,
+            )
+            .unwrap();
+            bank.freeze();
+            assert_eq!(
+                bank.get_snapshot_hash(),
+                SnapshotHash::new(bank.calculate_accounts_lt_hash_for_tests().0.checksum()),
+            );
+        }
     }
 
     #[test]

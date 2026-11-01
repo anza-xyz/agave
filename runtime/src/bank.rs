@@ -4967,7 +4967,37 @@ impl Bank {
         thread_pool_for_loading_accounts: Option<&ThreadPool>,
     ) {
         assert!(!self.freeze_started());
-        let mut m = Measure::start("stakes_cache.check_and_store");
+        let (_, store_us) = measure_us!({
+            self.update_stakes_cache_with_accounts(&accounts);
+            self.store_accounts_without_stakes_cache(accounts, thread_pool_for_loading_accounts);
+        });
+        let stats = &self.rc.accounts.accounts_db.stats;
+        stats
+            .stakes_cache_check_and_store_us
+            .fetch_add(store_us, Relaxed);
+    }
+
+    /// `prev_accounts` must hold each account's current version in this bank, in the order
+    /// of `accounts`.
+    pub(crate) fn store_accounts_with_prev_versions<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        prev_accounts: Vec<AccountSharedData>,
+    ) {
+        assert!(!self.freeze_started());
+        assert_eq!(accounts.len(), prev_accounts.len());
+        let (_, store_us) = measure_us!({
+            self.update_stakes_cache_with_accounts(&accounts);
+            self.enqueue_lt_hash_updates_with_prev_versions(&accounts, prev_accounts);
+            self.store_accounts_after_lt_hash_updates(accounts);
+        });
+        let stats = &self.rc.accounts.accounts_db.stats;
+        stats
+            .stakes_cache_check_and_store_us
+            .fetch_add(store_us, Relaxed);
+    }
+
+    fn update_stakes_cache_with_accounts<'a>(&self, accounts: &impl StorableAccounts<'a>) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let in_epoch_rewards_period = self.in_epoch_rewards_period();
         let remove_inactive_stakes = self.feature_set.snapshot().remove_inactive_stakes;
@@ -4987,14 +5017,6 @@ impl Bank {
                 )
             })
         });
-        self.store_accounts_without_stakes_cache(accounts, thread_pool_for_loading_accounts);
-        m.stop();
-        self.rc
-            .accounts
-            .accounts_db
-            .stats
-            .stakes_cache_check_and_store_us
-            .fetch_add(m.as_us(), Relaxed);
     }
 
     fn store_account_without_stakes_cache(&self, pubkey: &Pubkey, account: &AccountSharedData) {
@@ -5011,12 +5033,18 @@ impl Bank {
         accounts: impl StorableAccounts<'a>,
         thread_pool_for_loading_accounts: Option<&ThreadPool>,
     ) {
-        assert!(!self.freeze_started());
-        self.update_bank_hash_stats(&accounts);
         self.enqueue_off_chain_accounts_lt_hash_updates(
             &accounts,
             thread_pool_for_loading_accounts,
         );
+        self.store_accounts_after_lt_hash_updates(accounts);
+    }
+
+    // Callers must enqueue the accounts lt hash updates first, since loading the previous
+    // versions reads accounts-db.
+    fn store_accounts_after_lt_hash_updates<'a>(&self, accounts: impl StorableAccounts<'a>) {
+        assert!(!self.freeze_started());
+        self.update_bank_hash_stats(&accounts);
         self.rc
             .accounts
             .store_accounts(accounts, self.bank_id(), None, &self.ancestors);
