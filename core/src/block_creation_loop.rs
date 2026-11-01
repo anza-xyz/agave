@@ -8,8 +8,8 @@ use {
     crate::{
         banking_channels::BankingPacketSender,
         block_creation_loop::rewards::{
-            certs_requestor::CertsRequestor,
-            msg_types::{RewardRequestToken, RewardRespSucc},
+            certs_requestor::{CertsRequestor, RewardRequestToken},
+            msg_types::RewardRespSucc,
             reward_certs_service::RewardCertsService,
         },
         replay_stage::{Finalizer, ReplayStage},
@@ -18,7 +18,7 @@ use {
     agave_votor::{event::LeaderWindowInfo, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::{
         consensus_message::{Block, BlockId},
-        reward_certificate::{NUM_SLOTS_FOR_REWARD, NotarRewardCertificate, SkipRewardCertificate},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     },
     crossbeam_channel::{Receiver, Sender, select_biased},
     solana_clock::Slot,
@@ -57,6 +57,7 @@ use {
     solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
     std::{
+        cmp::Ordering as CmpOrdering,
         sync::{
             Arc, Condvar, Mutex, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -190,6 +191,7 @@ struct LeaderContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
     reward_certs_requestor: CertsRequestor,
+    stashed_reward_token: Option<RewardRequestToken>,
     /// Banking-stage ingress used to reschedule transactions after sad handover.
     banking_stage_sender: BankingPacketSender,
 
@@ -331,6 +333,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         transaction_status_sender,
         replay_highest_frozen,
         reward_certs_requestor,
+        stashed_reward_token: None,
         banking_stage_sender,
         metrics: LoopMetrics::default(),
         highest_finalized,
@@ -598,9 +601,9 @@ fn produce_first_slot(
     parent_block: Block,
     block_timer: &mut Instant,
     ctx: &mut LeaderContext,
+    active_reward_token: &mut Option<RewardRequestToken>,
 ) -> Result<(), StartLeaderError> {
     let mut slot_metrics = SlotMetrics::new(slot, fast_leader_handover);
-    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
     let res = start_leader_wait_for_parent_replay(
         ctx,
         &mut slot_metrics,
@@ -613,10 +616,10 @@ fn produce_first_slot(
     .and_then(|working_bank| {
         produce_slot(
             ctx,
+            active_reward_token,
             &mut slot_metrics,
             slot,
             fast_leader_handover.then_some(parent_block),
-            reward_cert_request,
             block_timer,
             working_bank,
         )
@@ -629,9 +632,9 @@ fn produce_intra_window_slot(
     slot: Slot,
     block_timer: &mut Instant,
     ctx: &mut LeaderContext,
+    active_reward_token: &mut Option<RewardRequestToken>,
 ) -> Result<(), StartLeaderError> {
     let mut slot_metrics = SlotMetrics::new(slot, false);
-    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
     let res = start_leader_wait_for_parent_replay(
         ctx,
         &mut slot_metrics,
@@ -644,10 +647,10 @@ fn produce_intra_window_slot(
     .and_then(|working_bank| {
         produce_slot(
             ctx,
+            active_reward_token,
             &mut slot_metrics,
             slot,
             None,
-            reward_cert_request,
             block_timer,
             working_bank,
         )
@@ -663,30 +666,19 @@ fn produce_intra_window_slot(
 /// no time to answer.
 fn request_reward_certs(
     ctx: &mut LeaderContext,
-    slot_metrics: &mut SlotMetrics,
-    slot: Slot,
+    window_start: Slot,
 ) -> Result<Option<RewardRequestToken>, StartLeaderError> {
-    // Do not build reward certs for the first NUM_SLOTS_FOR_REWARD AG slots as the reward slots
-    // would be tower slots.
-    if slot
-        <= ctx
-            .genesis_cert_block_marker
-            .slot
-            .saturating_add(NUM_SLOTS_FOR_REWARD)
-    {
-        return Ok(None);
-    }
     ctx.reward_certs_requestor
-        .request_reward_certs(slot_metrics, ctx.my_pubkey, slot)
+        .request_reward_certs(&ctx.my_pubkey, window_start)
         .map_err(|()| StartLeaderError::PohRecorder(PohRecorderError::ChannelDisconnected))
 }
 
 fn produce_slot(
     ctx: &mut LeaderContext,
+    active_reward_token: &mut Option<RewardRequestToken>,
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     optimistic_parent: Option<Block>,
-    reward_cert_request: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     working_bank: Arc<Bank>,
 ) -> Result<(), StartLeaderError> {
@@ -700,10 +692,10 @@ fn produce_slot(
     let mut bank_completion_measure = Measure::start("bank_completion");
     if let Err(e) = record_and_complete_block(
         ctx,
+        active_reward_token,
         slot_metrics,
         slot,
         optimistic_parent,
-        reward_cert_request,
         block_timer,
         timeout,
     ) {
@@ -732,8 +724,48 @@ fn produce_window(
     start_slot: Slot,
     end_slot: Slot,
     parent_block: Block,
+    block_timer: Instant,
+    ctx: &mut LeaderContext,
+) -> Result<(), StartLeaderError> {
+    let mut active_reward_token = match &ctx.stashed_reward_token {
+        Some(stashed_reward_token) => match stashed_reward_token.window_start.cmp(&start_slot) {
+            CmpOrdering::Less => {
+                ctx.stashed_reward_token = None;
+                request_reward_certs(ctx, start_slot)?
+            }
+            CmpOrdering::Equal => ctx.stashed_reward_token.take(),
+            CmpOrdering::Greater => None,
+        },
+        None => request_reward_certs(ctx, start_slot)?,
+    };
+    produce_window_with_reward_token(
+        fast_leader_handover,
+        start_slot,
+        end_slot,
+        parent_block,
+        block_timer,
+        ctx,
+        &mut active_reward_token,
+    )
+    .inspect_err(|_| {
+        if ctx
+            .stashed_reward_token
+            .as_ref()
+            .is_none_or(|token| token.window_start <= start_slot)
+        {
+            ctx.stashed_reward_token = active_reward_token;
+        }
+    })
+}
+
+fn produce_window_with_reward_token(
+    fast_leader_handover: bool,
+    start_slot: Slot,
+    end_slot: Slot,
+    parent_block: Block,
     mut block_timer: Instant,
     ctx: &mut LeaderContext,
+    active_reward_token: &mut Option<RewardRequestToken>,
 ) -> Result<(), StartLeaderError> {
     update_leader_window_clock(ctx, start_slot, block_timer);
     let mut window_production_start = Measure::start("window_production");
@@ -744,12 +776,13 @@ fn produce_window(
         parent_block,
         &mut block_timer,
         ctx,
+        active_reward_token,
     )?;
     for slot in (start_slot + 1)..=end_slot {
         if ctx.exit.load(Ordering::Relaxed) {
             break;
         }
-        produce_intra_window_slot(slot, &mut block_timer, ctx)?;
+        produce_intra_window_slot(slot, &mut block_timer, ctx, active_reward_token)?;
     }
     if !ctx.exit.load(Ordering::Relaxed) {
         trace!(
@@ -772,10 +805,10 @@ fn produce_window(
 /// - Clear the working bank
 fn record_and_complete_block(
     ctx: &mut LeaderContext,
+    active_reward_token: &mut Option<RewardRequestToken>,
     slot_metrics: &mut SlotMetrics,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
-    reward_cert_request: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
@@ -903,17 +936,29 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
-        let reward_certs = ctx
-            .reward_certs_requestor
-            .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_request)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
-        let RewardRespSucc {
-            skip,
-            notar,
-            validators,
-        } = reward_certs;
-        let reward_cert =
-            ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
+        let reward_certs = match active_reward_token {
+            None => None,
+            Some(token) => token
+                .recv_next_cert(&ctx.my_pubkey, bank_slot)
+                .map_err(|()| PohRecorderError::ChannelDisconnected)?,
+        };
+
+        let (validated_reward_cert, skip, notar) = match reward_certs {
+            None => {
+                slot_metrics.reward_certs_skipped += 1;
+                (None, None, None)
+            }
+            Some(RewardRespSucc {
+                skip,
+                notar,
+                validators,
+            }) => {
+                let cert =
+                    ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
+                (cert, skip, notar)
+            }
+        };
+
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
@@ -927,7 +972,7 @@ fn record_and_complete_block(
             i64::try_from(footer.block_producer_time_nanos)
                 .expect("locally produced block timestamp must fit in i64"),
             None, // Banks we produce do not need the bank hash mismatch check
-            reward_cert,
+            validated_reward_cert,
             final_cert_input,
         )?;
         slot_metrics.vote_accounts_update_stats = Some(vote_account_update_stats);
@@ -1784,6 +1829,7 @@ mod tests {
             transaction_status_sender: None,
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
+            stashed_reward_token: None,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
@@ -1897,6 +1943,7 @@ mod tests {
             transaction_status_sender: None,
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
+            stashed_reward_token: None,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: GenesisCertBlockMarker {
@@ -1911,29 +1958,51 @@ mod tests {
         let mut block_timer = Instant::now()
             .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
             .unwrap();
-        let err = produce_first_slot(
+        let err = produce_window(
             false,
             slot,
+            last_of_consecutive_leader_slots(slot),
             Block::new_unique(slot - 1),
-            &mut block_timer,
+            block_timer,
             &mut ctx,
         )
         .unwrap_err();
         assert!(matches!(err, StartLeaderError::ReplayIsBehind(11, 12)));
 
-        // The reward certs were already requested while we waited for the parent.
+        // Request the whole window before waiting for parent replay, and retain
+        // the token so retrying the window does not send another request.
         let request = reward_request_receiver.try_recv().unwrap();
-        assert_eq!(request.bank_slot, slot);
+        assert_eq!(request.window_start, slot);
+        assert_eq!(
+            ctx.stashed_reward_token.as_ref().unwrap().window_start,
+            slot
+        );
+        block_timer = Instant::now()
+            .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
+            .unwrap();
+        let err = produce_window(
+            false,
+            slot,
+            last_of_consecutive_leader_slots(slot),
+            Block::new_unique(slot - 1),
+            block_timer,
+            &mut ctx,
+        )
+        .unwrap_err();
+        assert!(matches!(err, StartLeaderError::ReplayIsBehind(11, 12)));
+        assert!(reward_request_receiver.is_empty());
 
-        // Same for a slot later in the window.
+        // A later slot uses the same window's token without requesting again.
+        let mut active_reward_token = ctx.stashed_reward_token.take();
         let slot = 13;
         let mut block_timer = Instant::now()
             .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
             .unwrap();
-        let err = produce_intra_window_slot(slot, &mut block_timer, &mut ctx).unwrap_err();
+        let err =
+            produce_intra_window_slot(slot, &mut block_timer, &mut ctx, &mut active_reward_token)
+                .unwrap_err();
         assert!(matches!(err, StartLeaderError::ReplayIsBehind(12, 13)));
-        let request = reward_request_receiver.try_recv().unwrap();
-        assert_eq!(request.bank_slot, slot);
+        assert!(reward_request_receiver.is_empty());
     }
 
     #[test]
@@ -1991,6 +2060,7 @@ mod tests {
             transaction_status_sender: None,
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
+            stashed_reward_token: None,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
@@ -2106,6 +2176,7 @@ mod tests {
             transaction_status_sender: None,
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
+            stashed_reward_token: None,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker,
@@ -2177,6 +2248,7 @@ mod tests {
             transaction_status_sender: None,
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
+            stashed_reward_token: None,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
@@ -2195,9 +2267,9 @@ mod tests {
         let start = Instant::now();
         let result = record_and_complete_block(
             &mut ctx,
+            &mut None,
             &mut SlotMetrics::new(1, true),
             1,
-            None,
             None,
             &mut Instant::now(),
             Duration::ZERO,
@@ -2300,6 +2372,7 @@ mod tests {
             transaction_status_sender: Some(transaction_status_sender),
             replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
             reward_certs_requestor,
+            stashed_reward_token: None,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
             genesis_cert_block_marker: test_genesis_cert_block_marker(),
