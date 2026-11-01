@@ -430,7 +430,6 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "strum",
- "symlink",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -469,6 +468,7 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-cpu-utils",
  "agave-event-system",
+ "agave-fs",
  "agave-logger",
  "agave-snapshots",
  "agave-votor",
@@ -545,7 +545,6 @@ dependencies = [
  "solana-validator-exit",
  "solana-version",
  "solana-vote-program",
- "symlink",
  "tempfile",
  "test-case",
  "thiserror 2.0.21",
@@ -9913,6 +9912,7 @@ name = "solana-rpc"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-feature-set",
+ "agave-fs",
  "agave-math-utils",
  "agave-reserved-account-keys",
  "agave-snapshots",
@@ -10012,7 +10012,6 @@ dependencies = [
  "spl-token-2022-interface",
  "spl-token-interface",
  "stream-cancel",
- "symlink",
  "test-case",
  "thiserror 2.0.21",
  "tokio",
@@ -12136,12 +12135,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "symlink"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "syn"

@@ -112,6 +112,7 @@ tokio-util = { workspace = true, features = ["codec", "compat", "rt"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-fs = { path = "../fs" }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
@@ -141,7 +142,6 @@ solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-svm-log-collector = { path = "../svm-log-collector", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["wincode"] }
-symlink = { workspace = true }
 test-case = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 
