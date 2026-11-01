@@ -20,9 +20,6 @@ use {
     solana_bls_signatures::signature::SignatureAffine,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_core::consensus::tower_storage::{
-        FileTowerStorage, SavedTower, SavedTowerVersions, TowerStorage,
-    },
     solana_entry::entry::{self, Entry, EntrySlice},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
@@ -60,7 +57,7 @@ use {
     std::{
         collections::{HashMap, HashSet, VecDeque},
         net::{SocketAddr, TcpListener, UdpSocket},
-        path::{Path, PathBuf},
+        path::Path,
         sync::{
             Arc, RwLock,
             atomic::{AtomicBool, Ordering},
@@ -527,16 +524,6 @@ pub fn kill_entry_and_spend_and_verify_rest(
              nodes after {MAX_SEND_ATTEMPTS} attempts"
         );
     }
-}
-
-pub fn apply_votes_to_tower(node_keypair: &Keypair, votes: Vec<(Slot, Hash)>, tower_path: PathBuf) {
-    let tower_storage = FileTowerStorage::new(tower_path);
-    let mut tower = tower_storage.load(&node_keypair.pubkey()).unwrap();
-    for (slot, hash) in votes {
-        tower.record_vote(slot, hash);
-    }
-    let saved_tower = SavedTowerVersions::from(SavedTower::new(&tower, node_keypair).unwrap());
-    tower_storage.store(&saved_tower).unwrap();
 }
 
 pub fn check_min_slot_is_rooted(min_slot: Slot, contact_infos: &[ContactInfo], test_name: &str) {

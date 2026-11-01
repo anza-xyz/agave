@@ -1,18 +1,7 @@
 //! Dead-slot classification and notification helpers for replay.
 
 use {
-    super::TowerBFTStructures,
-    crate::{
-        consensus::progress_map::{DeadSlotReason, ProgressMap},
-        repair::{
-            ancestor_hashes_service::AncestorHashesReplayUpdateSender,
-            cluster_slot_state_verifier::{
-                DeadState, DuplicateSlotsToRepair, DuplicateState, PurgeRepairSlotCounter,
-                SlotStateUpdate, check_slot_agrees_with_cluster,
-            },
-        },
-    },
-    agave_votor_messages::migration::MigrationStatus,
+    crate::consensus::progress_map::{DeadSlotReason, ProgressMap},
     solana_clock::Slot,
     solana_ledger::{
         block_error::BlockError,
@@ -21,11 +10,7 @@ use {
     },
     solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
     solana_rpc_client_api::response::SlotUpdate,
-    solana_runtime::{
-        bank::Bank,
-        block_component_processor::BlockComponentProcessorError,
-        vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
-    },
+    solana_runtime::{bank::Bank, block_component_processor::BlockComponentProcessorError},
     solana_time_utils::timestamp,
     std::sync::Arc,
 };
@@ -83,34 +68,12 @@ pub(super) struct DeadSlotNotifications {
     pub(super) rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     /// Optional test/runtime hook used by slot-status observers.
     pub(super) slot_status_notifier: Option<SlotStatusNotifier>,
-    /// Replay-vote channel used to release buffered votes for the failed bank.
-    pub(super) replay_vote_sender: ReplayVoteSender,
-}
-
-/// Tower/duplicate bookkeeping that must be updated only for hard-dead slots.
-pub(super) struct DeadSlotDuplicateContext<'a> {
-    /// Current root used by the duplicate-slot agreement state machine.
-    pub(super) root: Slot,
-    /// Slots that should be repaired after duplicate/dead state transitions.
-    pub(super) duplicate_slots_to_repair: &'a mut DuplicateSlotsToRepair,
-    /// Notifies ancestor-hash repair when a dead slot changes duplicate state.
-    pub(super) ancestor_hashes_replay_update_sender: &'a AncestorHashesReplayUpdateSender,
-    /// Rate-limits purge repair requests triggered by duplicate/dead handling.
-    pub(super) purge_repair_slot_counter: &'a mut PurgeRepairSlotCounter,
-    /// Tower data is present only on the Tower replay path; Alpenglow replay
-    /// passes `None` because it does not run this duplicate state machine.
-    pub(super) tbft_structs: Option<&'a mut TowerBFTStructures>,
 }
 
 /// All state needed to decide and publish a replay dead-slot transition.
-pub(super) struct DeadSlotContext<'a> {
-    /// Persistent/RPC/replay-vote notification sinks.
+pub(super) struct DeadSlotContext {
+    /// Persistent/RPC notification sinks.
     pub(super) notifications: DeadSlotNotifications,
-    /// Duplicate/Tower bookkeeping for hard-dead transitions.
-    pub(super) duplicate: DeadSlotDuplicateContext<'a>,
-    /// Migration gates decide whether an UpdateParent marker can still recover
-    /// a failed prefix by restarting replay from a later FEC set.
-    pub(super) migration_status: &'a MigrationStatus,
 }
 
 /// Replay errors that may be caused solely by executing the optimistic-parent prefix.
@@ -153,11 +116,9 @@ fn soft_dead_reason(
     bank: &Bank,
     err: &BlockstoreProcessorError,
     progress: &ProgressMap,
-    migration_status: &MigrationStatus,
 ) -> Option<DeadSlotReason> {
     let slot = bank.slot();
     if !bank.feature_set.snapshot().alpenglow_fast_leader_handover
-        || !migration_status.should_allow_block_markers(slot)
         || blockstore.is_dead(slot)
         || !is_update_parent_recoverable_replay_error(err)
     {
@@ -205,15 +166,13 @@ fn soft_dead_reason(
 
 /// Mark a slot soft-dead after replay fails before a possible UpdateParent.
 ///
-/// This releases replay-vote state for the current bank, but intentionally
-/// avoids blockstore/RPC dead-slot writes because a later marker may restart
-/// replay from the updated parent.
+/// This intentionally avoids blockstore/RPC dead-slot writes because a later
+/// marker may restart replay from the updated parent.
 fn mark_soft_dead_slot(
     bank: &Bank,
     err: &BlockstoreProcessorError,
     reason: DeadSlotReason,
     progress: &mut ProgressMap,
-    notifications: &DeadSlotNotifications,
 ) {
     let slot = bank.slot();
     datapoint_info!(
@@ -222,17 +181,6 @@ fn mark_soft_dead_slot(
         ("slot", slot, i64),
     );
     progress.get_mut(&slot).unwrap().mark_dead(reason);
-    send_invalid_bank(bank, &notifications.replay_vote_sender);
-}
-
-/// Release replay-vote state for a bank that replay will no longer finish.
-pub(super) fn send_invalid_bank(bank: &Bank, replay_vote_sender: &ReplayVoteSender) {
-    replay_vote_sender
-        .send(ReplayVoteMessage::InvalidBank {
-            replay_bank_id: bank.bank_id(),
-            replay_slot: bank.slot(),
-        })
-        .expect("Failed to send InvalidBank message to replay vote sender");
 }
 
 /// Persist and publish a hard-dead slot.
@@ -249,8 +197,7 @@ pub(super) fn mark_hard_dead_slot_notifications(
     let slot = bank.slot();
     let parent_slot = bank.parent_slot();
     log_level.datapoint(slot, err.clone());
-    // Do not remove from progress map when marking dead! Needed by
-    // `process_duplicate_confirmed_slots()`
+    // Keep the entry so replay and repair can observe the terminal state.
     progress
         .get_mut(&slot)
         .unwrap()
@@ -259,8 +206,6 @@ pub(super) fn mark_hard_dead_slot_notifications(
         .blockstore
         .set_dead_slot(slot)
         .expect("Failed to mark slot as dead in blockstore");
-    send_invalid_bank(bank, &notifications.replay_vote_sender);
-
     notifications.blockstore.slots_stats.mark_dead(slot);
 
     if let Some(slot_status_notifier) = notifications.slot_status_notifier.as_ref() {
@@ -284,9 +229,8 @@ pub(super) fn mark_hard_dead_slot(
     err: String,
     log_level: DeadSlotLogLevel,
     progress: &mut ProgressMap,
-    dead_slot_context: &mut DeadSlotContext<'_>,
+    dead_slot_context: &DeadSlotContext,
 ) {
-    let slot = bank.slot();
     mark_hard_dead_slot_notifications(
         bank,
         err,
@@ -294,68 +238,6 @@ pub(super) fn mark_hard_dead_slot(
         progress,
         &dead_slot_context.notifications,
     );
-
-    if let Some(TowerBFTStructures {
-        heaviest_subtree_fork_choice,
-        duplicate_slots_tracker,
-        duplicate_confirmed_slots,
-        epoch_slots_frozen_slots,
-        ..
-    }) = dead_slot_context.duplicate.tbft_structs.as_deref_mut()
-    {
-        let dead_state = DeadState::new_from_state(
-            slot,
-            duplicate_slots_tracker,
-            duplicate_confirmed_slots,
-            heaviest_subtree_fork_choice,
-            epoch_slots_frozen_slots,
-        );
-        check_slot_agrees_with_cluster(
-            slot,
-            dead_slot_context.duplicate.root,
-            dead_slot_context.notifications.blockstore.as_ref(),
-            duplicate_slots_tracker,
-            epoch_slots_frozen_slots,
-            heaviest_subtree_fork_choice,
-            dead_slot_context.duplicate.duplicate_slots_to_repair,
-            dead_slot_context
-                .duplicate
-                .ancestor_hashes_replay_update_sender,
-            dead_slot_context.duplicate.purge_repair_slot_counter,
-            SlotStateUpdate::Dead(dead_state),
-        );
-
-        // If we previously marked this slot as duplicate in blockstore, let the state machine know.
-        if !duplicate_slots_tracker.contains(&slot)
-            && dead_slot_context
-                .notifications
-                .blockstore
-                .get_duplicate_slot(slot)
-                .is_some()
-        {
-            let duplicate_state = DuplicateState::new_from_state(
-                slot,
-                duplicate_confirmed_slots,
-                heaviest_subtree_fork_choice,
-                || true,
-                || None,
-            );
-            check_slot_agrees_with_cluster(
-                slot,
-                dead_slot_context.duplicate.root,
-                dead_slot_context.notifications.blockstore.as_ref(),
-                duplicate_slots_tracker,
-                epoch_slots_frozen_slots,
-                heaviest_subtree_fork_choice,
-                dead_slot_context.duplicate.duplicate_slots_to_repair,
-                dead_slot_context
-                    .duplicate
-                    .ancestor_hashes_replay_update_sender,
-                dead_slot_context.duplicate.purge_repair_slot_counter,
-                SlotStateUpdate::Duplicate(duplicate_state),
-            );
-        }
-    }
 }
 
 /// Classify a replay failure as soft-dead or hard-dead and publish the
@@ -364,7 +246,7 @@ pub(super) fn mark_replay_dead_slot(
     bank: &Bank,
     err: &BlockstoreProcessorError,
     progress: &mut ProgressMap,
-    dead_slot_context: &mut DeadSlotContext<'_>,
+    dead_slot_context: &DeadSlotContext,
 ) {
     bank.clear_accounts_lt_hash_async_progress_is_at_end();
     if let Some(reason) = soft_dead_reason(
@@ -372,15 +254,8 @@ pub(super) fn mark_replay_dead_slot(
         bank,
         err,
         progress,
-        dead_slot_context.migration_status,
     ) {
-        mark_soft_dead_slot(
-            bank,
-            err,
-            reason,
-            progress,
-            &dead_slot_context.notifications,
-        );
+        mark_soft_dead_slot(bank, err, reason, progress);
         return;
     }
 

@@ -29,17 +29,13 @@ use {
     futures::{StreamExt, stream::FuturesUnordered},
     histogram::Histogram,
     solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH, bytes::Bytes},
-    solana_poh::{
-        poh_controller::PohController, poh_recorder::PohRecorder,
-        transaction_recorder::TransactionRecorder,
-    },
+    solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+        bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         transaction_execution::TransactionStatusSender, vote_sender_types::ReplayVoteSender,
     },
     solana_time_utils::AtomicInterval,
-    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::HashSet,
         num::{NonZeroU64, NonZeroUsize},
@@ -891,22 +887,6 @@ pub enum BankingControlMsg {
     External {
         session: agave_scheduler_handshake::AgaveSession,
     },
-}
-
-pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
-    bank_forks: &RwLock<BankForks>,
-    poh_controller: &mut PohController,
-    tpu_bank: Bank,
-) {
-    let tpu_bank = bank_forks
-        .write()
-        .unwrap()
-        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
-    let tpu_bank_for_poh = tpu_bank.clone_with_scheduler();
-    let set_bank_res = poh_controller.set_bank(tpu_bank_for_poh);
-    if set_bank_res.is_err() {
-        warn!("Failed to set poh bank, poh service is disconnected");
-    }
 }
 
 #[derive(Debug)]

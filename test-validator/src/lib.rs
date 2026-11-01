@@ -1457,15 +1457,6 @@ mod test {
 
         let active_features = FEATURE_NAMES.keys().copied().collect::<Vec<_>>();
         assert_feature_accounts(&rpc_client, &active_features, &[]).await;
-        assert!(
-            test_validator
-                .bank_forks()
-                .read()
-                .unwrap()
-                .root_bank()
-                .get_alpenglow_genesis_certificate()
-                .is_some()
-        );
     }
 
     #[test]
@@ -1538,7 +1529,6 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
-            agave_feature_set::alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
         ]
