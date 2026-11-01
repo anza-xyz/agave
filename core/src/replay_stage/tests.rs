@@ -3740,14 +3740,14 @@ fn test_pre_update_soft_dead() {
         blockstore,
         vote_simulator,
         ..
-    } = replay_blockstore_components(Some(tr(0) / tr(1)), 1, None::<GenerateVotes>);
+    } = replay_blockstore_components(Some(tr(0) / tr(4)), 1, None::<GenerateVotes>);
     let VoteSimulator {
         bank_forks,
         mut progress,
         ..
     } = vote_simulator;
 
-    let slot = 1;
+    let slot = 4;
     let mut meta = blockstore.meta(slot).unwrap().unwrap();
     meta.replay_fec_set_index = 0;
     meta.last_index = None;
@@ -3793,20 +3793,80 @@ fn test_pre_update_soft_dead() {
     );
 }
 
-#[test]
-fn test_after_update_hard_dead() {
+#[test_case(5; "window_index_1")]
+#[test_case(6; "window_index_2")]
+#[test_case(7; "window_index_3")]
+fn test_non_window_start_replay_failure_is_hard_dead(slot: Slot) {
     let ReplayBlockstoreComponents {
         blockstore,
         vote_simulator,
         ..
-    } = replay_blockstore_components(Some(tr(0) / tr(1)), 1, None::<GenerateVotes>);
+    } = replay_blockstore_components(Some(tr(0) / tr(slot)), 1, None::<GenerateVotes>);
     let VoteSimulator {
         bank_forks,
         mut progress,
         ..
     } = vote_simulator;
 
-    let slot = 1;
+    let mut meta = blockstore.meta(slot).unwrap().unwrap();
+    meta.replay_fec_set_index = 0;
+    meta.last_index = None;
+    blockstore.put_meta(slot, &meta).unwrap();
+
+    let bank = bank_forks.read().unwrap().get(slot).unwrap();
+    let p = ForkProgress::new(bank.last_blockhash(), Some(0), None, 0, 0, None);
+    p.replay_progress.write().unwrap().num_shreds = 5;
+    progress.insert(slot, p);
+
+    let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
+    let (ancestor_hashes_replay_update_sender, _) = bounded(1024);
+    let mut duplicate_slots_to_repair = DuplicateSlotsToRepair::default();
+    let mut purge_repair_slot_counter = PurgeRepairSlotCounter::default();
+    let migration_status = post_migration_status_for_tests();
+    let mut dead_slot_context = dead_slot_context_for_tests(
+        blockstore.clone(),
+        replay_vote_sender.clone(),
+        &ancestor_hashes_replay_update_sender,
+        &mut duplicate_slots_to_repair,
+        &mut purge_repair_slot_counter,
+        None,
+        &migration_status,
+    );
+    mark_replay_dead_slot(
+        &bank,
+        &BlockstoreProcessorError::InvalidTransaction(TransactionError::AccountNotFound),
+        &mut progress,
+        &mut dead_slot_context,
+    );
+
+    assert!(blockstore.is_dead(slot));
+    assert!(matches!(
+        progress.get(&slot).unwrap().dead_reason,
+        Some(DeadSlotReason::Hard)
+    ));
+    assert_eq!(
+        replay_vote_receiver.try_recv(),
+        Ok(ReplayVoteMessage::InvalidBank {
+            replay_bank_id: bank.bank_id(),
+            replay_slot: slot,
+        })
+    );
+}
+
+#[test]
+fn test_after_update_hard_dead() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        ..
+    } = replay_blockstore_components(Some(tr(0) / tr(4)), 1, None::<GenerateVotes>);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+
+    let slot = 4;
     let mut meta = blockstore.meta(slot).unwrap().unwrap();
     meta.replay_fec_set_index = 5;
     meta.last_index = None;
