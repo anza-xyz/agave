@@ -3113,6 +3113,7 @@ fn test_get_rooted_block() {
             }
             let compute_units_consumed = Some(12345);
             let cost_units = Some(6789);
+            let loaded_accounts_data_size = Some(4096);
             let signature = transaction.signatures[0];
             let status = TransactionStatusMeta {
                 status: Ok(()),
@@ -3128,6 +3129,7 @@ fn test_get_rooted_block() {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed,
                 cost_units,
+                loaded_accounts_data_size,
             }
             .into();
             blockstore
@@ -3148,6 +3150,7 @@ fn test_get_rooted_block() {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed,
                 cost_units,
+                loaded_accounts_data_size,
             }
             .into();
             blockstore
@@ -3168,6 +3171,7 @@ fn test_get_rooted_block() {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed,
                 cost_units,
+                loaded_accounts_data_size,
             }
             .into();
             blockstore
@@ -3190,6 +3194,7 @@ fn test_get_rooted_block() {
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
                     cost_units,
+                    loaded_accounts_data_size,
                 },
             }
         })
@@ -3432,8 +3437,10 @@ fn test_persist_transaction_status() {
     };
     let compute_units_consumed_1 = Some(3812649u64);
     let cost_units_1 = Some(1234);
+    let loaded_accounts_data_size_1 = Some(1024);
     let compute_units_consumed_2 = Some(42u64);
     let cost_units_2 = Some(5678);
+    let loaded_accounts_data_size_2 = Some(2048);
 
     // result not found
     assert!(
@@ -3460,6 +3467,7 @@ fn test_persist_transaction_status() {
         return_data: Some(test_return_data.clone()),
         compute_units_consumed: compute_units_consumed_1,
         cost_units: cost_units_1,
+        loaded_accounts_data_size: loaded_accounts_data_size_1,
     }
     .into();
     assert!(
@@ -3483,6 +3491,7 @@ fn test_persist_transaction_status() {
         return_data,
         compute_units_consumed,
         cost_units,
+        loaded_accounts_data_size,
     } = transaction_status_cf
         .get_protobuf((Signature::default(), 0))
         .unwrap()
@@ -3502,6 +3511,7 @@ fn test_persist_transaction_status() {
     assert_eq!(return_data.unwrap(), test_return_data);
     assert_eq!(compute_units_consumed, compute_units_consumed_1);
     assert_eq!(cost_units, cost_units_1);
+    assert_eq!(loaded_accounts_data_size, loaded_accounts_data_size_1);
 
     // insert value
     let status = TransactionStatusMeta {
@@ -3518,6 +3528,7 @@ fn test_persist_transaction_status() {
         return_data: Some(test_return_data.clone()),
         compute_units_consumed: compute_units_consumed_2,
         cost_units: cost_units_2,
+        loaded_accounts_data_size: loaded_accounts_data_size_2,
     }
     .into();
     assert!(
@@ -3541,6 +3552,7 @@ fn test_persist_transaction_status() {
         return_data,
         compute_units_consumed,
         cost_units,
+        loaded_accounts_data_size,
     } = transaction_status_cf
         .get_protobuf((Signature::from([2u8; 64]), 9))
         .unwrap()
@@ -3562,6 +3574,7 @@ fn test_persist_transaction_status() {
     assert_eq!(return_data.unwrap(), test_return_data);
     assert_eq!(compute_units_consumed, compute_units_consumed_2);
     assert_eq!(cost_units, cost_units_2);
+    assert_eq!(loaded_accounts_data_size, loaded_accounts_data_size_2);
 }
 
 #[test]
@@ -3586,6 +3599,7 @@ fn test_get_transaction_status() {
         return_data: Some(TransactionReturnData::default()),
         compute_units_consumed: Some(42u64),
         cost_units: Some(1234),
+        loaded_accounts_data_size: Some(4096),
     }
     .into();
 
@@ -3763,6 +3777,7 @@ fn test_get_transaction_status_with_old_data() {
         return_data: Some(TransactionReturnData::default()),
         compute_units_consumed: Some(42u64),
         cost_units: Some(1234),
+        loaded_accounts_data_size: Some(4096),
     }
     .into();
 
@@ -3894,6 +3909,7 @@ fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_servi
         return_data: Some(TransactionReturnData::default()),
         compute_units_consumed: Some(42u64),
         cost_units: Some(1234),
+        loaded_accounts_data_size: Some(4096),
     }
     .into();
 
@@ -4065,6 +4081,7 @@ fn test_get_rooted_transaction() {
                 return_data: return_data.clone(),
                 compute_units_consumed: Some(42),
                 cost_units: Some(1234),
+                loaded_accounts_data_size: Some(4096),
             }
             .into();
             blockstore
@@ -4087,6 +4104,7 @@ fn test_get_rooted_transaction() {
                     return_data,
                     compute_units_consumed: Some(42),
                     cost_units: Some(1234),
+                    loaded_accounts_data_size: Some(4096),
                 },
             }
         })
@@ -4190,6 +4208,7 @@ fn test_get_complete_transaction() {
                 return_data: return_data.clone(),
                 compute_units_consumed: Some(42u64),
                 cost_units: Some(1234),
+                loaded_accounts_data_size: Some(4096),
             }
             .into();
             blockstore
@@ -4212,6 +4231,7 @@ fn test_get_complete_transaction() {
                     return_data,
                     compute_units_consumed: Some(42u64),
                     cost_units: Some(1234),
+                    loaded_accounts_data_size: Some(4096),
                 },
             }
         })
@@ -4844,6 +4864,7 @@ fn test_map_transactions_to_statuses() {
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         }
         .into();
         transaction_status_cf
@@ -7492,6 +7513,7 @@ pub(crate) fn write_transaction_statuses_for_entries(
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: Some(12345),
                 cost_units: Some(6789),
+                loaded_accounts_data_size: Some(4096),
             };
             blockstore
                 .write_transaction_status(

@@ -324,6 +324,7 @@ impl From<StoredConfirmedBlockTransactionStatusMeta> for TransactionStatusMeta {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         }
     }
 }
