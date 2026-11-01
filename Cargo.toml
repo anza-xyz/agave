@@ -423,6 +423,7 @@ solana-curve25519 = "4.0.1"
 solana-define-syscall = "5.3.0"
 solana-derivation-path = "3.0.0"
 solana-download-utils = { path = "download-utils", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
+solana-ed25519 = "0.2.4"
 solana-ed25519-program = "3.0.0"
 solana-entry = { path = "entry", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-epoch-info = "3.1.0"
