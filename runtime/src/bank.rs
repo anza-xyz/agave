@@ -1075,9 +1075,15 @@ impl TxExecutionGuard<'_> {
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
+        transaction_indexes: Option<&[usize]>,
     ) -> Vec<TransactionCommitResult> {
-        self.bank
-            .commit_transactions(sanitized_txs, processing_results, processed_counts, timings)
+        self.bank.commit_transactions(
+            sanitized_txs,
+            processing_results,
+            processed_counts,
+            timings,
+            transaction_indexes,
+        )
     }
 }
 
@@ -4546,12 +4552,14 @@ impl Bank {
         self.bank_hash_stats.accumulate(&stats);
     }
 
+    /// `transaction_indexes` holds each tx's block index, aligned with `sanitized_txs`, for geyser
     pub fn commit_transactions(
         &self,
         sanitized_txs: &[impl TransactionWithMeta],
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
+        transaction_indexes: Option<&[usize]>,
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
@@ -4599,10 +4607,11 @@ impl Bank {
                         .collect::<Vec<_>>()
                 });
 
-            let (accounts_to_store, transactions) = collect_accounts_to_store(
+            let (accounts_to_store, transactions, txn_indexes) = collect_accounts_to_store(
                 sanitized_txs,
                 &maybe_transaction_refs,
                 &processing_results,
+                transaction_indexes,
             );
 
             let to_store = (self.slot(), accounts_to_store.as_slice());
@@ -4612,6 +4621,7 @@ impl Bank {
                 to_store,
                 self.bank_id(),
                 transactions.as_deref(),
+                txn_indexes.as_deref(),
                 &self.ancestors,
             );
         });
@@ -4762,6 +4772,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
+        transaction_indexes: Option<&[usize]>,
     ) -> (Vec<TransactionCommitResult>, Option<BalanceCollector>) {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -4769,6 +4780,7 @@ impl Bank {
             timings,
             log_messages_bytes_limit,
             None::<fn(&_) -> _>,
+            transaction_indexes,
         )
         .unwrap()
     }
@@ -4780,6 +4792,7 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
         pre_commit_callback: impl FnOnce(&[TransactionProcessingResult]) -> Result<()>,
+        transaction_indexes: Option<&[usize]>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -4787,6 +4800,7 @@ impl Bank {
             timings,
             log_messages_bytes_limit,
             Some(pre_commit_callback),
+            transaction_indexes,
         )
     }
 
@@ -4797,6 +4811,7 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
         pre_commit_callback: Option<impl FnOnce(&[TransactionProcessingResult]) -> Result<()>>,
+        transaction_indexes: Option<&[usize]>,
     ) -> Result<(Vec<TransactionCommitResult>, Option<BalanceCollector>)> {
         let execution_guard = self.try_enter_transaction_execution();
         let LoadAndExecuteTransactionsOutput {
@@ -4835,6 +4850,7 @@ impl Bank {
                 processing_results,
                 &processed_counts,
                 timings,
+                transaction_indexes,
             )
         } else {
             Self::create_commit_results(processing_results)
@@ -4867,6 +4883,7 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
+            None,
         );
 
         commit_results.remove(0)
@@ -4900,6 +4917,7 @@ impl Bank {
             batch,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
+            None,
             None,
         )
         .0
@@ -5019,7 +5037,7 @@ impl Bank {
         );
         self.rc
             .accounts
-            .store_accounts(accounts, self.bank_id(), None, &self.ancestors);
+            .store_accounts(accounts, self.bank_id(), None, None, &self.ancestors);
     }
 
     pub fn force_flush_accounts_cache(&self) {
