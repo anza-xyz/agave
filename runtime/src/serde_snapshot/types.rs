@@ -1,5 +1,7 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
+#[cfg(not(feature = "stable-abi"))]
+use wincode::{adapter::DiscardSeq, len::BincodeLen};
 use {
     solana_account::AccountSharedData,
     solana_accounts_db::accounts_hash::AccountsLtHash,
@@ -67,7 +69,15 @@ impl UnusedRentCollector {
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct UnusedStakes {
+    #[cfg_attr(
+        not(feature = "stable-abi"),
+        wincode(with = "DiscardSeq<(Pubkey, (u64, AccountSharedData)), BincodeLen>")
+    )]
     vote_accounts: Vec<(Pubkey, (u64, AccountSharedData))>,
+    #[cfg_attr(
+        not(feature = "stable-abi"),
+        wincode(with = "DiscardSeq<(Pubkey, Delegation), BincodeLen>")
+    )]
     stake_delegations: Vec<(Pubkey, Delegation)>,
     unused: u64,
     epoch: Epoch,
