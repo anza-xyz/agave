@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::{
+        blockstore::column::ColumnName,
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
@@ -8590,4 +8591,101 @@ fn test_connectivity_does_not_propagate_through_incomplete_slot() {
     // Children stay disconnected since parent 48 is incomplete
     assert!(!blockstore.meta(60).unwrap().unwrap().is_connected());
     assert!(!blockstore.meta(70).unwrap().unwrap().is_connected());
+}
+
+fn make_slot_with_data_sets(
+    slot: Slot,
+    parent_slot: Slot,
+    num_data_sets: usize,
+) -> (Vec<Shred>, Vec<Vec<Entry>>) {
+    let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
+    let keypair = Keypair::new();
+    let mut chained_merkle_root = Hash::new_unique();
+    let (mut next_shred_index, mut next_code_index) = (0, 0);
+    let mut data_shreds = vec![];
+    let mut data_sets = vec![];
+    for i in 0..num_data_sets {
+        let entries = create_ticks(40, 1, Hash::new_unique());
+        let shreds = shredder.make_merkle_shreds_from_entries(
+            &keypair,
+            &entries,
+            i + 1 == num_data_sets,
+            chained_merkle_root,
+            next_shred_index,
+            next_code_index,
+            &mut ProcessShredsStats::default(),
+        );
+        chained_merkle_root = shreds.last().unwrap().merkle_root().unwrap();
+        for shred in shreds {
+            if shred.is_data() {
+                next_shred_index += 1;
+                data_shreds.push(shred);
+            } else {
+                next_code_index += 1;
+            }
+        }
+        data_sets.push(entries);
+    }
+    (data_shreds, data_sets)
+}
+
+#[test_case(0; "first_shred")]
+#[test_case(1; "middle_shred")]
+#[test_case(2; "last_shred")]
+fn test_contiguous_read_reports_missing_shred(position: usize) {
+    let path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(path.path()).unwrap();
+    let (shreds, data_sets) = make_slot_with_data_sets(42, 41, 2);
+    blockstore.insert_shreds(shreds, true).unwrap();
+    assert_eq!(
+        blockstore.get_slot_entries(42, 0).unwrap(),
+        data_sets.concat()
+    );
+    let (later_shreds, _) = make_slot_with_data_sets(43, 42, 2);
+    blockstore.insert_shreds(later_shreds, true).unwrap();
+    let consumed = blockstore.meta(42).unwrap().unwrap().consumed;
+    let index = [0, consumed / 2, consumed - 1][position];
+    blockstore.data_shred_cf.delete((42, index)).unwrap();
+    assert_matches!(
+        blockstore.get_slot_entries(42, 0),
+        Err(BlockstoreError::MissingShred(42, i)) if i == index
+    );
+}
+
+#[test]
+fn test_contiguous_read_reports_storage_error() {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(path.path()).unwrap();
+    let (shreds, _) = make_slot_with_data_sets(70, 69, 2);
+    blockstore.insert_shreds(shreds, true).unwrap();
+    blockstore.data_shred_cf.compact();
+    let file_name = blockstore
+        .live_files_metadata()
+        .unwrap()
+        .into_iter()
+        .find(|file| file.column_family_name == cf::ShredData::NAME)
+        .unwrap()
+        .name;
+    drop(blockstore);
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(
+            path.path()
+                .join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL)
+                .join(file_name.trim_start_matches('/')),
+        )
+        .unwrap();
+    // Lands inside the file's first data block.
+    file.seek(SeekFrom::Start(100)).unwrap();
+    file.write_all(&[0x5a; 16]).unwrap();
+    file.sync_all().unwrap();
+
+    let blockstore = Blockstore::open(path.path()).unwrap();
+    assert_matches!(
+        blockstore.get_slot_entries(70, 0),
+        Err(BlockstoreError::RocksDb(_))
+    );
 }

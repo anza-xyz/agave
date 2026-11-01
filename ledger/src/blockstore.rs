@@ -7,7 +7,7 @@ use trees::{Tree, TreeWalk};
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
-        blockstore::column::{TypedColumn, columns as cf},
+        blockstore::column::{Column, TypedColumn, columns as cf},
         blockstore_db::{
             DBPinnableSlice, DBPinnedT, IteratorDirection, IteratorMode, LedgerColumn, Rocks,
             WriteBatch,
@@ -129,6 +129,8 @@ const GENESIS_BLOCK_MARKER_SHRED_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64;
 // and misses is also expensive because it would involve malicious leader giving
 // up their future leader slots.
 const UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(16).unwrap();
+// RocksDB trims this at a scan's upper bound as long as it has a block cache.
+const MAX_SCAN_READAHEAD_SIZE: usize = 2 << 20;
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
@@ -5231,18 +5233,18 @@ impl Blockstore {
             return Ok(vec![]);
         };
         let indices = u64::from(start)..u64::from(end);
-        let keys = indices.clone().map(|index| (slot, index));
-        let keys = self.data_shred_cf.multi_get_keys(keys);
-        let mut shreds =
-            self.data_shred_cf
-                .multi_get_bytes(&keys)
-                .zip(indices)
-                .map(|(shred, index)| {
-                    shred?.ok_or_else(|| {
-                        maybe_print_error(index);
-                        BlockstoreError::MissingShred(slot, index)
-                    })
-                });
+        // A scan reads a block from every sorted run, so damage outside this range can fail it.
+        let mut scan = self.data_shred_cf.scan_range(
+            (slot, indices.start)..(slot, indices.end),
+            MAX_SCAN_READAHEAD_SIZE,
+        );
+        let mut shreds = indices.map(|index| match scan.next().transpose()? {
+            Some((key, shred)) if *key == cf::ShredData::key(&(slot, index)) => Ok(shred),
+            _ => {
+                maybe_print_error(index);
+                Err(BlockstoreError::MissingShred(slot, index))
+            }
+        });
         completed_ranges
             .iter()
             .map(|Range { start, end }| end - start)
