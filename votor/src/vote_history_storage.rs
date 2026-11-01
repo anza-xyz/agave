@@ -140,12 +140,12 @@ enum StorageRequest {
     },
 }
 
-struct VoteHistoryStorageWorker {
+struct State {
     handle: JoinHandle<()>,
     sender: Sender<StorageRequest>,
 }
 
-impl VoteHistoryStorageWorker {
+impl State {
     fn shutdown(self) -> thread::Result<()> {
         // Disconnect before joining so the receiver drains the queue and exits.
         drop(self.sender);
@@ -154,7 +154,7 @@ impl VoteHistoryStorageWorker {
 }
 
 pub struct VoteHistoryStorage {
-    worker: Mutex<Option<VoteHistoryStorageWorker>>,
+    worker: Mutex<Option<State>>,
 }
 
 impl VoteHistoryStorage {
@@ -188,7 +188,7 @@ impl VoteHistoryStorage {
             })
             .unwrap();
         Self {
-            worker: Mutex::new(Some(VoteHistoryStorageWorker { handle, sender })),
+            worker: Mutex::new(Some(State { handle, sender })),
         }
     }
 
