@@ -8,7 +8,7 @@ use {
         },
         streamer::{ChannelSend, StakedNodes},
     },
-    pem::Pem,
+    base64::{Engine as _, prelude::BASE64_STANDARD},
     quinn::{
         Endpoint, IdleTimeout, ServerConfig, VarInt,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -22,6 +22,7 @@ use {
     std::{
         num::NonZeroUsize,
         ops::RangeInclusive,
+        str,
         sync::{
             Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
@@ -91,11 +92,14 @@ pub(crate) fn configure_server(
     quic_server_params: &QuicStreamerConfig,
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
-    let cert_chain_pem_parts = vec![Pem {
-        tag: "CERTIFICATE".to_string(),
-        contents: cert.as_ref().to_vec(),
-    }];
-    let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
+    let cert_base64 = BASE64_STANDARD.encode(cert.as_ref());
+    let mut cert_chain_pem = String::from("-----BEGIN CERTIFICATE-----\r\n");
+    for line in cert_base64.as_bytes().chunks(64) {
+        // SAFETY: `line` comes from `cert_base64`, which is String, thus valid utf-8.
+        cert_chain_pem.push_str(str::from_utf8(line).unwrap());
+        cert_chain_pem.push_str("\r\n");
+    }
+    cert_chain_pem.push_str("-----END CERTIFICATE-----\r\n");
 
     let mut server_tls_config =
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
