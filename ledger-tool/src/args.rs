@@ -122,8 +122,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
         Arg::with_name("accounts_db_account_storage_file_format")
             .long("accounts-db-account-storage-file-format")
             .takes_value(true)
-            .possible_values(&["append-vec", "split-experimental"])
-            .default_value("append-vec")
+            .possible_values(&["append-vec", "split"])
+            .default_value("split")
             .help("Selects the account storage file format")
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_ancient_append_vecs")
@@ -369,7 +369,7 @@ pub fn get_accounts_db_config(
         .value_of("accounts_db_account_storage_file_format")
         .map(|format| match format {
             "append-vec" => AccountsFileProvider::AppendVec,
-            "split-experimental" => AccountsFileProvider::Split,
+            "split" => AccountsFileProvider::Split,
             _ => {
                 // clap will enforce one of the above values is given
                 unreachable!("invalid value given to accounts_db_account_storage_file_format")

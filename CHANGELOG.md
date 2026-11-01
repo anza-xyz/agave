@@ -13,6 +13,8 @@ Release channels have their own copy of this changelog:
 * [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 * [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
 
+brooks TODO: add changelog line indicating that account storage file format changes to SplitFile
+
 ## 4.5.0-Unreleased
 
 ### RPC

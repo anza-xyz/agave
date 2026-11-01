@@ -426,8 +426,8 @@ impl AccountsFile {
 /// An enum that creates AccountsFile instance with the specified format.
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsFileProvider {
-    #[default]
     AppendVec,
+    #[default]
     Split,
 }
 
