@@ -88,7 +88,7 @@ dependencies = [
  "bitvec",
  "crossbeam-channel",
  "log",
- "parking_lot 0.12.2",
+ "parking_lot 0.13.0",
  "qualifier_attr",
  "rayon",
  "smallvec",
@@ -473,7 +473,7 @@ dependencies = [
  "derive_more 2.1.1",
  "itertools 0.15.0",
  "log",
- "parking_lot 0.12.2",
+ "parking_lot 0.13.0",
  "smallvec",
  "solana-bls-signatures",
  "solana-clock",
@@ -1939,7 +1939,7 @@ dependencies = [
  "cfg-if 1.0.5",
  "crossbeam-utils",
  "hashbrown 0.14.5",
- "lock_api",
+ "lock_api 0.4.14",
  "once_cell",
  "parking_lot_core 0.9.12",
  "rayon",
@@ -3791,6 +3791,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lock_api"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4285,7 +4294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
 dependencies = [
  "instant",
- "lock_api",
+ "lock_api 0.4.14",
  "parking_lot_core 0.8.6",
 ]
 
@@ -4295,8 +4304,18 @@ version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e4af0ca4f6caed20e900d564c242b8e5d4903fdacf31d3daf527b66fe6f42fb"
 dependencies = [
- "lock_api",
+ "lock_api 0.4.14",
  "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cf937ca4e1d0b7578784559063422fc39ae7c5a00f02471f2614d5486fd226"
+dependencies = [
+ "lock_api 0.5.0",
+ "parking_lot_core 0.10.0",
 ]
 
 [[package]]
@@ -4322,6 +4341,18 @@ dependencies = [
  "cfg-if 1.0.5",
  "libc",
  "redox_syscall 0.5.18",
+ "smallvec",
+ "windows-link",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
+dependencies = [
+ "libc",
+ "redox_syscall 0.9.5",
  "smallvec",
  "windows-link",
 ]
@@ -4918,6 +4949,15 @@ name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
+dependencies = [
+ "bitflags 2.13.2",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags 2.13.2",
 ]
@@ -7006,7 +7046,7 @@ dependencies = [
  "lazy-lru",
  "log",
  "num-traits",
- "parking_lot 0.12.2",
+ "parking_lot 0.13.0",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
@@ -7277,7 +7317,7 @@ dependencies = [
  "lru 0.18.5",
  "mockall",
  "num_enum",
- "parking_lot 0.12.2",
+ "parking_lot 0.13.0",
  "prost",
  "qualifier_attr",
  "rand 0.9.4",
@@ -7930,7 +7970,7 @@ dependencies = [
  "log",
  "num-derive 0.5.1",
  "num-traits",
- "parking_lot 0.12.2",
+ "parking_lot 0.13.0",
  "semver",
  "solana-derivation-path",
  "solana-offchain-message",
