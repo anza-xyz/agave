@@ -375,6 +375,12 @@ impl AdminRpc for AdminRpcImpl {
                 info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
+                if let Some(s) = meta.vote_history_storage.as_ref()
+                    && let Err(e) = s.shutdown()
+                {
+                    error!("Shutting down VoteHistoryStorage failed with {e:?}");
+                }
+
                 if !meta.validator_exit_backpressure.is_empty() {
                     let service_names = meta.validator_exit_backpressure.keys();
                     info!("Wait for these services to complete: {service_names:?}");
