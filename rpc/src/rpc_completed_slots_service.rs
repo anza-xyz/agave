@@ -20,7 +20,7 @@ pub struct RpcCompletedSlotsService;
 impl RpcCompletedSlotsService {
     pub fn spawn(
         completed_slots_receiver: CompletedSlotsReceiver,
-        rpc_subscriptions: Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
@@ -43,10 +43,12 @@ impl RpcCompletedSlotsService {
                         }
                         Ok(slots) => {
                             for slot in slots {
-                                rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
-                                    slot,
-                                    timestamp: timestamp(),
-                                });
+                                if let Some(rpc_subscriptions) = &rpc_subscriptions {
+                                    rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
+                                        slot,
+                                        timestamp: timestamp(),
+                                    });
+                                }
                                 if let Some(slot_status_notifier) = &slot_status_notifier {
                                     slot_status_notifier.read().unwrap().notify_completed(slot);
                                 }
