@@ -436,7 +436,7 @@ solana-fee-structure = "4.1.0"
 solana-file-download = "3.1.4"
 solana-frozen-abi = { version = "3.9.0", default-features = false }
 solana-frozen-abi-macro = { version = "3.7.0", default-features = false }
-solana-genesis-config = "5.0.1"
+solana-genesis-config = "5.0.2"
 solana-genesis-utils = { path = "genesis-utils", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 solana-gossip = { path = "gossip", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
