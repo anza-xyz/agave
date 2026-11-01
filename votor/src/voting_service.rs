@@ -1,7 +1,7 @@
 use {
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
-        wire::VersionedWireConsensusMessage,
+        reward_certificate::NUM_SLOTS_FOR_REWARD, wire::VersionedWireConsensusMessage,
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -64,6 +64,18 @@ pub fn votor_rate_limit_pps() -> usize {
 
 /// How often we should refresh messages from the standstill queue
 const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Returns true if a message for `slot` is useless to peers and should not be broadcast.
+///
+/// Finalization of `highest_finalized_slot` settles every slot below it, so votes and
+/// certificates for those slots no longer matter for consensus. Notarize and skip votes for
+/// `slot` remain relevant for rewards until the leader of `slot + NUM_SLOTS_FOR_REWARD` has
+/// produced its block, hence the margin. Without this filter a node catching up broadcasts
+/// votes and footer certificates for every replayed block and trips the peers' rate limiters.
+fn is_stale(slot: Slot, highest_finalized_slot: Option<Slot>) -> bool {
+    highest_finalized_slot
+        .is_some_and(|finalized| slot.saturating_add(NUM_SLOTS_FOR_REWARD) < finalized)
+}
 
 #[derive(Debug)]
 pub enum BLSOp {
@@ -224,7 +236,18 @@ impl VotingService {
                         Err(RecvTimeoutError::Disconnected) => break,
                         Err(RecvTimeoutError::Timeout) => continue,
                     };
-                    Self::handle_bls_op(&cluster_info, bls_op, &egress, &mut standstill_queue);
+                    let highest_finalized_slot = highest_finalized
+                        .read()
+                        .expect("highest_finalized lock poisoned")
+                        .as_ref()
+                        .map(|finalized| finalized.slot().slot());
+                    Self::handle_bls_op(
+                        &cluster_info,
+                        bls_op,
+                        highest_finalized_slot,
+                        &egress,
+                        &mut standstill_queue,
+                    );
                 }
                 info!("AlpenglowVotingService has stopped");
             })
@@ -311,11 +334,15 @@ impl VotingService {
     fn handle_bls_op(
         cluster_info: &ClusterInfo,
         bls_op: BLSOp,
+        highest_finalized_slot: Option<Slot>,
         egress: &mpsc::Sender<Bytes>,
         standstill_queue: &mut StandstillRefreshQueue,
     ) {
         match bls_op {
             BLSOp::PushVote { vote } => {
+                if is_stale(vote.vote.slot(), highest_finalized_slot) {
+                    return;
+                }
                 let msg = VersionedWireConsensusMessage::new_from_vote(
                     Arc::unwrap_or_clone(vote),
                     cluster_info.my_shred_version(),
@@ -324,6 +351,9 @@ impl VotingService {
             }
             BLSOp::PushCertificates { certificates } => {
                 for certificate in certificates {
+                    if is_stale(certificate.cert_type.slot(), highest_finalized_slot) {
+                        continue;
+                    }
                     let msg = VersionedWireConsensusMessage::new_from_cert(
                         Arc::unwrap_or_clone(certificate),
                         cluster_info.my_shred_version(),
