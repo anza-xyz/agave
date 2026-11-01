@@ -1868,6 +1868,7 @@ impl ReplayStage {
                 let _ = own_vote_sender.try_send(vote_msg.clone());
                 let _ = bls_sender.try_send(BLSOp::PushVote {
                     vote: Arc::new(vote_msg),
+                    saved_vote_history: None,
                 });
             }
             e => {

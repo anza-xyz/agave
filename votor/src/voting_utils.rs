@@ -3,7 +3,7 @@ use {
         commitment::CommitmentAggregationData,
         common::nonblocking_send,
         vote_history::{VoteHistory, VoteHistoryError},
-        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage},
+        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
     },
     agave_bls_sigverify::{
@@ -119,7 +119,6 @@ pub(crate) struct VotingContext {
     pub(crate) vote_account_pubkey: Pubkey,
     pub(crate) identity_keypair: Arc<Keypair>,
     pub(crate) authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-    pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
     // The BLS keypair should always change with authorized_voter_keypairs.
     pub(crate) derived_bls_keypairs: HashMap<Pubkey, Arc<BLSKeypair>>,
     pub(crate) own_vote_sender: EvictingSender<VoteMessage>,
@@ -298,15 +297,15 @@ pub(crate) fn insert_vote_and_create_bls_message(
         return Ok(None);
     };
 
-    let saved_vote_history =
-        SavedVoteHistory::new(&context.vote_history, &context.identity_keypair)?;
-    context
-        .vote_history_storage
-        .store(&SavedVoteHistoryVersions::from(saved_vote_history))?;
+    let saved_vote_history = SavedVoteHistoryVersions::from(SavedVoteHistory::new(
+        &context.vote_history,
+        &context.identity_keypair,
+    )?);
 
     // Return vote for sending
     Ok(Some(BLSOp::PushVote {
         vote: Arc::new(vote_msg),
+        saved_vote_history: Some(saved_vote_history),
     }))
 }
 
@@ -371,7 +370,6 @@ pub(crate) fn generate_refresh_vote_message(
 mod tests {
     use {
         super::*,
-        crate::vote_history_storage::NullVoteHistoryStorage,
         agave_votor_messages::consensus_message::{Block, BlockId},
         crossbeam_channel::{Receiver, bounded},
         solana_gossip::contact_info::ContactInfo,
@@ -450,7 +448,6 @@ mod tests {
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(
                 my_keys.vote_keypair.insecure_clone(),
             )])),
-            vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: own_reward_aggregates_sender,
@@ -498,7 +495,7 @@ mod tests {
             &my_bls_keypair,
             &voting_context.sharable_banks.root(),
         );
-        if let BLSOp::PushVote { vote } = result {
+        if let BLSOp::PushVote { vote, .. } = result {
             let msg = Arc::unwrap_or_clone(vote);
             assert_eq!(msg, expected_message);
         } else {
