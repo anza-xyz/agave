@@ -89,20 +89,20 @@ pub fn archive_snapshot(
     })?;
     let staging_snapshot_file = staging_snapshot_dir.join(&slot_str);
     let src_snapshot_file = src_snapshot_dir.join(slot_str);
-    symlink::symlink_file(&src_snapshot_file, &staging_snapshot_file)
+    agave_fs::symlink(&src_snapshot_file, &staging_snapshot_file)
         .map_err(|err| E::SymlinkSnapshot(err, src_snapshot_file, staging_snapshot_file))?;
 
     // Following the existing archive format, the status cache is under snapshots/, not under <slot>/
     // like in the snapshot dir.
     let staging_status_cache = staging_snapshots_dir.join(paths::SNAPSHOT_STATUS_CACHE_FILENAME);
     let src_status_cache = src_snapshot_dir.join(paths::SNAPSHOT_STATUS_CACHE_FILENAME);
-    symlink::symlink_file(&src_status_cache, &staging_status_cache)
+    agave_fs::symlink(&src_status_cache, &staging_status_cache)
         .map_err(|err| E::SymlinkStatusCache(err, src_status_cache, staging_status_cache))?;
 
     // The bank snapshot has the version file, so symlink it to the correct staging path
     let staging_version_file = staging_dir.path().join(paths::SNAPSHOT_VERSION_FILENAME);
     let src_version_file = src_snapshot_dir.join(paths::SNAPSHOT_VERSION_FILENAME);
-    symlink::symlink_file(&src_version_file, &staging_version_file).map_err(|err| {
+    agave_fs::symlink(&src_version_file, &staging_version_file).map_err(|err| {
         E::SymlinkVersionFile(err, src_version_file, staging_version_file.clone())
     })?;
 
