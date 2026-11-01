@@ -181,9 +181,8 @@ fn ban_invalid_vote_sender(
 /// caller falls back to individual vote verification so invalid votes can be
 /// identified precisely.
 ///
-/// Returns the optimistic verification outcome together with the distinct vote
-/// messages and their prepared payloads, which can be reused by the fallback
-/// path.
+/// Returns the aggregate signature on success, or the hashed message on failure
+/// so individual verification can reuse it.
 // Return the prepared message on failure so fallback verification can reuse it
 // without another hash-to-curve operation. Boxing it would add an allocation to
 // this latency-sensitive path.
