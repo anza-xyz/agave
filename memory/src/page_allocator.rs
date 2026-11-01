@@ -131,7 +131,7 @@ unsafe impl Allocator for PageAllocator {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::AlignedBuffer, allocator_api2::vec::Vec};
+    use {super::*, allocator_api2::vec::Vec};
 
     #[test]
     fn test_round_trip_through_growth() {
@@ -197,6 +197,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_populate_makes_pages_resident() {
+        use crate::AlignedBuffer;
+
         let page = crate::page_size();
         for (huge_pages, size) in [
             (HugePages::Off, 3 * page + 100),
