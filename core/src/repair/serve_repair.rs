@@ -846,18 +846,18 @@ impl RepairPeers {
         &self.peers[index]
     }
 
-    fn evict(&mut self, identity: &Pubkey) -> bool {
+    /// Excludes our new identity from cached peers after rotation to avoid self-repair.
+    /// Returns an error without changing the cache if no positively weighted peer remains.
+    fn try_remove_identity(&mut self, identity: &Pubkey) -> std::result::Result<(), WeightedError> {
         let Some(index) = self.peers.iter().position(|peer| &peer.pubkey == identity) else {
-            return true;
+            return Ok(());
         };
         let mut weights: Vec<_> = self.weighted_index.weights().collect();
         weights.remove(index);
-        let Ok(weighted_index) = WeightedIndex::new(weights) else {
-            return false;
-        };
+        let weighted_index = WeightedIndex::new(weights)?;
         self.peers.remove(index);
         self.weighted_index = weighted_index;
-        true
+        Ok(())
     }
 
     fn is_valid_for(&self, weight_source: RepairPeerWeightSource) -> bool {
@@ -989,7 +989,7 @@ impl ServeRepair {
         let identity = identity_keypair.pubkey();
         if let Some(entry) = peers_cache.get_mut(&slot)
             && entry.is_valid_for(weight_source)
-            && entry.evict(&identity)
+            && entry.try_remove_identity(&identity).is_ok()
         {
             return Ok(peers_cache.get(&slot).unwrap());
         }
