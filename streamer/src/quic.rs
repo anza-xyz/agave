@@ -95,8 +95,7 @@ pub(crate) fn configure_server(
     let cert_base64 = BASE64_STANDARD.encode(cert.as_ref());
     let mut cert_chain_pem = String::from("-----BEGIN CERTIFICATE-----\r\n");
     for line in cert_base64.as_bytes().chunks(64) {
-        // SAFETY: `line` comes from `cert_base64`, which is String, thus valid utf-8.
-        cert_chain_pem.push_str(str::from_utf8(line).unwrap());
+        cert_chain_pem.push_str(str::from_utf8(line).expect("base64 is ascii"));
         cert_chain_pem.push_str("\r\n");
     }
     cert_chain_pem.push_str("-----END CERTIFICATE-----\r\n");
