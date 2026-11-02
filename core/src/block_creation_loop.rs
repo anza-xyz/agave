@@ -361,9 +361,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
                 "Identity changed from {my_old_pubkey} to {my_pubkey} during block creation loop"
             );
 
-            if ctx.record_receiver.is_shutdown() && ctx.record_receiver.is_safe_to_restart() {
-                reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
-            }
+            refresh_next_leader_slot(&ctx);
         }
 
         // Wait for the first window notification, then drain both sources and pick the newest
@@ -463,6 +461,31 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         .write()
         .unwrap()
         .reset(bank.clone(), next_leader_slot);
+}
+
+fn refresh_next_leader_slot(ctx: &LeaderContext) {
+    let schedule_bank = ctx.bank_forks.read().unwrap().root_bank();
+
+    // next_leader_slot() searches strictly after this slot. Using the latest
+    // observed window minus one keeps the current window eligible.
+    let search_after_slot = ctx
+        .alpenglow_slot_clock
+        .load()
+        .map_or(schedule_bank.slot(), |clock| clock.slot.saturating_sub(1))
+        .max(schedule_bank.slot());
+
+    let next_leader_slot = ctx.leader_schedule_cache.next_leader_slot(
+        &ctx.my_pubkey,
+        search_after_slot,
+        &schedule_bank,
+        Some(ctx.blockstore.as_ref()),
+        GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
+    );
+
+    ctx.poh_recorder
+        .write()
+        .unwrap()
+        .update_next_leader_slot(next_leader_slot);
 }
 
 /// Returns the elapsed leader-window time at which `slot` must be completed.
@@ -1823,6 +1846,19 @@ mod tests {
 
         // After refreshing the identity, a later window can still start a bank.
         ctx.my_pubkey = new_identity;
+        ctx.alpenglow_slot_clock
+            .update(4, Instant::now(), Duration::from_millis(400));
+        refresh_next_leader_slot(&ctx);
+        assert_eq!(
+            ctx.poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .next_leader_slot_range(),
+            Some((4, 7))
+        );
+
         let bank = start_leader_wait_for_parent_replay(
             &mut ctx,
             &mut SlotMetrics::new(4, false),

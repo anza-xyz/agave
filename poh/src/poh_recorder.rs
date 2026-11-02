@@ -358,6 +358,25 @@ impl PohRecorder {
         self.leader_last_tick_height = leader_last_tick_height;
     }
 
+    pub fn update_next_leader_slot(&mut self, next_leader_slot: Option<(Slot, Slot)>) {
+        let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
+            Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
+
+        self.leader_last_tick_height = leader_last_tick_height;
+        self.grace_ticks = grace_ticks;
+
+        let state = self.shared_leader_state.load();
+        let new_state = Arc::new(LeaderState::new(
+            state.working_bank().cloned(),
+            state.tick_height(),
+            leader_first_tick_height,
+            next_leader_slot,
+        ));
+        drop(state);
+
+        self.shared_leader_state.store(new_state);
+    }
+
     /// Send the block marker to be broadcast
     pub fn send_marker(&mut self, marker: VersionedBlockMarker) -> Result<()> {
         self.send_recorder_message(RecorderMessage::Marker(marker))
