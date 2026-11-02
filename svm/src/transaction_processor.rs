@@ -523,6 +523,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
+            // The batch-local account state is only read by later transactions or
+            // post-balance collection. The final transaction otherwise discards it.
+            let update_account_loader = processing_results.len().saturating_add(1)
+                < sanitized_txs.len()
+                || balance_collector.is_some();
             let (validate_result, validate_fees_us) = measure_us!(match check_result {
                 Ok(tx_details) => Self::validate_transaction_nonce_and_fee_payer(
                     &mut account_loader,
@@ -577,8 +582,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
                 // Transactions that fail at account loading charge fees and roll nonces
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                    account_loader
-                        .update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts, self.slot);
+                    if update_account_loader {
+                        account_loader.update_accounts_for_failed_tx(
+                            &fees_only_tx.rollback_accounts,
+                            self.slot,
+                        );
+                    }
                     Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                 }
 
@@ -645,12 +654,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         // Successful transactions need to update the account loader cache as future
                         // transactions in the batch may depend on them.
                         (Ok(_), _) => {
-                            account_loader.update_accounts_for_successful_tx(
-                                tx,
-                                &executed_tx.loaded_transaction.accounts,
-                                &executed_tx.loaded_transaction.touched_flags,
-                                self.slot,
-                            );
+                            if update_account_loader {
+                                account_loader.update_accounts_for_successful_tx(
+                                    tx,
+                                    &executed_tx.loaded_transaction.accounts,
+                                    &executed_tx.loaded_transaction.touched_flags,
+                                    self.slot,
+                                );
+                            }
                             // Also update local program cache with modifications made by the
                             // transaction, if it executed successfully.
                             program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
@@ -672,10 +683,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         // Unsuccessful transactions will still update rollback accounts (fee payer,
                         // nonce, etc).
                         (Err(_), false) => {
-                            account_loader.update_accounts_for_failed_tx(
-                                &executed_tx.loaded_transaction.rollback_accounts,
-                                self.slot,
-                            );
+                            if update_account_loader {
+                                account_loader.update_accounts_for_failed_tx(
+                                    &executed_tx.loaded_transaction.rollback_accounts,
+                                    self.slot,
+                                );
+                            }
 
                             Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                         }
