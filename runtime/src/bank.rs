@@ -1327,7 +1327,7 @@ impl Bank {
         let _rewards_calculation_thread_pool = rewards_calculation_thread_pool();
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         let mut bank = Self::default_with_bank_rc(BankRc::new(accounts));
         bank.ancestors = Ancestors::from(vec![(bank.slot(), bank.bank_id())]);
         bank.compute_budget = runtime_config.compute_budget;
@@ -7085,7 +7085,7 @@ impl Bank {
 
     pub fn default_for_tests() -> Self {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         Self::default_with_bank_rc(BankRc::new(accounts))
     }
 

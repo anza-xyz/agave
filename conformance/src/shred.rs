@@ -390,10 +390,10 @@ fn create_accounts_db() -> Accounts {
         skip_initial_hash_calc: true,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
     };
-    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
+    Accounts::new(AccountsDb::new_for_tests_with_config(
         vec![],
         accounts_db_config,
-    )))
+    ))
 }
 
 /// Conformance harness entry point for shred parsing.

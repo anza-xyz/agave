@@ -12676,7 +12676,7 @@ fn test_new_for_txn_tests_system_transfer() {
     let recent_blockhash = Hash::new_unique();
     blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
 
-    let bank_rc = BankRc::new(Accounts::new(Arc::new(AccountsDb::default_for_tests())));
+    let bank_rc = BankRc::new(Accounts::new(AccountsDb::default_for_tests()));
 
     let clock = solana_clock::Clock {
         slot,
@@ -12852,7 +12852,7 @@ fn test_new_for_block_tests_with_vote_account() {
     let mut blockhash_queue = BlockhashQueue::default();
     blockhash_queue.register_hash(&recent_blockhash, lamports_per_signature);
 
-    let bank_rc = BankRc::new(Accounts::new(Arc::new(AccountsDb::default_for_tests())));
+    let bank_rc = BankRc::new(Accounts::new(AccountsDb::default_for_tests()));
 
     let owned_accounts = vec![
         (vote_pubkey, vote_account),
