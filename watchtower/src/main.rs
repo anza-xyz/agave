@@ -35,6 +35,7 @@ struct Config {
     json_rpc_urls: Vec<String>,
     rpc_timeout: Duration,
     minimum_validator_identity_balance: u64,
+    minimum_delegated: Option<u64>,
     monitor_active_stake: bool,
     active_stake_alert_threshold: u8,
     unhealthy_threshold: usize,
@@ -151,6 +152,22 @@ fn get_config() -> Config {
                 .help("Alert when the validator identity balance is less than this amount of SOL"),
         )
         .arg(
+            Arg::with_name("minimum_delegated")
+                .long("minimum-delegated")
+                .value_name("SOL")
+                .takes_value(true)
+                .requires("validator_identities")
+                .validator(|value| {
+                    sol_str_to_lamports(&value)
+                        .map(|_| ())
+                        .ok_or_else(|| "Invalid delegated SOL amount".to_string())
+                })
+                .help(
+                    "Alert when the active delegated stake of a monitored validator \
+                     falls below this amount of SOL",
+                ),
+        )
+        .arg(
             // Deprecated parameter, now always enabled
             Arg::with_name("no_duplicate_notifications")
                 .long("no-duplicate-notifications")
@@ -215,6 +232,9 @@ fn get_config() -> Config {
         .value_of("minimum_validator_identity_balance")
         .and_then(sol_str_to_lamports)
         .unwrap();
+    let minimum_delegated = matches
+        .value_of("minimum_delegated")
+        .and_then(sol_str_to_lamports);
     let json_rpc_urls = values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| {
         vec![value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url)]
     });
@@ -241,6 +261,7 @@ fn get_config() -> Config {
         json_rpc_urls,
         rpc_timeout,
         minimum_validator_identity_balance,
+        minimum_delegated,
         monitor_active_stake,
         active_stake_alert_threshold,
         unhealthy_threshold,
@@ -360,6 +381,23 @@ fn get_minimum_vat_vote_account_balance(
     Ok(Some(
         vote_account_rent_exempt_minimum + vat_to_burn_per_epoch,
     ))
+}
+
+fn delegated_stake_below_minimum(
+    vote_accounts: &RpcVoteAccountStatus,
+    validator_identity: &str,
+    minimum_delegated: u64,
+) -> Option<u64> {
+    let delegated_stake = vote_accounts
+        .current
+        .iter()
+        .chain(vote_accounts.delinquent.iter())
+        .filter(|account| account.node_pubkey == validator_identity)
+        .fold(0u64, |total, account| {
+            total.saturating_add(account.activated_stake)
+        });
+
+    (delegated_stake < minimum_delegated).then_some(delegated_stake)
 }
 
 fn query_endpoint(
@@ -502,6 +540,31 @@ fn query_endpoint(
 
             if !validator_errors.is_empty() {
                 failures.push(("delinquent", validator_errors.join(",")));
+            }
+
+            if let Some(minimum_delegated) = config.minimum_delegated {
+                let mut below_threshold = Vec::new();
+
+                for validator_identity in &config.validator_identity_pubkeys {
+                    let identity = validator_identity.to_string();
+
+                    if let Some(delegated_stake) =
+                        delegated_stake_below_minimum(&vote_accounts, &identity, minimum_delegated)
+                    {
+                        let name = format_labeled_address(&identity, &config.address_labels);
+
+                        below_threshold.push(format!(
+                            "{} has {} active delegated stake, below minimum {}",
+                            name,
+                            Sol(delegated_stake),
+                            Sol(minimum_delegated),
+                        ));
+                    }
+                }
+
+                if !below_threshold.is_empty() {
+                    failures.push(("minimum-delegated", below_threshold.join("; ")));
+                }
             }
 
             for failure in &failures {
@@ -690,5 +753,111 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             incident = Hash::new_unique();
         }
         sleep(config.interval);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solana_rpc_client_api::response::RpcVoteAccountInfo;
+
+    fn vote_account(identity: &str, stake: u64) -> RpcVoteAccountInfo {
+        RpcVoteAccountInfo {
+            vote_pubkey: "unused".to_string(),
+            node_pubkey: identity.to_string(),
+            activated_stake: stake,
+            commission: 0,
+            inflation_rewards_commission_bps: None,
+            epoch_vote_account: true,
+            epoch_credits: vec![],
+            last_vote: 0,
+            root_slot: 0,
+        }
+    }
+
+    #[test]
+    fn test_delegated_stake_below_minimum() {
+        let accounts = RpcVoteAccountStatus {
+            current: vec![vote_account("validator-a", 80)],
+            delinquent: vec![],
+        };
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 100),
+            Some(80)
+        );
+    }
+
+    #[test]
+    fn test_delegated_stake_equal_to_minimum() {
+        let accounts = RpcVoteAccountStatus {
+            current: vec![vote_account("validator-a", 100)],
+            delinquent: vec![],
+        };
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 100),
+            None
+        );
+    }
+
+    #[test]
+    fn test_delegated_stake_above_minimum() {
+        let accounts = RpcVoteAccountStatus {
+            current: vec![vote_account("validator-a", 150)],
+            delinquent: vec![],
+        };
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 100),
+            None
+        );
+    }
+
+    #[test]
+    fn test_delegated_stake_multiple_vote_accounts() {
+        let accounts = RpcVoteAccountStatus {
+            current: vec![vote_account("validator-a", 60)],
+            delinquent: vec![vote_account("validator-a", 40)],
+        };
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 100),
+            None
+        );
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 101),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn test_delegated_stake_ignores_other_validators() {
+        let accounts = RpcVoteAccountStatus {
+            current: vec![
+                vote_account("validator-a", 40),
+                vote_account("validator-b", 500),
+            ],
+            delinquent: vec![],
+        };
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 100),
+            Some(40)
+        );
+    }
+
+    #[test]
+    fn test_delegated_stake_no_vote_accounts() {
+        let accounts = RpcVoteAccountStatus {
+            current: vec![],
+            delinquent: vec![],
+        };
+
+        assert_eq!(
+            delegated_stake_below_minimum(&accounts, "validator-a", 100),
+            Some(0)
+        );
     }
 }
