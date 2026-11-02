@@ -2620,7 +2620,7 @@ fn test_storage_remove_account_double_remove() {
     storage_entry.remove_accounts(0, 1);
 }
 
-fn do_full_clean_refcount(accounts: AccountsDb, store1_first: bool) {
+fn do_full_clean_refcount(accounts: Arc<AccountsDb>, store1_first: bool) {
     let pubkey1 = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
     let pubkey2 = Pubkey::from_str("My22211111111111111111111111111111111111111").unwrap();
     let pubkey3 = Pubkey::from_str("My33311111111111111111111111111111111111111").unwrap();
@@ -3727,10 +3727,7 @@ fn test_read_only_accounts_cache_not_populated_from_older_ancestors() {
 
 #[test]
 fn test_read_only_accounts_cache() {
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        DEFAULT_ACCOUNTS_DB_CONFIG,
-    ));
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
@@ -3784,10 +3781,7 @@ fn test_read_only_accounts_cache() {
 
 #[test]
 fn test_read_only_accounts_cache_skips_zero_lamport() {
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        DEFAULT_ACCOUNTS_DB_CONFIG,
-    ));
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
@@ -3875,10 +3869,7 @@ fn test_flush_stores_large_accounts_in_read_cache() {
 
 #[test]
 fn test_load_with_read_only_accounts_cache() {
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        DEFAULT_ACCOUNTS_DB_CONFIG,
-    ));
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let account_key = Pubkey::new_unique();
     let zero_lamport_account = AccountSharedData::empty(0, &Pubkey::default());
@@ -4139,10 +4130,7 @@ fn test_select_pubkeys_to_store() {
 
 #[test]
 fn test_flush_cache_clean() {
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        DEFAULT_ACCOUNTS_DB_CONFIG,
-    ));
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
 
     let account_key = Pubkey::new_unique();
     let slot0_account = AccountSharedData::empty(1, &Pubkey::default());
@@ -4316,10 +4304,7 @@ fn setup_scan(
 
 #[test]
 fn test_scan_flush_accounts_cache_then_clean_drop() {
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        DEFAULT_ACCOUNTS_DB_CONFIG,
-    ));
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let account_key = Pubkey::new_unique();
     let account_key2 = Pubkey::new_unique();
     let slot0_account = AccountSharedData::empty(1, &Pubkey::default());
@@ -4558,13 +4543,13 @@ fn setup_accounts_db_cache_clean(
     scan_slot: Option<Slot>,
     write_cache_limit_bytes: Option<u64>,
 ) -> (Arc<AccountsDb>, Vec<Pubkey>, Vec<Slot>, Option<ScanTracker>) {
-    let accounts_db = Arc::new(AccountsDb::new_for_tests_with_config(
+    let accounts_db = AccountsDb::new_for_tests_with_config(
         Vec::new(),
         AccountsDbConfig {
             write_cache_limit_bytes,
             ..DEFAULT_ACCOUNTS_DB_CONFIG
         },
-    ));
+    );
 
     let slots: Vec<_> = (0..num_slots as Slot).collect();
     let stall_slot = num_slots as Slot;
@@ -5245,7 +5230,6 @@ fn start_load_thread(
 #[test]
 fn test_load_account_and_cache_flush_race() {
     let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    let db = Arc::new(db);
     let pubkey = Arc::new(Pubkey::new_unique());
     let exit = Arc::new(AtomicBool::new(false));
     db.store_for_tests((
@@ -5299,10 +5283,7 @@ fn test_load_account_and_cache_flush_race() {
 /// Regression test for stale reads during a batched flush.
 #[test]
 fn test_load_during_batched_flush_returns_latest() {
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
-        Vec::new(),
-        DEFAULT_ACCOUNTS_DB_CONFIG,
-    ));
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let pubkey = Arc::new(Pubkey::new_unique());
     let exit = Arc::new(AtomicBool::new(false));
 
@@ -7040,13 +7021,13 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
         )
     };
 
-    let db = Arc::new(AccountsDb::new_for_tests_with_config(
+    let db = AccountsDb::new_for_tests_with_config(
         Vec::new(),
         AccountsDbConfig {
             account_indexes: Some(spl_token_mint_index_enabled()),
             ..DEFAULT_ACCOUNTS_DB_CONFIG
         },
-    ));
+    );
 
     // 50 accounts in rooted slot 1 make it very likely (~98%) that pubkey_new
     // is visited after the handshake fires and slot 3 is rooted mid-scan.

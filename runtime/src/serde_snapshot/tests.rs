@@ -67,7 +67,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> agave_snapshots::Result<AccountsDb>
+    ) -> agave_snapshots::Result<Arc<AccountsDb>>
     where
         R: Read,
     {
@@ -95,7 +95,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> agave_snapshots::Result<AccountsDb>
+    ) -> agave_snapshots::Result<Arc<AccountsDb>>
     where
         R: Read,
     {
@@ -168,7 +168,7 @@ mod serde_snapshot_tests {
         accounts: &AccountsDb,
         slot: Slot,
         accounts_db_config: AccountsDbConfig,
-    ) -> (AccountsDb, TempDir) {
+    ) -> (Arc<AccountsDb>, TempDir) {
         let mut writer = Cursor::new(vec![]);
         accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
@@ -211,7 +211,7 @@ mod serde_snapshot_tests {
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
         let accounts_db =
             AccountsDb::new_for_tests_with_config(paths, ACCOUNTS_DB_CONFIG_FOR_TESTING);
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let slot = 0;
         let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
@@ -246,7 +246,7 @@ mod serde_snapshot_tests {
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
         let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
-        let daccounts = Accounts::new(Arc::new(
+        let daccounts = Accounts::new(
             accountsdb_from_stream(
                 &mut reader,
                 &daccounts_paths,
@@ -254,7 +254,7 @@ mod serde_snapshot_tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
             .unwrap(),
-        ));
+        );
         check_accounts_local(&daccounts, &pubkeys, 100);
         let daccounts_hash = accounts
             .accounts_db
@@ -446,7 +446,7 @@ mod serde_snapshot_tests {
 
     fn with_chained_zero_lamport_accounts<F>(f: F)
     where
-        F: Fn(AccountsDb, Slot) -> (AccountsDb, TempDir),
+        F: Fn(Arc<AccountsDb>, Slot) -> (Arc<AccountsDb>, TempDir),
     {
         let some_lamport = 223;
         let zero_lamport = 0;
