@@ -3412,6 +3412,7 @@ mod tests {
 
         #[derive(Debug)]
         enum PanickingHanlderCheckPoint {
+            IgnoredPanicTaskReceived,
             BeforeNotifiedPanic,
             BeforeIgnoredPanic,
         }
@@ -3419,6 +3420,7 @@ mod tests {
         let progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeNewTask,
             &CheckPoint::NewTask(0),
+            &PanickingHanlderCheckPoint::IgnoredPanicTaskReceived,
             &PanickingHanlderCheckPoint::BeforeNotifiedPanic,
             &CheckPoint::SchedulerThreadAborted,
             &PanickingHanlderCheckPoint::BeforeIgnoredPanic,
@@ -3438,6 +3440,7 @@ mod tests {
                 if task_id == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
                 } else if task_id == 1 {
+                    sleepless_testing::at(PanickingHanlderCheckPoint::IgnoredPanicTaskReceived);
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeIgnoredPanic);
                 } else {
                     unreachable!();
