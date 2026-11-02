@@ -3140,24 +3140,25 @@ impl AccountsDb {
 
     /// Calculates the `AccountLtHash` of `account`
     pub fn lt_hash_account(account: &impl ReadableAccount, pubkey: &Pubkey) -> AccountLtHash {
-        lt_hash::with_thread_buffer(|buffer| {
-            Self::lt_hash_account_with_buffer(account, pubkey, buffer)
+        lt_hash::with_thread_hasher(|hasher| {
+            Self::lt_hash_account_with_hasher(account, pubkey, hasher)
         })
     }
 
-    /// Calculates the `AccountLtHash` of `account` like `lt_hash_account()`, with `buffer`
+    /// Calculates the `AccountLtHash` of `account` like `lt_hash_account()`, with `hasher`
     /// held by the caller instead of the thread.
-    pub fn lt_hash_account_with_buffer(
+    pub fn lt_hash_account_with_hasher(
         account: &impl ReadableAccount,
         pubkey: &Pubkey,
-        buffer: &mut Vec<u8>,
+        hasher: &mut BufferingHasher,
     ) -> AccountLtHash {
         if account.lamports() == 0 {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::write_account_hash_input(account, pubkey, BufferingHasher::new(buffer));
-        AccountLtHash(hasher.into_lt_hash())
+        AccountLtHash(hasher.lt_hash(|hasher| {
+            Self::write_account_hash_input(account, pubkey, hasher);
+        }))
     }
 
     /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the

@@ -1,4 +1,5 @@
 use {
+    arrayvec::ArrayVec,
     base64::{display::Base64Display, prelude::BASE64_STANDARD},
     std::{cell::RefCell, fmt, str},
 };
@@ -80,57 +81,58 @@ impl SingleLtHashUpdater for blake3::Hasher {
 /// 16 BLAKE3 chunks, the widest SIMD batch.
 const BUFFERED_PREFIX_LEN: usize = 16 * blake3::CHUNK_LEN;
 
-/// Hashes an input given in parts, buffering its first 16 KiB in `buffer`.
+/// Hashes an input given in parts, buffering its first 16 KiB.
 ///
 /// BLAKE3 hashes its 1 KiB chunks in parallel only from a chunk-aligned start, so a short
 /// first part makes it hash the following chunks serially and widen its batches gradually.
 /// Handing BLAKE3 the buffered prefix as one slice keeps every batch at full SIMD width.
-pub struct BufferingHasher<'a> {
+#[derive(Default)]
+pub struct BufferingHasher {
     hasher: blake3::Hasher,
-    /// The prefix so far, `None` once the full prefix is hashed.
-    buffer: Option<&'a mut Vec<u8>>,
+    buffer: ArrayVec<u8, BUFFERED_PREFIX_LEN>,
+    is_prefix_hashed: bool,
 }
 
-impl<'a> BufferingHasher<'a> {
-    pub fn new(buffer: &'a mut Vec<u8>) -> Self {
-        buffer.clear();
-        Self {
-            hasher: blake3::Hasher::new(),
-            buffer: Some(buffer),
-        }
-    }
-
+impl BufferingHasher {
+    /// Returns the lt hash of the input that `write_input` writes into `self`.
     #[must_use]
-    pub fn into_lt_hash(mut self) -> LtHash {
-        if let Some(buffer) = self.buffer {
-            self.hasher.update(buffer);
+    pub fn lt_hash(&mut self, write_input: impl FnOnce(&mut Self)) -> LtHash {
+        self.hasher.reset();
+        self.buffer.clear();
+        self.is_prefix_hashed = false;
+        write_input(self);
+        if !self.is_prefix_hashed {
+            self.hasher.update(&self.buffer);
         }
         LtHash::with(&self.hasher)
     }
 }
 
-impl SingleLtHashUpdater for BufferingHasher<'_> {
+impl SingleLtHashUpdater for &mut BufferingHasher {
     fn write_part(&mut self, bytes: &[u8]) {
-        let Some(buffer) = &mut self.buffer else {
+        if self.is_prefix_hashed {
             self.hasher.update(bytes);
             return;
-        };
-        let free_len = BUFFERED_PREFIX_LEN.saturating_sub(buffer.len());
-        let (prefix, rest) = bytes.split_at(bytes.len().min(free_len));
-        buffer.extend_from_slice(prefix);
-        if buffer.len() == BUFFERED_PREFIX_LEN {
-            self.hasher.update(buffer).update(rest);
-            self.buffer = None;
+        }
+        let (prefix, rest) = bytes.split_at(bytes.len().min(self.buffer.remaining_capacity()));
+        self.buffer
+            .try_extend_from_slice(prefix)
+            .expect("prefix fits the free capacity");
+        if self.buffer.is_full() {
+            self.hasher.update(&self.buffer).update(rest);
+            self.is_prefix_hashed = true;
         }
     }
 }
 
-/// Calls `f` with this thread's buffer for a [`BufferingHasher`].
-pub fn with_thread_buffer<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+/// Calls `f` with this thread's [`BufferingHasher`].
+pub fn with_thread_hasher<R>(f: impl FnOnce(&mut BufferingHasher) -> R) -> R {
     thread_local! {
-        static BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        // Boxed, so only threads that hash allocate the hasher, instead of every thread
+        // carrying it in its static TLS.
+        static HASHER: RefCell<Box<BufferingHasher>> = RefCell::default();
     }
-    BUFFER.with_borrow_mut(f)
+    HASHER.with_borrow_mut(|hasher| f(hasher))
 }
 
 /// A smaller "checksum" of the LtHash, useful when 2 KiB is too large
@@ -466,20 +468,17 @@ mod tests {
     /// cross the buffered prefix.
     #[test]
     fn test_buffering_hasher_matches_contiguous_input() {
-        let mut buffer = Vec::new();
+        let mut hasher = BufferingHasher::default();
         for len in [0, 1, 1024, 16383, 16384, 16385, 50_000] {
             let input = (0..len).map(|i| i as u8).collect::<Vec<_>>();
             let expected = LtHash::with(blake3::Hasher::new().update(&input));
             for part_len in [1, 7, 8, 1000, 16384, usize::MAX] {
-                let mut hasher = BufferingHasher::new(&mut buffer);
-                for part in input.chunks(part_len.min(len.max(1))) {
-                    hasher.write_part(part);
-                }
-                assert_eq!(
-                    hasher.into_lt_hash(),
-                    expected,
-                    "len={len} part_len={part_len}"
-                );
+                let lt_hash = hasher.lt_hash(|mut hasher| {
+                    for part in input.chunks(part_len.min(len.max(1))) {
+                        hasher.write_part(part);
+                    }
+                });
+                assert_eq!(lt_hash, expected, "len={len} part_len={part_len}");
             }
         }
     }
