@@ -5592,21 +5592,26 @@ fn test_fec_set_rebuild_failure_invalid_parity() {
 /// index, the last `num_inserted` of which arrived in the current batch.
 /// Without `has_erasure_meta` the set is treated as data-only, as when no coding
 /// shred of it was ever inserted.
-/// Expects `recover_missing_data_shreds` when data shreds are missing and the
-/// set can be rebuilt, and `run_fec_checks` only in the batch which brings the
-/// set to the rebuild threshold.
-#[test_case(31, 0, 31, true, false, false; "too few shreds")]
-#[test_case(32, 0, 1, false, false, true; "data only, crossing the threshold")]
-#[test_case(32, 0, 32, false, false, true; "data only, in a single batch")]
-#[test_case(31, 1, 1, true, true, true; "crossing the threshold")]
-#[test_case(0, 32, 32, true, true, true; "coding only, in a single batch")]
-#[test_case(31, 2, 1, true, true, false; "already over the threshold")]
-#[test_case(32, 32, 64, true, false, true; "all shreds in a single batch")]
-#[test_case(32, 32, 32, true, false, false; "all shreds, already over the threshold")]
+/// Expects `run_fec_checks` only in the batch which brings the set to the
+/// rebuild threshold. Expects `recover_missing_data_shreds` when data shreds
+/// are missing and the set can be rebuilt; once SIMD-0504 is active for the
+/// slot (`stricter_shred_validation_active`) recovery is restricted to the
+/// crossing batch, since a later failed rebuild would be pure waste (issue
+/// #16444), whereas without the feature it keeps being attempted every batch.
+#[test_case(31, 0, 31, false, true, false, false; "too few shreds")]
+#[test_case(32, 0, 1, false, false, false, true; "data only, crossing the threshold")]
+#[test_case(32, 0, 32, false, false, false, true; "data only, in a single batch")]
+#[test_case(31, 1, 1, false, true, true, true; "crossing the threshold")]
+#[test_case(0, 32, 32, false, true, true, true; "coding only, in a single batch")]
+#[test_case(31, 2, 1, false, true, true, false; "already over the threshold, feature off")]
+#[test_case(31, 2, 1, true, true, false, false; "already over the threshold, feature on")]
+#[test_case(32, 32, 64, false, true, false, true; "all shreds in a single batch")]
+#[test_case(32, 32, 32, false, true, false, false; "all shreds, already over the threshold")]
 fn test_fec_set_actions(
     num_data: usize,
     num_coding: usize,
     num_inserted: usize,
+    stricter_shred_validation_active: bool,
     has_erasure_meta: bool,
     recover_missing_data_shreds: bool,
     run_fec_checks: bool,
@@ -5627,7 +5632,13 @@ fn test_fec_set_actions(
     let FecSetActions {
         recover_missing_data_shreds: actual_recover,
         run_fec_checks: actual_check,
-    } = fec_set_actions(&index, erasure_set, erasure_meta, num_inserted);
+    } = fec_set_actions(
+        &index,
+        erasure_set,
+        erasure_meta,
+        num_inserted,
+        stricter_shred_validation_active,
+    );
     assert_eq!(
         (actual_recover, actual_check),
         (recover_missing_data_shreds, run_fec_checks)

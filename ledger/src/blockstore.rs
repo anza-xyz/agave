@@ -516,6 +516,7 @@ fn fec_set_actions(
     erasure_set: ErasureSetId,
     erasure_meta: Option<&ErasureMeta>,
     num_inserted: usize,
+    stricter_shred_validation_active: bool,
 ) -> FecSetActions {
     let Range { start, end } = erasure_set.data_shred_indices();
     let num_data = index.data().count_range(u64::from(start)..u64::from(end));
@@ -527,10 +528,22 @@ fn fec_set_actions(
     });
     let num_shreds = num_data + num_coding;
     let can_rebuild = num_shreds >= DATA_SHREDS_PER_FEC_BLOCK;
+    // True only in the batch which first brings the set to the rebuild threshold.
+    let just_crossed_recovery_threshold =
+        can_rebuild && num_shreds.saturating_sub(num_inserted) < DATA_SHREDS_PER_FEC_BLOCK;
+    // Recovery is deterministic in the set's stored shreds, shreds are never removed.
+    // So once the FEC set has crossed the rebuild threshold a failed recovery will
+    // keep failing on every later batch. When SIMD-0504 is active, such failure
+    // marks the slot dead, so re-running the rebuild in later batches is useless.
+    // Without the feature a failing set is not terminal, so block
+    // completion on the un-gated path must stay as-is and we keep attempting
+    // recovery on every batch as before.
+    let recover_missing_data_shreds = can_rebuild
+        && num_data < DATA_SHREDS_PER_FEC_BLOCK
+        && (just_crossed_recovery_threshold || !stricter_shred_validation_active);
     FecSetActions {
-        recover_missing_data_shreds: can_rebuild && num_data < DATA_SHREDS_PER_FEC_BLOCK,
-        run_fec_checks: can_rebuild
-            && num_shreds.saturating_sub(num_inserted) < DATA_SHREDS_PER_FEC_BLOCK,
+        recover_missing_data_shreds,
+        run_fec_checks: just_crossed_recovery_threshold,
     }
 }
 
@@ -1851,7 +1864,13 @@ impl Blockstore {
                     index_working_set.get(&(BlockLocation::Original, erasure_set.slot()))?;
                 let index = &index_meta_entry.index;
                 let num_inserted = num_inserted_shreds.get(&erasure_set).copied().unwrap_or(0);
-                let actions = fec_set_actions(index, erasure_set, erasure_meta, num_inserted);
+                let actions = fec_set_actions(
+                    index,
+                    erasure_set,
+                    erasure_meta,
+                    num_inserted,
+                    shred_recovery_ctx.is_stricter_shred_validation_active(erasure_set.slot()),
+                );
                 (actions.recover_missing_data_shreds || actions.run_fec_checks).then_some((
                     erasure_set,
                     erasure_meta,
