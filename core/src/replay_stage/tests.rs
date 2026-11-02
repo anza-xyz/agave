@@ -1094,7 +1094,7 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
 
     fn notify_created_bank(&self, _slot: Slot, _parent: Slot, _bank_id: BankId) {}
 
-    fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String, bank_id: BankId) {
+    fn notify_dead_bank(&self, slot: Slot, _parent: Slot, bank_id: BankId, _error: String) {
         self.dead_slots.lock().unwrap().insert((slot, bank_id));
     }
 }

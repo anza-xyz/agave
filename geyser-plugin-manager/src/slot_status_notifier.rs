@@ -34,7 +34,7 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
         self.notify_bank_status(slot, Some(parent), SlotStatus::CreatedBank, bank_id);
     }
 
-    fn notify_slot_dead(&self, slot: Slot, parent: Slot, error: String, bank_id: BankId) {
+    fn notify_dead_bank(&self, slot: Slot, parent: Slot, bank_id: BankId, error: String) {
         self.notify_bank_status(slot, Some(parent), SlotStatus::Dead(error), bank_id);
     }
 }
@@ -225,23 +225,24 @@ mod tests {
             })]);
         let notifier = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)));
 
-        notifier.notify_slot_dead(43, 42, "first bank failed".to_owned(), BankId::new(9));
-        notifier.notify_slot_dead(43, 42, "replacement failed".to_owned(), BankId::new(10));
+        let slot = 43;
+        let parent = 42;
+        let bank_id = BankId::new(9);
+        let replacement_bank_id = BankId::new(10);
+        let error = "first bank failed".to_owned();
+        let replacement_error = "replacement failed".to_owned();
+        notifier.notify_dead_bank(slot, parent, bank_id, error.clone());
+        notifier.notify_dead_bank(slot, parent, replacement_bank_id, replacement_error.clone());
 
         assert_eq!(
             *updates.lock().unwrap(),
             [
+                (slot, Some(parent), SlotStatus::Dead(error), bank_id.into()),
                 (
-                    43,
-                    Some(42),
-                    SlotStatus::Dead("first bank failed".to_owned()),
-                    9
-                ),
-                (
-                    43,
-                    Some(42),
-                    SlotStatus::Dead("replacement failed".to_owned()),
-                    10
+                    slot,
+                    Some(parent),
+                    SlotStatus::Dead(replacement_error),
+                    replacement_bank_id.into()
                 ),
             ],
         );
@@ -275,11 +276,15 @@ mod tests {
         )]);
         let notifier = SlotStatusNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)));
 
-        notifier.notify_slot_dead(43, 42, "dead bank".to_owned(), BankId::new(9));
+        let slot = 43;
+        let parent = 42;
+        let bank_id = BankId::new(9);
+        let error = "dead bank".to_owned();
+        notifier.notify_dead_bank(slot, parent, bank_id, error.clone());
 
         assert_eq!(
             *updates.lock().unwrap(),
-            [(43, Some(42), SlotStatus::Dead("dead bank".to_owned()))],
+            [(slot, Some(parent), SlotStatus::Dead(error))],
         );
     }
 }

@@ -25,7 +25,7 @@ pub trait SlotStatusNotifierInterface {
 
     /// Notified when a concrete bank is marked dead. A replacement bank at the same slot
     /// may still be replayed successfully.
-    fn notify_slot_dead(&self, slot: Slot, parent: Slot, error: String, bank_id: BankId);
+    fn notify_dead_bank(&self, slot: Slot, parent: Slot, bank_id: BankId, error: String);
 }
 
 pub type SlotStatusNotifier = Arc<RwLock<dyn SlotStatusNotifierInterface + Sync + Send>>;
