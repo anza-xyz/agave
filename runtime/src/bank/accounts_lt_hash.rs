@@ -1541,7 +1541,7 @@ mod tests {
                     // Spread sizes from 0.5KiB to 128KiB, since dispatch may treat large
                     // accounts apart.
                     let data_len = 512 << (index % 9);
-                    let curr = AccountSharedData::new(round, data_len, &owner);
+                    let curr = AccountSharedData::new_with_data(round, vec![0; data_len], &owner);
                     AccountsLtHashUpdate::new(
                         *address,
                         last_version.replace(curr.clone()),

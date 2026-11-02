@@ -442,7 +442,7 @@ mod tests {
                 slot2,
                 slice::from_ref(&(
                     Pubkey::new_unique(),
-                    AccountSharedData::new(42, 42_000, &Pubkey::default()),
+                    AccountSharedData::new_with_data(42, vec![0; 42_000], &Pubkey::default()),
                 )),
             ))
             .unwrap();

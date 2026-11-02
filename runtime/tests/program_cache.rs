@@ -55,17 +55,16 @@ fn test_bank_load_program() {
     program_account.set_executable(true);
     program_account.set_rent_epoch(1);
     let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-    let mut programdata_account = AccountSharedData::new(
+    let mut programdata_account = AccountSharedData::new_data_with_space(
         40,
-        programdata_data_offset + elf.len(),
-        &bpf_loader_upgradeable::id(),
-    );
-    programdata_account
-        .set_state(&UpgradeableLoaderState::ProgramData {
+        &UpgradeableLoaderState::ProgramData {
             slot: 42,
             upgrade_authority_address: None,
-        })
-        .unwrap();
+        },
+        programdata_data_offset + elf.len(),
+        &bpf_loader_upgradeable::id(),
+    )
+    .unwrap();
     programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
     programdata_account.set_rent_epoch(1);
     bank.store_account(&program_key, &program_account);

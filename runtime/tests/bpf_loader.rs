@@ -136,16 +136,15 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
 
     // Setup accounts
     let buffer_account = {
-        let mut account = AccountSharedData::new(
+        let mut account = AccountSharedData::new_data_with_space(
             min_buffer_balance,
+            &UpgradeableLoaderState::Buffer {
+                authority_address: Some(upgrade_authority_keypair.pubkey()),
+            },
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
-        );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
-                authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
@@ -153,9 +152,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             .copy_from_slice(&elf);
         account
     };
-    let program_account = AccountSharedData::new(
+    let program_account = AccountSharedData::new_with_data(
         min_program_balance,
-        UpgradeableLoaderState::size_of_program(),
+        vec![0; UpgradeableLoaderState::size_of_program()],
         &bpf_loader_upgradeable::id(),
     );
 
@@ -342,16 +341,15 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
 
     // Setup accounts
     let buffer_account = {
-        let mut account = AccountSharedData::new(
+        let mut account = AccountSharedData::new_data_with_space(
             min_buffer_balance,
+            &UpgradeableLoaderState::Buffer {
+                authority_address: Some(upgrade_authority_keypair.pubkey()),
+            },
             UpgradeableLoaderState::size_of_buffer(elf.len()),
             &bpf_loader_upgradeable::id(),
-        );
-        account
-            .set_state(&UpgradeableLoaderState::Buffer {
-                authority_address: Some(upgrade_authority_keypair.pubkey()),
-            })
-            .unwrap();
+        )
+        .unwrap();
         account
             .data_as_mut_slice()
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)

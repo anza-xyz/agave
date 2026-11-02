@@ -1472,18 +1472,13 @@ mod tests {
             },
             credits_observed: vote_credits,
         };
-        let mut account = AccountSharedData::new(
+        let account = AccountSharedData::new_data_with_space(
             rent_exempt_reserve + non_rent_lamports,
+            &StakeStateV2::Stake(Meta::default(), stake, StakeFlags::default()),
             StakeStateV2::size_of(),
             &solana_stake_interface::program::id(),
-        );
-        account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        )
+        .unwrap();
         let stake_account = StakeAccount::try_from(account).unwrap();
         let stake_pubkey = Pubkey::new_unique();
         let point_value = PointValue {
@@ -1945,11 +1940,6 @@ mod tests {
         vote_address: &Pubkey,
         activation_epoch: Epoch,
     ) -> AccountSharedData {
-        let mut stake_account = AccountSharedData::new(
-            lamports,
-            StakeStateV2::size_of(),
-            &solana_sdk_ids::stake::id(),
-        );
         let rent_exempt_reserve = lamports.saturating_sub(delegation);
 
         let meta = Meta {
@@ -1964,10 +1954,13 @@ mod tests {
             credits_observed: 0,
         };
 
-        stake_account
-            .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-            .expect("set_state");
-        stake_account
+        AccountSharedData::new_data_with_space(
+            lamports,
+            &StakeStateV2::Stake(meta, stake, StakeFlags::empty()),
+            StakeStateV2::size_of(),
+            &solana_sdk_ids::stake::id(),
+        )
+        .expect("set_state")
     }
 
     fn apply_epoch_operations(

@@ -864,18 +864,13 @@ mod tests {
         drop(stakes_cache);
 
         let overflowing_account = Pubkey::new_unique();
-        let mut stake_account = AccountSharedData::new(
+        let stake_account = AccountSharedData::new_data_with_space(
             u64::MAX - stake_reward - block_reward + 1,
+            &StakeStateV2::Stake(Meta::default(), new_stake, StakeFlags::default()),
             StakeStateV2::size_of(),
             &solana_stake_interface::program::id(),
-        );
-        stake_account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                new_stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        )
+        .unwrap();
         bank.store_account(&overflowing_account, &stake_account);
         let partitioned_stake_reward = PartitionedStakeReward {
             stake_pubkey: overflowing_account,
@@ -906,11 +901,6 @@ mod tests {
         let successful_account = Pubkey::new_unique();
         let starting_stake = new_stake.delegation.stake - stake_reward;
         let starting_lamports = rent_exempt_reserve + starting_stake;
-        let mut stake_account = AccountSharedData::new(
-            starting_lamports,
-            StakeStateV2::size_of(),
-            &solana_stake_interface::program::id(),
-        );
         let other_stake = Stake {
             delegation: Delegation {
                 voter_pubkey,
@@ -919,13 +909,13 @@ mod tests {
             },
             credits_observed: 11,
         };
-        stake_account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                other_stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        let stake_account = AccountSharedData::new_data_with_space(
+            starting_lamports,
+            &StakeStateV2::Stake(Meta::default(), other_stake, StakeFlags::default()),
+            StakeStateV2::size_of(),
+            &solana_stake_interface::program::id(),
+        )
+        .unwrap();
         bank.store_account(&successful_account, &stake_account);
         let partitioned_stake_reward = PartitionedStakeReward {
             stake_pubkey: successful_account,
@@ -939,18 +929,13 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         let expected_lamports = starting_lamports + stake_reward + block_reward;
-        let mut expected_stake_account = AccountSharedData::new(
+        let expected_stake_account = AccountSharedData::new_data_with_space(
             expected_lamports,
+            &StakeStateV2::Stake(Meta::default(), new_stake, StakeFlags::default()),
             StakeStateV2::size_of(),
             &solana_stake_interface::program::id(),
-        );
-        expected_stake_account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                new_stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        )
+        .unwrap();
 
         let expected_stake_reward = StakeReward {
             stake_pubkey: successful_account,
@@ -990,11 +975,6 @@ mod tests {
         };
         let starting_stake = deactivating_stake.delegation.stake - stake_reward;
         let starting_lamports = rent_exempt_reserve + starting_stake;
-        let mut stake_account = AccountSharedData::new(
-            starting_lamports,
-            StakeStateV2::size_of(),
-            &solana_stake_interface::program::id(),
-        );
         let other_stake = Stake {
             delegation: Delegation {
                 voter_pubkey,
@@ -1004,13 +984,13 @@ mod tests {
             },
             credits_observed: 11,
         };
-        stake_account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                other_stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        let stake_account = AccountSharedData::new_data_with_space(
+            starting_lamports,
+            &StakeStateV2::Stake(Meta::default(), other_stake, StakeFlags::default()),
+            StakeStateV2::size_of(),
+            &solana_stake_interface::program::id(),
+        )
+        .unwrap();
         bank.store_account(&deactivating_account, &stake_account);
         let partitioned_stake_reward = PartitionedStakeReward {
             stake_pubkey: deactivating_account,
@@ -1024,18 +1004,13 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         let expected_lamports = starting_lamports + stake_reward;
-        let mut expected_stake_account = AccountSharedData::new(
+        let expected_stake_account = AccountSharedData::new_data_with_space(
             expected_lamports,
+            &StakeStateV2::Stake(Meta::default(), deactivating_stake, StakeFlags::default()),
             StakeStateV2::size_of(),
             &solana_stake_interface::program::id(),
-        );
-        expected_stake_account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                deactivating_stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        )
+        .unwrap();
 
         let expected_stake_reward = StakeReward {
             stake_pubkey: deactivating_account,

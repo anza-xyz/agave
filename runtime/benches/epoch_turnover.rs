@@ -72,12 +72,13 @@ fn create_stake_account(
 
     let stake_state = StakeStateV2::Stake(meta, stake, StakeFlags::empty());
 
-    let mut account = AccountSharedData::new(
+    let account = AccountSharedData::new_data_with_space(
         total_lamports,
+        &stake_state,
         StakeStateV2::size_of(),
         &stake_program::id(),
-    );
-    account.set_state(&stake_state).unwrap();
+    )
+    .unwrap();
     Account::from(account)
 }
 
