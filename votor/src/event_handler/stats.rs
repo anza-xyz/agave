@@ -171,7 +171,8 @@ impl EventHandlerStats {
         match event {
             VotorEvent::FirstShred(slot) => {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
-                entry.first_shred = Some(Instant::now());
+                // The slot is reported again if its Original location is purged and refilled.
+                entry.first_shred.get_or_insert_with(Instant::now);
             }
             VotorEvent::ParentReady { slot, .. } => {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();

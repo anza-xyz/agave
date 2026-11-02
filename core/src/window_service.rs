@@ -13,10 +13,15 @@ use {
         },
         result::{Error, Result},
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
+    agave_votor::event::VotorEvent,
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, unbounded},
     rayon::{ThreadPool, prelude::*},
+    solana_clock::Slot,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore::{
+            Blockstore, BlockstoreInsertionMetrics, InsertResults, PossibleDuplicateShred,
+        },
         blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
         shred::{
@@ -39,6 +44,48 @@ use {
         time::{Duration, Instant},
     },
 };
+
+struct FirstShredNotifier {
+    votor_event_sender: Sender<VotorEvent>,
+    pending_slot: Option<Slot>,
+}
+
+impl FirstShredNotifier {
+    fn retry_pending(&mut self) {
+        if let Some(slot) = self.pending_slot.take()
+            && let Err(TrySendError::Full(_)) = self
+                .votor_event_sender
+                .try_send(VotorEvent::FirstShred(slot))
+        {
+            self.pending_slot = Some(slot);
+        }
+    }
+
+    fn notify(&mut self, slots: impl IntoIterator<Item = Slot>, root: Slot) {
+        for slot in slots {
+            if slot <= root || !slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) {
+                continue;
+            }
+            match self
+                .votor_event_sender
+                .try_send(VotorEvent::FirstShred(slot))
+            {
+                Ok(()) => (),
+                Err(TrySendError::Full(_)) => {
+                    error!(
+                        "Votor event channel is backed up len {}, something is wrong",
+                        self.votor_event_sender.len(),
+                    );
+                    // Only the latest first shred notification matters.
+                    self.pending_slot = Some(slot);
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    info!("Votor event channel disconnected, we are shutting down")
+                }
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct WindowServiceMetrics {
@@ -130,8 +177,7 @@ fn run_insert<'db, F>(
     handle_duplicate: F,
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
-    completed_data_sets_sender: Option<&CompletedDataSetsSender>,
-) -> Result<()>
+) -> Result<InsertResults>
 where
     F: Fn(PossibleDuplicateShred),
 {
@@ -162,7 +208,7 @@ where
     });
     ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
     ws_metrics.num_shreds_received += shreds.len();
-    let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
+    Ok(blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
         false, // is_trusted
         shred_recovery_context,
@@ -170,13 +216,7 @@ where
         write_batch,
         &handle_duplicate,
         metrics,
-    )?;
-
-    if let Some(sender) = completed_data_sets_sender {
-        sender.try_send(completed_data_sets)?;
-    }
-
-    Ok(())
+    )?)
 }
 
 pub struct WindowServiceChannels {
@@ -224,6 +264,7 @@ impl WindowService {
         shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         repair_xdp_sender: Option<PinnedXdpSender>,
+        votor_event_sender: Sender<VotorEvent>,
     ) -> WindowService {
         let bank_forks = repair_info.bank_forks.clone();
 
@@ -264,6 +305,10 @@ impl WindowService {
         );
 
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let first_shred_notifier = FirstShredNotifier {
+            votor_event_sender,
+            pending_slot: None,
+        };
         let t_insert = Self::start_window_insert_thread(
             exit,
             blockstore,
@@ -273,6 +318,7 @@ impl WindowService {
             duplicate_sender,
             completed_data_sets_sender,
             retransmit_sender,
+            first_shred_notifier,
         );
 
         WindowService {
@@ -311,6 +357,7 @@ impl WindowService {
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: RetransmitSender,
+        mut first_shred_notifier: FirstShredNotifier,
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solWinInsert".to_string())
@@ -341,9 +388,13 @@ impl WindowService {
                 let mut write_batch = blockstore.get_write_batch();
 
                 while !exit.load(Ordering::Relaxed) {
-                    shred_recovery_context.maybe_update(sharable_banks.root());
+                    let root_bank = sharable_banks.root();
+                    let root_slot = root_bank.slot();
+                    shred_recovery_context.maybe_update(root_bank);
 
-                    if let Err(e) = run_insert(
+                    // Retry even when no more shreds arrive: recv_timeout returns to the loop.
+                    first_shred_notifier.retry_pending();
+                    let result = run_insert(
                         &thread_pool,
                         &verified_receiver,
                         &blockstore,
@@ -353,8 +404,23 @@ impl WindowService {
                         handle_duplicate,
                         &mut metrics,
                         &mut ws_metrics,
-                        completed_data_sets_sender.as_ref(),
-                    ) {
+                    )
+                    .and_then(
+                        |InsertResults {
+                             completed_data_set_infos,
+                             first_shred_slots,
+                             ..
+                         }| {
+                            // Notify votor before the completed data sets send, which can fail
+                            // when RPC/geyser is backed up.
+                            first_shred_notifier.notify(first_shred_slots, root_slot);
+                            if let Some(sender) = completed_data_sets_sender.as_ref() {
+                                sender.try_send(completed_data_set_infos)?;
+                            }
+                            Ok(())
+                        },
+                    );
+                    if let Err(e) = result {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e) {
                             break;
@@ -423,6 +489,24 @@ mod test {
             genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
         },
     };
+
+    #[test]
+    fn test_first_shred_notifier_filters_slots() {
+        let (votor_event_sender, receiver) = bounded(8);
+        let mut notifier = FirstShredNotifier {
+            votor_event_sender,
+            pending_slot: None,
+        };
+        let window = NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot;
+        notifier.notify(0..=3 * window, window);
+        assert!(
+            matches!(receiver.try_recv(), Ok(VotorEvent::FirstShred(slot)) if slot == 2 * window)
+        );
+        assert!(
+            matches!(receiver.try_recv(), Ok(VotorEvent::FirstShred(slot)) if slot == 3 * window)
+        );
+        assert!(receiver.is_empty());
+    }
 
     fn local_entries_to_shred(
         entries: &[Entry],

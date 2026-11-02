@@ -7,10 +7,8 @@ use {
             ClusterNodes, ClusterNodesCache, DATA_PLANE_FANOUT, Error, MAX_NUM_TURBINE_HOPS,
         },
     },
-    agave_votor::event::VotorEvent,
-    agave_votor_messages::migration::MigrationStatus,
     agave_worker_pool::{WorkerPool, WorkerPoolConfig},
-    crossbeam_channel::{Receiver, Sender, TrySendError},
+    crossbeam_channel::{Receiver, Sender},
     lru::LruCache,
     rand::Rng,
     solana_clock::Slot,
@@ -124,8 +122,6 @@ struct RetransmitStats {
 struct RetransmitNotifiers {
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
-    migration_status: Arc<MigrationStatus>,
-    votor_event_sender: Sender<VotorEvent>,
 }
 
 struct WorkerContext {
@@ -514,12 +510,8 @@ impl RetransmitStage {
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         xdp_sender: Option<XdpSender>,
-        votor_event_sender: Sender<VotorEvent>,
     ) -> (RetransmitSender, Self) {
-        let (sharable_banks, migration_status) = {
-            let bank_forks = bank_forks.read().unwrap();
-            (bank_forks.sharable_banks(), bank_forks.migration_status())
-        };
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -567,8 +559,6 @@ impl RetransmitStage {
             notifiers: RetransmitNotifiers {
                 rpc_subscriptions,
                 slot_status_notifier,
-                migration_status,
-                votor_event_sender,
             },
         };
 
@@ -622,12 +612,11 @@ impl AddAssign for RetransmitSlotStats {
 }
 
 /// * Accumulates and reports retransmit stats.
-/// * Sends first-shred notifications to Votor.
 /// * Sends first-shred notifications to Geyser and RPC.
 /// * Resets shared dedupers when needed.
 ///
 /// Geyser plugin callbacks execute synchronously on this thread. A slow or blocked plugin delays
-/// deduper reset checks, stats processing, and Votor first-shred notifications.
+/// deduper reset checks and stats processing.
 fn process_stats_update(
     StatsThreadContext {
         sharable_banks,
@@ -640,15 +629,7 @@ fn process_stats_update(
     receiver: Receiver<BatchStats>,
 ) {
     let mut stats = RetransmitStats::new(Instant::now());
-    let mut pending_first_shred_event = None;
     for batch_stats in receiver.iter() {
-        // Attempt to resend a pending first shred event to votor
-        if let Some(event) = pending_first_shred_event.take()
-            && let Err(TrySendError::Full(event)) = notifiers.votor_event_sender.try_send(event)
-        {
-            // Failed again, requeue
-            pending_first_shred_event = Some(event);
-        }
         let mut epoch_cache_update = Measure::start("retransmit_epoch_cache_update");
         shred_deduper.maybe_reset(
             &mut rand::rng(),
@@ -659,12 +640,7 @@ fn process_stats_update(
         stats.epoch_cache_update += epoch_cache_update.as_us();
 
         stats.accumulate_job_counters(&batch_stats);
-        stats.insert_slot_stats(
-            batch_stats.slot_stats,
-            batch_stats.root,
-            &notifiers,
-            &mut pending_first_shred_event,
-        );
+        stats.insert_slot_stats(batch_stats.slot_stats, batch_stats.root, &notifiers);
         stats.submit_slot_stats();
 
         stats.maybe_submit(
@@ -706,18 +682,12 @@ impl RetransmitStats {
         feed: impl IntoIterator<Item = (Slot, RetransmitSlotStats)>,
         root: Slot,
         notifiers: &RetransmitNotifiers,
-        pending_first_shred_event: &mut Option<VotorEvent>,
     ) {
         for (slot, slot_stats) in feed {
             match self.slot_stats.get_mut(&slot) {
                 None => {
                     if slot > root {
-                        notify_subscribers(
-                            slot,
-                            slot_stats.outset,
-                            notifiers,
-                            pending_first_shred_event,
-                        );
+                        notify_subscribers(slot, slot_stats.outset, notifiers);
                     }
                     self.slot_stats.put(slot, slot_stats);
                 }
@@ -815,7 +785,6 @@ fn notify_subscribers(
     slot: Slot,
     timestamp: u64, // When the first shred in the slot was received.
     notifiers: &RetransmitNotifiers,
-    pending_first_shred_event: &mut Option<VotorEvent>,
 ) {
     if let Some(rpc_subscriptions) = notifiers.rpc_subscriptions.as_ref() {
         let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
@@ -828,39 +797,17 @@ fn notify_subscribers(
             .unwrap()
             .notify_first_shred_received(slot);
     }
-
-    if notifiers.migration_status.should_send_first_shred(slot) {
-        match notifiers
-            .votor_event_sender
-            .try_send(VotorEvent::FirstShred(slot))
-        {
-            Ok(()) => (),
-            Err(TrySendError::Full(event)) => {
-                error!(
-                    "Votor event channel is backed up len {}, something is wrong",
-                    notifiers.votor_event_sender.len(),
-                );
-                // Only the latest first shred notification matters, requeue
-                pending_first_shred_event.replace(event);
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                info!("Votor event channel disconnected, we are shutting down")
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crossbeam_channel::TryRecvError,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
         solana_entry::entry::create_ticks,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::shred::{ProcessShredsStats, Shredder},
     };
 
@@ -1004,48 +951,5 @@ mod tests {
            First time seeing shred Y from a third erasure batch => Dup because common header is \
              unique but shred ID seen twice already"
         );
-    }
-
-    #[test]
-    fn test_notify_subscribers_sends_first_shred_after_genesis() {
-        let (votor_event_sender, votor_event_receiver) = crossbeam_channel::bounded(1);
-        let migration_status = Arc::new(MigrationStatus::post_migration_status());
-        let genesis_slot = migration_status.genesis_block().unwrap().slot;
-        let notifiers = RetransmitNotifiers {
-            rpc_subscriptions: None,
-            slot_status_notifier: None,
-            migration_status,
-            votor_event_sender,
-        };
-        let mut pending_first_shred_event = None;
-
-        let slot = genesis_slot.checked_add(1).unwrap();
-        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
-        notify_subscribers(
-            slot,
-            /*timestamp:*/ 0,
-            &notifiers,
-            &mut pending_first_shred_event,
-        );
-
-        assert!(matches!(
-            votor_event_receiver.try_recv(),
-            Ok(VotorEvent::FirstShred(received_slot)) if received_slot == slot
-        ));
-        assert!(pending_first_shred_event.is_none());
-
-        // Later unaligned slots do not need a FirstShred event.
-        let slot = slot.checked_add(1).unwrap();
-        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
-        notify_subscribers(
-            slot,
-            /*timestamp:*/ 0,
-            &notifiers,
-            &mut pending_first_shred_event,
-        );
-        assert!(matches!(
-            votor_event_receiver.try_recv(),
-            Err(TryRecvError::Empty)
-        ));
     }
 }
