@@ -666,11 +666,11 @@ mod tests {
         let accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
         ];
 
@@ -688,11 +688,11 @@ mod tests {
         let accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
         ];
 
@@ -765,11 +765,11 @@ mod tests {
         let accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
         ];
 
