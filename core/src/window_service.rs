@@ -13,12 +13,16 @@ use {
         },
         result::{Error, Result},
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
+    agave_votor::event::VotorEvent,
+    agave_votor_messages::migration::MigrationStatus,
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError, unbounded},
     rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
+        blockstore::{
+            Blockstore, BlockstoreInsertionMetrics, InsertResults, PossibleDuplicateShred,
+        },
         blockstore_db::{DBPinnableSlice, WriteBatch},
         blockstore_meta::BlockLocation,
         shred::{self, Shred, filter::ShredRecoveryContext},
@@ -41,6 +45,47 @@ use {
 
 type DuplicateSlotSender = Sender<Slot>;
 pub(crate) type DuplicateSlotReceiver = Receiver<Slot>;
+
+struct FirstShredNotifier {
+    migration_status: Arc<MigrationStatus>,
+    votor_event_sender: Sender<VotorEvent>,
+    pending_event: Option<VotorEvent>,
+}
+
+impl FirstShredNotifier {
+    fn retry_pending(&mut self) {
+        if let Some(event) = self.pending_event.take()
+            && let Err(TrySendError::Full(event)) = self.votor_event_sender.try_send(event)
+        {
+            self.pending_event = Some(event);
+        }
+    }
+
+    fn notify(&mut self, slots: impl IntoIterator<Item = Slot>, root: Slot) {
+        for slot in slots {
+            if slot <= root || !self.migration_status.should_send_first_shred(slot) {
+                continue;
+            }
+            match self
+                .votor_event_sender
+                .try_send(VotorEvent::FirstShred(slot))
+            {
+                Ok(()) => (),
+                Err(TrySendError::Full(event)) => {
+                    error!(
+                        "Votor event channel is backed up len {}, something is wrong",
+                        self.votor_event_sender.len(),
+                    );
+                    // Only the latest first shred notification matters.
+                    self.pending_event = Some(event);
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    info!("Votor event channel disconnected, we are shutting down")
+                }
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct WindowServiceMetrics {
@@ -158,10 +203,14 @@ fn run_insert<'db, F>(
     metrics: &mut BlockstoreInsertionMetrics,
     ws_metrics: &mut WindowServiceMetrics,
     completed_data_sets_sender: Option<&CompletedDataSetsSender>,
+    first_shred_notifier: &mut FirstShredNotifier,
+    root: Slot,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
 {
+    // Retry even when no more shreds arrive: recv_timeout returns to the loop.
+    first_shred_notifier.retry_pending();
     const RECV_TIMEOUT: Duration = Duration::from_millis(200);
     let mut shred_receiver_elapsed = Measure::start("shred_receiver_elapsed");
     let mut shreds = verified_receiver.recv_timeout(RECV_TIMEOUT)?;
@@ -189,7 +238,11 @@ where
     });
     ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
     ws_metrics.num_shreds_received += shreds.len();
-    let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
+    let InsertResults {
+        completed_data_set_infos,
+        first_shred_slots,
+        ..
+    } = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
         false, // is_trusted
         shred_recovery_context,
@@ -199,8 +252,9 @@ where
         metrics,
     )?;
 
+    first_shred_notifier.notify(first_shred_slots, root);
     if let Some(sender) = completed_data_sets_sender {
-        sender.try_send(completed_data_sets)?;
+        sender.try_send(completed_data_set_infos)?;
     }
 
     Ok(())
@@ -255,6 +309,7 @@ impl WindowService {
         shred_version: u16,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         repair_xdp_sender: Option<PinnedXdpSender>,
+        votor_event_sender: Sender<VotorEvent>,
     ) -> WindowService {
         let cluster_info = repair_info.cluster_info.clone();
         let bank_forks = repair_info.bank_forks.clone();
@@ -301,6 +356,11 @@ impl WindowService {
         );
 
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let first_shred_notifier = FirstShredNotifier {
+            migration_status: bank_forks.read().unwrap().migration_status(),
+            votor_event_sender,
+            pending_event: None,
+        };
         let t_insert = Self::start_window_insert_thread(
             exit,
             blockstore,
@@ -310,6 +370,7 @@ impl WindowService {
             duplicate_sender,
             completed_data_sets_sender,
             retransmit_sender,
+            first_shred_notifier,
         );
 
         WindowService {
@@ -356,6 +417,7 @@ impl WindowService {
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: Sender<Vec<shred::Payload>>,
+        mut first_shred_notifier: FirstShredNotifier,
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solWinInsert".to_string())
@@ -386,7 +448,9 @@ impl WindowService {
                 let mut write_batch = blockstore.get_write_batch();
 
                 while !exit.load(Ordering::Relaxed) {
-                    shred_recovery_context.maybe_update(sharable_banks.root());
+                    let root_bank = sharable_banks.root();
+                    let root_slot = root_bank.slot();
+                    shred_recovery_context.maybe_update(root_bank);
 
                     if let Err(e) = run_insert(
                         &thread_pool,
@@ -399,6 +463,8 @@ impl WindowService {
                         &mut metrics,
                         &mut ws_metrics,
                         completed_data_sets_sender.as_ref(),
+                        &mut first_shred_notifier,
+                        root_slot,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e) {
@@ -450,12 +516,13 @@ impl WindowService {
 mod test {
     use {
         super::*,
-        crossbeam_channel::bounded,
+        crossbeam_channel::{TryRecvError, bounded},
         rand::Rng,
         solana_entry::entry::{Entry, create_ticks},
         solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
+        solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::{
             blockstore::{Blockstore, make_many_slot_entries},
             get_tmp_ledger_path_auto_delete,
@@ -473,6 +540,35 @@ mod test {
         solana_signer::Signer,
         solana_time_utils::timestamp,
     };
+
+    #[test]
+    fn test_first_shred_notifier_filters_slots() {
+        let (votor_event_sender, receiver) = bounded(8);
+        let migration_status = Arc::new(MigrationStatus::post_migration_status());
+        let genesis_slot = migration_status.genesis_block().unwrap().slot;
+        let mut notifier = FirstShredNotifier {
+            migration_status,
+            votor_event_sender,
+            pending_event: None,
+        };
+        let first = genesis_slot + 1;
+        assert!(!first.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
+        notifier.notify([genesis_slot, first, first + 1], 0);
+        assert!(matches!(receiver.try_recv(), Ok(VotorEvent::FirstShred(slot)) if slot == first));
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+
+        let window = NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot;
+        let aligned = first.next_multiple_of(window);
+        notifier.notify([aligned - window, aligned, aligned + window], aligned);
+        assert!(
+            matches!(receiver.try_recv(), Ok(VotorEvent::FirstShred(slot)) if slot == aligned + window)
+        );
+        assert!(receiver.is_empty());
+
+        notifier.migration_status = Arc::new(MigrationStatus::default());
+        notifier.notify([first, aligned + window], 0);
+        assert!(receiver.is_empty());
+    }
 
     fn local_entries_to_shred(
         entries: &[Entry],
