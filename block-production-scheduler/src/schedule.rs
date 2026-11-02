@@ -1,13 +1,15 @@
 use {
     crate::{
         Scheduler, check_response::TransactionState, in_flight_tracker::InFlightTracker,
-        progress_tracker::SchedulerState,
+        progress_tracker::SchedulerState, scheduling_details::SchedulingSummary,
     },
     agave_scheduler_bindings::PackToExecutionWorkerMessage,
     agave_scheduler_handshake::ClientWorkerSession,
     agave_scheduling_utils::{
         ENTRY_OVERHEAD_BYTES,
-        thread_aware_account_locks::{MAX_THREADS, ThreadAwareAccountLocks, ThreadId, ThreadSet},
+        thread_aware_account_locks::{
+            MAX_THREADS, ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError,
+        },
         transaction_priority_queue::TransactionPriorityId,
         transaction_ptr::TransactionPtrBatch,
     },
@@ -18,10 +20,25 @@ use {
 const MAX_TRANSACTIONS_PER_BATCH: usize = 16;
 
 impl Scheduler {
-    pub(super) fn schedule(&mut self, mut budget: u64) {
+    pub(super) fn schedule(&mut self, budget: u64) {
         let SchedulerState::LeaderReady { slot, .. } = self.state else {
             return;
         };
+        let mut summary = SchedulingSummary {
+            starting_queue_size: self.transactions.queue_size(),
+            starting_buffer_size: self.transactions.len(),
+            ..SchedulingSummary::default()
+        };
+        self.schedule_transactions(slot, budget, &mut summary);
+        self.scheduling_details.update(&summary);
+    }
+
+    fn schedule_transactions(
+        &mut self,
+        slot: Slot,
+        mut budget: u64,
+        summary: &mut SchedulingSummary,
+    ) {
         if budget == 0 {
             return;
         }
@@ -54,14 +71,24 @@ impl Scheduler {
                 break;
             }
             let transaction = self.transactions.get(id.id).unwrap();
-            let Some(worker) = try_schedule_transaction(
+            let worker = match try_schedule_transaction(
                 id.id,
                 transaction,
                 &mut self.account_locks,
                 &mut batches,
                 &mut allowed_workers,
-            ) else {
-                continue;
+            ) {
+                Ok(worker) => worker,
+                Err(TryLockError::MultipleConflicts) => {
+                    summary.num_unschedulable_conflicts =
+                        summary.num_unschedulable_conflicts.wrapping_add(1);
+                    continue;
+                }
+                Err(TryLockError::ThreadNotAllowed) => {
+                    summary.num_unschedulable_threads =
+                        summary.num_unschedulable_threads.wrapping_add(1);
+                    continue;
+                }
             };
             self.scheduled_cost = self.scheduled_cost.saturating_add(transaction.cost);
             budget = budget.saturating_sub(transaction.cost);
@@ -69,6 +96,7 @@ impl Scheduler {
         }
 
         batches.send_all(&mut ThreadSet::none());
+        summary.num_scheduled = scheduled.len();
         self.leader_slot_metrics.scheduled_transactions = self
             .leader_slot_metrics
             .scheduled_transactions
@@ -86,22 +114,21 @@ fn try_schedule_transaction(
     account_locks: &mut ThreadAwareAccountLocks,
     batches: &mut ExecutionBatches<'_>,
     allowed_workers: &mut ThreadSet,
-) -> Option<ThreadId> {
+) -> Result<ThreadId, TryLockError> {
     let writable = transaction.transaction.writable_accounts();
     let readonly = transaction.transaction.readonly_accounts();
     let account_keys = writable
         .map(|key| (key, true))
         .chain(readonly.map(|key| (key, false)));
-    let worker = account_locks
-        .try_lock_accounts(account_keys.clone(), *allowed_workers, |eligible| {
+    let worker =
+        account_locks.try_lock_accounts(account_keys.clone(), *allowed_workers, |eligible| {
             select_worker(eligible, batches)
-        })
-        .ok()?;
+        })?;
     if !batches.try_push(worker, id, transaction, allowed_workers) {
         account_locks.unlock_accounts(account_keys, worker);
-        return None;
+        return Err(TryLockError::ThreadNotAllowed);
     }
-    Some(worker)
+    Ok(worker)
 }
 
 fn allowed_workers(
@@ -538,6 +565,8 @@ mod tests {
         scheduler.schedule(1_000);
 
         assert_eq!(scheduler.scheduled_cost, 2);
+        assert_eq!(scheduler.scheduling_details.sum_unschedulable_threads, 1);
+        assert_eq!(scheduler.scheduling_details.sum_unschedulable_conflicts, 0);
         assert_eq!(scheduler.transactions.pop_highest(), Some(deferred));
         assert_eq!(
             scheduler
@@ -599,6 +628,17 @@ mod tests {
         scheduler.schedule(1_000);
         scheduler.schedule(1_000);
         assert_eq!(scheduler.scheduled_cost, 300);
+        let details = &scheduler.scheduling_details;
+        assert_eq!(details.num_schedule_calls, 2);
+        assert_eq!(details.min_starting_queue_size, 1);
+        assert_eq!(details.max_starting_queue_size, 4);
+        assert_eq!(details.sum_starting_queue_size, 5);
+        assert_eq!(details.min_starting_buffer_size, 4);
+        assert_eq!(details.max_starting_buffer_size, 4);
+        assert_eq!(details.sum_starting_buffer_size, 8);
+        assert_eq!(details.sum_num_scheduled, 3);
+        assert_eq!(details.sum_unschedulable_conflicts, 2);
+        assert_eq!(details.sum_unschedulable_threads, 0);
         assert_eq!(scheduler.transactions.pop_highest(), Some(blocked));
         assert!(scheduler.transactions.pop_highest().is_none());
         assert_batch(&mut scheduler, &mut agave, 0, &[first, same_worker]);

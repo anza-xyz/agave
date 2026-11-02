@@ -61,6 +61,10 @@ impl<T> TransactionContainer<T> {
         self.transactions.len()
     }
 
+    pub(crate) fn queue_size(&self) -> usize {
+        self.queue.len()
+    }
+
     pub(crate) fn should_drop_nonce(&self, address: &Pubkey, priority: u64) -> bool {
         self.nonces_in_use
             .get(address)

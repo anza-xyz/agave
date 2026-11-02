@@ -5,7 +5,8 @@ use {
     crate::{
         check_response::TransactionState, in_flight_tracker::InFlightTracker,
         leader_slot_metrics::LeaderSlotMetrics, progress_tracker::SchedulerState,
-        schedule::SchedulerScratch, transaction_container::TransactionContainer,
+        schedule::SchedulerScratch, scheduling_details::SchedulingDetails,
+        transaction_container::TransactionContainer,
     },
     agave_reserved_account_keys::ReservedAccountKeys,
     agave_scheduler_bindings::{
@@ -38,6 +39,7 @@ mod leader_slot_metrics;
 mod progress_tracker;
 mod resolved_transaction;
 mod schedule;
+mod scheduling_details;
 mod tpu_ingress;
 #[cfg_attr(
     not(test),
@@ -56,6 +58,7 @@ pub use config::{Config, SchedulerConfig, SessionConfig};
 struct Scheduler {
     state: SchedulerState,
     leader_slot_metrics: LeaderSlotMetrics,
+    scheduling_details: SchedulingDetails,
     scheduling_slot: Option<Slot>,
     cost_pacer: Option<CostPacer>,
     /// Estimated CUs dispatched in the current scheduling slot, used for pacing.
@@ -111,6 +114,7 @@ impl Scheduler {
         Ok(Self {
             state: SchedulerState::new(),
             leader_slot_metrics: LeaderSlotMetrics::default(),
+            scheduling_details: SchedulingDetails::default(),
             scheduling_slot: None,
             cost_pacer: None,
             scheduled_cost: 0,
@@ -146,6 +150,7 @@ impl Scheduler {
         self.handle_tpu_ingress();
         let budget = self.pacing_budget(Instant::now(), self.scheduled_cost);
         self.schedule(budget);
+        self.scheduling_details.maybe_report();
         core::hint::spin_loop();
     }
 
