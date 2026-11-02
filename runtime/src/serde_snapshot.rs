@@ -776,7 +776,7 @@ pub(crate) fn reconstruct_bank_from_fields(
     )?;
     bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
-    let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
+    let bank_rc = BankRc::new(Accounts::new(accounts_db));
     let runtime_config = Arc::new(runtime_config.clone());
     let epoch_stakes = epoch_stakes_handle.join().expect("calculate epoch stakes");
 
@@ -907,7 +907,7 @@ fn reconstruct_accountsdb_from_fields(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), SnapshotError> {
+) -> Result<(Arc<AccountsDb>, ReconstructedAccountsDbInfo), SnapshotError> {
     let accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
         accounts_db_config,
