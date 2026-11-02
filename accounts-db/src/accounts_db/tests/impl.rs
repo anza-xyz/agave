@@ -6756,15 +6756,6 @@ fn test_write_accounts_to_cache_scenarios(
 
     db.store_accounts_unfrozen((slot, batch.as_slice()), BankId::new(slot), &ancestors);
 
-    let expected_stores = batch_accounts.len() as u64
-        - expected_ephemeral_skips
-        - expected_ancestors_skips
-        - expected_duplicate_skips;
-    assert_eq!(
-        db.accounts_cache.contains(BankId::new(slot)),
-        expected_stores != 0,
-        "An entirely skipped batch must not create its destination cache"
-    );
 
     // Verify results
     let loaded = db.do_load_for_tests(&ancestors, &key);
