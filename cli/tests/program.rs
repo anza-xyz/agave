@@ -3961,6 +3961,7 @@ async fn test_cli_program_deploy_prefunded_programdata(allow_prefunded_programda
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false, 
         skip_feature_verification: true,
     });
     let result = process_command(&config).await;
