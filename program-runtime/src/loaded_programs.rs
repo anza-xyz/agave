@@ -925,7 +925,6 @@ pub(crate) mod tests {
             },
             program_metrics::ProgramStatistics,
         },
-        assert_matches::assert_matches,
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_sbpf::{elf::Executable, program::BuiltinProgram},
@@ -936,7 +935,7 @@ pub(crate) mod tests {
             },
             thread,
         },
-        std::{fs::File, io::Read, ops::ControlFlow},
+        std::{assert_matches, fs::File, io::Read, ops::ControlFlow},
         test_case::{test_case, test_matrix},
     };
 

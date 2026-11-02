@@ -2954,7 +2954,6 @@ mod tests {
     use solana_sysvar::fees::Fees;
     use {
         super::*,
-        assert_matches::assert_matches,
         core::slice,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_account_info::AccountInfo,
@@ -2992,6 +2991,7 @@ mod tests {
         solana_sysvar_id::SysvarId,
         solana_transaction_context::instruction_accounts::InstructionAccount,
         std::{
+            assert_matches,
             hash::{DefaultHasher, Hash, Hasher},
             mem,
             str::FromStr,
