@@ -124,6 +124,7 @@ use {
         rpc_pubsub_service::{PubSubConfig, PubSubService},
         rpc_service::{JsonRpcService, JsonRpcServiceConfig, RpcTpuClientArgs},
         rpc_subscriptions::RpcSubscriptions,
+        slot_status_notifier::SlotStatusNotifier,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
     },
@@ -981,7 +982,8 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
-            bank_notifications_enabled.then(|| dependency_tracker.clone()),
+            slot_status_notifier.clone(),
+            dependency_tracker.clone(),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -2454,7 +2456,7 @@ fn initialize_event_system(
     Ok(event_system)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn load_blockstore(
     config: &ValidatorConfig,
     ledger_path: &Path,
@@ -2464,7 +2466,8 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
-    dependency_tracker: Option<Arc<DependencyTracker>>,
+    slot_status_notifier: Option<SlotStatusNotifier>,
+    dependency_tracker: Arc<DependencyTracker>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2534,7 +2537,8 @@ fn load_blockstore(
                 enable_rpc_transaction_history,
                 config.rpc_config.enable_extended_tx_metadata_storage,
                 transaction_notifier,
-                dependency_tracker,
+                (config.rpc_addrs.is_some() || slot_status_notifier.is_some())
+                    .then_some(dependency_tracker),
                 config
                     .validator_exit_backpressure
                     .get(TransactionStatusService::NAME)
