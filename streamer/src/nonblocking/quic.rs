@@ -191,7 +191,7 @@ where
 {
     let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
-    let (config, _) = configure_server(keypair, &quic_server_params)?;
+    let config = configure_server(keypair, &quic_server_params)?;
 
     let endpoints = sockets
         .into_iter()
