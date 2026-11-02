@@ -3303,7 +3303,7 @@ pub mod rpc_bank {
         fn get_ag_genesis_cert(&self, meta: Self::Metadata)
         -> Result<Option<WireBlockCertMessage>>;
 
-        #[rpc(meta, name = "getVATActiveSetRankMap")]
+        #[rpc(meta, name = "getVatActiveSetRankMap")]
         fn get_vat_active_set_rank_map(
             &self,
             meta: Self::Metadata,
@@ -5559,7 +5559,7 @@ pub mod tests {
     #[test]
     fn test_rpc_get_vat_active_set_rank_map() {
         let rpc = RpcHandler::start();
-        let request = create_test_request("getVATActiveSetRankMap", Some(json!([0])));
+        let request = create_test_request("getVatActiveSetRankMap", Some(json!([0])));
         let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         let rank_map = response.value.unwrap();
@@ -5589,7 +5589,7 @@ pub mod tests {
         assert_eq!(rank_map.total_stake, validator.stake);
 
         let request = create_test_request(
-            "getVATActiveSetRankMap",
+            "getVatActiveSetRankMap",
             Some(json!([TEST_SLOTS_PER_EPOCH])),
         );
         let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
@@ -5598,7 +5598,7 @@ pub mod tests {
 
         let unavailable_slot = TEST_SLOTS_PER_EPOCH * 2;
         let request =
-            create_test_request("getVATActiveSetRankMap", Some(json!([unavailable_slot])));
+            create_test_request("getVatActiveSetRankMap", Some(json!([unavailable_slot])));
         let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.is_none());
@@ -5704,7 +5704,7 @@ pub mod tests {
         assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
         for validator in &first.validators {
             let request = create_test_request(
-                "getVATActiveSetRankMap",
+                "getVatActiveSetRankMap",
                 Some(json!([0, {
                     "identity": validator.node_pubkey, "minContextSlot": 1
                 }])),
@@ -5716,7 +5716,7 @@ pub mod tests {
             assert_eq!(filtered.total_stake, first.total_stake);
         }
         let request = create_test_request(
-            "getVATActiveSetRankMap",
+            "getVatActiveSetRankMap",
             Some(json!([0, {"identity": Pubkey::new_unique().to_string()}])),
         );
         let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
@@ -5747,7 +5747,7 @@ pub mod tests {
         assert_eq!(code, -32601);
         for slot in [0, TEST_SLOTS_PER_EPOCH * 2] {
             let request = create_test_request(
-                "getVATActiveSetRankMap",
+                "getVatActiveSetRankMap",
                 Some(json!([slot, {"minContextSlot": 1}])),
             );
             let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
@@ -5755,7 +5755,7 @@ pub mod tests {
         }
         for commitment in ["processed", "confirmed", "finalized"] {
             let request = create_test_request(
-                "getVATActiveSetRankMap",
+                "getVatActiveSetRankMap",
                 Some(json!([0, {"commitment": commitment}])),
             );
             let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
@@ -5763,7 +5763,7 @@ pub mod tests {
             assert!(message.contains("unknown field `commitment`"));
         }
         let request = create_test_request(
-            "getVATActiveSetRankMap",
+            "getVatActiveSetRankMap",
             Some(json!([0, {"identity": "invalid"}])),
         );
         let (code, _) = parse_failure_response(rpc.handle_request_sync(request));

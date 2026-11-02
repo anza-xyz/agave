@@ -187,7 +187,7 @@ impl RpcSender for MockSender {
                 };
                 serde_json::to_value(Some(cert))?
             }
-            "getVATActiveSetRankMap" => serde_json::to_value(Response::<
+            "getVatActiveSetRankMap" => serde_json::to_value(Response::<
                 Option<RpcVatActiveSetRankMap>,
             > {
                 context: RpcResponseContext {

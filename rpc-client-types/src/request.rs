@@ -117,7 +117,7 @@ impl RpcRequest {
             RpcRequest::GetSlotLeader => "getSlotLeader",
             RpcRequest::GetSlotLeaders => "getSlotLeaders",
             RpcRequest::GetAgGenesisCert => "getAgGenesisCert",
-            RpcRequest::GetVatActiveSetRankMap => "getVATActiveSetRankMap",
+            RpcRequest::GetVatActiveSetRankMap => "getVatActiveSetRankMap",
             RpcRequest::GetStakeMinimumDelegation => "getStakeMinimumDelegation",
             RpcRequest::GetStorageTurn => "getStorageTurn",
             RpcRequest::GetStorageTurnRate => "getStorageTurnRate",

@@ -2152,9 +2152,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getVATActiveSetRankMap`] RPC method.
+    /// This method corresponds directly to the [`getVatActiveSetRankMap`] RPC method.
     ///
-    /// [`getVATActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
+    /// [`getVatActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
     ///
     /// # Examples
     ///

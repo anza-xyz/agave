@@ -14,6 +14,8 @@ use {
     tokio::sync::OnceCell,
 };
 
+// The outer Arc lets requests initialize or await the cell without holding the cache lock.
+// The inner Arc lets an owned response share the map without cloning its validator entries.
 type RankMapCell = Arc<OnceCell<Arc<RpcVatActiveSetRankMap>>>;
 
 pub struct RankMapCache {

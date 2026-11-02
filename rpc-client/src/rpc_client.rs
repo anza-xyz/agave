@@ -1885,9 +1885,9 @@ impl RpcClient {
     ///
     /// # RPC Reference
     ///
-    /// This method corresponds directly to the [`getVATActiveSetRankMap`] RPC method.
+    /// This method corresponds directly to the [`getVatActiveSetRankMap`] RPC method.
     ///
-    /// [`getVATActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
+    /// [`getVatActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
     ///
     /// # Examples
     ///
@@ -4769,7 +4769,7 @@ mod tests {
         let expected_json = serde_json::to_value(&expected).unwrap();
         let expected_config = serde_json::to_value(&config).unwrap();
         let mut io = IoHandler::default();
-        io.add_sync_method("getVATActiveSetRankMap", move |params: Params| {
+        io.add_sync_method("getVatActiveSetRankMap", move |params: Params| {
             let params: Vec<Value> = params.parse()?;
             assert_eq!(params.len(), 2);
             match params[0].as_u64().unwrap() {
