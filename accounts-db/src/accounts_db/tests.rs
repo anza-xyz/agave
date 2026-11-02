@@ -50,3 +50,25 @@ impl AccountsDb {
         )
     }
 }
+
+/// Buffering the hash input's prefix must not change any account's lt hash.
+#[test]
+fn test_lt_hash_account_matches_streamed_input() {
+    let pubkey = Pubkey::new_unique();
+    for data_len in [0, 1023, 1024, 3762, 16310, 16311, 16312, 100_000, 1_600_000] {
+        let account = AccountSharedData::from(Account {
+            lamports: 123,
+            data: (0..data_len).map(|i| i as u8).collect(),
+            owner: Pubkey::new_unique(),
+            executable: true,
+            rent_epoch: 0,
+        });
+        let streamed =
+            AccountsDb::write_account_hash_input(&account, &pubkey, blake3::Hasher::new());
+        assert_eq!(
+            AccountsDb::lt_hash_account(&account, &pubkey).0,
+            LtHash::with(&streamed),
+            "data_len={data_len}",
+        );
+    }
+}
