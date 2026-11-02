@@ -10260,6 +10260,7 @@ dependencies = [
  "solana-nonce",
  "solana-nonce-account",
  "solana-packet",
+ "solana-perf",
  "solana-poh-config",
  "solana-precompile-error",
  "solana-program-binaries",

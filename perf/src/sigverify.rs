@@ -34,18 +34,7 @@ fn verify_packet(packet: &mut BytesPacket, reject_non_vote: bool) -> bool {
         if reject_non_vote && !is_simple_vote_tx {
             (is_simple_vote_tx, false)
         } else {
-            let signatures = view.signatures();
-            if signatures.is_empty() {
-                (is_simple_vote_tx, false)
-            } else {
-                let message = view.message_data();
-                let static_account_keys = view.static_account_keys();
-                let verified = signatures
-                    .iter()
-                    .zip(static_account_keys.iter())
-                    .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message));
-                (is_simple_vote_tx, verified)
-            }
+            (is_simple_vote_tx, verify_transaction_view_signatures(&view))
         }
     };
 
@@ -54,6 +43,18 @@ fn verify_packet(packet: &mut BytesPacket, reject_non_vote: bool) -> bool {
     }
 
     verified
+}
+
+/// Returns true if every signature on the sanitized transaction verifies
+/// against its corresponding static account key. Short circuit on first bad signature
+pub fn verify_transaction_view_signatures<D: AsRef<[u8]>>(
+    view: &SanitizedTransactionView<D>,
+) -> bool {
+    let message = view.message_data();
+    view.signatures()
+        .iter()
+        .zip(view.static_account_keys())
+        .all(|(signature, pubkey)| signature.verify(pubkey.as_ref(), message))
 }
 
 pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
@@ -153,6 +154,8 @@ mod tests {
             sigverify::{self},
             test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
         },
+        agave_transaction_view::result::TransactionViewError,
+        assert_matches::assert_matches,
         bytes::Bytes,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -607,5 +610,24 @@ mod tests {
         let mut packet = BytesPacket::from_bytes(None, wincode::serialize(&tx).unwrap());
 
         assert!(verify_packet(&mut packet, false));
+    }
+
+    #[test]
+    fn test_verify_packet_tx_v1_no_signatures() {
+        let mut tx = test_tx_v1();
+        let VersionedMessage::V1(message) = &mut tx.message else {
+            unreachable!()
+        };
+
+        message.header.num_required_signatures = 0;
+        tx.signatures.clear();
+        let data = wincode::serialize(&tx).unwrap();
+
+        assert_matches!(
+            SanitizedTransactionView::try_new_sanitized(data.as_slice()),
+            Err(TransactionViewError::SanitizeError)
+        );
+        let mut packet = BytesPacket::from_bytes(None, Bytes::from(data));
+        assert!(!verify_packet(&mut packet, false));
     }
 }
