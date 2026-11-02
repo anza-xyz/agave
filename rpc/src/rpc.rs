@@ -85,7 +85,7 @@ use {
     solana_signer::Signer,
     solana_storage_bigtable::Error as StorageError,
     solana_svm_transaction::svm_message::SVMStaticMessage,
-    solana_transaction::sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash},
+    solana_transaction::sanitized::MessageHash,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
@@ -4544,9 +4544,10 @@ pub mod rpc_full {
                 "get_recent_prioritization_fees rpc request received: {:?} pubkeys",
                 pubkey_strs.len()
             );
-            if pubkey_strs.len() > MAX_TX_ACCOUNT_LOCKS {
+            const MAX_ACCOUNT_FILTERS: usize = 128;
+            if pubkey_strs.len() > MAX_ACCOUNT_FILTERS {
                 return Err(Error::invalid_params(format!(
-                    "Too many inputs provided; max {MAX_TX_ACCOUNT_LOCKS}"
+                    "Too many inputs provided; max {MAX_ACCOUNT_FILTERS}"
                 )));
             }
             let pubkeys = pubkey_strs
@@ -10605,6 +10606,26 @@ pub mod tests {
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
             assert_eq!(response.value, TEST_SIGNATURE_FEE + PRIORITY_FEE);
         }
+    }
+
+    #[test]
+    fn test_rpc_get_recent_prioritization_fees_account_limit() {
+        let rpc = RpcHandler::start();
+        let mut addresses: Vec<_> = (0..128).map(|_| Pubkey::new_unique().to_string()).collect();
+        let request = create_test_request("getRecentPrioritizationFees", Some(json!([addresses])));
+        let response: Vec<RpcPrioritizationFee> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(response.is_empty());
+
+        addresses.push(Pubkey::new_unique().to_string());
+        let request = create_test_request("getRecentPrioritizationFees", Some(json!([addresses])));
+        assert_eq!(
+            parse_failure_response(rpc.handle_request_sync(request)),
+            (
+                ErrorCode::InvalidParams.code(),
+                "Too many inputs provided; max 128".to_string(),
+            ),
+        );
     }
 
     #[test]
