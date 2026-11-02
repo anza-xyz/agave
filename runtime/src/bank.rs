@@ -148,6 +148,7 @@ use {
         AccountKeys, SanitizedMessage, inner_instruction::InnerInstructions, v0::LoadedAddresses,
     },
     solana_packet::PACKET_DATA_SIZE,
+    solana_perf::sigverify::verify_transaction_view_signatures,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
@@ -5694,18 +5695,11 @@ impl Bank {
                 .sanitize()
                 .map_err(|_| TransactionError::SanitizeFailure)?;
 
-            if verification_mode == TransactionVerificationMode::FullVerification {
-                let message_data = sanitized_tx.message_data();
-                let keys = sanitized_tx.static_account_keys().iter();
-                let signatures = sanitized_tx.signatures().iter();
-
-                for (key, signature) in keys.zip(signatures) {
-                    let valid_signature = signature.verify(key.as_ref(), message_data);
-                    if !valid_signature {
-                        return Err(TransactionError::SignatureFailure);
-                    }
-                }
-            };
+            if verification_mode == TransactionVerificationMode::FullVerification
+                && !verify_transaction_view_signatures(&sanitized_tx)
+            {
+                return Err(TransactionError::SignatureFailure);
+            }
 
             let sanitized_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 sanitized_tx,
