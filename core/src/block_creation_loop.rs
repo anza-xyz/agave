@@ -360,6 +360,10 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
             warn!(
                 "Identity changed from {my_old_pubkey} to {my_pubkey} during block creation loop"
             );
+
+            if ctx.record_receiver.is_shutdown() && ctx.record_receiver.is_safe_to_restart() {
+                reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
+            }
         }
 
         // Wait for the first window notification, then drain both sources and pick the newest
