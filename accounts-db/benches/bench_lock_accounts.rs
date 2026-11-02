@@ -9,8 +9,11 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
-    solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    std::{hint::black_box, sync::Arc},
+    solana_transaction::{
+        Transaction,
+        sanitized::{MAX_TX_ACCOUNT_LOCKS, SanitizedTransaction},
+    },
+    std::hint::black_box,
 };
 
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
@@ -86,7 +89,7 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
         );
 
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let transactions = create_test_transactions(lock_count, read_conflicts);
         group.throughput(Throughput::Elements(transactions.len() as u64));
