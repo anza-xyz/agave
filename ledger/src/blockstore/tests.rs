@@ -5160,7 +5160,8 @@ fn test_fec_set_check_on_rebuild_threshold() {
             .collect()
     };
 
-    // Data shreds only: checked once all data shreds are received, nothing to recover.
+    // Data shreds only: checked once all data shreds are received, no data shreds to recover. The
+    // recovered coding shreds are retransmitted.
     let mut data = fec_set(&data_shreds, 0);
     let code = fec_set(&coding_shreds, 0);
     let last_data_shred = data.pop().unwrap();
@@ -5169,7 +5170,11 @@ fn test_fec_set_check_on_rebuild_threshold() {
     let metrics = blockstore.insert(vec![last_data_shred.clone()], original);
     assert_eq!(metrics.num_fec_set_checks_passed, 1);
     assert_eq!(metrics.num_recovered_data_shreds, 0);
-    assert_eq!(metrics.num_recovered_coding_shreds, 0);
+    assert_eq!(
+        metrics.num_recovered_coding_shreds,
+        CODING_SHREDS_PER_FEC_BLOCK
+    );
+    assert_eq!(metrics.num_recovered_retransmit_batches, 1);
     // Shreds which already exist and shreds inserted into the Alternate
     // columns do not count as inserted, so they do not trigger another check.
     let metrics = blockstore.insert(vec![last_data_shred], original);

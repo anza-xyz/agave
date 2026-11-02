@@ -1866,16 +1866,14 @@ impl Blockstore {
             .filter(|(_, _, _, actions)| actions.recover_missing_data_shreds)
             .count();
         // At least DATA_SHREDS_PER_FEC_BLOCK shreds are received, so at most as
-        // many are recovered.
-        let max_recovered_shreds = num_to_recover * DATA_SHREDS_PER_FEC_BLOCK;
-        let mut recovered_shreds = Vec::with_capacity(max_recovered_shreds);
-        let mut recovered_data_shreds = Vec::with_capacity(max_recovered_shreds);
+        // many are recovered per FEC set.
+        let mut recovered_shreds =
+            Vec::with_capacity(erasure_sets_to_rebuild.len() * DATA_SHREDS_PER_FEC_BLOCK);
+        let mut recovered_data_shreds =
+            Vec::with_capacity(num_to_recover * DATA_SHREDS_PER_FEC_BLOCK);
         let mut slots_failing_checks = HashSet::new();
         for (erasure_set, erasure_meta, index, actions) in erasure_sets_to_rebuild {
-            let FecSetActions {
-                recover_missing_data_shreds: should_recover,
-                run_fec_checks: should_check,
-            } = actions;
+            let should_check = actions.run_fec_checks;
             let batch = match self.rebuild_erasure_batch(
                 index,
                 erasure_set,
@@ -1905,19 +1903,11 @@ impl Blockstore {
                 }
             };
             let fec_set_check = should_check.then(|| batch.check_fec_set());
-            let recovered = shred_recovery_ctx.check_recovered_shreds(batch);
-            let invalid_shreds_found = if should_recover {
-                ShredRecoveryContext::collect_recovered_shreds(
-                    recovered,
-                    &mut recovered_shreds,
-                    &mut recovered_data_shreds,
-                )
-            } else {
-                // TODO: Retransmit these too. All data shreds are present, so
-                // the reconstructed shreds are only coding shreds, which the
-                // node may not have received and so has not retransmitted.
-                recovered.fold(false, |found, shred| found | shred.is_err())
-            };
+            let invalid_shreds_found = ShredRecoveryContext::collect_recovered_shreds(
+                shred_recovery_ctx.check_recovered_shreds(batch),
+                &mut recovered_shreds,
+                &mut recovered_data_shreds,
+            );
             if let Some(fec_set_check) = fec_set_check {
                 let fec_set_check = fec_set_check.and(if invalid_shreds_found {
                     Err(FecSetViolation::InvalidReconstructedShred)
