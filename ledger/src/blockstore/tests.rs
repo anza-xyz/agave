@@ -5145,13 +5145,20 @@ impl RecoveryTestBlockstore {
         shreds: Vec<Shred>,
         location: BlockLocation,
     ) -> BlockstoreInsertionMetrics {
+        self.insert_at_locations(shreds.into_iter().map(|shred| (shred, location)).collect())
+    }
+
+    fn insert_at_locations(
+        &mut self,
+        shreds: Vec<(Shred, BlockLocation)>,
+    ) -> BlockstoreInsertionMetrics {
         let is_repaired = false;
         let is_trusted = false;
         let mut metrics = BlockstoreInsertionMetrics::default();
         let precomputed_merkle_root = None; // gets computed on demand
         let shreds = shreds
             .into_iter()
-            .map(|shred| (shred, is_repaired, location, precomputed_merkle_root));
+            .map(|(shred, location)| (shred, is_repaired, location, precomputed_merkle_root));
         self.blockstore
             .do_insert_shreds(
                 shreds,
@@ -5368,6 +5375,62 @@ fn test_fec_set_check_on_rebuild_threshold_adversarial(first_slot: Slot, gate_ac
     assert_eq!(metrics.num_fec_set_checks_failed, 1);
     assert_eq!(metrics.num_fec_set_checks_passed, 0);
     assert_eq!(blockstore.is_dead(slot), gate_active);
+}
+
+/// Before SIMD-0504 is effective, recovery of an erasure set which failed to rebuild is
+/// retried in later batches which load the set again. A batch which touches the set only
+/// at an Alternate location loads its erasure meta, and another erasure set of the slot
+/// loads the slot's Original index, but the set's Original merkle root meta is not
+/// loaded. Such a set is skipped, since its stored shreds did not change.
+#[test]
+fn test_failed_recovery_with_alternate_shred_of_erasure_set() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
+    let original = BlockLocation::Original;
+    let alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    let slot = 1;
+    assert!(
+        !blockstore
+            .shred_recovery_context
+            .is_stricter_shred_validation_active(slot),
+        "a failed recovery is retried only before SIMD-0504 is effective"
+    );
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
+    let fec_set = |shreds: &[Shred], fec_set_index| -> Vec<Shred> {
+        shreds
+            .iter()
+            .filter(|shred| shred.fec_set_index() == fec_set_index)
+            .cloned()
+            .collect()
+    };
+
+    let mut batch = [fec_set(&data_shreds, 0), fec_set(&coding_shreds, 0)].concat();
+    sign_with_invalid_parity_for_tests(&Keypair::new(), &mut batch, 0..CODING_SHREDS_PER_FEC_BLOCK);
+    let mut code = batch.split_off(DATA_SHREDS_PER_FEC_BLOCK);
+    let data = batch;
+    code.truncate(DATA_SHREDS_PER_FEC_BLOCK - 1);
+    blockstore.insert(code, original);
+    let metrics = blockstore.insert(vec![data[0].clone()], original);
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 1);
+    assert_eq!(metrics.num_recovered_data_shreds, 0);
+
+    let other_fec_set_index = DATA_SHREDS_PER_FEC_BLOCK as u32;
+    let (other_data_shreds, _) = setup_erasure_shreds_with_index(slot, 0, 100, other_fec_set_index);
+    let other_fec_set_shred = fec_set(&other_data_shreds, other_fec_set_index)
+        .into_iter()
+        .next()
+        .expect("the shreds should start at the given erasure set");
+    let metrics = blockstore.insert_at_locations(vec![
+        (data[1].clone(), alternate),
+        (other_fec_set_shred, original),
+    ]);
+    assert_eq!(metrics.num_inserted, 2);
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(metrics.num_recovered_data_shreds, 0);
+    assert!(!blockstore.is_dead(slot));
 }
 
 /// Coding shred indices which do not start at fec_set_index violate SIMD-0504.
