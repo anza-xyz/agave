@@ -773,7 +773,7 @@ pub fn execute(
     info!("Validator initialized");
     validator.listen_for_signals()?;
     validator.close();
-    info!("Validator exiting...");
+    info!("Validator exiting");
 
     Ok(())
 }
