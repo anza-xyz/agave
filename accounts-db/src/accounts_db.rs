@@ -4329,6 +4329,7 @@ impl AccountsDb {
             ..Default::default()
         };
         let mut store_account = BitVec::new_fill(false, len as u64);
+        let mut cache_writer = None;
 
         (0..len).rev().for_each(|index| {
             accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
@@ -4356,8 +4357,9 @@ impl AccountsDb {
 
                 let account_shared_data = account.take_account();
                 let account_data_len = account_shared_data.data().len();
-                self.accounts_cache
-                    .store(slot, bank_id, pubkey, account_shared_data);
+                cache_writer
+                    .get_or_insert_with(|| self.accounts_cache.slot_cache_writer(slot, bank_id))
+                    .store(pubkey, account_shared_data);
                 store_account.set(index as u64, true);
                 stats.num_accounts_stored += 1;
                 stats.account_data_bytes_stored += account_data_len as u64;
