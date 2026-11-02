@@ -12,6 +12,7 @@ use {
     crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
     solana_perf::packet::BytesPacket,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
@@ -593,7 +594,14 @@ impl ShredRecoveryContext {
         recovered_shreds: &mut Vec<Payload>,
         recovered_data_shreds: &mut Vec<Shred>,
     ) -> Result<(), Error> {
-        let batch = self.rebuild_erasure_batch(shreds)?;
+        let shreds: Vec<_> = shreds.into_iter().collect();
+        let merkle_root = shreds
+            .first()
+            .ok_or(Error::from(
+                reed_solomon_erasure::Error::TooFewShardsPresent,
+            ))?
+            .merkle_root()?;
+        let batch = self.rebuild_erasure_batch(shreds, merkle_root)?;
         let shreds = self.check_recovered_shreds(batch);
         Self::collect_recovered_shreds(shreds, recovered_shreds, recovered_data_shreds);
         Ok(())
@@ -606,13 +614,14 @@ impl ShredRecoveryContext {
     /// is valid for every shred. For recovered shreds the signature is copied from shreds
     /// which were received from turbine (or repair) and are already sig-verified. It
     /// verifies for recovered shreds too, because rebuilding checks that the Merkle tree
-    /// of the erasure batch yields the same Merkle root.
+    /// of the batch yields `merkle_root`, and that received shreds' proofs derive it.
     ///
     /// Once SIMD-0504 is active, received shreds may carry different signatures
     /// over the same Merkle root.
     pub(crate) fn rebuild_erasure_batch<T: IntoIterator<Item = Shred>>(
         &mut self,
         shreds: T,
+        merkle_root: Hash,
     ) -> Result<ErasureBatch, Error> {
         let shreds: Vec<_> = shreds
             .into_iter()
@@ -624,6 +633,7 @@ impl ShredRecoveryContext {
 
         merkle::rebuild_erasure_batch_with_buffer(
             shreds,
+            merkle_root,
             must_match_signatures,
             &mut self.parity_buffer,
         )
@@ -1029,7 +1039,7 @@ mod tests {
             );
             (
                 shred_recovery_context.is_stricter_shred_validation_active(slot),
-                shred_recovery_context.rebuild_erasure_batch(subset),
+                shred_recovery_context.rebuild_erasure_batch(subset, merkle_root),
             )
         };
 

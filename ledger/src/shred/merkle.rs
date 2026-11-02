@@ -752,10 +752,9 @@ impl ErasureBatch {
 }
 
 // Common header of the coding shred at position 0 of an erasure batch, along
-// with the Merkle root and chained Merkle root of the batch.
+// with the chained Merkle root of the batch.
 struct ReferenceHeaders {
     common_header: ShredCommonHeader,
-    merkle_root: Hash,
     chained_merkle_root: Option<Hash>,
 }
 
@@ -803,7 +802,6 @@ fn get_reference_headers(shreds: &[Shred]) -> Result<ReferenceHeaders, Error> {
 
     Ok(ReferenceHeaders {
         common_header,
-        merkle_root: shred.merkle_root()?,
         chained_merkle_root: shred.chained_merkle_root().ok(),
     })
 }
@@ -813,11 +811,15 @@ pub(super) fn rebuild_erasure_batch(
     shreds: Vec<Shred>,
     must_match_signatures: bool,
 ) -> Result<ErasureBatch, Error> {
-    rebuild_erasure_batch_with_buffer(shreds, must_match_signatures, &mut Vec::new())
+    let merkle_root = shreds
+        .first()
+        .ok_or(Error::from(TooFewShardsPresent))?
+        .merkle_root()?;
+    rebuild_erasure_batch_with_buffer(shreds, merkle_root, must_match_signatures, &mut Vec::new())
 }
 
 /// Rebuilds the whole erasure batch from a subset of its shreds, and verifies
-/// that the rebuilt Merkle tree matches the signed Merkle root.
+/// that the rebuilt Merkle tree's root matches `merkle_root`.
 ///
 /// Coding shreds need not be present: if all data shreds are given, coding
 /// shreds are re-encoded from them.
@@ -830,6 +832,7 @@ pub(super) fn rebuild_erasure_batch(
 /// `parity_buffer` is scratch space for the parity check, reused across calls.
 pub(super) fn rebuild_erasure_batch_with_buffer(
     mut shreds: Vec<Shred>,
+    merkle_root: Hash,
     must_match_signatures: bool,
     parity_buffer: &mut Vec<u8>,
 ) -> Result<ErasureBatch, Error> {
@@ -841,7 +844,6 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
     }
     let ReferenceHeaders {
         common_header,
-        merkle_root,
         chained_merkle_root,
     } = get_reference_headers(&shreds)?;
     debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
@@ -937,9 +939,6 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
             // Sigverify checks each shred against the root derived from its own proof.
             // Signatures need not match after SIMD-0504, so a received leaf may match the
             // tree while its proof derives a different Merkle root. Force proofs to match.
-            //
-            // TODO: Pass the FEC set's root from MerkleRootMeta in as the expected
-            // root instead of deriving it from the reference shred.
             if !shred.merkle_proof()?.map(Some).eq(proof.map(Result::ok)) {
                 return Err(Error::InvalidMerkleRoot);
             }
@@ -2169,10 +2168,12 @@ mod test {
             (&valid, SHREDS_PER_FEC_BLOCK, Ok(())),
         ] {
             let subset = batch[..num_shreds].to_vec();
+            let merkle_root = subset[0].merkle_root().expect("subset holds merkle shreds");
             // Each batch carries a single signature, so either mode works here.
             let must_match_signatures = true;
             let rebuilt = rebuild_erasure_batch_with_buffer(
                 subset,
+                merkle_root,
                 must_match_signatures,
                 &mut parity_buffer,
             )
