@@ -1658,7 +1658,7 @@ mod tests {
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 1, &bpf_loader::ID),
+                AccountSharedData::new_with_data(1, vec![0; 1], &bpf_loader::ID),
             )],
             Rent::default(),
             4,
@@ -2297,11 +2297,10 @@ mod tests {
             if account_exists {
                 // Even if the account exists owned by the native loader,
                 // the invariant should hold.
-                mock_bank
-                    .account_shared_data
-                    .write()
-                    .unwrap()
-                    .insert(key, AccountSharedData::new(1, 1, &native_loader::id()));
+                mock_bank.account_shared_data.write().unwrap().insert(
+                    key,
+                    AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id()),
+                );
             }
 
             let program_cache_for_tx_batch = batch_processor

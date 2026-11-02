@@ -249,7 +249,7 @@ fn rent_exempt_lamports(space: usize) -> u64 {
 
 #[cfg(feature = "sbf_rust")]
 fn rent_exempt_account(space: usize, owner: &Pubkey) -> AccountSharedData {
-    AccountSharedData::new(rent_exempt_lamports(space), space, owner)
+    AccountSharedData::new_with_data(rent_exempt_lamports(space), vec![0; space], owner)
 }
 
 #[test]
@@ -560,7 +560,7 @@ fn test_program_sbf_duplicate_accounts() {
         let payer_pubkey = Pubkey::new_unique();
         let payee_pubkey = Pubkey::new_unique();
         let pubkey = Pubkey::new_unique();
-        let account = Account::new(10, 1, &program_id);
+        let account = Account::new_with_data(10, vec![0; 1], &program_id);
 
         let account_metas = vec![
             AccountMeta::new(payer_pubkey, true),
@@ -574,7 +574,10 @@ fn test_program_sbf_duplicate_accounts() {
             let mut accounts = program_accounts.clone();
             accounts.extend([
                 (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
-                (payee_pubkey, Account::new(10, 1, &program_id)),
+                (
+                    payee_pubkey,
+                    Account::new_with_data(10, vec![0; 1], &program_id),
+                ),
                 (pubkey, account.clone()),
             ]);
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
@@ -623,8 +626,11 @@ fn test_program_sbf_duplicate_accounts() {
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.extend([
             (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
-            (payee_pubkey, Account::new(10, 1, &program_id)),
-            (pubkey, Account::new(10, 1, &program_id)),
+            (
+                payee_pubkey,
+                Account::new_with_data(10, vec![0; 1], &program_id),
+            ),
+            (pubkey, Account::new_with_data(10, vec![0; 1], &program_id)),
         ]);
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
@@ -823,11 +829,16 @@ fn test_program_sbf_invoke_sanity() {
             .unwrap();
 
         let argument_keypair = Keypair::new();
-        let account = AccountSharedData::new(ARGUMENT_LAMPORTS, 100, &invoke_program_id);
+        let account =
+            AccountSharedData::new_with_data(ARGUMENT_LAMPORTS, vec![0; 100], &invoke_program_id);
         bank.store_account(&argument_keypair.pubkey(), &account);
 
         let invoked_argument_keypair = Keypair::new();
-        let account = AccountSharedData::new(INVOKED_ARGUMENT_LAMPORTS, 10, &invoked_program_id);
+        let account = AccountSharedData::new_with_data(
+            INVOKED_ARGUMENT_LAMPORTS,
+            vec![0; 10],
+            &invoked_program_id,
+        );
         bank.store_account(&invoked_argument_keypair.pubkey(), &account);
 
         // Covers the two `CREATE_ACCOUNT_LAMPORTS` CPIs and stays rent-exempt.
@@ -1010,11 +1021,18 @@ fn test_program_sbf_invoke_sanity() {
         assert!(bank.feature_set.snapshot().raise_cpi_nesting_limit_to_8);
         {
             // Reset the account balances for `ARGUMENT` and `INVOKED_ARGUMENT`
-            let account = AccountSharedData::new(ARGUMENT_LAMPORTS, 100, &invoke_program_id);
+            let account = AccountSharedData::new_with_data(
+                ARGUMENT_LAMPORTS,
+                vec![0; 100],
+                &invoke_program_id,
+            );
             bank.store_account(&argument_keypair.pubkey(), &account);
 
-            let account =
-                AccountSharedData::new(INVOKED_ARGUMENT_LAMPORTS, 10, &invoked_program_id);
+            let account = AccountSharedData::new_with_data(
+                INVOKED_ARGUMENT_LAMPORTS,
+                vec![0; 10],
+                &invoked_program_id,
+            );
             bank.store_account(&invoked_argument_keypair.pubkey(), &account);
         }
         do_invoke_success(
@@ -1799,7 +1817,10 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -2617,7 +2638,10 @@ fn test_program_sbf_ro_account_modify() {
 
     let argument_pubkey = Pubkey::new_unique();
     let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
-    accounts.push((argument_pubkey, Account::new(42, 100, &program_id)));
+    accounts.push((
+        argument_pubkey,
+        Account::new_with_data(42, vec![0; 100], &program_id),
+    ));
 
     let account_metas = vec![
         AccountMeta::new_readonly(argument_pubkey, false),
@@ -2674,7 +2698,7 @@ fn test_program_sbf_realloc() {
         let mut bump = 0;
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
-        let account = AccountSharedData::new(START_BALANCE, 5, &program_id);
+        let account = AccountSharedData::new_with_data(START_BALANCE, vec![0; 5], &program_id);
         bank.store_account(&pubkey, &account);
 
         // Realloc RO account
@@ -3094,7 +3118,7 @@ fn test_program_sbf_realloc_invoke() {
     let mut bump = 0;
     let keypair = Keypair::new();
     let pubkey = keypair.pubkey().clone();
-    let account = AccountSharedData::new(START_BALANCE, 5, &realloc_program_id);
+    let account = AccountSharedData::new_with_data(START_BALANCE, vec![0; 5], &realloc_program_id);
     bank.store_account(&pubkey, &account);
     let invoke_keypair = Keypair::new();
     let invoke_pubkey = invoke_keypair.pubkey().clone();
@@ -3350,7 +3374,8 @@ fn test_program_sbf_realloc_invoke() {
     assert_eq!(0, data.len());
 
     // Realloc to 100 and check via CPI
-    let invoke_account = AccountSharedData::new(START_BALANCE, 5, &realloc_invoke_program_id);
+    let invoke_account =
+        AccountSharedData::new_with_data(START_BALANCE, vec![0; 5], &realloc_invoke_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
     bank_client
         .send_and_confirm_message(
@@ -4413,7 +4438,7 @@ fn test_cpi_invalid_account_info_pointers() {
             TEST_CPI_INVALID_OWNER_POINTER,
             TEST_CPI_INVALID_DATA_POINTER,
         ] {
-            let account = AccountSharedData::new(42, 5, invoke_program_id);
+            let account = AccountSharedData::new_with_data(42, vec![0; 5], invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
             let instruction = Instruction::new_with_bytes(
                 *invoke_program_id,
@@ -4482,7 +4507,7 @@ fn test_cpi_invalid_account_info_rc() {
 
         for invoke_program_id in &program_ids {
             for ix in [TEST_CPI_INVALID_LAMPORTS_RC, TEST_CPI_INVALID_DATA_RC] {
-                let account = AccountSharedData::new(42, 5, invoke_program_id);
+                let account = AccountSharedData::new_with_data(42, vec![0; 5], invoke_program_id);
                 bank.store_account(&account_keypair.pubkey(), &account);
                 let instruction = Instruction::new_with_bytes(
                     *invoke_program_id,
@@ -5402,7 +5427,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 AccountMeta::new(account_keypair.pubkey(), false),
             ];
 
-            let account = AccountSharedData::new(42, 1024, &program_id);
+            let account = AccountSharedData::new_with_data(42, vec![0; 1024], &program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
@@ -5484,7 +5509,10 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -5543,7 +5571,10 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
