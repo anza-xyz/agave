@@ -9,7 +9,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client_api::filter::RpcFilterType,
     solana_runtime::{
-        bank::{TransactionLogCollectorConfig, TransactionLogCollectorFilter},
+        bank::{BankId, TransactionLogCollectorConfig, TransactionLogCollectorFilter},
         bank_forks::BankForks,
     },
     solana_signature::Signature,
@@ -343,12 +343,29 @@ impl SubscriptionControl {
     }
 }
 
+/// The last account write, or the slot cursor for other subscription types.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LastNotifiedSlot {
+    pub slot: Slot,
+    /// Only processed account subscriptions need to distinguish same-slot bank versions.
+    pub bank_id: Option<BankId>,
+}
+
+impl From<Slot> for LastNotifiedSlot {
+    fn from(slot: Slot) -> Self {
+        Self {
+            slot,
+            bank_id: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SubscriptionInfo {
     id: SubscriptionId,
     params: SubscriptionParams,
     method: &'static str,
-    pub last_notified_slot: RwLock<Slot>,
+    pub last_notified_slot: RwLock<LastNotifiedSlot>,
     commitment: Option<CommitmentConfig>,
 }
 
@@ -474,7 +491,7 @@ impl SubscriptionsTracker {
         &mut self,
         params: SubscriptionParams,
         id: SubscriptionId,
-        last_notified_slot: impl FnOnce() -> Slot,
+        last_notified_slot: impl FnOnce() -> LastNotifiedSlot,
     ) {
         let info = Arc::new(SubscriptionInfo {
             last_notified_slot: RwLock::new(last_notified_slot()),
@@ -817,7 +834,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut tracker = SubscriptionsTracker::new(bank_forks);
 
-        tracker.subscribe(SubscriptionParams::Slot, 0.into(), || 0);
+        tracker.subscribe(SubscriptionParams::Slot, 0.into(), || 0.into());
         let info = tracker
             .node_progress_watchers
             .get(&SubscriptionParams::Slot)
@@ -826,7 +843,7 @@ mod tests {
         assert_eq!(info.params, SubscriptionParams::Slot);
         assert_eq!(info.method, SubscriptionParams::Slot.method());
         assert_eq!(info.id, SubscriptionId::from(0));
-        assert_eq!(*info.last_notified_slot.read().unwrap(), 0);
+        assert_eq!(*info.last_notified_slot.read().unwrap(), 0.into());
 
         let account_params = SubscriptionParams::Account(AccountSubscriptionParams {
             pubkey: spl_generic_token::token::id(),
@@ -834,7 +851,7 @@ mod tests {
             encoding: UiAccountEncoding::Base64Zstd,
             data_slice: None,
         });
-        tracker.subscribe(account_params.clone(), 1.into(), || 42);
+        tracker.subscribe(account_params.clone(), 1.into(), || 42.into());
 
         let info = tracker
             .commitment_watchers
@@ -844,7 +861,7 @@ mod tests {
         assert_eq!(info.params, account_params);
         assert_eq!(info.method, account_params.method());
         assert_eq!(info.id, SubscriptionId::from(1));
-        assert_eq!(*info.last_notified_slot.read().unwrap(), 42);
+        assert_eq!(*info.last_notified_slot.read().unwrap(), 42.into());
     }
 
     #[test]
@@ -864,7 +881,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut tracker = SubscriptionsTracker::new(bank_forks);
 
-        tracker.subscribe(SubscriptionParams::Slot, 0.into(), || 0);
+        tracker.subscribe(SubscriptionParams::Slot, 0.into(), || 0.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 1));
         tracker.unsubscribe(SubscriptionParams::Slot, 0.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
@@ -875,7 +892,7 @@ mod tests {
             encoding: UiAccountEncoding::Base64Zstd,
             data_slice: None,
         });
-        tracker.subscribe(account_params.clone(), 1.into(), || 0);
+        tracker.subscribe(account_params.clone(), 1.into(), || 0.into());
         assert_eq!(counts(&tracker), (0, 1, 0, 0));
         tracker.unsubscribe(account_params, 1.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
@@ -886,7 +903,7 @@ mod tests {
             encoding: UiAccountEncoding::Base64Zstd,
             data_slice: None,
         });
-        tracker.subscribe(account_params2.clone(), 2.into(), || 0);
+        tracker.subscribe(account_params2.clone(), 2.into(), || 0.into());
         assert_eq!(counts(&tracker), (0, 0, 1, 0));
         tracker.unsubscribe(account_params2, 2.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
@@ -896,14 +913,14 @@ mod tests {
             commitment: CommitmentConfig::processed(),
             enable_received_notification: false,
         });
-        tracker.subscribe(signature_params.clone(), 3.into(), || 0);
+        tracker.subscribe(signature_params.clone(), 3.into(), || 0.into());
         assert_eq!(counts(&tracker), (1, 1, 0, 0));
         tracker.unsubscribe(signature_params, 3.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
 
         // Deprecated vote subscriptions retain a token for unsubscribe
         // compatibility, but are deliberately absent from all notification indexes.
-        tracker.subscribe(SubscriptionParams::Vote, 4.into(), || 0);
+        tracker.subscribe(SubscriptionParams::Vote, 4.into(), || 0.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
         tracker.unsubscribe(SubscriptionParams::Vote, 4.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));

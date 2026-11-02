@@ -32,7 +32,7 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, bank_hash_details},
+        bank::{Bank, BankId, bank_hash_details},
         leader_schedule_utils::{
             first_of_consecutive_leader_slots, last_of_consecutive_leader_slots, leader_slot_index,
         },
@@ -54,8 +54,8 @@ use {
 mod stats;
 
 /// Banks that have completed replay, but are yet to be voted on
-/// in the form of (block, parent block)
-pub(crate) type PendingBlocks = BTreeMap<Slot, Vec<(Block, Block)>>;
+/// in the form of (block, parent block, bank id)
+pub(crate) type PendingBlocks = BTreeMap<Slot, Vec<(Block, Block, BankId)>>;
 
 /// Inputs for the event handler thread
 pub(crate) struct EventHandlerContext {
@@ -300,6 +300,7 @@ impl EventHandler {
                 )
                 .map_err(EventLoopError::ChannelDisconnected)?;
                 let (block, parent_block) = Self::get_block_parent_block(&bank);
+                let bank_id = bank.bank_id();
                 info!(
                     "{}: Block {block:?} parent {parent_block:?}",
                     local_context.my_pubkey
@@ -308,6 +309,7 @@ impl EventHandler {
                     &local_context.my_pubkey,
                     block,
                     parent_block,
+                    bank_id,
                     &mut local_context.pending_blocks,
                     vctx,
                     &mut votes,
@@ -319,11 +321,11 @@ impl EventHandler {
                         &mut votes,
                     )?;
                 } else if !vctx.vote_history.voted(slot) {
-                    local_context
-                        .pending_blocks
-                        .entry(slot)
-                        .or_default()
-                        .push((block, parent_block));
+                    local_context.pending_blocks.entry(slot).or_default().push((
+                        block,
+                        parent_block,
+                        bank_id,
+                    ));
                 }
                 Self::check_rootable_blocks_and_bank_hash_mismatches(
                     &local_context.my_pubkey,
@@ -769,6 +771,7 @@ impl EventHandler {
         my_pubkey: &Pubkey,
         Block { slot, block_id }: Block,
         parent_block: Block,
+        bank_id: BankId,
         pending_blocks: &mut PendingBlocks,
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
@@ -809,6 +812,7 @@ impl EventHandler {
             my_pubkey,
             CommitmentType::Notarize,
             slot,
+            bank_id,
             &voting_context.commitment_sender,
         );
         pending_blocks.remove(&slot);
@@ -826,17 +830,18 @@ impl EventHandler {
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
     ) -> Result<(), VoteError> {
-        let blocks_to_check: Vec<(Block, Block)> = pending_blocks
+        let blocks_to_check: Vec<(Block, Block, BankId)> = pending_blocks
             .values()
             .flat_map(|blocks| blocks.iter())
             .copied()
             .collect();
 
-        for (block, parent_block) in blocks_to_check {
+        for (block, parent_block, bank_id) in blocks_to_check {
             Self::try_notar(
                 my_pubkey,
                 block,
                 parent_block,
+                bank_id,
                 pending_blocks,
                 voting_context,
                 votes,
@@ -1581,6 +1586,15 @@ mod tests {
             let commitment = self.commitment_receiver.try_recv().unwrap();
             assert_eq!(commitment.commitment_type, expected_type);
             assert_eq!(commitment.slot, expected_slot);
+            assert_eq!(
+                commitment.bank_id,
+                self.bank_forks
+                    .read()
+                    .unwrap()
+                    .get(expected_slot)
+                    .unwrap()
+                    .bank_id()
+            );
         }
 
         fn check_no_vote_or_commitment(&mut self) {
@@ -2467,10 +2481,10 @@ mod tests {
             restored_root + 1,
             voted_slot,
         ] {
-            test_context
-                .local_context
-                .pending_blocks
-                .insert(slot, vec![(Block::new_unique(slot), parent_block)]);
+            test_context.local_context.pending_blocks.insert(
+                slot,
+                vec![(Block::new_unique(slot), parent_block, BankId::default())],
+            );
         }
         test_context.local_context.standstill_slot = Some(restored_root - 1);
 
@@ -2557,10 +2571,10 @@ mod tests {
             effective_root + 1,
             voted_slot,
         ] {
-            test_context
-                .local_context
-                .pending_blocks
-                .insert(slot, vec![(Block::new_unique(slot), parent_block)]);
+            test_context.local_context.pending_blocks.insert(
+                slot,
+                vec![(Block::new_unique(slot), parent_block, BankId::default())],
+            );
         }
 
         test_context

@@ -5345,14 +5345,21 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         progress: &mut ProgressMap,
     ) {
-        if !command.matches_frozen_bank(&context.bank_forks.read().unwrap()) {
-            warn!(
-                "{my_pubkey}: Ignoring stale SetRoot for slot {} block_id {}; the matching frozen \
-                 bank is no longer newer than the applied root",
-                command.new_root.slot, command.new_root.block_id,
-            );
-            return;
-        }
+        let bank_id = {
+            let bank_forks = context.bank_forks.read().unwrap();
+            if !command.matches_frozen_bank(&bank_forks) {
+                warn!(
+                    "{my_pubkey}: Ignoring stale SetRoot for slot {} block_id {}; the matching \
+                     frozen bank is no longer newer than the applied root",
+                    command.new_root.slot, command.new_root.block_id,
+                );
+                return;
+            }
+            bank_forks
+                .get(command.new_root.slot)
+                .expect("matching frozen bank must exist")
+                .bank_id()
+        };
 
         let new_root = command.new_root.slot;
         root_utils::check_and_handle_new_root(
@@ -5378,6 +5385,7 @@ impl ReplayStage {
             my_pubkey,
             CommitmentType::Rooted,
             new_root,
+            bank_id,
             &context.votor_commitment_sender,
         );
     }

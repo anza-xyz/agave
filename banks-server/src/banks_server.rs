@@ -106,7 +106,7 @@ impl BanksServer {
         {
             // ensure that the commitment cache and bank are synced
             let mut w_block_commitment_cache = block_commitment_cache.write().unwrap();
-            w_block_commitment_cache.set_all_slots(slot, slot);
+            w_block_commitment_cache.set_all_slots(slot, bank.bank_id(), slot);
         }
         let server_bank_forks = bank_forks.clone();
         Builder::new()

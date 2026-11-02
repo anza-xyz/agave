@@ -1467,6 +1467,8 @@ impl ProgramTestContext {
         let bank_at_warp_slot = Bank::new_from_parent(warp_bank, leader, warp_slot);
         self.bank_forks.write().unwrap().insert(bank_at_warp_slot);
 
+        let bank = self.bank_forks.read().unwrap().working_bank();
+
         // Update block commitment cache, otherwise banks server will poll at
         // the wrong slot
         let mut w_block_commitment_cache = self.block_commitment_cache.write().unwrap();
@@ -1474,9 +1476,8 @@ impl ProgramTestContext {
         // in a testing environment, the root bank never updates after a warp.
         // The ticking thread only updates the working bank, and never the root
         // bank.
-        w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
+        w_block_commitment_cache.set_all_slots(warp_slot, bank.bank_id(), warp_slot);
 
-        let bank = self.bank_forks.read().unwrap().working_bank();
         self.last_blockhash = bank.last_blockhash();
         Ok(())
     }
@@ -1512,6 +1513,8 @@ impl ProgramTestContext {
         warp_bank.force_reward_interval_end_for_tests();
         self.bank_forks.write().unwrap().insert(warp_bank);
 
+        let bank = self.bank_forks.read().unwrap().working_bank();
+
         // Update block commitment cache, otherwise banks server will poll at
         // the wrong slot
         let mut w_block_commitment_cache = self.block_commitment_cache.write().unwrap();
@@ -1519,9 +1522,8 @@ impl ProgramTestContext {
         // in a testing environment, the root bank never updates after a warp.
         // The ticking thread only updates the working bank, and never the root
         // bank.
-        w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
+        w_block_commitment_cache.set_all_slots(warp_slot, bank.bank_id(), warp_slot);
 
-        let bank = self.bank_forks.read().unwrap().working_bank();
         self.last_blockhash = bank.last_blockhash();
         Ok(())
     }

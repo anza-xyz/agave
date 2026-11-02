@@ -11,7 +11,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::rpc_subscriptions::RpcSubscriptions,
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, BankId},
         commitment::{BlockCommitment, BlockCommitmentCache, CommitmentSlots, VOTE_THRESHOLD_SIZE},
     },
     std::{
@@ -147,6 +147,7 @@ impl AggregateCommitmentService {
                         block_commitment_cache,
                         data.commitment_type,
                         data.slot,
+                        data.bank_id,
                     )
                 }
                 default(Duration::from_secs(1)) => continue
@@ -185,13 +186,14 @@ impl AggregateCommitmentService {
         block_commitment_cache: &RwLock<BlockCommitmentCache>,
         update_type: AlpenglowCommitmentType,
         slot: Slot,
+        bank_id: BankId,
     ) -> CommitmentSlots {
         let mut w_block_commitment_cache = block_commitment_cache.write().unwrap();
 
         match update_type {
             AlpenglowCommitmentType::Notarize => {
                 // Notarize (our first round vote in favor of a block) satisfies the Processed commitment level
-                w_block_commitment_cache.set_slot(slot);
+                w_block_commitment_cache.set_slot(slot, bank_id);
             }
             AlpenglowCommitmentType::Rooted => {
                 // There is no distinction of OC, root, or finalized in Alpengow commitment.
@@ -217,16 +219,19 @@ impl AggregateCommitmentService {
 
         let highest_super_majority_root =
             get_highest_super_majority_root(rooted_stake, aggregation_data.total_stake);
+        let bank_id = aggregation_data.bank.bank_id();
 
         let mut new_block_commitment = BlockCommitmentCache::new(
             block_commitment,
             aggregation_data.total_stake,
             CommitmentSlots {
                 slot: aggregation_data.bank.slot(),
+                bank_id,
                 root: aggregation_data.root,
                 highest_confirmed_slot: aggregation_data.root,
                 highest_super_majority_root,
             },
+            bank_id,
         );
         let highest_confirmed_slot = new_block_commitment.calculate_highest_confirmed_slot();
         new_block_commitment.set_highest_confirmed_slot(highest_confirmed_slot);
@@ -352,6 +357,38 @@ mod tests {
         assert_eq!(get_highest_super_majority_root(rooted_stake, 10), 0);
         let rooted_stake = vec![(1, 5), (0, 10), (2, 5), (1, 4)];
         assert_eq!(get_highest_super_majority_root(rooted_stake, 10), 1);
+    }
+
+    #[test]
+    fn test_alpenglow_update_commitment_cache_tracks_processed_bank_id() {
+        let block_commitment_cache = RwLock::new(BlockCommitmentCache::new_for_tests());
+        let processed_bank_id = BankId::new(42);
+        AggregateCommitmentService::alpenglow_update_commitment_cache(
+            &block_commitment_cache,
+            AlpenglowCommitmentType::Notarize,
+            3,
+            processed_bank_id,
+        );
+
+        {
+            let cache = block_commitment_cache.read().unwrap();
+            assert_eq!(cache.slot(), 3);
+            assert_eq!(cache.bank_id(), processed_bank_id);
+        }
+
+        AggregateCommitmentService::alpenglow_update_commitment_cache(
+            &block_commitment_cache,
+            AlpenglowCommitmentType::Rooted,
+            2,
+            BankId::new(43),
+        );
+
+        let cache = block_commitment_cache.read().unwrap();
+        assert_eq!(cache.slot(), 3);
+        assert_eq!(cache.bank_id(), processed_bank_id);
+        assert_eq!(cache.highest_confirmed_slot(), 2);
+        assert_eq!(cache.root(), 2);
+        assert_eq!(cache.highest_super_majority_root(), 2);
     }
 
     #[test]
@@ -703,6 +740,7 @@ mod tests {
         bank34.process_transaction(&vote33).unwrap();
 
         let working_bank = bank_forks.read().unwrap().working_bank();
+        let working_bank_id = working_bank.bank_id();
         let vote_state = get_vote_state(vote_pubkey, &working_bank);
         let root = vote_state.root_slot.unwrap();
         let ancestors = working_bank.status_cache_ancestors();
@@ -720,6 +758,10 @@ mod tests {
             .read()
             .unwrap()
             .highest_super_majority_root();
+        assert_eq!(
+            block_commitment_cache.read().unwrap().bank_id(),
+            working_bank_id
+        );
         bank_forks
             .write()
             .unwrap()

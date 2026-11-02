@@ -757,7 +757,10 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     // A root replay didn't apply is never published to the commitment cache.
     assert!(votor_commitment_receiver.is_empty());
 
-    let block_id = bank_forks.read().unwrap().block_id(1).unwrap();
+    let (block_id, bank_id) = {
+        let bank = bank_forks.read().unwrap().get(1).unwrap();
+        (bank.block_id().unwrap(), bank.bank_id())
+    };
     let matching_command = SetRootCommand {
         new_root: Block { slot: 1, block_id },
     };
@@ -774,6 +777,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
         CommitmentAggregationData {
             commitment_type: CommitmentType::Rooted,
             slot: 1,
+            bank_id,
         }
     );
     assert!(votor_commitment_receiver.is_empty());
@@ -3027,6 +3031,216 @@ fn test_switch_bank_purges_cleared_descendants() {
     assert!(bank_forks.read().unwrap().get(1).is_none());
     assert!(bank_forks.read().unwrap().get(2).is_none());
     assert!(!blockstore.is_dead(1));
+}
+
+enum AccountNotificationBankRemoval {
+    TowerRepair,
+    AlpenglowSwitch,
+}
+
+#[test_case::test_case(AccountNotificationBankRemoval::TowerRepair; "tower")]
+#[test_case::test_case(AccountNotificationBankRemoval::AlpenglowSwitch; "alpenglow_switch")]
+#[tokio::test]
+async fn test_bank_removal_corrects_processed_account_notifications(
+    removal: AccountNotificationBankRemoval,
+) {
+    use {
+        solana_account::AccountSharedData,
+        solana_account_decoder::UiAccountEncoding,
+        solana_commitment_config::CommitmentConfig,
+        solana_rpc::rpc_subscription_tracker::{AccountSubscriptionParams, SubscriptionParams},
+        solana_runtime::commitment::CommitmentSlots,
+    };
+
+    let ReplayBlockstoreComponents {
+        vote_simulator:
+            VoteSimulator {
+                bank_forks,
+                mut progress,
+                ..
+            },
+        blockstore,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let root = bank_forks.read().unwrap().root_bank();
+    let subscriptions = Arc::new(RpcSubscriptions::default_with_bank_forks(
+        Arc::new(AtomicU64::default()),
+        bank_forks.clone(),
+    ));
+    let mut receiver = subscriptions.control().broadcast_receiver();
+    let accounts = [Pubkey::new_unique(), Pubkey::new_unique()];
+    let tokens = accounts.map(|pubkey| {
+        subscriptions
+            .control()
+            .subscribe(SubscriptionParams::Account(AccountSubscriptionParams {
+                pubkey,
+                commitment: CommitmentConfig::processed(),
+                encoding: UiAccountEncoding::Base64,
+                data_slice: None,
+            }))
+            .unwrap()
+    });
+    let slot_token = subscriptions
+        .control()
+        .subscribe(SubscriptionParams::Slot)
+        .unwrap();
+    subscriptions.notify_slot(0, 0, 0);
+    let ready = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready.subscription_id, slot_token.id());
+
+    let owner = Pubkey::new_unique();
+    let bank1 = Bank::new_from_parent(root.clone(), SlotLeader::default(), 1);
+    bank1.store_account(&accounts[0], &AccountSharedData::new(20, 0, &owner));
+    bank1.freeze();
+    let bank1 = bank_forks
+        .write()
+        .unwrap()
+        .insert(bank1)
+        .clone_without_scheduler();
+    let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+    bank2.store_account(&accounts[1], &AccountSharedData::new(40, 0, &owner));
+    bank2.freeze();
+    bank_forks.write().unwrap().insert(bank2);
+    blockstore.add_tree(tr(0) / (tr(1) / tr(2)), false, false, 3, Hash::default());
+    let queued = CommitmentSlots {
+        slot: 2,
+        bank_id: bank_forks.read().unwrap().get(2).unwrap().bank_id(),
+        ..CommitmentSlots::default()
+    };
+    subscriptions.notify_subscribers(queued);
+    for _ in 0..2 {
+        let notification = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let index = tokens
+            .iter()
+            .position(|token| token.id() == notification.subscription_id)
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
+        assert_eq!(
+            value["params"]["result"]["value"]["lamports"],
+            [20, 40][index]
+        );
+    }
+
+    match removal {
+        AccountNotificationBankRemoval::AlpenglowSwitch => {
+            let block_id = Hash::new_unique();
+            blockstore
+                .set_double_merkle_root(1, BlockLocation::Original, block_id)
+                .unwrap();
+            blockstore.set_dead_slot(1).unwrap();
+            let latest_switch_request = LatestSwitchRequest::default();
+            latest_switch_request.try_advance(SwitchBankEvent::Switch {
+                block: Block {
+                    slot: 1,
+                    block_id: block_id.into(),
+                },
+            });
+            let mut pending_switch = None;
+            ReplayStage::process_switch_bank_events(
+                &Pubkey::new_unique(),
+                &latest_switch_request,
+                &mut pending_switch,
+                &blockstore,
+                &bank_forks,
+                &mut progress,
+                &mut Vec::new(),
+                None,
+            )
+            .unwrap();
+            assert!(pending_switch.is_none());
+        }
+        AccountNotificationBankRemoval::TowerRepair => {
+            let mut ancestors = bank_forks.read().unwrap().ancestors();
+            let mut descendants = bank_forks.read().unwrap().descendants();
+            let (sender, receiver) = bounded(1);
+            ReplayStage::dump_then_repair_correct_slots(
+                &mut HashMap::from([(1, Hash::new_unique())]),
+                &mut ancestors,
+                &mut descendants,
+                &mut progress,
+                &bank_forks,
+                &blockstore,
+                None,
+                &mut PurgeRepairSlotCounter::default(),
+                &sender,
+                &Pubkey::new_unique(),
+                &leader_schedule_cache,
+            );
+            assert_eq!(receiver.recv().unwrap().len(), 1);
+        }
+    }
+    assert!(bank_forks.read().unwrap().get(1).is_none());
+    assert!(bank_forks.read().unwrap().get(2).is_none());
+
+    let replacement1 = Bank::new_from_parent(root, SlotLeader::default(), 1);
+    replacement1.store_account(&accounts[0], &AccountSharedData::new(30, 0, &owner));
+    let replacement1 = bank_forks
+        .write()
+        .unwrap()
+        .insert(replacement1)
+        .clone_without_scheduler();
+    let replacement2 = Bank::new_from_parent(replacement1, SlotLeader::default(), 2);
+    replacement2.store_account(&accounts[1], &AccountSharedData::new(50, 0, &owner));
+    let replacement2 = bank_forks
+        .write()
+        .unwrap()
+        .insert(replacement2)
+        .clone_without_scheduler();
+    let child = Bank::new_from_parent(replacement2, SlotLeader::default(), 3);
+    child.freeze();
+    bank_forks.write().unwrap().insert(child);
+    // Stale queued work must not read a replacement, even after it has frozen.
+    subscriptions.notify_subscribers(queued);
+    subscriptions.notify_slot(3, 2, 0);
+    let barrier = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(barrier.subscription_id, slot_token.id());
+    subscriptions.notify_subscribers(CommitmentSlots {
+        slot: 3,
+        bank_id: bank_forks.read().unwrap().get(3).unwrap().bank_id(),
+        ..CommitmentSlots::default()
+    });
+    for _ in 0..2 {
+        let notification = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let index = tokens
+            .iter()
+            .position(|token| token.id() == notification.subscription_id)
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
+        assert_eq!(value["params"]["result"]["context"]["slot"], 3);
+        assert_eq!(
+            value["params"]["result"]["value"]["lamports"],
+            [30, 50][index]
+        );
+    }
+    // A subsequent bank notification must not repeat the corrections. The slot notification
+    // is a queue barrier, so this does not rely on sleeping to detect an extra account update.
+    subscriptions.notify_subscribers(CommitmentSlots {
+        slot: 3,
+        bank_id: bank_forks.read().unwrap().get(3).unwrap().bank_id(),
+        ..CommitmentSlots::default()
+    });
+    subscriptions.notify_slot(3, 2, 0);
+    let next = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.subscription_id, slot_token.id());
+    assert!(receiver.try_recv().is_err());
 }
 
 #[test]
