@@ -8693,3 +8693,65 @@ fn test_first_shred_slots_rejected_shreds() {
     );
     assert!(blockstore.get_index(slot).unwrap().is_none());
 }
+
+#[test]
+fn test_slots_with_shreds_after_reopen() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    {
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let alternate = BlockLocation::Alternate {
+            block_id: Hash::new_unique(),
+        };
+        for slot in [4, 8, 12, 16] {
+            let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+            let shred = if slot == 8 { &coding[0] } else { &data[0] };
+            let location = if slot == 12 {
+                alternate
+            } else {
+                BlockLocation::Original
+            };
+            insert_first_shred_test_batch(&blockstore, vec![(shred.clone(), true, location)]);
+            if slot == 16 {
+                // The same slot may be present in several locations.
+                insert_first_shred_test_batch(
+                    &blockstore,
+                    vec![
+                        (shred.clone(), true, alternate),
+                        (
+                            shred.clone(),
+                            true,
+                            BlockLocation::Alternate {
+                                block_id: Hash::new_unique(),
+                            },
+                        ),
+                    ],
+                );
+            }
+        }
+        assert!(blockstore.meta(8).unwrap().is_none());
+        assert!(blockstore.get_index(12).unwrap().is_none());
+        // Empty indexes and orphan metadata do not count as receiving a shred.
+        blockstore.index_cf.put(20, &Index::new(20)).unwrap();
+        blockstore
+            .alt_index_cf
+            .put((20, Hash::new_unique()), &Index::new(20))
+            .unwrap();
+        blockstore.put_meta(24, &SlotMeta::new_orphan(24)).unwrap();
+    }
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    assert_eq!(
+        blockstore.slots_with_shreds_after(0).unwrap(),
+        vec![4, 8, 12, 16],
+    );
+    assert_eq!(
+        blockstore.slots_with_shreds_after(4).unwrap(),
+        vec![8, 12, 16],
+    );
+    assert!(blockstore.slots_with_shreds_after(16).unwrap().is_empty());
+    assert!(
+        blockstore
+            .slots_with_shreds_after(Slot::MAX)
+            .unwrap()
+            .is_empty()
+    );
+}

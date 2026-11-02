@@ -29,6 +29,7 @@ use {
     crossbeam_channel::select,
     parking_lot::RwLock,
     solana_clock::Slot,
+    solana_ledger::blockstore::error::BlockstoreError,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -80,6 +81,8 @@ enum EventLoopError {
     VotingError(#[from] VoteError),
     #[error("Set identity error")]
     SetIdentityError(#[from] VoteHistoryError),
+    #[error("Failed to restore received shreds: {0}")]
+    RestoreReceivedShreds(#[from] BlockstoreError),
 }
 
 pub(crate) struct EventHandler {
@@ -162,6 +165,7 @@ impl EventHandler {
                 );
                 return Err(EventLoopError::SetIdentityError(e));
             }
+            Self::restore_received_shreds(&ctx, &vctx, &migration_status, &mut local_context)?;
             Self::send_vote_history_to_consensus_pool(&local_context.my_pubkey, &mut vctx)?;
 
             while !exit.load(Ordering::Relaxed) {
@@ -221,6 +225,28 @@ impl EventHandler {
             }
         }
 
+        Ok(())
+    }
+
+    fn restore_received_shreds(
+        ctx: &SharedContext,
+        vctx: &VotingContext,
+        migration_status: &MigrationStatus,
+        local_context: &mut LocalContext,
+    ) -> Result<(), EventLoopError> {
+        let root = vctx
+            .sharable_banks
+            .root()
+            .slot()
+            .max(vctx.vote_history.root());
+        // Insertion only reports newly populated locations, so persisted partial slots will
+        // not send another FirstShred after restart. Restore before processing any timeouts.
+        local_context.received_shred.extend(
+            ctx.blockstore
+                .slots_with_shreds_after(root)?
+                .into_iter()
+                .filter(|slot| migration_status.should_send_first_shred(*slot)),
+        );
         Ok(())
     }
 
@@ -1066,8 +1092,12 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            blockstore::Blockstore, blockstore_options::BlockstoreOptions, get_tmp_ledger_path,
+            blockstore::{Blockstore, BlockstoreInsertionMetrics},
+            blockstore_meta::BlockLocation,
+            blockstore_options::BlockstoreOptions,
+            get_tmp_ledger_path,
             leader_schedule_cache::LeaderScheduleCache,
+            shred::{ProcessShredsStats, Shred, Shredder, filter::ShredRecoveryContext},
         },
         solana_net_utils::SocketAddrSpace,
         solana_runtime::{
@@ -1079,6 +1109,7 @@ mod tests {
         },
         solana_streamer::evicting_sender::EvictingSender,
         std::{
+            borrow::Cow,
             collections::HashMap,
             fs::remove_file,
             path::PathBuf,
@@ -1086,6 +1117,7 @@ mod tests {
             time::Instant,
         },
         tempfile::TempDir,
+        test_case::test_case,
     };
 
     struct EventHandlerTestContext {
@@ -1860,6 +1892,133 @@ mod tests {
         );
         test_context.send_timeout_crashed_leader_event(8);
         test_context.check_no_vote_or_commitment();
+    }
+
+    fn first_shred_for_tests(slot: Slot, coding: bool) -> Shred {
+        Shredder::new(slot, slot - 1, 0, 0)
+            .unwrap()
+            .make_merkle_shreds_from_entries(
+                &Keypair::new(),
+                &[],
+                true,
+                Hash::new_unique(),
+                0,
+                0,
+                &mut ProcessShredsStats::default(),
+            )
+            .into_iter()
+            .find(|shred| shred.is_code() == coding)
+            .unwrap()
+    }
+
+    #[test_case(false, false; "original_data")]
+    #[test_case(true, false; "coding_only")]
+    #[test_case(false, true; "alternate_data")]
+    fn test_restore_received_shreds_after_restart(coding: bool, alternate: bool) {
+        let mut test_context = setup();
+        let slot = 4;
+        let ledger_path = TempDir::new().unwrap();
+        {
+            let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+            let location = if alternate {
+                BlockLocation::Alternate {
+                    block_id: Hash::new_unique(),
+                }
+            } else {
+                BlockLocation::Original
+            };
+            let (sender, _receiver) = bounded(1);
+            let mut recovery = ShredRecoveryContext::new(
+                sender,
+                test_context.voting_context.sharable_banks.root(),
+                0,
+            );
+            let result = blockstore
+                .insert_shreds_at_location_handle_duplicate(
+                    std::iter::once((
+                        Cow::Owned(first_shred_for_tests(slot, coding)),
+                        true,
+                        location,
+                        None,
+                    )),
+                    false,
+                    &mut recovery,
+                    &mut blockstore.new_pinnable_slice(),
+                    &mut blockstore.get_write_batch(),
+                    &|_| {},
+                    &mut BlockstoreInsertionMetrics::default(),
+                )
+                .unwrap();
+            assert_eq!(result.first_shred_slots, vec![slot]);
+            assert!(!blockstore.is_full(slot));
+        }
+        test_context.shared_context.blockstore =
+            Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        assert!(test_context.local_context.received_shred.is_empty());
+        EventHandler::restore_received_shreds(
+            &test_context.shared_context,
+            &test_context.voting_context,
+            &MigrationStatus::post_migration_status(),
+            &mut test_context.local_context,
+        )
+        .unwrap();
+
+        // No new FirstShred event is needed after reopening the ledger.
+        test_context.send_timeout_crashed_leader_event(slot);
+        test_context.check_no_vote_or_commitment();
+
+        // An empty window must still be skipped.
+        let empty_slot = 8;
+        test_context.send_timeout_crashed_leader_event(empty_slot);
+        for slot in empty_slot..=last_of_consecutive_leader_slots(empty_slot) {
+            test_context.check_for_vote(&Vote::new_skip_vote(slot));
+        }
+    }
+
+    #[test]
+    fn test_restore_received_shreds_filters_slots() {
+        let mut test_context = setup();
+        test_context
+            .shared_context
+            .blockstore
+            .insert_shreds(
+                [1, 2, 4, 8, 12].map(|slot| first_shred_for_tests(slot, false)),
+                false,
+            )
+            .unwrap();
+
+        let mut restore = |migration_status: &MigrationStatus, expected: &[Slot]| {
+            test_context.local_context.received_shred.clear();
+            EventHandler::restore_received_shreds(
+                &test_context.shared_context,
+                &test_context.voting_context,
+                migration_status,
+                &mut test_context.local_context,
+            )
+            .unwrap();
+            assert_eq!(
+                test_context.local_context.received_shred,
+                expected.iter().copied().collect(),
+            );
+        };
+        restore(&MigrationStatus::default(), &[]);
+        // Include the first slot after genesis, even though it is unaligned.
+        let migration_status = MigrationStatus::post_migration_status();
+        restore(&migration_status, &[1, 4, 8, 12]);
+
+        test_context.voting_context.vote_history.set_root(4);
+        test_context.local_context.received_shred.clear();
+        EventHandler::restore_received_shreds(
+            &test_context.shared_context,
+            &test_context.voting_context,
+            &migration_status,
+            &mut test_context.local_context,
+        )
+        .unwrap();
+        assert_eq!(
+            test_context.local_context.received_shred,
+            BTreeSet::from([8, 12])
+        );
     }
 
     #[test]

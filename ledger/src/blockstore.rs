@@ -4049,6 +4049,36 @@ impl Blockstore {
         self.index_cf.get(slot)
     }
 
+    /// Returns sorted, unique slots strictly above `root` with stored data or coding shreds
+    /// in either the original or an alternate block location.
+    pub fn slots_with_shreds_after(&self, root: Slot) -> Result<Vec<Slot>> {
+        let Some(start) = root.checked_add(1) else {
+            return Ok(Vec::new());
+        };
+        // Keep both indexes consistent while blocks move between locations.
+        let _lock = self.insert_shreds_lock.lock().unwrap();
+        let original = self
+            .index_cf
+            .iter(IteratorMode::From(start, IteratorDirection::Forward))?;
+        let alternate = self
+            .alt_index_cf
+            .iter(IteratorMode::From(
+                (start, Hash::default()),
+                IteratorDirection::Forward,
+            ))?
+            .map(|((slot, _), bytes)| (slot, bytes));
+        let mut slots = Vec::new();
+        for (slot, bytes) in original.chain(alternate) {
+            let index = cf::Index::deserialize(&bytes)?;
+            if index.data().num_shreds() != 0 || index.coding().num_shreds() != 0 {
+                slots.push(slot);
+            }
+        }
+        slots.sort_unstable();
+        slots.dedup();
+        Ok(slots)
+    }
+
     /// Get a DB pinned reference to the [`Index`] via [`IndexRef`].
     fn get_index_ref(
         &self,
