@@ -10738,7 +10738,6 @@ dependencies = [
  "agave-wake-channel",
  "anyhow",
  "assert_matches",
- "base64 0.23.1",
  "bytes",
  "chrono",
  "clap 4.5.31",
