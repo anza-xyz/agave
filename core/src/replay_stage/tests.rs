@@ -2884,7 +2884,7 @@ fn test_clear_slots_clears_status_cache_for_removed_bank() {
     assert!(bank_forks.read().unwrap().get(1).is_none());
     assert!(bank1.get_signature_status(&transfer_signature).is_some());
 
-    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
+    clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
 
     assert!(bank1.get_signature_status(&transfer_signature).is_none());
 }
@@ -2918,7 +2918,7 @@ fn test_clear_slots_propagates_transaction_status_disconnect() {
         ),
     ] {
         assert_matches!(
-            ReplayStage::clear_slots(
+            clear_slots(
                 [1],
                 &bank_forks,
                 &mut progress,

@@ -2,7 +2,8 @@
 
 use {
     super::{
-        ProcessActiveBanksContext, ReplayStage, ReplayStageError, TowerBFTStructures,
+        ProcessActiveBanksContext, ReplayStageError, TowerBFTStructures,
+        bank_cleanup::clear_slots,
         dead_slots::{
             DeadSlotLogLevel, DeadSlotNotifications, mark_hard_dead_slot,
             mark_hard_dead_slot_notifications, send_invalid_bank,
@@ -200,7 +201,7 @@ fn try_restart_slot_from_update_parent(
         send_invalid_bank(&bank, replay_vote_sender);
         bank.bank_id()
     });
-    ReplayStage::clear_slots(
+    clear_slots(
         [slot],
         bank_forks,
         progress,
@@ -433,7 +434,7 @@ pub(super) fn handle_abandoned_bank(
 
     // Clear the bank from bank_forks. It will be recreated with the correct
     // parent by generate_new_bank_forks on the next iteration.
-    ReplayStage::clear_slots(
+    clear_slots(
         [bank_slot],
         bank_forks,
         progress,
