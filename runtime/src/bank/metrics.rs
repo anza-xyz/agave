@@ -20,7 +20,6 @@ pub(crate) struct NewEpochTimings {
 pub(crate) struct RewardsMetrics {
     pub(crate) calculate_points_us: AtomicU64,
     pub(crate) redeem_rewards_us: u64,
-    pub(crate) store_stake_accounts_us: AtomicU64,
     pub(crate) store_epoch_boundary_accounts_us: AtomicU64,
     pub(crate) load_and_update_epoch_boundary_accounts_us: u64,
 }
@@ -97,11 +96,6 @@ pub(crate) fn report_new_epoch_metrics(
             i64
         ),
         ("redeem_rewards_us", metrics.redeem_rewards_us, i64),
-        (
-            "store_stake_accounts_us",
-            metrics.store_stake_accounts_us.load(Relaxed),
-            i64
-        ),
         (
             "store_epoch_boundary_accounts_us",
             metrics.store_epoch_boundary_accounts_us.load(Relaxed),
