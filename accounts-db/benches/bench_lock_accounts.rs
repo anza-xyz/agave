@@ -27,17 +27,23 @@ const LOCK_COUNTS: [usize; 2] = [2, 64];
 const TOTAL_TRANSACTIONS: usize = 1024;
 
 fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<SanitizedTransaction> {
+    // The system program accounts for one readonly lock.
+    let instruction_account_count = lock_count
+        .checked_sub(1)
+        .expect("lock count must include the system program");
     // keys available to be shared between transactions, depending on mode
     // currently, we test batches with no conflicts and batches with reader/reader conflicts
     // in the future with SIMD83, we will also test reader/writer and writer/writer conflicts
-    let shared_pubkeys: Vec<_> = (0..lock_count).map(|_| Pubkey::new_unique()).collect();
+    let shared_pubkeys: Vec<_> = (0..instruction_account_count)
+        .map(|_| Pubkey::new_unique())
+        .collect();
     let mut transactions = vec![];
 
     for _ in 0..TOTAL_TRANSACTIONS {
         let mut account_metas = vec![];
 
         #[allow(clippy::needless_range_loop)]
-        for i in 0..lock_count {
+        for i in 0..instruction_account_count {
             // `lock_accounts()` distinguishes writable from readonly, so give transactions an even split
             // signer doesn't matter for locking but `sanitize()` expects to see at least one
             let account_meta = if i == 0 {
@@ -56,9 +62,9 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
         let instruction = Instruction::new_with_bytes(system_program::id(), &[], account_metas);
         let transaction = Transaction::new_with_payer(&[instruction], None);
 
-        transactions.push(SanitizedTransaction::from_transaction_for_tests(
-            transaction,
-        ));
+        let transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
+        assert_eq!(transaction.message().account_keys().len(), lock_count);
+        transactions.push(transaction);
     }
 
     transactions
