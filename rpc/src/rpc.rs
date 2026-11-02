@@ -5350,9 +5350,13 @@ pub mod tests {
             let versioned = VoteStateVersions::new_v4(vote_state);
             let space = VoteStateV4::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
-            let mut vote_account =
-                AccountSharedData::new(balance, space, &solana_vote_program::id());
-            vote_account.set_state(&versioned).unwrap();
+            let vote_account = AccountSharedData::new_data_with_space(
+                balance,
+                &versioned,
+                space,
+                &solana_vote_program::id(),
+            )
+            .unwrap();
             bank.store_account(vote_pubkey, &vote_account);
         }
 
