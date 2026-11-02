@@ -21,11 +21,12 @@ dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 
 [dependencies]
 agave-jemalloc = { workspace = true, features = ["metrics"] }
+agave-wake-channel = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true }
-derive-where = { workspace = true }
 derive_more = { workspace = true }
 log = { workspace = true }
 scopeguard = { workspace = true }

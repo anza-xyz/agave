@@ -100,10 +100,11 @@ pub struct ComputeBudget {
     /// Big integer modular exponentiation base cost
     pub big_modular_exponentiation_base_cost: u64,
     /// Big integer modular exponentiation cost divisor.
-    /// The modular exponentiation cost is computed from SIMD-0529 operand
-    /// complexity and adjusted exponent bit length, divided by this divisor,
-    /// plus
-    /// `big_modular_exponentiation_base_cost`.
+    /// The modular exponentiation cost is the SIMD-0529 operand complexity
+    /// times the number of multiplications for the exponent's 64-bit words,
+    /// divided by this divisor and rounded up, plus
+    /// `big_modular_exponentiation_base_cost`. An exponent of 1 is priced as a
+    /// single modular reduction with a fixed divisor of 15 instead.
     pub big_modular_exponentiation_cost_divisor: u64,
     /// Coefficient `a` of the quadratic function which determines the number
     /// of compute units consumed to call poseidon syscall for a given number
@@ -147,6 +148,24 @@ pub struct ComputeBudget {
     pub bls12_381_one_pair_cost: u64,
     /// Incremental number of compute units consumed per pair in a bls12_381 pairing.
     pub bls12_381_additional_pair_cost: u64,
+    /// Number of compute units consumed to perform a secp256r1 point addition.
+    pub secp256r1_add_cost: u64,
+    /// Number of compute units consumed to perform a secp256r1 point subtraction.
+    pub secp256r1_subtract_cost: u64,
+    /// Number of compute units consumed to perform a secp256r1 point multiplication.
+    pub secp256r1_multiply_cost: u64,
+    /// Base number of compute units consumed for a multiscalar multiplication
+    /// (msm) of secp256r1 points. The total cost is calculated as
+    /// `msm_base_cost + (length - 1) * msm_incremental_cost`.
+    pub secp256r1_msm_base_cost: u64,
+    /// Incremental number of compute units consumed per additional secp256r1
+    /// point in a multiscalar multiplication (msm). The total cost is
+    /// calculated as `msm_base_cost + (length - 1) * msm_incremental_cost`.
+    pub secp256r1_msm_incremental_cost: u64,
+    /// Number of compute units to perform a secp256r1 point validation.
+    pub secp256r1_validate_cost: u64,
+    /// Number of compute units to perform a secp256r1 point decompression.
+    pub secp256r1_decompress_cost: u64,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -231,6 +250,13 @@ impl ComputeBudget {
             bls12_381_g2_validate_cost: cost.bls12_381_g2_validate_cost,
             bls12_381_one_pair_cost: cost.bls12_381_one_pair_cost,
             bls12_381_additional_pair_cost: cost.bls12_381_additional_pair_cost,
+            secp256r1_add_cost: cost.secp256r1_add_cost,
+            secp256r1_subtract_cost: cost.secp256r1_subtract_cost,
+            secp256r1_multiply_cost: cost.secp256r1_multiply_cost,
+            secp256r1_msm_base_cost: cost.secp256r1_msm_base_cost,
+            secp256r1_msm_incremental_cost: cost.secp256r1_msm_incremental_cost,
+            secp256r1_validate_cost: cost.secp256r1_validate_cost,
+            secp256r1_decompress_cost: cost.secp256r1_decompress_cost,
         }
     }
 
@@ -300,6 +326,13 @@ impl ComputeBudget {
             bls12_381_g2_validate_cost: self.bls12_381_g2_validate_cost,
             bls12_381_one_pair_cost: self.bls12_381_one_pair_cost,
             bls12_381_additional_pair_cost: self.bls12_381_additional_pair_cost,
+            secp256r1_add_cost: self.secp256r1_add_cost,
+            secp256r1_subtract_cost: self.secp256r1_subtract_cost,
+            secp256r1_multiply_cost: self.secp256r1_multiply_cost,
+            secp256r1_msm_base_cost: self.secp256r1_msm_base_cost,
+            secp256r1_msm_incremental_cost: self.secp256r1_msm_incremental_cost,
+            secp256r1_validate_cost: self.secp256r1_validate_cost,
+            secp256r1_decompress_cost: self.secp256r1_decompress_cost,
         }
     }
 

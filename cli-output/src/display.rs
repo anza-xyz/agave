@@ -8,7 +8,6 @@ use {
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
     indicatif::{ProgressBar, ProgressStyle},
-    solana_bincode::limited_deserialize,
     solana_cli_config::SettingType,
     solana_clock::UnixTimestamp,
     solana_hash::Hash,
@@ -16,6 +15,7 @@ use {
         VersionedMessage, compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup,
         v1,
     },
+    solana_packet::PACKET_DATA_WINCODE_CONFIG,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_stake_interface as stake,
@@ -461,28 +461,30 @@ fn write_instruction<'a, W: io::Write>(
     if let AccountKeyType::Known(program_pubkey) = program_pubkey {
         if program_pubkey == &solana_vote_program::id() {
             if let Ok(vote_instruction) =
-                limited_deserialize::<solana_vote_program::vote_instruction::VoteInstruction>(
-                    &instruction.data,
-                    solana_packet::PACKET_DATA_SIZE as u64,
-                )
+                wincode::config::deserialize::<
+                    solana_vote_program::vote_instruction::VoteInstruction,
+                    _,
+                >(&instruction.data, PACKET_DATA_WINCODE_CONFIG)
             {
                 writeln!(w, "{prefix}  {vote_instruction:?}")?;
                 raw = false;
             }
         } else if program_pubkey == &stake::program::id() {
-            if let Ok(stake_instruction) = limited_deserialize::<stake::instruction::StakeInstruction>(
-                &instruction.data,
-                solana_packet::PACKET_DATA_SIZE as u64,
-            ) {
+            if let Ok(stake_instruction) =
+                wincode::config::deserialize::<stake::instruction::StakeInstruction, _>(
+                    &instruction.data,
+                    PACKET_DATA_WINCODE_CONFIG,
+                )
+            {
                 writeln!(w, "{prefix}  {stake_instruction:?}")?;
                 raw = false;
             }
         } else if program_pubkey == &solana_sdk_ids::system_program::id() {
             if let Ok(system_instruction) =
-                limited_deserialize::<solana_system_interface::instruction::SystemInstruction>(
-                    &instruction.data,
-                    solana_packet::PACKET_DATA_SIZE as u64,
-                )
+                wincode::config::deserialize::<
+                    solana_system_interface::instruction::SystemInstruction,
+                    _,
+                >(&instruction.data, PACKET_DATA_WINCODE_CONFIG)
             {
                 writeln!(w, "{prefix}  {system_instruction:?}")?;
                 raw = false;

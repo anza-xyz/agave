@@ -150,7 +150,7 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
          instruction_accounts: Vec<AccountMeta>,
          expected_result: Result<(), InstructionError>| {
             let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,
@@ -225,6 +225,69 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
     {
         assert_eq!(*elf_new.get(i).unwrap(), *byte);
     }
+
+    // Case: Success with stale ProgramData bytes past the new ELF
+    let (mut transaction_accounts, instruction_accounts) = get_accounts(
+        &buffer_address,
+        &upgrade_authority_address,
+        &upgrade_authority_address,
+        &elf_orig,
+        &elf_new,
+    );
+    transaction_accounts
+        .first_mut()
+        .unwrap()
+        .1
+        .data_as_mut_slice()
+        .get_mut(UpgradeableLoaderState::size_of_programdata_metadata()..)
+        .unwrap()
+        .fill(0xff);
+    let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+    let programdata = accounts.first().unwrap().data();
+    let (elf, tail) = programdata
+        .get(UpgradeableLoaderState::size_of_programdata_metadata()..)
+        .unwrap()
+        .split_at(elf_new.len());
+    assert_eq!(elf, elf_new.as_slice());
+    if set_programdata_to_elf_length {
+        assert!(tail.is_empty());
+    } else {
+        assert!(tail.iter().all(|byte| *byte == 0));
+    }
+
+    // Case: ProgramData account not writable
+    let (transaction_accounts, mut instruction_accounts) = get_accounts(
+        &buffer_address,
+        &upgrade_authority_address,
+        &upgrade_authority_address,
+        &elf_orig,
+        &elf_new,
+    );
+    instruction_accounts.first_mut().unwrap().is_writable = false;
+    process_instruction(
+        transaction_accounts,
+        instruction_accounts,
+        Err(InstructionError::ReadonlyDataModified),
+    );
+
+    // Case: ProgramData account not owned by loader
+    let (mut transaction_accounts, instruction_accounts) = get_accounts(
+        &buffer_address,
+        &upgrade_authority_address,
+        &upgrade_authority_address,
+        &elf_orig,
+        &elf_new,
+    );
+    transaction_accounts
+        .first_mut()
+        .unwrap()
+        .1
+        .set_owner(Pubkey::new_unique());
+    process_instruction(
+        transaction_accounts,
+        instruction_accounts,
+        Err(InstructionError::ExternalAccountDataModified),
+    );
 
     // Case: not upgradable
     let (mut transaction_accounts, instruction_accounts) = get_accounts(
@@ -320,7 +383,7 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         &elf_new,
     );
     *instruction_accounts.get_mut(1).unwrap() = instruction_accounts.get(2).unwrap().clone();
-    let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+    let instruction_data = wincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
 
     process_instruction_with_setup(
         &bpf_loader_upgradeable::id(),
@@ -806,7 +869,7 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
          instruction_accounts: Vec<AccountMeta>,
          expected_result: Result<(), InstructionError>| {
             let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             process_instruction_with_setup(
                 &bpf_loader_upgradeable::id(),
                 &instruction_data,

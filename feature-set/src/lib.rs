@@ -21,7 +21,6 @@ pub struct FeatureSnapshot {
     pub disable_fees_sysvar: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
@@ -33,7 +32,6 @@ pub struct FeatureSnapshot {
     pub enable_poseidon_syscall: bool,
     pub remaining_compute_units_syscall_enabled: bool,
     pub enable_alt_bn128_compression_syscall: bool,
-    pub abort_on_invalid_curve: bool,
     pub get_sysvar_syscall_enabled: bool,
     pub enable_get_epoch_stake_syscall: bool,
     pub move_stake_and_move_lamports_ixs: bool,
@@ -78,6 +76,14 @@ pub struct FeatureSnapshot {
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
     pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub secp256r1_syscall_enabled: bool,
+    pub single_program_runtime_environment: bool,
+    pub loader_v3_allow_prefunded_programdata: bool,
+    pub core_bpf_hash_validation: bool,
+    pub loader_v3_remove_extend_program: bool,
+    pub remove_runtime_float_ops: bool,
+    pub replace_ata_with_p_ata: bool,
+    pub increase_tx_v1_account_lock_limit: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -92,7 +98,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
             ),
-            increase_tx_account_lock_limit: is_active(&increase_tx_account_lock_limit::ID),
             enable_bpf_loader_set_authority_checked_ix: is_active(
                 &enable_bpf_loader_set_authority_checked_ix::ID,
             ),
@@ -114,7 +119,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             enable_alt_bn128_compression_syscall: is_active(
                 &enable_alt_bn128_compression_syscall::ID,
             ),
-            abort_on_invalid_curve: is_active(&abort_on_invalid_curve::ID),
             get_sysvar_syscall_enabled: is_active(&get_sysvar_syscall_enabled::ID),
             enable_get_epoch_stake_syscall: is_active(&enable_get_epoch_stake_syscall::ID),
             move_stake_and_move_lamports_ixs: is_active(&move_stake_and_move_lamports_ixs::ID),
@@ -177,6 +181,16 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             unbound_loader_v3_instruction_data: is_active(&unbound_loader_v3_instruction_data::ID),
             pass_input_metadata_in_vm_r3_r5: is_active(&pass_input_metadata_in_vm_r3_r5::ID),
+            secp256r1_syscall_enabled: is_active(&secp256r1_syscall_enabled::ID),
+            single_program_runtime_environment: is_active(&single_program_runtime_environment::ID),
+            loader_v3_allow_prefunded_programdata: is_active(
+                &loader_v3_allow_prefunded_programdata::ID,
+            ),
+            core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
+            loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
+            remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
+            replace_ata_with_p_ata: is_active(&replace_ata_with_p_ata::ID),
+            increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
         }
     }
 }
@@ -289,7 +303,6 @@ impl FeatureSet {
             enable_bpf_loader_set_authority_checked_ix: snapshot
                 .enable_bpf_loader_set_authority_checked_ix,
             deplete_cu_meter_on_vm_failure: snapshot.deplete_cu_meter_on_vm_failure,
-            abort_on_invalid_curve: snapshot.abort_on_invalid_curve,
             blake3_syscall_enabled: snapshot.blake3_syscall_enabled,
             disable_fees_sysvar: snapshot.disable_fees_sysvar,
             enable_alt_bn128_compression_syscall: snapshot.enable_alt_bn128_compression_syscall,
@@ -310,7 +323,6 @@ impl FeatureSet {
             simplify_alt_bn128_syscall_error_codes: snapshot.simplify_alt_bn128_syscall_error_codes,
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
-            increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
@@ -338,6 +350,9 @@ impl FeatureSet {
                 .early_instruction_trace_overflow_detection,
             unbound_loader_v3_instruction_data: snapshot.unbound_loader_v3_instruction_data,
             pass_input_metadata_in_vm_r3_r5: snapshot.pass_input_metadata_in_vm_r3_r5,
+            secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
+            loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
+            loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
         }
     }
 }
@@ -840,10 +855,6 @@ pub mod disable_rehash_for_rent_epoch {
     solana_pubkey::declare_id!("DTVTkmw3JSofd8CJVJte8PXEbxNQ2yZijvVr3pe2APPj");
 }
 
-pub mod increase_tx_account_lock_limit {
-    solana_pubkey::declare_id!("9LZdXeKGeBV6hRLdxS1rHbHoEUsKqesCC2ZAPTPKJAbK");
-}
-
 pub mod limit_max_instruction_trace_length {
     solana_pubkey::declare_id!("GQALDaC48fEhZGWRj9iL5Q889emJKcj3aCvHF7VCbbF4");
 }
@@ -897,7 +908,7 @@ pub mod update_hashes_per_tick {
 }
 
 pub mod enable_big_mod_exp_syscall {
-    solana_pubkey::declare_id!("expH2ppKPW2ANEdEmAjfhSEcnBQJfmoX4FjuNpe9ttg");
+    solana_pubkey::declare_id!("expHkkpN92z71GU7EwB7AXCy8Mz4kzDJFpGY1dZV9A7");
 }
 
 pub mod disable_builtin_loader_ownership_chains {
@@ -1168,7 +1179,7 @@ pub mod move_precompile_verification_to_svm {
     solana_pubkey::declare_id!("9ypxGLzkMxi89eDerRKXWDXe44UY2z4hBig4mDhNq5Dp");
 }
 
-pub mod enable_transaction_loading_failure_fees {
+pub mod relax_transaction_loading_constraints {
     solana_pubkey::declare_id!("PaymEPK2oqwT9TXAVfadjztH2H6KfLEB9Hhd5Q5frvP");
 }
 
@@ -1310,6 +1321,10 @@ pub mod enforce_fixed_fec_set {
 
 pub mod enforce_correct_proof_size {
     solana_pubkey::declare_id!("turbzzBJLGMJJikLvgCCJu9e1hTmfxwarrbLndYAsK5");
+}
+
+pub mod stricter_shred_validation {
+    solana_pubkey::declare_id!("s5o4YoA9zUrw9j4v335ncdG5PpznDBsrgM6CvUGrasA");
 }
 
 pub mod provide_instruction_data_offset_in_vm_r2 {
@@ -1518,7 +1533,7 @@ pub mod relax_fee_payer_constraint {
 }
 
 pub mod double_disinflation_rate {
-    solana_pubkey::declare_id!("55oikhjJ2LUi1xdgJ17ueRyHFURZEw32asT3iAKfh7gg");
+    solana_pubkey::declare_id!("ddibiks7RHZR69QXYMCmk4EZNt6WckspTqEEWv6cS38");
     /// Taper (yearly disinflation rate) applied from activation onward.
     pub const TAPER: f64 = 0.30;
 }
@@ -1541,6 +1556,53 @@ pub mod unbound_loader_v3_instruction_data {
 
 pub mod pass_input_metadata_in_vm_r3_r5 {
     solana_pubkey::declare_id!("r3r5hXFhEZLB2VCDXmUysuDZj4oMbtW8JRVUqvQSgqE");
+}
+
+pub mod secp256r1_syscall_enabled {
+    solana_pubkey::declare_id!("SeRjtX7Abiq5hQYbzdCny266oveDseHZh9tnrs2cdVC");
+}
+
+pub mod single_program_runtime_environment {
+    solana_pubkey::declare_id!("Hh4mTuC2AVFALH78RjiL8Rih1CcLxXpm4ehXCJNsUei1");
+}
+
+pub mod loader_v3_allow_prefunded_programdata {
+    solana_pubkey::declare_id!("63Zvc4ixE2NQsP1ef9R5AWQyty96BhRp7NiSuejUmXGM");
+}
+
+pub mod core_bpf_hash_validation {
+    solana_pubkey::declare_id!("FCsQnd4V52NESBhVURWYSWBbmLFzgxEZVC2WngzHzp1u");
+}
+
+pub mod loader_v3_remove_extend_program {
+    solana_pubkey::declare_id!("5Ach9H8V5NCNDQg7Md6HnJmVttF3tzHwiWWucnnFd4jz");
+}
+
+pub mod remove_runtime_float_ops {
+    solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
+}
+
+pub mod replace_ata_with_p_ata {
+    use {solana_hash::Hash, solana_pubkey::Pubkey};
+
+    solana_pubkey::declare_id!("pata6uFabFDejC1U7rpmFj9s1FhmiPyWk6D51U1ksx3");
+
+    pub const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID: Pubkey =
+        Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+    pub const PROGRAM_BUFFER: Pubkey =
+        Pubkey::from_str_const("pataAAkF439TTjwRqmxRkTTEfZemRdoriXusez4PQ6S");
+
+    // Bytes of the SHA256 hash for the p-ata program data.
+    //   - hash: 4e008052b0a7ac695482474946700abe70e9cfd03d178aa8887b02674e7f7d9e
+    pub const BUILD_HASH: Hash = Hash::new_from_array([
+        78, 0, 128, 82, 176, 167, 172, 105, 84, 130, 71, 73, 70, 112, 10, 190, 112, 233, 207, 208,
+        61, 23, 138, 168, 136, 123, 2, 103, 78, 127, 125, 158,
+    ]);
+}
+
+pub mod increase_tx_v1_account_lock_limit {
+    solana_pubkey::declare_id!("8ZVMrzG6pPBREHMbHNyrErKJsXA7b1vg9e1iycSooCeY");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1982,10 +2044,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "remove support for RequestUnitsDeprecated instruction #27500",
         ),
         (
-            increase_tx_account_lock_limit::id(),
-            "increase tx account lock limit to 128 #27241",
-        ),
-        (
             limit_max_instruction_trace_length::id(),
             "limit max instruction trace length #27939",
         ),
@@ -2300,8 +2358,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0159: Move precompile verification into SVM",
         ),
         (
-            enable_transaction_loading_failure_fees::id(),
-            "SIMD-0082: Enable fees for some additional transaction failures",
+            relax_transaction_loading_constraints::id(),
+            "SIMD-0191: Relax Transaction Loading Constraints",
         ),
         (
             deprecate_legacy_vote_ixs::id(),
@@ -2464,6 +2522,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_correct_proof_size::id(),
             "SIMD-0317: Enforce the Merkle proof size of a fixed 32:32 FEC set",
+        ),
+        (
+            stricter_shred_validation::id(),
+            "SIMD-0504: Stricter shred validation",
         ),
         (
             provide_instruction_data_offset_in_vm_r2::id(),
@@ -2639,7 +2701,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             early_instruction_trace_overflow_detection::id(),
-            "SIMD-582: Early detection of instruction trace overflow",
+            "SIMD-0582: Early detection of instruction trace overflow",
         ),
         (
             unbound_loader_v3_instruction_data::id(),
@@ -2648,6 +2710,38 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             pass_input_metadata_in_vm_r3_r5::id(),
             "SIMD-0683: Pass ABIv1 input metadata via registers r3-r5",
+        ),
+        (
+            secp256r1_syscall_enabled::id(),
+            "SIMD-0565: Enable secp256r1 syscalls",
+        ),
+        (
+            single_program_runtime_environment::id(),
+            "SIMD-0688: Single Program Runtime Environment",
+        ),
+        (
+            loader_v3_allow_prefunded_programdata::id(),
+            "SIMD-0684: Loader V3 Allow Prefunded ProgramData",
+        ),
+        (
+            core_bpf_hash_validation::id(),
+            "SIMD-0690: Hash validation in Core BPF program migrations and upgrades",
+        ),
+        (
+            loader_v3_remove_extend_program::id(),
+            "SIMD-0685: Loader V3 Remove ExtendProgram",
+        ),
+        (
+            remove_runtime_float_ops::id(),
+            "SIMD-0607: Remove floating point from runtime inflation",
+        ),
+        (
+            replace_ata_with_p_ata::id(),
+            "SIMD-0567: CU-optimized ATA program",
+        ),
+        (
+            increase_tx_v1_account_lock_limit::id(),
+            "Increase transaction v1 account lock limit to 96",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

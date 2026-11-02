@@ -11,6 +11,7 @@ use {
     solana_clock::Slot,
     solana_nohash_hasher::IntSet,
     std::{
+        ops::ControlFlow,
         path::Path,
         sync::{
             RwLock, RwLockReadGuard,
@@ -305,9 +306,10 @@ impl AccountStorageEntry {
             .scan_accounts_with(reader, |offset, account| {
                 if excluded_offsets.contains(&offset) {
                     num_excluded += 1;
-                    return;
+                    return ControlFlow::Continue(());
                 }
                 callback(offset, account);
+                ControlFlow::Continue(())
             })?;
         Ok(num_excluded)
     }
@@ -324,9 +326,10 @@ impl AccountStorageEntry {
             .scan_accounts_without_data(|offset, account| {
                 if excluded_offsets.contains(&offset) {
                     num_excluded += 1;
-                    return;
+                    return ControlFlow::Continue(());
                 }
                 callback(offset, account);
+                ControlFlow::Continue(())
             })?;
         Ok(num_excluded)
     }

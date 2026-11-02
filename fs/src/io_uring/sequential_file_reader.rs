@@ -1,12 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    super::{
-        IO_PRIO_BE_HIGHEST,
-        memory::{IoBufferChunk, PageAlignedMemory},
-    },
+    super::{IO_PRIO_BE_HIGHEST, memory::IoBufferChunk},
     crate::{FileSize, IoSize, buffered_reader::FileBufRead, io_uring::sqpoll},
     agave_io_uring::{Completion, Ring, RingAccess as _, RingOp},
+    agave_memory::AlignedBuffer,
     io_uring::{IoUring, opcode, squeue, types},
     std::{
         collections::VecDeque,
@@ -99,7 +97,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     /// multiple `read_capacity` sized reads in parallel to fill the buffer.
     pub fn build<'a>(self, buf_capacity: usize) -> io::Result<SequentialFileReader<'a>> {
         let buf_capacity = buf_capacity.max(self.read_capacity as usize);
-        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        let buffer = AlignedBuffer::new_page_aligned(buf_capacity)?;
         self.build_with_buffer(buffer)
     }
 
@@ -111,7 +109,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
     fn build_with_buffer<'a>(
         self,
-        mut buffer: PageAlignedMemory,
+        mut buffer: AlignedBuffer,
     ) -> io::Result<SequentialFileReader<'a>> {
         // Align buffer capacity to read capacity, so we always read equally sized chunks
         let buf_capacity =
@@ -206,7 +204,7 @@ pub struct SequentialFileReader<'a> {
     state: SequentialFileReaderState,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    backing_buffer: PageAlignedMemory,
+    backing_buffer: AlignedBuffer,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -935,7 +933,7 @@ mod tests {
         )
         .unwrap();
 
-        let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
+        let buf = AlignedBuffer::new_page_aligned(backing_buffer_size).unwrap();
         let mut reader = SequentialFileReaderBuilder::new()
             .use_direct_io(use_direct_io)
             .read_capacity(read_capacity)

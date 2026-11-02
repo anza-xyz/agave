@@ -19,7 +19,7 @@ use {
             BankingControlMsg, BankingStage,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        consensus::{Tower, tower_storage::TowerStorage},
+        consensus::tower_storage::TowerStorage,
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
@@ -107,6 +107,8 @@ pub struct AdminRpcContactInfo {
     pub serve_repair: SocketAddr,
     pub last_updated_timestamp: u64,
     pub shred_version: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -149,6 +151,7 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
             shred_version: node.shred_version(),
+            version: Some(node.version().as_detailed_string()),
         }
     }
 }
@@ -367,8 +370,23 @@ impl AdminRpc for AdminRpcImpl {
                     thread::sleep(Duration::from_millis(100));
                 }
 
-                info!("validator exit requested");
+                info!("Validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
+
+                // `post_init` holds references to state that is referenced by
+                // other validator threads. To enable graceful shutdown,
+                // `drop()` those additional references now.
+                let post_init = meta.post_init.write().unwrap().take();
+                // But `BankForks` must be handled specially. `BankForks` holds
+                // banks which hold an `Arc<Accounts>`. Depending on factors
+                // such as cluster state, AccountsDb may take a while to
+                // `drop()`. So, grab and hold a `BankForks` reference in this
+                // thread to ensure other validator threads do not hold the
+                // final reference and thus get stuck performing the `drop()`.
+                let _bank_forks = post_init
+                    .as_ref()
+                    .map(|post_init| post_init.bank_forks.clone());
+                drop(post_init);
 
                 if !meta.validator_exit_backpressure.is_empty() {
                     let service_names = meta.validator_exit_backpressure.keys();
@@ -394,17 +412,19 @@ impl AdminRpc for AdminRpcImpl {
                     info!("All services have completed");
                 }
 
-                // TODO: Debug why Exit doesn't always cause the validator to fully exit
-                // (rocksdb background processing or some other stuck thread perhaps?).
+                // The main thread should exit before `sleep()` elapses, and the
+                // main thread exiting causes termination of the entire process.
                 //
-                // If the process is still alive after five seconds, exit harder
+                // Exit after the `sleep()` just incase the process is still
+                // alive
+                const DEFAULT_EXIT_TIMEOUT_SECS: u64 = 5;
                 thread::sleep(Duration::from_secs(
                     env::var("SOLANA_VALIDATOR_EXIT_TIMEOUT")
                         .ok()
                         .and_then(|x| x.parse().ok())
-                        .unwrap_or(5),
+                        .unwrap_or(DEFAULT_EXIT_TIMEOUT_SECS),
                 ));
-                warn!("validator exit timeout");
+                error!("Validator exit timed out");
                 std::process::exit(0);
             })
             .unwrap();
@@ -597,7 +617,7 @@ impl AdminRpc for AdminRpcImpl {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        require_tower: bool,
+        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity request received");
@@ -608,19 +628,14 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_identity_from_bytes(
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        require_tower: bool,
+        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
@@ -631,12 +646,7 @@ impl AdminRpc for AdminRpcImpl {
             ))
         })?;
 
-        AdminRpcImpl::set_identity_keypair(
-            meta,
-            identity_keypair,
-            require_tower,
-            require_vote_history,
-        )
+        AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_vote_history)
     }
 
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
@@ -964,7 +974,6 @@ impl AdminRpcImpl {
     fn set_identity_keypair(
         meta: AdminRpcRequestMetadata,
         identity_keypair: Keypair,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         meta.with_post_init(|post_init| {
@@ -985,17 +994,6 @@ impl AdminRpcImpl {
                          {new_identity} is not supported"
                     )));
                 }
-            }
-
-            if require_tower {
-                let _ = Tower::restore(meta.tower_storage.as_ref(), &identity_keypair.pubkey())
-                    .map_err(|err| {
-                        jsonrpc_core::error::Error::invalid_params(format!(
-                            "Unable to load tower file for identity {}: {}",
-                            identity_keypair.pubkey(),
-                            err
-                        ))
-                    })?;
             }
 
             if require_vote_history {
@@ -1414,7 +1412,6 @@ mod tests {
             AdminRpcImpl::set_identity_keypair(
                 rpc.meta.clone(),
                 validators[1].node_keypair.insecure_clone(),
-                false,
                 false,
             ),
             Err(jsonrpc_core::Error {

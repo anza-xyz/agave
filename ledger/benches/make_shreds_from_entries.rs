@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{Criterion, criterion_group, criterion_main},
+    crossbeam_channel::bounded,
     rand::Rng,
     solana_entry::entry::Entry,
     solana_hash::Hash,
@@ -15,7 +16,6 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_transaction::Transaction,
     std::{hint::black_box, iter::repeat_with, sync::Arc},
 };
@@ -23,7 +23,7 @@ use {
 fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let genesis_config = create_genesis_config(1).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let (dummy_retransmit_sender, _) = bounded(0);
     ShredRecoveryContext::new(
         dummy_retransmit_sender,
         root_bank,

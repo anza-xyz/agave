@@ -664,7 +664,7 @@ pub mod test {
         let mut shreds = make_marker_shreds(
             VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot: 11,
-                parent_block_id: Hash::new_unique(),
+                parent_block_id: BlockId::new_unique(),
             }),
             0,
         );

@@ -104,7 +104,14 @@ impl TransactionAccountViewMut<'_> {
     }
 
     pub(crate) fn resize(&mut self, new_len: usize, value: u8) {
-        self.data_mut().resize(new_len, value);
+        match self.private_fields.payload.get(..new_len) {
+            // If the buffer is shared and doesn't grow, copy only the retained
+            // prefix instead of cloning the whole buffer and truncating it.
+            Some(prefix) if self.is_shared() => {
+                self.private_fields.payload = Arc::new(prefix.to_vec());
+            }
+            _ => self.data_mut().resize(new_len, value),
+        }
         self.abi_account.payload.set_len(new_len as u64);
     }
 
@@ -447,7 +454,7 @@ impl TransactionAccounts {
                     shared_fields.key,
                     AccountSharedData::create_from_existing_shared_data(
                         shared_fields.lamports,
-                        private_fields.payload.clone(),
+                        private_fields.payload,
                         shared_fields.owner,
                         private_fields.executable,
                         private_fields.rent_epoch,
@@ -468,7 +475,7 @@ impl TransactionAccounts {
                 let private_fields = private_fields_cell.into_inner();
                 AccountSharedData::create_from_existing_shared_data(
                     shared_fields.lamports,
-                    private_fields.payload.clone(),
+                    private_fields.payload,
                     shared_fields.owner,
                     private_fields.executable,
                     private_fields.rent_epoch,
@@ -616,20 +623,54 @@ impl DerefMut for AccountRefMut<'_> {
 #[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
 mod tests {
     use {
-        crate::transaction_accounts::TransactionAccounts, solana_account::AccountSharedData,
-        solana_instruction_error::InstructionError, solana_pubkey::Pubkey,
+        crate::transaction_accounts::TransactionAccounts,
+        solana_account::{AccountSharedData, ReadableAccount},
+        solana_instruction_error::InstructionError,
+        solana_pubkey::Pubkey,
+        std::sync::Arc,
+        test_case::test_case,
     };
+
+    #[test_case(true, 4; "shrink_shared")]
+    #[test_case(false, 4; "shrink_unshared")]
+    #[test_case(true, 0; "shrink_shared_to_empty")]
+    #[test_case(true, 200; "grow_shared")]
+    #[test_case(false, 200; "grow_unshared")]
+    #[test_case(true, 100; "same_length_shared")]
+    #[test_case(false, 100; "same_length_unshared")]
+    fn test_resize(shared: bool, new_len: usize) {
+        let data = (0..100).collect::<Vec<u8>>();
+        let account = AccountSharedData::new_with_data(1, data.clone(), &Pubkey::new_unique());
+        let original = shared.then(|| account.data_clone());
+        let tx_accounts = TransactionAccounts::new(vec![(Pubkey::new_unique(), account)]);
+        let mut expected = data.clone();
+        expected.resize(new_len, 0);
+
+        let mut acc = tx_accounts.try_borrow_mut(0).unwrap();
+        assert_eq!(acc.is_shared(), shared);
+        acc.resize(new_len, 0);
+        assert_eq!(acc.data(), expected);
+        assert_eq!(acc.account.abi_account.payload.len(), new_len as u64);
+        assert!(!acc.is_shared());
+        if let Some(original) = original {
+            assert!(!Arc::ptr_eq(&original, &acc.account.private_fields.payload));
+            if new_len <= data.len() {
+                assert_eq!(acc.account.private_fields.payload.capacity(), new_len);
+            }
+            assert_eq!(*original, data);
+        }
+    }
 
     #[test]
     fn test_missing_account() {
         let accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
         ];
 
@@ -647,11 +688,11 @@ mod tests {
         let accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
         ];
 
@@ -724,11 +765,11 @@ mod tests {
         let accounts = vec![
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(2, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::new_unique()),
             ),
         ];
 

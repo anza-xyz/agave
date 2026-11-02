@@ -33,8 +33,7 @@ use {
     solana_runtime::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
-        stake_history::StakeHistory,
-        stakes::{DeserializableDelegationStakes, SerdeStakesToStakeFormat, Stakes},
+        stakes::{SerdeStakesToStakeFormat, Stakes},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk_ids::sysvar,
@@ -54,7 +53,6 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::TransactionError,
-    solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, num::NonZeroUsize, sync::Arc},
 };
 #[cfg(not(test))]
@@ -123,16 +121,6 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         epoch_stakes.insert(key, entry);
     }
 
-    // `new_for_txn_tests` ignores `stakes`/`versioned_epoch_stakes`, but the
-    // struct still has to be constructed.
-    let stakes = DeserializableDelegationStakes {
-        vote_accounts: VoteAccounts::default(),
-        stake_delegations: vec![],
-        unused: 0,
-        epoch,
-        stake_history: StakeHistory::default(),
-    };
-
     let bank_fields = BankFieldsToDeserialize {
         blockhash_queue,
         parent_slot,
@@ -143,7 +131,6 @@ pub fn execute_txn_proto(context: &ProtoTxnContext) -> ProtoTxnResult {
         block_height: slot,
         fee_rate_governor,
         epoch_schedule,
-        stakes,
         ..BankFieldsToDeserialize::default()
     };
 
@@ -425,8 +412,8 @@ mod tests {
             TxnContext as ProtoTxnContext, acct_state::DataRepr,
         },
         solana_account::{
-            AccountSharedData, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount, WincodeConfig,
-            WritableAccount, state_traits::StateMutWincode as _,
+            AccountSharedData, ReadableAccount, WincodeConfig, WritableAccount,
+            state_traits::StateMutWincode as _,
         },
         solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
         solana_clock::Clock,
@@ -440,7 +427,7 @@ mod tests {
             v0::{self, MessageAddressTableLookup},
         },
         solana_pubkey::Pubkey,
-        solana_runtime::sysvar_account::create_account,
+        solana_runtime::sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account},
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
         solana_signature::Signature,
         solana_slot_hashes::SlotHashes,
@@ -616,7 +603,7 @@ mod tests {
     {
         (
             T::id(),
-            create_account(sysvar, DUMMY_INHERITABLE_ACCOUNT_FIELDS),
+            create_account(sysvar, RENT_UNADJUSTED_INITIAL_BALANCE),
         )
     }
 

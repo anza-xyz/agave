@@ -74,6 +74,13 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
         require_vote_history,
     } = SetIdentityArgs::from_clap_arg_match(matches)?;
 
+    if require_tower {
+        eprintln!(
+            "The --require-tower flag has been deprecated and will be removed in the future. The \
+             flag is only relevant to TowerBFT and setting it is now a no-op."
+        )
+    }
+
     if let Some(identity_keypair) = identity {
         let identity_keypair = fs::canonicalize(&identity_keypair)?;
 

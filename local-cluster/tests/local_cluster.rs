@@ -113,12 +113,16 @@ fn test_spend_and_verify_all_nodes() {
     agave_logger::setup_with_default(RUST_LOG_FILTER);
     let num_nodes = 3;
     info!("test_spend_and_verify_all_nodes with {num_nodes} nodes");
-    let local = LocalCluster::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-        SocketAddrSpace::Unspecified,
+    let mut config =
+        ClusterConfig::new_with_equal_stakes(num_nodes, DEFAULT_MINT_LAMPORTS, DEFAULT_NODE_STAKE);
+    // Nodes staked after genesis only join consensus in epoch 2 and can fall too far
+    // behind the bootstrap node to catch up.
+    config.validator_keys = Some(
+        iter::repeat_with(|| (ValidatorKeys::new(), true))
+            .take(num_nodes)
+            .collect(),
     );
+    let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     cluster_tests::spend_and_verify_all_nodes(
         &local.entry_point_info,
         &local.funding_keypair,

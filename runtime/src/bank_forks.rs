@@ -438,7 +438,7 @@ impl BankForks {
 
         let root_bank = self.root_bank();
 
-        root_bank.remove_unrooted_slots(&slots_to_purge);
+        root_bank.mark_banks_removed(&slots_to_purge);
         drop(removed_banks);
 
         for (slot, _) in slots_to_purge {
@@ -979,7 +979,8 @@ mod tests {
         finish_done_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        assert!(child_bank.get_account(&account_key).is_none());
+        // A removed bank's write cache stays until the bank drops
+        assert!(child_bank.get_account(&account_key).is_some());
     }
 
     fn make_root_bank_for_migration_status_test(

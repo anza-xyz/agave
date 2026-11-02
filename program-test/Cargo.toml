@@ -76,7 +76,7 @@ tokio = { workspace = true, features = ["full"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-solana-address-lookup-table-interface = { workspace = true, features = ["bincode", "bytemuck"] }
+solana-address-lookup-table-interface = { workspace = true, features = ["bytemuck", "wincode"] }
 solana-cpi = { workspace = true }
 solana-instruction = { workspace = true, features = ["wincode"] }
 solana-program = { workspace = true }

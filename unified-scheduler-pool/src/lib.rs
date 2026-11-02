@@ -15,16 +15,18 @@
 
 use {
     agave_jemalloc::{
+        arena_for_worker,
         group::ArenaGroup,
-        jemalloc::{Arena, Jemalloc},
+        jemalloc::{Arena, DisableThreadTcacheOnDrop, Jemalloc},
+    },
+    agave_wake_channel::{
+        Sender as WakeSender, SharedEventReceiver as WakeReceiver, TryRecvError, WakeEvent,
     },
     assert_matches::assert_matches,
-    crossbeam_channel::{
-        self, Receiver, RecvError, RecvTimeoutError, SendError, Sender, never, select_biased,
-    },
+    crossbeam_channel::{self, RecvError, RecvTimeoutError, SendError, Sender},
+    crossbeam_queue::SegQueue,
     crossbeam_utils::CachePadded,
-    dashmap::DashMap,
-    derive_where::derive_where,
+    dashmap::{DashMap, mapref::entry::Entry},
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
@@ -116,7 +118,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     common_handler_context: CommonHandlerContext,
     block_verification_handler_count: CountOrDefault,
-    handler_thread_arenas: Option<ArenaGroup>,
+    handler_thread_arenas: Option<Arc<ArenaGroup>>,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
     // almost always. But, this would cause wasted and noisy Arc::clone()'s at every call sites.
@@ -135,28 +137,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     _phantom: PhantomData<TH>,
 }
 
-// Drop this before jemalloc's thread-local destructor runs. That flushes and disables the
-// handler thread's tcache while the thread is still assigned to its arena, avoiding jemalloc's
-// no-background-thread forced purge path when the last handler thread exits.
-#[derive(Debug)]
-struct DisableHandlerThreadTcacheOnDrop {
-    arena: Arena,
-    thread_index: usize,
-}
-
-impl Drop for DisableHandlerThreadTcacheOnDrop {
-    fn drop(&mut self) {
-        if let Err(error) = Jemalloc::disable_current_thread_tcache() {
-            warn!(
-                "failed to disable unified scheduler handler thread jemalloc tcache before thread \
-                 exit; thread_index: {}; arena_id: {}; error: {error}",
-                self.thread_index,
-                self.arena.id()
-            );
-        }
-    }
-}
-
 #[derive(derive_more::Debug, Clone)]
 pub struct HandlerContext {
     thread_count: usize,
@@ -167,9 +147,12 @@ pub struct HandlerContext {
 }
 
 impl HandlerContext {
-    fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
+    fn usage_queue_loader_for_newly_spawned(&self, eviction_threshold: usize) -> UsageQueueLoader {
         UsageQueueLoader::OwnedBySelf {
-            usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
+            usage_queue_loader_inner: UsageQueueLoaderInner::new(
+                Capability::FifoQueueing,
+                eviction_threshold,
+            ),
         }
     }
 
@@ -240,7 +223,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        handler_thread_arenas: Option<ArenaGroup>,
+        handler_thread_arenas: Option<Arc<ArenaGroup>>,
     ) -> Arc<Self> {
         Self::do_new(
             block_verification_handler_count,
@@ -281,7 +264,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
-        handler_thread_arenas: Option<ArenaGroup>,
+        handler_thread_arenas: Option<Arc<ArenaGroup>>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -749,16 +732,22 @@ mod chained_channel {
     // hide variants by putting this inside newtype
     enum ChainedChannelPrivate<P, C> {
         Payload(P),
-        ContextAndChannels(C, Receiver<ChainedChannel<P, C>>, Receiver<P>),
+        ContextAndChannels(C, WakeReceiver<ChainedChannel<P, C>>, WakeReceiver<P>),
     }
 
     pub(super) struct ChainedChannel<P, C>(ChainedChannelPrivate<P, C>);
 
+    #[derive(Debug)]
+    pub(super) enum Received<P, A = P> {
+        Primary(P),
+        Auxiliary(A),
+    }
+
     impl<P, C> ChainedChannel<P, C> {
         fn chain_to_new_channel(
             context: C,
-            receiver: Receiver<Self>,
-            aux_receiver: Receiver<P>,
+            receiver: WakeReceiver<Self>,
+            aux_receiver: WakeReceiver<P>,
         ) -> Self {
             Self(ChainedChannelPrivate::ContextAndChannels(
                 context,
@@ -769,12 +758,12 @@ mod chained_channel {
     }
 
     pub(super) struct ChainedChannelSender<P, C> {
-        sender: Sender<ChainedChannel<P, C>>,
-        aux_sender: Sender<P>,
+        sender: WakeSender<ChainedChannel<P, C>>,
+        aux_sender: WakeSender<P>,
     }
 
     impl<P, C: Clone> ChainedChannelSender<P, C> {
-        fn new(sender: Sender<ChainedChannel<P, C>>, aux_sender: Sender<P>) -> Self {
+        fn new(sender: WakeSender<ChainedChannel<P, C>>, aux_sender: WakeSender<P>) -> Self {
             Self { sender, aux_sender }
         }
 
@@ -790,13 +779,21 @@ mod chained_channel {
             self.aux_sender.send(payload)
         }
 
+        /// Sends one handoff per handler; `count` must match the number of receiving handlers.
+        /// The auxiliary queue must be drained before switching because primary-channel handoffs
+        /// take priority over auxiliary payloads.
         pub(super) fn send_chained_channel(
             &mut self,
             context: &C,
             count: usize,
         ) -> std::result::Result<(), SendError<ChainedChannel<P, C>>> {
-            let (chained_sender, chained_receiver) = crossbeam_channel::unbounded();
-            let (chained_aux_sender, chained_aux_receiver) = crossbeam_channel::unbounded();
+            // Handlers switch generations independently. Sharing an event with the old pair
+            // could wake a handler that has already switched and cannot drain the old pair.
+            let event = Arc::new(WakeEvent::default());
+            let (chained_sender, chained_receiver) =
+                agave_wake_channel::unbounded_with_wake_event(event.clone());
+            let (chained_aux_sender, chained_aux_receiver) =
+                agave_wake_channel::unbounded_with_wake_event(event);
             for _ in 0..count {
                 self.sender.send(ChainedChannel::chain_to_new_channel(
                     context.clone(),
@@ -810,24 +807,21 @@ mod chained_channel {
         }
     }
 
-    // P doesn't need to be `: Clone`, yet rustc derive can't handle it.
-    // see https://github.com/rust-lang/rust/issues/26925
-    #[derive_where(Clone)]
     pub(super) struct ChainedChannelReceiver<P, C: Clone> {
-        receiver: Receiver<ChainedChannel<P, C>>,
-        aux_receiver: Receiver<P>,
+        receiver: WakeReceiver<ChainedChannel<P, C>>,
+        aux_receiver: Option<WakeReceiver<P>>,
         context: C,
     }
 
     impl<P, C: Clone> ChainedChannelReceiver<P, C> {
         fn new(
-            receiver: Receiver<ChainedChannel<P, C>>,
-            aux_receiver: Receiver<P>,
+            receiver: WakeReceiver<ChainedChannel<P, C>>,
+            aux_receiver: WakeReceiver<P>,
             initial_context: C,
         ) -> Self {
             Self {
                 receiver,
-                aux_receiver,
+                aux_receiver: Some(aux_receiver),
                 context: initial_context,
             }
         }
@@ -836,27 +830,57 @@ mod chained_channel {
             &self.context
         }
 
-        pub(super) fn for_select(&self) -> &Receiver<ChainedChannel<P, C>> {
-            &self.receiver
-        }
-
-        pub(super) fn aux_for_select(&self) -> &Receiver<P> {
-            &self.aux_receiver
-        }
-
-        pub(super) fn never_receive_from_aux(&mut self) {
-            self.aux_receiver = never();
-        }
-
-        pub(super) fn after_select(&mut self, message: ChainedChannel<P, C>) -> Option<P> {
-            match message.0 {
-                ChainedChannelPrivate::Payload(payload) => Some(payload),
-                ChainedChannelPrivate::ContextAndChannels(context, channel, idle_channel) => {
-                    self.context = context;
-                    self.receiver = channel;
-                    self.aux_receiver = idle_channel;
-                    None
+        fn try_recv_message(
+            receiver: &WakeReceiver<ChainedChannel<P, C>>,
+            aux_receiver: &mut Option<WakeReceiver<P>>,
+        ) -> std::result::Result<Received<ChainedChannel<P, C>, P>, TryRecvError> {
+            match receiver.try_recv() {
+                Ok(message) => return Ok(Received::Primary(message)),
+                Err(TryRecvError::Disconnected) => return Err(TryRecvError::Disconnected),
+                Err(TryRecvError::Empty) => {}
+            }
+            if let Some(receiver) = aux_receiver.as_ref() {
+                match receiver.try_recv() {
+                    Ok(payload) => return Ok(Received::Auxiliary(payload)),
+                    // During switching, the auxiliary sender can disappear before this
+                    // handler observes its context message. Keep waiting on the primary.
+                    Err(TryRecvError::Disconnected) => *aux_receiver = None,
+                    Err(TryRecvError::Empty) => {}
                 }
+            }
+            Err(TryRecvError::Empty)
+        }
+
+        /// Polls the primary channel before the auxiliary, including context switches and disconnects.
+        pub(super) fn recv(&mut self) -> std::result::Result<Received<P>, RecvError> {
+            loop {
+                let message = self
+                    .receiver
+                    .wake_event()
+                    .recv_with(|| Self::try_recv_message(&self.receiver, &mut self.aux_receiver))?;
+                match message {
+                    Received::Primary(ChainedChannel(ChainedChannelPrivate::Payload(payload))) => {
+                        return Ok(Received::Primary(payload));
+                    }
+                    Received::Primary(ChainedChannel(
+                        ChainedChannelPrivate::ContextAndChannels(context, receiver, aux_receiver),
+                    )) => {
+                        self.context = context;
+                        self.receiver = receiver;
+                        self.aux_receiver = Some(aux_receiver);
+                    }
+                    Received::Auxiliary(payload) => return Ok(Received::Auxiliary(payload)),
+                }
+            }
+        }
+    }
+
+    impl<P, C: Clone> Clone for ChainedChannelReceiver<P, C> {
+        fn clone(&self) -> Self {
+            Self {
+                receiver: self.receiver.clone(),
+                aux_receiver: self.aux_receiver.clone(),
+                context: self.context.clone(),
             }
         }
     }
@@ -864,12 +888,115 @@ mod chained_channel {
     pub(super) fn unbounded<P, C: Clone>(
         initial_context: C,
     ) -> (ChainedChannelSender<P, C>, ChainedChannelReceiver<P, C>) {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let (aux_sender, aux_receiver) = crossbeam_channel::unbounded();
+        let event = Arc::new(WakeEvent::default());
+        let (sender, receiver) = agave_wake_channel::unbounded_with_wake_event(event.clone());
+        let (aux_sender, aux_receiver) = agave_wake_channel::unbounded_with_wake_event(event);
         (
             ChainedChannelSender::new(sender, aux_sender),
             ChainedChannelReceiver::new(receiver, aux_receiver, initial_context),
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_priority_and_disconnect() {
+            let (sender, mut receiver) = unbounded::<usize, _>(0);
+            sender.send_aux_payload(1).unwrap();
+            sender.send_payload(2).unwrap();
+            assert_matches!(receiver.recv(), Ok(Received::Primary(2)));
+            assert_matches!(receiver.recv(), Ok(Received::Auxiliary(1)));
+
+            sender.send_aux_payload(3).unwrap();
+            drop(sender);
+            // A primary disconnect takes precedence over auxiliary work.
+            assert_matches!(receiver.recv(), Err(RecvError));
+        }
+
+        #[test]
+        fn test_aux_disconnect_keeps_primary_alive() {
+            let (sender, mut receiver) = unbounded::<usize, _>(0);
+            let ChainedChannelSender { sender, aux_sender } = sender;
+            drop(aux_sender);
+            // Poll before publishing primary work, so the auxiliary disconnect must be observed.
+            assert!(matches!(
+                ChainedChannelReceiver::try_recv_message(
+                    &receiver.receiver,
+                    &mut receiver.aux_receiver,
+                ),
+                Err(TryRecvError::Empty)
+            ));
+            assert!(receiver.aux_receiver.is_none());
+            sender
+                .send(ChainedChannel(ChainedChannelPrivate::Payload(7)))
+                .unwrap();
+            assert_matches!(receiver.recv(), Ok(Received::Primary(7)));
+            drop(sender);
+            assert_matches!(receiver.recv(), Err(RecvError));
+        }
+
+        #[test]
+        fn test_staggered_context_switch() {
+            const TIMEOUT: Duration = Duration::from_secs(10);
+
+            let (mut sender, mut first) = unbounded::<usize, _>(0);
+            let mut second = first.clone();
+            let (progress_sender, progress_receiver) = crossbeam_channel::unbounded();
+            let (resume_sender, resume_receiver) = crossbeam_channel::bounded(1);
+            let first_thread = thread::spawn({
+                let progress_sender = progress_sender.clone();
+                move || {
+                    assert_matches!(first.recv(), Ok(Received::Primary(7)));
+                    assert_eq!(*first.context(), 1);
+                    assert!(Arc::ptr_eq(
+                        first.receiver.wake_event(),
+                        first.aux_receiver.as_ref().unwrap().wake_event(),
+                    ));
+                    progress_sender
+                        .send(first.receiver.wake_event().clone())
+                        .unwrap();
+                    // Leave auxiliary work for the handler still on the old generation.
+                    resume_receiver.recv_timeout(TIMEOUT).unwrap();
+                    assert_matches!(first.recv(), Err(RecvError));
+                }
+            });
+
+            sender.send_chained_channel(&1, 2).unwrap();
+            sender.send_payload(7).unwrap();
+            let new_event = progress_receiver.recv_timeout(TIMEOUT).unwrap();
+            assert_eq!(*second.context(), 0);
+            assert!(!Arc::ptr_eq(&new_event, second.receiver.wake_event()));
+
+            // The second receiver is still on the old generation when auxiliary work arrives.
+            sender.send_aux_payload(8).unwrap();
+            let second_thread = thread::spawn(move || {
+                assert_matches!(second.recv(), Ok(Received::Auxiliary(8)));
+                assert_eq!(*second.context(), 1);
+                assert!(Arc::ptr_eq(
+                    second.receiver.wake_event(),
+                    second.aux_receiver.as_ref().unwrap().wake_event(),
+                ));
+                progress_sender
+                    .send(second.receiver.wake_event().clone())
+                    .unwrap();
+                assert_matches!(second.recv(), Err(RecvError));
+            });
+            let event = progress_receiver.recv_timeout(TIMEOUT).unwrap();
+            assert!(Arc::ptr_eq(&event, &new_event));
+
+            resume_sender.send(()).unwrap();
+            drop(sender);
+            let start = Instant::now();
+            for worker in [first_thread, second_thread] {
+                while !worker.is_finished() {
+                    assert!(start.elapsed() < TIMEOUT, "handler did not finish");
+                    thread::yield_now();
+                }
+                worker.join().unwrap();
+            }
+        }
     }
 }
 
@@ -879,29 +1006,59 @@ mod chained_channel {
 /// with automatic population on initial entry misses, fulfilling the Pubkey-UsageQueue 1-to-1
 /// mapping responsibility as documented by `UsageQueue`.
 ///
-/// Currently, the simplest implementation. This grows memory usage in unbounded way. Overgrown
-/// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
+/// Insertions above the eviction threshold try to evict up to 10 queues. Overgrown instance
+/// destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
-/// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
+/// the pure-logic-only crate).
 #[derive(Debug)]
 struct UsageQueueLoaderInner {
     capability: Capability,
     usage_queues: DashMap<Pubkey, UsageQueue>,
+    eviction_candidates: SegQueue<Pubkey>,
+    eviction_threshold: usize,
 }
 
 impl UsageQueueLoaderInner {
-    fn new(capability: Capability) -> Self {
+    fn new(capability: Capability, eviction_threshold: usize) -> Self {
         Self {
             capability,
             usage_queues: DashMap::default(),
+            eviction_candidates: SegQueue::new(),
+            eviction_threshold,
         }
     }
 
     fn load(&self, address: Pubkey) -> UsageQueue {
-        self.usage_queues
-            .entry(address)
-            .or_insert_with(|| UsageQueue::new(&self.capability))
-            .clone()
+        let queue = match self.usage_queues.entry(address) {
+            Entry::Occupied(entry) => return entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let queue = UsageQueue::new(&self.capability);
+                self.eviction_candidates.push(address);
+                entry.insert(queue.clone());
+                queue
+            }
+        };
+
+        // Try to evict up to 10 queues if the number of queues exceeds the eviction threshold. This
+        // is best effort - we don't want to loop indefinitely, as many eviction candidates may be
+        // shared and not evictable, and we don't want to slow down load() too much.
+        for _ in 0..10 {
+            if self.eviction_candidates.len() <= self.eviction_threshold {
+                break;
+            }
+            let Some(address) = self.eviction_candidates.pop() else {
+                break;
+            };
+            if self
+                .usage_queues
+                .remove_if(&address, |_, queue| !queue.is_shared())
+                .is_none()
+            {
+                self.eviction_candidates.push(address);
+            }
+        }
+
+        queue
     }
 
     fn count(&self) -> usize {
@@ -944,14 +1101,6 @@ impl UsageQueueLoader {
             } => false,
         }
     }
-}
-
-// (this is slow needing atomic mem reads. However, this can be turned into a lot faster
-// optimizer-friendly version as shown in this crossbeam pr:
-// https://github.com/crossbeam-rs/crossbeam/pull/1047)
-fn disconnected<T>() -> Receiver<T> {
-    // drop the sender residing at .0, returning an always-disconnected receiver.
-    crossbeam_channel::unbounded().1
 }
 
 /// The concrete scheduler instance along with 1 scheduler and N handler threads.
@@ -1084,10 +1233,10 @@ where
 struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_id: SchedulerId,
     pool: Arc<SchedulerPool<S, TH>>,
-    new_task_sender: Sender<NewTaskPayload>,
-    new_task_receiver: Option<Receiver<NewTaskPayload>>,
-    session_result_sender: Sender<ResultWithTimings>,
-    session_result_receiver: Receiver<ResultWithTimings>,
+    new_task_sender: WakeSender<NewTaskPayload>,
+    new_task_receiver: Option<WakeReceiver<NewTaskPayload>>,
+    session_result_sender: WakeSender<ResultWithTimings>,
+    session_result_receiver: agave_wake_channel::Receiver<ResultWithTimings>,
     session_result_with_timings: Option<ResultWithTimings>,
     scheduler_thread: Option<JoinHandle<()>>,
     handler_threads: Vec<JoinHandle<()>>,
@@ -1096,10 +1245,47 @@ struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
 struct HandlerPanicked;
 type HandlerResult = std::result::Result<ExecutedTask, HandlerPanicked>;
 
+enum SchedulerInput {
+    FinishedBlocked(HandlerResult),
+    Unblocked,
+    NewTask(NewTaskPayload),
+    FinishedIdle(HandlerResult),
+}
+
+/// Polls in priority order: blocked-task completions, locally unblocked tasks, new tasks,
+/// then idle-task completions.
+/// All three receivers must share the same event, consumed only by the scheduler thread.
+fn recv_scheduler_input(
+    finished_blocked: &WakeReceiver<HandlerResult>,
+    has_unblocked_task: bool,
+    new_tasks: &WakeReceiver<NewTaskPayload>,
+    finished_idle: &WakeReceiver<HandlerResult>,
+) -> std::result::Result<SchedulerInput, RecvError> {
+    new_tasks.wake_event().recv_with(|| {
+        match finished_blocked.try_recv() {
+            Ok(result) => return Ok(SchedulerInput::FinishedBlocked(result)),
+            Err(TryRecvError::Disconnected) => return Err(TryRecvError::Disconnected),
+            Err(TryRecvError::Empty) => {}
+        }
+        // Only this thread mutates the state machine, so this condition cannot change while
+        // waiting and needs no independent wakeup.
+        if has_unblocked_task {
+            return Ok(SchedulerInput::Unblocked);
+        }
+        match new_tasks.try_recv() {
+            Ok(task) => return Ok(SchedulerInput::NewTask(task)),
+            Err(TryRecvError::Disconnected) => return Err(TryRecvError::Disconnected),
+            Err(TryRecvError::Empty) => {}
+        }
+        finished_idle.try_recv().map(SchedulerInput::FinishedIdle)
+    })
+}
+
 impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
-        let (new_task_sender, new_task_receiver) = crossbeam_channel::unbounded();
-        let (session_result_sender, session_result_receiver) = crossbeam_channel::unbounded();
+        let (new_task_sender, new_task_receiver) =
+            agave_wake_channel::unbounded_with_wake_event(Arc::new(WakeEvent::default()));
+        let (session_result_sender, session_result_receiver) = agave_wake_channel::unbounded();
 
         Self {
             scheduler_id: pool.new_scheduler_id(),
@@ -1330,10 +1516,19 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // because it is more likely that a blocked task will have more blocked tasks behind it,
         // which should be scheduled while minimizing the delay to clear buffered linearized runs
         // as fast as possible.
+        let scheduler_wake_event = self
+            .new_task_receiver
+            .as_ref()
+            .expect("no 2nd start_threads()")
+            .wake_event();
         let (finished_blocked_task_sender, finished_blocked_task_receiver) =
-            crossbeam_channel::unbounded::<HandlerResult>();
+            agave_wake_channel::unbounded_with_wake_event::<HandlerResult>(
+                scheduler_wake_event.clone(),
+            );
         let (finished_idle_task_sender, finished_idle_task_receiver) =
-            crossbeam_channel::unbounded::<HandlerResult>();
+            agave_wake_channel::unbounded_with_wake_event::<HandlerResult>(
+                scheduler_wake_event.clone(),
+            );
 
         assert_matches!(self.session_result_with_timings, None);
 
@@ -1395,11 +1590,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // like syscalls, VDSO, and even memory (de)allocation should be avoided at all costs
             // by design or by means of offloading at the last resort.
             move || {
-                let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
-                let dummy_receiver = |trigger| {
-                    if trigger { do_now } else { dont_now }
-                };
-
                 let mut state_machine = unsafe {
                     SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling(
                         Self::max_running_task_count(),
@@ -1411,30 +1601,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // externally-provided mutable state for each session in this way:
                 //
                 // 1. Initial result_with_timing is propagated implicitly by the moved variable.
-                // 2. Subsequent result_with_timings are propagated explicitly from
-                //    the new_task_receiver.recv() invocation located at the end of loop.
+                // 2. Subsequent result_with_timings arrive in OpenSubchannel messages
+                //    received while waiting for the next session at the end of the loop.
                 'nonaborted_main_loop: loop {
                     while !is_finished {
-                        // ALL recv selectors are eager-evaluated ALWAYS by current crossbeam impl,
-                        // which isn't great and is inconsistent with `if`s in the Rust's match
-                        // arm. So, eagerly binding the result to a variable unconditionally here
-                        // makes no perf. difference...
-                        let dummy_unblocked_task_receiver =
-                            dummy_receiver(Self::can_receive_unblocked_task(&state_machine));
-
-                        // There's something special called dummy_unblocked_task_receiver here.
-                        // This odd pattern was needed to react to newly unblocked tasks from
-                        // _not-crossbeam-channel_ event sources, precisely at the specified
-                        // precedence among other selectors, while delegating the control flow to
-                        // select_biased!.
-                        //
-                        // In this way, hot looping is avoided and overall control flow is much
-                        // consistent. Note that unified scheduler will go
-                        // into busy looping to seek lowest latency eventually. However, not now,
-                        // to measure _actual_ cpu usage easily with the select approach.
-                        select_biased! {
-                            recv(finished_blocked_task_receiver) -> receiver_result => {
-                                let handler_result = receiver_result.expect("alive handler");
+                        match recv_scheduler_input(
+                            &finished_blocked_task_receiver,
+                            Self::can_receive_unblocked_task(&state_machine),
+                            &new_task_receiver,
+                            &finished_idle_task_receiver,
+                        )
+                        .expect("alive scheduler inputs")
+                        {
+                            SchedulerInput::FinishedBlocked(handler_result)
+                            | SchedulerInput::FinishedIdle(handler_result) => {
                                 let Ok(executed_task) = handler_result else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1454,69 +1634,46 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 ) {
                                     break 'nonaborted_main_loop;
                                 }
-                            },
-                            recv(dummy_unblocked_task_receiver) -> dummy => {
-                                assert_matches!(dummy, Err(RecvError));
-
+                            }
+                            SchedulerInput::Unblocked => {
                                 let task = state_machine
                                     .schedule_next_unblocked_task()
                                     .expect("unblocked task");
                                 runnable_task_sender.send_payload(task).unwrap();
-                            },
-                            recv(new_task_receiver) -> message => {
+                            }
+                            SchedulerInput::NewTask(message) => {
                                 assert!(!session_ending);
 
                                 match message {
-                                    Ok(NewTaskPayload::Payload(task)) => {
+                                    NewTaskPayload::Payload(task) => {
                                         let task_id = task.task_id();
                                         sleepless_testing::at(CheckPoint::NewTask(task_id));
 
-                                        if let Some(task) = state_machine.schedule_or_buffer_task(task, session_ending) {
+                                        if let Some(task) = state_machine
+                                            .schedule_or_buffer_task(task, session_ending)
+                                        {
                                             runnable_task_sender.send_aux_payload(task).unwrap();
                                         } else {
-                                            sleepless_testing::at(CheckPoint::BufferedOrDroppedTask(task_id));
+                                            sleepless_testing::at(
+                                                CheckPoint::BufferedOrDroppedTask(task_id),
+                                            );
                                         }
                                     }
-                                    Ok(NewTaskPayload::CloseSubchannel) => {
+                                    NewTaskPayload::CloseSubchannel => {
                                         sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
-                                    Ok(
-                                        NewTaskPayload::OpenSubchannel(_)
-                                        | NewTaskPayload::UnpauseOpenedSubchannel
-                                        | NewTaskPayload::Reset
-                                    )
-                                    | Err(RecvError) => unreachable!(),
-                                    Ok(NewTaskPayload::Disconnect) => {
+                                    NewTaskPayload::OpenSubchannel(_)
+                                    | NewTaskPayload::UnpauseOpenedSubchannel
+                                    | NewTaskPayload::Reset => unreachable!(),
+                                    NewTaskPayload::Disconnect => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
                                         break 'nonaborted_main_loop;
                                     }
                                 }
-                            },
-                            recv(finished_idle_task_receiver) -> receiver_result => {
-                                let handler_result = receiver_result.expect("alive handler");
-                                let Ok(executed_task) = handler_result else {
-                                    break 'nonaborted_main_loop;
-                                };
-                                state_machine.deschedule_task(&executed_task.task);
-                                let task_result =
-                                    Self::dispatch_unblocked_then_check_block_cost_limits(
-                                        &mut state_machine,
-                                        &runnable_task_sender,
-                                        &executed_task,
-                                        &session_bank,
-                                    );
-
-                                if Self::abort_or_accumulate_result(
-                                    &mut result_with_timings.0,
-                                    executed_task,
-                                    task_result,
-                                ) {
-                                    break 'nonaborted_main_loop;
-                                }
-                            },
+                            }
                         };
 
                         is_finished = Self::can_finish_session(session_ending, &state_machine);
@@ -1556,7 +1713,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             sleepless_testing::at(CheckPoint::Discarded(count));
                         }
                         // Prepare for the new session.
-                        match new_task_receiver.recv() {
+                        // The scheduler is the sole consumer of its event. With no active tasks
+                        // left, only session control is relevant until the next session opens.
+                        match new_task_receiver
+                            .wake_event()
+                            .recv_with(|| new_task_receiver.try_recv())
+                        {
                             Ok(NewTaskPayload::Payload(_task)) => {
                                 unreachable!("cannot receive new task before session start");
                             }
@@ -1638,8 +1800,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //
             // 1. Initial context is propagated implicitly by the moved runnable_task_receiver,
             //    which is clone()-d just above for this particular thread.
-            // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
-            //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
+            // 2. Subsequent contexts are propagated explicitly inside `.recv()`,
+            //    sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || {
                 let _disable_tcache_on_exit = if let Some(arena) = assigned_arena {
@@ -1659,34 +1821,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         );
                     }
 
-                    Some(DisableHandlerThreadTcacheOnDrop {
-                        arena,
-                        thread_index,
-                    })
+                    Some(DisableThreadTcacheOnDrop::new(arena))
                 } else {
                     None
                 };
 
                 loop {
-                    let (task, sender) = select_biased! {
-                        recv(runnable_task_receiver.for_select()) -> message => {
-                            let Ok(message) = message else {
-                                break;
-                            };
-                            if let Some(task) = runnable_task_receiver.after_select(message) {
-                                (task, &finished_blocked_task_sender)
-                            } else {
-                                continue;
-                            }
-                        },
-                        recv(runnable_task_receiver.aux_for_select()) -> task => {
-                            if let Ok(task) = task {
-                                (task, &finished_idle_task_sender)
-                            } else {
-                                runnable_task_receiver.never_receive_from_aux();
-                                continue;
-                            }
+                    let (task, sender) = match runnable_task_receiver.recv() {
+                        Ok(chained_channel::Received::Primary(task)) => {
+                            (task, &finished_blocked_task_sender)
                         }
+                        Ok(chained_channel::Received::Auxiliary(task)) => {
+                            (task, &finished_idle_task_sender)
+                        }
+                        Err(RecvError) => break,
                     };
                     defer! {
                         if !thread::panicking() {
@@ -1732,13 +1880,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         self.handler_threads = (0..handler_context.thread_count)
             .map({
                 |thx| {
-                    let assigned_arena = handler_thread_arenas.map(|arenas| {
-                        let first_handler_arena = usize::from(arenas.len() > 1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        let arena_index =
-                            first_handler_arena + thx % (arenas.len() - first_handler_arena);
-                        arenas[arena_index]
-                    });
+                    let assigned_arena =
+                        handler_thread_arenas.map(|arenas| arena_for_worker(arenas, thx));
                     thread::Builder::new()
                         .name(format!("solScHandle{mode_char}{thx:02}"))
                         .spawn_tracked(handler_main_loop(thx, assigned_arena))
@@ -1963,7 +2106,11 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     ) -> Self {
         let mut thread_manager = ThreadManager::new(pool.clone());
         let handler_context = pool.create_handler_context();
-        let usage_queue_loader = handler_context.usage_queue_loader_for_newly_spawned();
+        let eviction_threshold = pool
+            .max_usage_queue_count
+            .saturating_sub(pool.max_usage_queue_count / 10);
+        let usage_queue_loader =
+            handler_context.usage_queue_loader_for_newly_spawned(eviction_threshold);
         thread_manager.start_threads(context.clone(), result_with_timings, handler_context);
         let inner = Self::Inner {
             thread_manager,
@@ -2165,16 +2312,51 @@ mod tests {
     }
 
     #[test]
+    fn test_scheduler_input_priority() {
+        let event = Arc::new(WakeEvent::default());
+        let (blocked_sender, blocked_receiver) =
+            agave_wake_channel::unbounded_with_wake_event(event.clone());
+        let (task_sender, task_receiver) =
+            agave_wake_channel::unbounded_with_wake_event(event.clone());
+        let (idle_sender, idle_receiver) = agave_wake_channel::unbounded_with_wake_event(event);
+        let recv = |has_unblocked| {
+            recv_scheduler_input(
+                &blocked_receiver,
+                has_unblocked,
+                &task_receiver,
+                &idle_receiver,
+            )
+        };
+
+        idle_sender.send(Err(HandlerPanicked)).unwrap();
+        task_sender.send(NewTaskPayload::CloseSubchannel).unwrap();
+        blocked_sender.send(Err(HandlerPanicked)).unwrap();
+        assert!(matches!(
+            recv(true),
+            Ok(SchedulerInput::FinishedBlocked(Err(_)))
+        ));
+        assert!(matches!(recv(true), Ok(SchedulerInput::Unblocked)));
+        assert!(matches!(
+            recv(false),
+            Ok(SchedulerInput::NewTask(NewTaskPayload::CloseSubchannel))
+        ));
+        assert!(matches!(
+            recv(false),
+            Ok(SchedulerInput::FinishedIdle(Err(_)))
+        ));
+
+        drop(blocked_sender);
+        assert!(matches!(recv(true), Err(RecvError)));
+    }
+
+    #[test]
     fn test_handler_thread_tcache_drop_guard_avoids_purge_on_thread_exit() {
         let arenas = ArenaGroup::new(1, 16 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
         let arena = arenas[0];
 
         let stats_before_thread_exit = std::thread::spawn(move || {
             arena.bind_current_thread_permanently().unwrap();
-            let _disable_tcache_on_exit = DisableHandlerThreadTcacheOnDrop {
-                arena,
-                thread_index: 0,
-            };
+            let _disable_tcache_on_exit = DisableThreadTcacheOnDrop::new(arena);
 
             const DIRTY_BYTES: usize = 8 * 1024 * 1024;
             let allocation = vec![0u8; DIRTY_BYTES];
@@ -2272,7 +2454,7 @@ mod tests {
             None,
             None,
             None,
-            Some(arenas),
+            Some(Arc::new(arenas)),
         );
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
@@ -2312,6 +2494,25 @@ mod tests {
     }
 
     const SHORTENED_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn test_usage_queue_loader_eviction_budget() {
+        let loader = UsageQueueLoaderInner::new(Capability::FifoQueueing, 90);
+        // Keep all 100 queues in use so eviction cannot reach the 90-queue target.
+        let queues = (0..100)
+            .map(|_| loader.load(Pubkey::new_unique()))
+            .collect::<Vec<_>>();
+        assert_eq!(loader.count(), 100);
+        drop(queues);
+
+        // Adding one queue makes 101. The ten-attempt budget leaves 91 cached.
+        loader.load(Pubkey::new_unique());
+        assert_eq!(loader.count(), 91);
+
+        // Another insertion can finish evicting down to the target of 90.
+        loader.load(Pubkey::new_unique());
+        assert_eq!(loader.count(), 90);
+    }
 
     #[test]
     fn test_scheduler_drop_idle() {
@@ -2419,12 +2620,15 @@ mod tests {
                 .load(Pubkey::new_unique());
         }
         let big_scheduler = pool.do_take_scheduler(context2);
-        for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
-            big_scheduler
-                .inner
-                .usage_queue_loader
-                .load(Pubkey::new_unique());
-        }
+        let big_queues = (0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1)
+            .map(|_| {
+                big_scheduler
+                    .inner
+                    .usage_queue_loader
+                    .load(Pubkey::new_unique())
+            })
+            .collect::<Vec<_>>();
+        drop(big_queues);
 
         assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
         assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);

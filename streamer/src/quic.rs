@@ -8,7 +8,6 @@ use {
         },
         streamer::{ChannelSend, StakedNodes},
     },
-    pem::Pem,
     quinn::{
         Endpoint, IdleTimeout, ServerConfig, VarInt,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -22,6 +21,7 @@ use {
     std::{
         num::NonZeroUsize,
         ops::RangeInclusive,
+        str,
         sync::{
             Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
@@ -85,17 +85,11 @@ pub struct SpawnServerResult {
 }
 
 /// Returns default server configuration along with its PEM certificate chain.
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
     quic_server_params: &QuicStreamerConfig,
-) -> Result<(ServerConfig, String), QuicServerError> {
+) -> Result<ServerConfig, QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
-    let cert_chain_pem_parts = vec![Pem {
-        tag: "CERTIFICATE".to_string(),
-        contents: cert.as_ref().to_vec(),
-    }];
-    let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
 
     let mut server_tls_config =
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
@@ -129,7 +123,7 @@ pub(crate) fn configure_server(
     // See https://github.com/anza-xyz/agave/pull/1647.
     config.enable_segmentation_offload(false);
 
-    Ok((server_config, cert_chain_pem))
+    Ok(server_config)
 }
 
 fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
@@ -158,7 +152,7 @@ pub struct EndpointKeyUpdater {
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key, &self.quic_server_params)?;
+        let config = configure_server(key, &self.quic_server_params)?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }

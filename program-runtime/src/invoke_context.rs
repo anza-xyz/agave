@@ -1161,7 +1161,7 @@ mod tests {
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount},
+        solana_account::{Account, ReadableAccount},
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_keypair::{Address, Keypair},
         solana_message::AccountKeys,
@@ -1325,7 +1325,7 @@ mod tests {
             invoke_stack.push(program_id);
             transaction_accounts.push((
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(1, 1, &program_id),
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_id),
             ));
             instruction_accounts.push(InstructionAccount::new(
                 index as IndexOfAccount,
@@ -1340,7 +1340,7 @@ mod tests {
         for (index, program_id) in invoke_stack.iter().enumerate() {
             transaction_accounts.push((
                 *program_id,
-                AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &solana_pubkey::Pubkey::default()),
             ));
             instruction_accounts.push(InstructionAccount::new(
                 index as IndexOfAccount,
@@ -1395,7 +1395,7 @@ mod tests {
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
             )],
             Rent::default(),
             1,
@@ -1428,7 +1428,7 @@ mod tests {
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
             )],
             Rent::default(),
             256,
@@ -1499,11 +1499,14 @@ mod tests {
         expected_result: Result<(), InstructionError>,
     ) {
         let callee_program_id = solana_pubkey::new_rand();
-        let owned_account = AccountSharedData::new(42, 1, &callee_program_id);
-        let not_owned_account = AccountSharedData::new(84, 1, &solana_pubkey::new_rand());
-        let readonly_account = AccountSharedData::new(168, 1, &solana_pubkey::new_rand());
-        let loader_account = AccountSharedData::new(0, 1, &native_loader::id());
-        let mut program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let owned_account = AccountSharedData::new_with_data(42, vec![0; 1], &callee_program_id);
+        let not_owned_account =
+            AccountSharedData::new_with_data(84, vec![0; 1], &solana_pubkey::new_rand());
+        let readonly_account =
+            AccountSharedData::new_with_data(168, vec![0; 1], &solana_pubkey::new_rand());
+        let loader_account = AccountSharedData::new_with_data(0, vec![0; 1], &native_loader::id());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
             (solana_pubkey::new_rand(), owned_account),
@@ -1554,11 +1557,14 @@ mod tests {
         expected_result: Result<(), InstructionError>,
     ) {
         let callee_program_id = solana_pubkey::new_rand();
-        let owned_account = AccountSharedData::new(42, 1, &callee_program_id);
-        let not_owned_account = AccountSharedData::new(84, 1, &solana_pubkey::new_rand());
-        let readonly_account = AccountSharedData::new(168, 1, &solana_pubkey::new_rand());
-        let loader_account = AccountSharedData::new(0, 1, &native_loader::id());
-        let mut program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let owned_account = AccountSharedData::new_with_data(42, vec![0; 1], &callee_program_id);
+        let not_owned_account =
+            AccountSharedData::new_with_data(84, vec![0; 1], &solana_pubkey::new_rand());
+        let readonly_account =
+            AccountSharedData::new_with_data(168, vec![0; 1], &solana_pubkey::new_rand());
+        let loader_account = AccountSharedData::new_with_data(0, vec![0; 1], &native_loader::id());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
             (solana_pubkey::new_rand(), owned_account),
@@ -1652,11 +1658,12 @@ mod tests {
     #[test_case(-1; "Resize the account smaller")]
     fn test_process_instruction_accounts_resize_delta(resize_delta: i64) {
         let program_key = Pubkey::new_unique();
-        let user_account_data_len = 123u64;
+        let user_account_data_len = 123usize;
         let user_account =
-            AccountSharedData::new(100, user_account_data_len as usize, &program_key);
+            AccountSharedData::new_with_data(100, vec![0; user_account_data_len], &program_key);
         let dummy_account = AccountSharedData::new(10, 0, &program_key);
-        let mut program_account = AccountSharedData::new(500, 500, &native_loader::id());
+        let mut program_account =
+            AccountSharedData::new_with_data(500, vec![0; 500], &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
             (Pubkey::new_unique(), user_account),
@@ -1702,12 +1709,13 @@ mod tests {
         let fee_payer = Keypair::new();
         transaction_accounts.push((
             fee_payer.pubkey(),
-            AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
         ));
         account_metas.push(AccountMeta::new(fee_payer.pubkey(), true));
 
         let program_id = Pubkey::new_unique();
-        let mut program_account = AccountSharedData::new(1, 1, &Pubkey::new_unique());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique());
         program_account.set_executable(true);
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
@@ -1715,7 +1723,10 @@ mod tests {
         // Reference the maximum number of instruction accounts.
         for _ in 2..MAX_ACCOUNTS_REFERENCED {
             let key = Pubkey::new_unique();
-            transaction_accounts.push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+            transaction_accounts.push((
+                key,
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
+            ));
             account_metas.push(AccountMeta::new_readonly(key, false));
         }
 
@@ -1818,12 +1829,13 @@ mod tests {
         let fee_payer = Keypair::new();
         transaction_accounts.push((
             fee_payer.pubkey(),
-            AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
         ));
         account_metas.push(AccountMeta::new(fee_payer.pubkey(), true));
 
         let program_id = Pubkey::new_unique();
-        let mut program_account = AccountSharedData::new(1, 1, &Pubkey::new_unique());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique());
         program_account.set_executable(true);
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
@@ -1831,8 +1843,10 @@ mod tests {
         for i in 2..account_metas.capacity() {
             if i % 2 == 0 {
                 let key = Pubkey::new_unique();
-                transaction_accounts
-                    .push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+                transaction_accounts.push((
+                    key,
+                    AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
+                ));
                 account_metas.push(AccountMeta::new_readonly(key, false));
             } else {
                 let last_key = transaction_accounts.last().unwrap().0;
@@ -1921,10 +1935,13 @@ mod tests {
         signer_seeds: &[&[&[u8]]],
     ) -> Result<(), InstructionError> {
         let target_account = AccountSharedData::new(100, 0, &TEST_CALLEE_PROGRAM_ID);
-        let mock_extra_account = AccountSharedData::new(0, 1, &system_program::id());
-        let mut caller_program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let mock_extra_account =
+            AccountSharedData::new_with_data(0, vec![0; 1], &system_program::id());
+        let mut caller_program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         caller_program_account.set_executable(true);
-        let mut callee_program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let mut callee_program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         callee_program_account.set_executable(true);
         let transaction_accounts = vec![
             (target_key, target_account),
@@ -2098,13 +2115,12 @@ mod tests {
     impl InvokeContextCallback for MockCallback {}
 
     fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
-        let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
         AccountSharedData::from(Account {
-            lamports,
+            lamports: 1,
             owner: native_loader::id(),
             data: name.as_bytes().to_vec(),
             executable: true,
-            rent_epoch,
+            rent_epoch: u64::MAX,
         })
     }
 
@@ -2187,11 +2203,11 @@ mod tests {
         let accounts = vec![
             (
                 writable_pubkey,
-                AccountSharedData::new(100, 1, &mock_system_program_id),
+                AccountSharedData::new_with_data(100, vec![0; 1], &mock_system_program_id),
             ),
             (
                 readonly_pubkey,
-                AccountSharedData::new(0, 1, &mock_system_program_id),
+                AccountSharedData::new_with_data(0, vec![0; 1], &mock_system_program_id),
             ),
             (
                 mock_system_program_id,
@@ -2405,11 +2421,11 @@ mod tests {
         let accounts = vec![
             (
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(100, 1, &mock_program_id),
+                AccountSharedData::new_with_data(100, vec![0; 1], &mock_program_id),
             ),
             (
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(0, 1, &mock_program_id),
+                AccountSharedData::new_with_data(0, vec![0; 1], &mock_program_id),
             ),
             (
                 mock_program_id,

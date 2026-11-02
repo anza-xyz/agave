@@ -7,7 +7,7 @@ use {
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_client::BankClient,
-        genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_default_rent},
         loader_utils::create_program,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -27,7 +27,7 @@ fn test_no_panic_banks_client() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(1_000_000_000_000);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let program_id = create_program(
         &bank,

@@ -660,11 +660,29 @@ impl VoteStateHandler {
         }
     }
 
+    /// Serializes `self` into a new buffer of `len` bytes, zero-filling the bytes past the
+    /// encoding.
+    ///
+    /// Returns `Err(InstructionError::InvalidAccountData)` if the encoding exceeds `len` bytes.
+    pub fn serialize_padded(&self, len: usize) -> Result<Vec<u8>, InstructionError> {
+        let mut data = Vec::with_capacity(len);
+        match &self.target_state {
+            TargetVoteState::V4(v4) => {
+                let versioned = VoteStateVersionsRef::V4(v4);
+                wincode::serialize_into(&mut data, &versioned)
+                    .map_err(|_e| InstructionError::InvalidAccountData)?;
+            }
+        }
+        if data.len() > len {
+            return Err(InstructionError::InvalidAccountData);
+        }
+        data.resize(len, 0);
+        Ok(data)
+    }
+
     #[cfg(test)]
     pub fn serialize(self) -> Vec<u8> {
-        let mut data = vec![0; VoteStateV4::size_of()];
-        self.serialize_into(&mut data).unwrap();
-        data
+        self.serialize_padded(VoteStateV4::size_of()).unwrap()
     }
 }
 
@@ -764,6 +782,16 @@ mod tests {
         let mut undersized_data = vec![0; expected.len() - 1];
         assert_eq!(
             handler.serialize_into(&mut undersized_data),
+            Err(InstructionError::InvalidAccountData),
+        );
+
+        assert_eq!(handler.serialize_padded(data.len()), Ok(data));
+        assert_eq!(
+            handler.serialize_padded(expected.len()).as_ref(),
+            Ok(&expected)
+        );
+        assert_eq!(
+            handler.serialize_padded(expected.len() - 1),
             Err(InstructionError::InvalidAccountData),
         );
     }
@@ -1350,7 +1378,8 @@ mod tests {
         // First create a vote account that's too small for v4.
         let v1_14_11_size = VoteState1_14_11::size_of();
         let lamports = rent.minimum_balance(v1_14_11_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Initialize - should fail.
         init_vote_account_state_v4_and_assert(
@@ -1366,7 +1395,8 @@ mod tests {
         // lamports for resize.
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Initialize - should resize and create v4.
         init_vote_account_state_v4_and_assert(
@@ -1380,7 +1410,7 @@ mod tests {
 
         // Now create a vote account that's large enough for v4.
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
 
         // Initialize - should create v4.
         init_vote_account_state_v4_and_assert(
@@ -1401,7 +1431,8 @@ mod tests {
         // First create a vote account that's too small for v4.
         let v1_14_11_size = VoteState1_14_11::size_of();
         let lamports = rent.minimum_balance(v1_14_11_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Deinitialize - should fail.
         deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent.clone());
@@ -1410,14 +1441,15 @@ mod tests {
         // lamports for resize.
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v1_14_11_size, &id());
+        let vote_account =
+            AccountSharedData::new_with_data(lamports, vec![0; v1_14_11_size], &id());
 
         // Deinitialize - should resize and create v4.
         deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent.clone());
 
         // Now create a vote account that's large enough for v4.
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
 
         // Deinitialize - should create v4.
         deinit_vote_account_state_v4_and_assert(vote_pubkey, vote_account, rent);
@@ -1745,7 +1777,7 @@ mod tests {
             rent.minimum_balance(account_size)
         };
 
-        let vote_account = AccountSharedData::new(lamports, account_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; account_size], &id());
 
         let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();
@@ -1882,7 +1914,7 @@ mod tests {
 
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let vote_account = AccountSharedData::new(lamports, v4_size, &id());
+        let vote_account = AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
 
         let transaction_context = mock_transaction_context(vote_pubkey, vote_account, rent);
         let instruction_context = transaction_context.get_next_instruction_context().unwrap();

@@ -41,6 +41,14 @@ check_env() {
   fi
 }
 
+escape_tag() {
+  local v="$1"
+  v="${v//,/\\,}"
+  v="${v//=/\\=}"
+  v="${v// /\\ }"
+  printf '%s' "$v"
+}
+
 filepath="$1"
 if [ ! -f "$filepath" ]; then
   print_error_and_exit "invalid <BENCHMARK_FILEPATH>"
@@ -77,7 +85,7 @@ while IFS= read -r line; do
     ns_iter=$(echo "$ns_iter" | tr -d ',' | cut -d'.' -f1)
     plus_minus=$(echo "$plus_minus" | tr -d ',' | cut -d'.' -f1)
 
-    datapoint="${INFLUX_MEASUREMENT},commit=${COMMIT_HASH},test_suite=${TEST_SUITE},name=${test_name} median=${ns_iter}i,deviation=${plus_minus}i"
+    datapoint="${INFLUX_MEASUREMENT},commit=${COMMIT_HASH},test_suite=$(escape_tag "$TEST_SUITE"),name=$(escape_tag "$test_name") median=${ns_iter}i,deviation=${plus_minus}i"
     echo "datapoint: $datapoint"
 
     if [[ -z "$DRY_RUN" ]]; then

@@ -21,6 +21,9 @@ fn main() -> Result<(), std::io::Error> {
         protos.push(proto);
     }
 
+    let mut config = tonic_prost_build::Config::new();
+    config.disable_comments(["."]);
+
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(false)
@@ -32,5 +35,5 @@ fn main() -> Result<(), std::io::Error> {
             "InstructionErrorType",
             "#[cfg_attr(test, derive(enum_iterator::Sequence))]",
         )
-        .compile_protos(&protos, &[proto_base_path])
+        .compile_with_config(config, &protos, &[proto_base_path])
 }

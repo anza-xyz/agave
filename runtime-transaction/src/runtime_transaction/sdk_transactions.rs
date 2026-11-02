@@ -139,7 +139,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
             reserved_account_keys,
         )?;
         crate::transaction_limits::validate_unique_account_keys(
-            sanitized_transaction.account_keys().iter(),
+            sanitized_transaction.account_keys(),
         )?;
 
         let tx = Self {

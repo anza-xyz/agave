@@ -220,7 +220,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/stable/run-partition.sh")
                         || file.ends_with("ci/stable/common.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
-                        || file.ends_with("ci/common/limit-threads.sh")
                 }),
             local_cluster: trigger_all
                 || rust_changed
@@ -236,7 +235,6 @@ impl PullRequestPipelineFlags {
                     file.ends_with("ci/test-docs.sh")
                         || file.ends_with("ci/test-stable.sh")
                         || file.ends_with("scripts/ulimit-n.sh")
-                        || file.ends_with("ci/common/limit-threads.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
                 }),
             localnet: trigger_all
@@ -261,7 +259,6 @@ impl PullRequestPipelineFlags {
                     file.ends_with("ci/test-stable-sbf.sh")
                         || file.ends_with("ci/test-stable.sh")
                         || file.ends_with("scripts/ulimit-n.sh")
-                        || file.ends_with("ci/common/limit-threads.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
                         || file.starts_with("programs/sbf/")
                         || file == "cargo-build-sbf"

@@ -89,9 +89,9 @@ uint64_t do_nested_invokes(uint64_t num_nested_invokes,
   sol_assert(SUCCESS == sol_invoke(&instruction, accounts, num_accounts));
 
   sol_assert(*accounts[ARGUMENT_INDEX].lamports ==
-             42 - 5 + (2 * num_nested_invokes));
+             ARGUMENT_LAMPORTS - 5 + (2 * num_nested_invokes));
   sol_assert(*accounts[INVOKED_ARGUMENT_INDEX].lamports ==
-             20 + 5 - (2 * num_nested_invokes));
+             INVOKED_ARGUMENT_LAMPORTS + 5 - (2 * num_nested_invokes));
 
   return SUCCESS;
 }
@@ -120,7 +120,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
           {accounts[FROM_INDEX].key, true, true},
           {accounts[DERIVED_KEY1_INDEX].key, true, true}};
       uint8_t data[4 + 8 + 8 + 32];
-      *(uint64_t *)(data + 4) = 42;
+      *(uint64_t *)(data + 4) = CREATE_ACCOUNT_LAMPORTS;
       *(uint64_t *)(data + 4 + 8) = MAX_PERMITTED_DATA_INCREASE;
       sol_memcpy(data + 4 + 8 + 8, params.program_id, SIZE_PUBKEY);
       const SolInstruction instruction = {accounts[SYSTEM_PROGRAM_INDEX].key,
@@ -135,8 +135,8 @@ extern uint64_t entrypoint(const uint8_t *input) {
                                               SOL_ARRAY_SIZE(accounts),
                                               signers_seeds,
                                               SOL_ARRAY_SIZE(signers_seeds)));
-      sol_assert(*accounts[FROM_INDEX].lamports == from_lamports - 42);
-      sol_assert(*accounts[DERIVED_KEY1_INDEX].lamports == to_lamports + 42);
+      sol_assert(*accounts[FROM_INDEX].lamports == from_lamports - CREATE_ACCOUNT_LAMPORTS);
+      sol_assert(*accounts[DERIVED_KEY1_INDEX].lamports == to_lamports + CREATE_ACCOUNT_LAMPORTS);
       sol_assert(SolPubkey_same(accounts[DERIVED_KEY1_INDEX].owner,
                                 params.program_id));
       sol_assert(accounts[DERIVED_KEY1_INDEX].data_len ==
@@ -493,7 +493,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
         {accounts[FROM_INDEX].key, true, true},
         {accounts[DERIVED_KEY1_INDEX].key, true, true}};
     uint8_t data[4 + 8 + 8 + 32];
-    *(uint64_t *)(data + 4) = 42;
+    *(uint64_t *)(data + 4) = CREATE_ACCOUNT_LAMPORTS;
     *(uint64_t *)(data + 4 + 8) = MAX_PERMITTED_DATA_INCREASE;
     sol_memcpy(data + 4 + 8 + 8, params.program_id, SIZE_PUBKEY);
     const SolInstruction instruction = {accounts[SYSTEM_PROGRAM_INDEX].key,
