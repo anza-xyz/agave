@@ -24,8 +24,9 @@ use {
     },
     assert_matches::assert_matches,
     crossbeam_channel::{self, RecvError, RecvTimeoutError, SendError, Sender},
+    crossbeam_queue::SegQueue,
     crossbeam_utils::CachePadded,
-    dashmap::DashMap,
+    dashmap::{DashMap, mapref::entry::Entry},
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
@@ -146,9 +147,12 @@ pub struct HandlerContext {
 }
 
 impl HandlerContext {
-    fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
+    fn usage_queue_loader_for_newly_spawned(&self, eviction_threshold: usize) -> UsageQueueLoader {
         UsageQueueLoader::OwnedBySelf {
-            usage_queue_loader_inner: UsageQueueLoaderInner::new(Capability::FifoQueueing),
+            usage_queue_loader_inner: UsageQueueLoaderInner::new(
+                Capability::FifoQueueing,
+                eviction_threshold,
+            ),
         }
     }
 
@@ -1002,29 +1006,59 @@ mod chained_channel {
 /// with automatic population on initial entry misses, fulfilling the Pubkey-UsageQueue 1-to-1
 /// mapping responsibility as documented by `UsageQueue`.
 ///
-/// Currently, the simplest implementation. This grows memory usage in unbounded way. Overgrown
-/// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
+/// Insertions above the eviction threshold try to evict up to 10 queues. Overgrown instance
+/// destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
-/// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
+/// the pure-logic-only crate).
 #[derive(Debug)]
 struct UsageQueueLoaderInner {
     capability: Capability,
     usage_queues: DashMap<Pubkey, UsageQueue>,
+    eviction_candidates: SegQueue<Pubkey>,
+    eviction_threshold: usize,
 }
 
 impl UsageQueueLoaderInner {
-    fn new(capability: Capability) -> Self {
+    fn new(capability: Capability, eviction_threshold: usize) -> Self {
         Self {
             capability,
             usage_queues: DashMap::default(),
+            eviction_candidates: SegQueue::new(),
+            eviction_threshold,
         }
     }
 
     fn load(&self, address: Pubkey) -> UsageQueue {
-        self.usage_queues
-            .entry(address)
-            .or_insert_with(|| UsageQueue::new(&self.capability))
-            .clone()
+        let queue = match self.usage_queues.entry(address) {
+            Entry::Occupied(entry) => return entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let queue = UsageQueue::new(&self.capability);
+                self.eviction_candidates.push(address);
+                entry.insert(queue.clone());
+                queue
+            }
+        };
+
+        // Try to evict up to 10 queues if the number of queues exceeds the eviction threshold. This
+        // is best effort - we don't want to loop indefinitely, as many eviction candidates may be
+        // shared and not evictable, and we don't want to slow down load() too much.
+        for _ in 0..10 {
+            if self.eviction_candidates.len() <= self.eviction_threshold {
+                break;
+            }
+            let Some(address) = self.eviction_candidates.pop() else {
+                break;
+            };
+            if self
+                .usage_queues
+                .remove_if(&address, |_, queue| !queue.is_shared())
+                .is_none()
+            {
+                self.eviction_candidates.push(address);
+            }
+        }
+
+        queue
     }
 
     fn count(&self) -> usize {
@@ -2072,7 +2106,11 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     ) -> Self {
         let mut thread_manager = ThreadManager::new(pool.clone());
         let handler_context = pool.create_handler_context();
-        let usage_queue_loader = handler_context.usage_queue_loader_for_newly_spawned();
+        let eviction_threshold = pool
+            .max_usage_queue_count
+            .saturating_sub(pool.max_usage_queue_count / 10);
+        let usage_queue_loader =
+            handler_context.usage_queue_loader_for_newly_spawned(eviction_threshold);
         thread_manager.start_threads(context.clone(), result_with_timings, handler_context);
         let inner = Self::Inner {
             thread_manager,
@@ -2458,6 +2496,25 @@ mod tests {
     const SHORTENED_POOL_CLEANER_INTERVAL: Duration = Duration::from_millis(1);
 
     #[test]
+    fn test_usage_queue_loader_eviction_budget() {
+        let loader = UsageQueueLoaderInner::new(Capability::FifoQueueing, 90);
+        // Keep all 100 queues in use so eviction cannot reach the 90-queue target.
+        let queues = (0..100)
+            .map(|_| loader.load(Pubkey::new_unique()))
+            .collect::<Vec<_>>();
+        assert_eq!(loader.count(), 100);
+        drop(queues);
+
+        // Adding one queue makes 101. The ten-attempt budget leaves 91 cached.
+        loader.load(Pubkey::new_unique());
+        assert_eq!(loader.count(), 91);
+
+        // Another insertion can finish evicting down to the target of 90.
+        loader.load(Pubkey::new_unique());
+        assert_eq!(loader.count(), 90);
+    }
+
+    #[test]
     fn test_scheduler_drop_idle() {
         agave_logger::setup();
 
@@ -2563,12 +2620,15 @@ mod tests {
                 .load(Pubkey::new_unique());
         }
         let big_scheduler = pool.do_take_scheduler(context2);
-        for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
-            big_scheduler
-                .inner
-                .usage_queue_loader
-                .load(Pubkey::new_unique());
-        }
+        let big_queues = (0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1)
+            .map(|_| {
+                big_scheduler
+                    .inner
+                    .usage_queue_loader
+                    .load(Pubkey::new_unique())
+            })
+            .collect::<Vec<_>>();
+        drop(big_queues);
 
         assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
         assert_eq!(pool_raw.trashed_scheduler_inners.lock().unwrap().len(), 0);
