@@ -26,7 +26,6 @@ use {
     crossbeam_channel::{self, RecvError, RecvTimeoutError, SendError, Sender},
     crossbeam_utils::CachePadded,
     dashmap::DashMap,
-    derive_where::derive_where,
     log::*,
     scopeguard::defer,
     solana_clock::Slot,
@@ -804,9 +803,6 @@ mod chained_channel {
         }
     }
 
-    // P doesn't need to be `: Clone`, yet rustc derive can't handle it.
-    // see https://github.com/rust-lang/rust/issues/26925
-    #[derive_where(Clone)]
     pub(super) struct ChainedChannelReceiver<P, C: Clone> {
         receiver: WakeReceiver<ChainedChannel<P, C>>,
         aux_receiver: Option<WakeReceiver<P>>,
@@ -871,6 +867,16 @@ mod chained_channel {
                     }
                     Received::Auxiliary(payload) => return Ok(Received::Auxiliary(payload)),
                 }
+            }
+        }
+    }
+
+    impl<P, C: Clone> Clone for ChainedChannelReceiver<P, C> {
+        fn clone(&self) -> Self {
+            Self {
+                receiver: self.receiver.clone(),
+                aux_receiver: self.aux_receiver.clone(),
+                context: self.context.clone(),
             }
         }
     }
