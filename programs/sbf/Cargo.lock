@@ -2787,6 +2787,7 @@ version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 dependencies = [
+ "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
 ]
@@ -5845,10 +5846,12 @@ name = "solana-accounts-db"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-fs",
+ "agave-memory",
  "ahash 0.8.12",
  "blake3",
  "bv",
  "dashmap",
+ "hashbrown 0.17.0",
  "itertools 0.15.0",
  "log",
  "modular-bitfield",
