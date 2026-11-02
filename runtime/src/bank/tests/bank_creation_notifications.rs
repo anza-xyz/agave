@@ -144,12 +144,7 @@ fn test_bank_creation_from_snapshot() {
             Some(*bank.leader()),
             None,
             bank.load_accounts_data_size(),
-            bank.stakes_cache
-                .stakes()
-                .stake_delegations()
-                .keys()
-                .copied()
-                .collect(),
+            pubkeys_by_owner(&bank.stakes_cache.stakes()),
             epoch_stakes,
         );
         assert_ne!(restored.bank_id(), bank.bank_id());
