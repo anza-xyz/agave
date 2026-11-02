@@ -33,12 +33,12 @@ use {
     },
     agave_jemalloc::jemalloc::Arena,
     agave_votor::{
-        cancelled_replay_slots::CancelledReplaySlots,
         commitment::{self, CommitmentAggregationData, CommitmentType},
         event::{
             CompletedBlock, LatestSwitchRequest, LeaderWindowInfo, SwitchBankEvent, VotorEvent,
             VotorEventSender,
         },
+        replay_signals::ReplayCancelReceiver,
         root_utils,
         voting_service::BLSOp,
         voting_utils::{self, GenerateVoteTxResult},
@@ -119,10 +119,12 @@ use {
     thiserror::Error,
 };
 
+mod cancelled_replay;
 mod dead_slots;
 mod update_parent;
 
 use {
+    cancelled_replay::CancelledReplaySlots,
     dead_slots::{
         DeadSlotContext, DeadSlotDuplicateContext, DeadSlotNotifications, mark_replay_dead_slot,
     },
@@ -464,8 +466,6 @@ pub struct ReplayStageConfig {
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
-    /// Skip-certified slots whose replay Votor cancelled.
-    pub cancelled_replay_slots: CancelledReplaySlots,
     pub(crate) replay_arena: Option<Arena>,
 }
 
@@ -504,6 +504,8 @@ pub struct ReplayReceivers {
     pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
     pub latest_switch_request: LatestSwitchRequest,
+    /// Commands from Votor to cancel or resume replay of skip-certified slots.
+    pub replay_cancel_receiver: ReplayCancelReceiver,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -788,7 +790,6 @@ impl ReplayStage {
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
-            cancelled_replay_slots,
             replay_arena,
         } = config;
 
@@ -827,6 +828,7 @@ impl ReplayStage {
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
+            replay_cancel_receiver,
         } = receivers;
 
         trace!("replay stage");
@@ -918,6 +920,7 @@ impl ReplayStage {
             // keep a free list to avoid doing one of those for each slot
             let mut async_verification_freelist = Vec::new();
             let mut pending_switch = None;
+            let mut cancelled_replay_slots = CancelledReplaySlots::default();
             let working_bank = {
                 let r_bank_forks = bank_forks.read().unwrap();
                 r_bank_forks.working_bank()
@@ -1015,6 +1018,16 @@ impl ReplayStage {
                     break;
                 }
 
+                // Cancel and resume replay of skip-certified slots as votor requested.
+                cancelled_replay_slots.process_commands(
+                    &my_pubkey,
+                    &replay_cancel_receiver,
+                    &blockstore,
+                    &bank_forks,
+                    &mut progress,
+                    &mut async_verification_freelist,
+                );
+
                 let mut generate_new_bank_forks_time =
                     Measure::start("generate_new_bank_forks_time");
                 if let Err(err) = Self::generate_new_bank_forks(
@@ -1036,19 +1049,6 @@ impl ReplayStage {
                     break;
                 }
                 generate_new_bank_forks_time.stop();
-
-                // Discard banks whose replay votor cancelled because their slot is
-                // skip-certified.
-                //
-                // Note: this runs after generate_new_bank_forks, so that a bank created
-                // concurrently with votor cancelling its slot is discarded before it gets replayed.
-                Self::process_cancelled_banks(
-                    &my_pubkey,
-                    &bank_forks,
-                    &mut progress,
-                    &mut async_verification_freelist,
-                    &cancelled_replay_slots,
-                );
 
                 // We either have a bank currently, OR there is a pending message to either reset or set
                 // the bank.
@@ -2656,116 +2656,6 @@ impl ReplayStage {
         Ok(())
     }
 
-    /// Discards the banks whose replay votor cancelled because their slot is skip-certified
-    /// without a NotarizeFallback-or-stronger certificate. Such blocks are unlikely to be
-    /// finalized, so this avoids spending replay time on them and limits how much replay time a
-    /// slow block can consume.
-    ///
-    /// Frozen banks, leader banks, and dead banks are left alone.
-    ///
-    /// Note that cancellation is not a replay failure: the slot is not marked dead and its shreds
-    /// are kept, so the bank can be recreated if votor resumes the slot. Votor resumes it when a
-    /// block in the slot gets a NotarizeFallback (or stronger) certificate, or when a descendant
-    /// block is finalized.
-    ///
-    /// Each discarded bank that replay started on is reported in `replay-slot-cancelled-stats`.
-    fn process_cancelled_banks(
-        my_pubkey: &Pubkey,
-        bank_forks: &RwLock<BankForks>,
-        progress: &mut ProgressMap,
-        async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-        cancelled_replay_slots: &CancelledReplaySlots,
-    ) {
-        // Banks are only created on top of frozen banks, so there is at most one unfrozen bank per
-        // fork: usually only the bank being replayed.
-        let banks_to_discard: SmallVec<[_; 2]> = {
-            let is_unfrozen_replay_bank = |bank: &BankWithScheduler| {
-                !bank.is_frozen() && bank.should_replay_from_blockstore()
-            };
-            let is_cancelled = |bank: &BankWithScheduler| {
-                // Neither check alone is enough: votor may resume a slot by removing it from
-                // `cancelled_replay_slots`, but never unflags a bank. Hence by only checking
-                // `cancelled_replay_slots`, we might keep a flagged bank that can no longer
-                // execute (in a slot that is no longer cancelled). Conversely, by only checking a
-                // bank's `is_replay_cancel_requested` flag, we might miss a bank that replay
-                // inserted into `BankForks` after votor looked it up when cancelling its slot.
-                bank.is_replay_cancel_requested() || cancelled_replay_slots.contains(bank.slot())
-            };
-            let is_dead = |bank: &BankWithScheduler| {
-                // Dead banks don't execute anything, and keeping them prevents replaying them.
-                progress.is_dead(bank.slot()).unwrap_or(false)
-            };
-
-            bank_forks
-                .read()
-                .unwrap()
-                .banks()
-                .values()
-                .filter(|bank| {
-                    is_unfrozen_replay_bank(bank) && is_cancelled(bank) && !is_dead(bank)
-                })
-                .map(|bank| bank.clone_without_scheduler())
-                .collect()
-        };
-
-        for bank in banks_to_discard {
-            let slot = bank.slot();
-            info!(
-                "{my_pubkey}: Discarding bank {slot} (bank id {:?}) whose replay was cancelled",
-                bank.bank_id()
-            );
-            bank.request_replay_cancel();
-            // A slot cancelled before replay started on its bank has no `ForkProgress`: nothing
-            // was spent on it, so there is nothing to report.
-            if let Some(fork_progress) = progress.get(&slot) {
-                Self::report_cancelled_bank(slot, fork_progress, cancelled_replay_slots);
-            }
-            // Note that we do not want to purge transaction history: the shreds are kept, so if
-            // votor resumes the slot, replay either re-executes the same block on the same parent,
-            // overwriting the rows written so far with identical keys and values, or starts from an
-            // `UpdateParent` offset, in which case `generate_new_bank_forks` purges the slot's
-            // transaction history first.
-            Self::clear_slots([slot], bank_forks, progress, async_verification_freelist);
-        }
-    }
-
-    /// Reports how far replay of a cancelled bank got, and how long it took, in
-    /// `replay-slot-cancelled-stats`.
-    fn report_cancelled_bank(
-        slot: Slot,
-        fork_progress: &ForkProgress,
-        cancelled_replay_slots: &CancelledReplaySlots,
-    ) {
-        // Zero if votor flagged the bank, but resumed its slot before replay discarded it.
-        let cancel_latency_us = cancelled_replay_slots
-            .cancelled_at(slot)
-            .map_or(0, |cancelled_at| cancelled_at.elapsed().as_micros() as i64);
-        let replay_total_elapsed_us = fork_progress
-            .replay_stats
-            .read()
-            .unwrap()
-            .started
-            .elapsed()
-            .as_micros() as i64;
-        let (num_txs, num_entries, num_shreds) = {
-            let replay_progress = fork_progress.replay_progress.read().unwrap();
-            (
-                replay_progress.num_txs as i64,
-                replay_progress.num_entries as i64,
-                replay_progress.num_shreds as i64,
-            )
-        };
-        datapoint_info!(
-            "replay-slot-cancelled-stats",
-            ("slot", slot as i64, i64),
-            ("replay_total_elapsed", replay_total_elapsed_us, i64),
-            ("cancel_latency_us", cancel_latency_us, i64),
-            ("total_transactions", num_txs, i64),
-            ("total_entries", num_entries, i64),
-            ("total_shreds", num_shreds, i64),
-        );
-    }
-
     fn leader_bank_shreds_pending(bank: &Bank, blockstore: &Blockstore) -> bool {
         !bank.should_replay_from_blockstore() && !blockstore.is_full(bank.slot())
     }
@@ -4267,7 +4157,7 @@ impl ReplayStage {
                     }
                     Err(err) if bank.is_replay_cancel_requested() => {
                         // Votor cancelled replay of this slot, so the error is expected. Don't
-                        // mark the slot dead; process_cancelled_banks discards the bank.
+                        // mark the slot dead; processing votor's cancel command discards the bank.
                         info!("Replay of slot {bank_slot} was cancelled: {err:?}");
                         continue;
                     }
@@ -4305,7 +4195,7 @@ impl ReplayStage {
                     Ok(completed_replay) => completed_replay,
                     Err(err) if bank.is_replay_cancel_requested() => {
                         // Votor cancelled replay of this slot, so the error is expected. Don't
-                        // mark the slot dead; process_cancelled_banks discards the bank.
+                        // mark the slot dead; processing votor's cancel command discards the bank.
                         info!("Replay of slot {bank_slot} was cancelled: {err:?}");
                         continue;
                     }

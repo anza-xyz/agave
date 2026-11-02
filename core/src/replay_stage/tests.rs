@@ -11,6 +11,7 @@ use {
         replay_stage::ReplayStage,
         vote_simulator::{self, VoteSimulator},
     },
+    agave_votor::replay_signals::{ReplayCancelCommand, ReplayCancelSender},
     agave_votor_messages::{
         certificate::{CertSignature, GenesisCert},
         consensus_message::Block,
@@ -19,7 +20,7 @@ use {
         AsyncVerificationProgress, ConfirmationProgress, ProcessOptions, confirm_full_slot,
         fill_blockstore_slot_with_ticks, process_bank_0,
     },
-    crossbeam_channel::bounded,
+    crossbeam_channel::{bounded, unbounded},
     itertools::Itertools,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
@@ -43,7 +44,8 @@ use {
     solana_ledger::{
         block_error::BlockError,
         blockstore::{
-            BlockstoreError, UpdateParentSignal, entries_to_test_shreds, make_slot_entries,
+            BlockstoreError, SlotMeta, UpdateParentSignal, entries_to_test_shreds,
+            make_slot_entries,
         },
         blockstore_meta::BlockLocation,
         create_new_tmp_ledger,
@@ -1318,7 +1320,8 @@ fn test_cancelled_replay_is_discarded_without_dead_mark() {
         .unwrap()
         .node_keypair
         .insecure_clone();
-    let cancelled_replay_slots = CancelledReplaySlots::default();
+    let mut cancelled_replay_slots = CancelledReplaySlots::default();
+    let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
 
     let slot = 1;
     let bank = {
@@ -1366,8 +1369,13 @@ fn test_cancelled_replay_is_discarded_without_dead_mark() {
     }
 
     // Votor observes a Skip certificate without NotarizeFallback-or-stronger for the slot.
-    cancelled_replay_slots.insert(slot);
     bank.request_replay_cancel();
+    replay_cancel_sender
+        .send(ReplayCancelCommand::Cancel {
+            slot,
+            cancelled_at: Instant::now(),
+        })
+        .unwrap();
 
     // Cancelling unblocks replay before the remaining transactions execute.
     let (result, _timings) = replay_wait.join().unwrap().unwrap();
@@ -1406,20 +1414,28 @@ fn test_cancelled_replay_is_discarded_without_dead_mark() {
     assert!(replay_vote_receiver.try_recv().is_err());
     assert!(bank_forks.read().unwrap().get(slot).is_some());
 
-    // The next replay iteration discards the bank, keeping the slot's shreds.
-    ReplayStage::process_cancelled_banks(
-        &Pubkey::new_unique(),
-        &bank_forks,
-        &mut progress,
-        &mut Vec::new(),
-        &cancelled_replay_slots,
-    );
+    // The next replay iteration discards the bank when processing votor's command, keeping the
+    // slot's shreds.
+    let process_commands = |cancelled_replay_slots: &mut CancelledReplaySlots,
+                            progress: &mut ProgressMap| {
+        cancelled_replay_slots.process_commands(
+            &Pubkey::new_unique(),
+            &replay_cancel_receiver,
+            &blockstore,
+            &bank_forks,
+            progress,
+            &mut Vec::new(),
+        );
+    };
+    process_commands(&mut cancelled_replay_slots, &mut progress);
+    assert!(cancelled_replay_slots.contains(slot));
     assert!(bank_forks.read().unwrap().get(slot).is_none());
     assert!(!progress.contains_key(&slot));
     assert!(!blockstore.is_dead(slot));
     assert!(blockstore.is_full(slot));
 
-    let generate_new_bank_forks = |progress: &mut ProgressMap| {
+    let generate_new_bank_forks = |cancelled_replay_slots: &CancelledReplaySlots,
+                                   progress: &mut ProgressMap| {
         ReplayStage::generate_new_bank_forks(
             NewBankForksContext {
                 blockstore: &blockstore,
@@ -1430,7 +1446,7 @@ fn test_cancelled_replay_is_discarded_without_dead_mark() {
                 transaction_status_sender: None,
                 migration_status: &MigrationStatus::default(),
                 my_pubkey: &Pubkey::new_unique(),
-                cancelled_replay_slots: &cancelled_replay_slots,
+                cancelled_replay_slots,
             },
             progress,
             &mut ReplayLoopTiming::default(),
@@ -1439,20 +1455,24 @@ fn test_cancelled_replay_is_discarded_without_dead_mark() {
     };
 
     // The bank is not recreated while its slot is cancelled.
-    generate_new_bank_forks(&mut progress);
+    generate_new_bank_forks(&cancelled_replay_slots, &mut progress);
     assert!(bank_forks.read().unwrap().get(slot).is_none());
 
     // Sanity check that the cancellation is the only reason the bank isn't recreated.
-    assert!(cancelled_replay_slots.remove(slot));
-    generate_new_bank_forks(&mut progress);
+    replay_cancel_sender
+        .send(ReplayCancelCommand::Resume(Block::new_unique(slot)))
+        .unwrap();
+    process_commands(&mut cancelled_replay_slots, &mut progress);
+    assert!(!cancelled_replay_slots.contains(slot));
+    generate_new_bank_forks(&cancelled_replay_slots, &mut progress);
     let recreated_bank = bank_forks.read().unwrap().get(slot).unwrap();
     assert!(!recreated_bank.is_replay_cancel_requested());
 }
 
 #[test]
-fn test_process_cancelled_banks_only_discards_cancelled_replay_banks() {
+fn test_cancel_command_only_discards_cancelled_replay_banks() {
     let ReplayBlockstoreComponents {
-        blockstore: _blockstore,
+        blockstore,
         vote_simulator,
         ..
     } = replay_blockstore_components(Some(tr(0)), 1, None);
@@ -1461,21 +1481,21 @@ fn test_process_cancelled_banks_only_discards_cancelled_replay_banks() {
         mut progress,
         ..
     } = vote_simulator;
-    let cancelled_replay_slots = CancelledReplaySlots::default();
+    let mut cancelled_replay_slots = CancelledReplaySlots::default();
+    let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let new_bank = |slot| Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
 
     let frozen_slot = 1;
     let leader_slot = 2;
     let dead_slot = 3;
-    let flagged_slot = 4;
-    let cancelled_slot = 5;
-    let other_slot = 6;
+    let cancelled_slot = 4;
+    let other_slot = 5;
     {
         let frozen_bank = new_bank(frozen_slot);
         frozen_bank.freeze();
         let leader_bank = new_bank(leader_slot).mark_leader_bank();
-        let replay_banks = [dead_slot, flagged_slot, cancelled_slot, other_slot].map(new_bank);
+        let replay_banks = [dead_slot, cancelled_slot, other_slot].map(new_bank);
         let mut bank_forks = bank_forks.write().unwrap();
         for bank in [frozen_bank, leader_bank].into_iter().chain(replay_banks) {
             bank_forks.insert(bank);
@@ -1485,7 +1505,6 @@ fn test_process_cancelled_banks_only_discards_cancelled_replay_banks() {
         frozen_slot,
         leader_slot,
         dead_slot,
-        flagged_slot,
         cancelled_slot,
         other_slot,
     ] {
@@ -1496,22 +1515,21 @@ fn test_process_cancelled_banks_only_discards_cancelled_replay_banks() {
     }
     progress.get_mut(&dead_slot).unwrap().dead_reason = Some(DeadSlotReason::Hard);
     for slot in [frozen_slot, leader_slot, dead_slot, cancelled_slot] {
-        cancelled_replay_slots.insert(slot);
+        replay_cancel_sender
+            .send(ReplayCancelCommand::Cancel {
+                slot,
+                cancelled_at: Instant::now(),
+            })
+            .unwrap();
     }
-    // Votor flagged the bank, then resumed the slot before replay discarded the bank.
-    bank_forks
-        .read()
-        .unwrap()
-        .get(flagged_slot)
-        .unwrap()
-        .request_replay_cancel();
 
-    ReplayStage::process_cancelled_banks(
+    cancelled_replay_slots.process_commands(
         &Pubkey::new_unique(),
+        &replay_cancel_receiver,
+        &blockstore,
         &bank_forks,
         &mut progress,
         &mut Vec::new(),
-        &cancelled_replay_slots,
     );
 
     let bank_forks = bank_forks.read().unwrap();
@@ -1520,10 +1538,12 @@ fn test_process_cancelled_banks_only_discards_cancelled_replay_banks() {
         assert!(!bank.is_replay_cancel_requested(), "slot {slot}");
         assert!(progress.contains_key(&slot), "slot {slot}");
     }
-    for slot in [flagged_slot, cancelled_slot] {
-        assert!(bank_forks.get(slot).is_none(), "slot {slot}");
-        assert!(!progress.contains_key(&slot), "slot {slot}");
+    assert!(bank_forks.get(cancelled_slot).is_none());
+    assert!(!progress.contains_key(&cancelled_slot));
+    for slot in [frozen_slot, leader_slot, dead_slot, cancelled_slot] {
+        assert!(cancelled_replay_slots.contains(slot), "slot {slot}");
     }
+    assert!(!cancelled_replay_slots.contains(other_slot));
 }
 
 /// Returns the entries of a complete slot on top of `bank`'s parent, with each transaction in its
@@ -1552,9 +1572,9 @@ fn make_complete_slot_entries_one_tx_per_entry(bank: &Bank, txs: Vec<Transaction
 /// NotarizeFallback-or-stronger certificate. Replay must recreate the bank and replay the block
 /// from its first shred, reaching the same bank hash as a replay that was never cancelled.
 ///
-/// If `resume_before_replay_handles_cancel`, the slot is resumed after votor flagged the
-/// bank but before replay processed the resulting error: replay must still discard the flagged
-/// bank instead of marking the slot dead.
+/// If `resume_before_replay_handles_cancel`, votor resumes the slot after flagging the bank, but
+/// before replay processes the resulting error and votor's commands: replay must still discard
+/// the flagged bank instead of marking the slot dead.
 #[test_case(false; "resume_after_bank_discarded")]
 #[test_case(true; "resume_before_replay_handles_cancel")]
 fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel: bool) {
@@ -1610,7 +1630,8 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
                 None, None, None, None, None,
             ),
         );
-    let cancelled_replay_slots = CancelledReplaySlots::default();
+    let mut cancelled_replay_slots = CancelledReplaySlots::default();
+    let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
     // Not the leader of `slot`, so that the slot is replayed from the blockstore.
     let my_pubkey = Pubkey::new_unique();
     let slot = 1;
@@ -1660,7 +1681,8 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
     let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
     let my_shred_version = cluster_info_for_tests().my_shred_version();
     // The steps of a replay-loop iteration that create, discard and replay banks.
-    let generate_new_bank_forks = |progress: &mut ProgressMap| {
+    let generate_new_bank_forks = |cancelled_replay_slots: &CancelledReplaySlots,
+                                   progress: &mut ProgressMap| {
         ReplayStage::generate_new_bank_forks(
             NewBankForksContext {
                 blockstore: &blockstore,
@@ -1671,21 +1693,29 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
                 transaction_status_sender: None,
                 migration_status: &MigrationStatus::default(),
                 my_pubkey: &my_pubkey,
-                cancelled_replay_slots: &cancelled_replay_slots,
+                cancelled_replay_slots,
             },
             progress,
             &mut ReplayLoopTiming::default(),
         )
         .unwrap();
     };
-    let process_cancelled_banks = |progress: &mut ProgressMap| {
-        ReplayStage::process_cancelled_banks(
+    let process_commands = |cancelled_replay_slots: &mut CancelledReplaySlots,
+                            progress: &mut ProgressMap| {
+        cancelled_replay_slots.process_commands(
             &my_pubkey,
+            &replay_cancel_receiver,
+            &blockstore,
             &bank_forks,
             progress,
             &mut Vec::new(),
-            &cancelled_replay_slots,
         );
+    };
+    let resume = || {
+        // A NotarizeFallback-or-stronger certificate for a block in the slot arrives.
+        replay_cancel_sender
+            .send(ReplayCancelCommand::Resume(Block::new_unique(slot)))
+            .unwrap();
     };
     let process_active_banks = |progress: &mut ProgressMap| {
         ReplayStage::process_active_banks(
@@ -1707,7 +1737,7 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
 
     // Reference: replay the block without cancelling it, then discard the bank.
     let expected_hash = {
-        generate_new_bank_forks(&mut progress);
+        generate_new_bank_forks(&cancelled_replay_slots, &mut progress);
         assert_eq!(process_active_banks(&mut progress), vec![slot]);
         let bank = bank_forks.read().unwrap().get(slot).unwrap();
         assert!(bank.is_frozen());
@@ -1716,7 +1746,7 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
     };
 
     // Replay of the block stalls until votor cancels it.
-    generate_new_bank_forks(&mut progress);
+    generate_new_bank_forks(&cancelled_replay_slots, &mut progress);
     let cancelled_bank = bank_forks.read().unwrap().get(slot).unwrap();
     STALLED_TXS.lock().unwrap().insert(stalled_signature);
     let new_frozen_slots = std::thread::scope(|scope| {
@@ -1726,11 +1756,15 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
         }
 
         // Votor observes a Skip certificate without NotarizeFallback-or-stronger for the slot.
-        cancelled_replay_slots.insert(slot);
         cancelled_bank.request_replay_cancel();
+        replay_cancel_sender
+            .send(ReplayCancelCommand::Cancel {
+                slot,
+                cancelled_at: Instant::now(),
+            })
+            .unwrap();
         if resume_before_replay_handles_cancel {
-            // A NotarizeFallback-or-stronger certificate for a block in the slot follows quickly.
-            assert!(cancelled_replay_slots.remove(slot));
+            resume();
         }
 
         STALLED_TXS.lock().unwrap().remove(&stalled_signature);
@@ -1753,29 +1787,32 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
             .any(|message| matches!(message, ReplayVoteMessage::InvalidBank { .. }))
     );
 
-    // The next replay iteration discards the flagged bank, even if the slot is no longer
-    // cancelled.
-    process_cancelled_banks(&mut progress);
+    // The next replay iteration discards the flagged bank when processing the cancel command,
+    // even if the slot is resumed right after.
+    process_commands(&mut cancelled_replay_slots, &mut progress);
     assert!(bank_forks.read().unwrap().get(slot).is_none());
     assert!(!progress.contains_key(&slot));
+    assert_eq!(
+        cancelled_replay_slots.contains(slot),
+        !resume_before_replay_handles_cancel
+    );
 
     if !resume_before_replay_handles_cancel {
-        generate_new_bank_forks(&mut progress);
+        generate_new_bank_forks(&cancelled_replay_slots, &mut progress);
         assert!(bank_forks.read().unwrap().get(slot).is_none());
 
-        // A NotarizeFallback-or-stronger certificate for a block in the slot arrives.
-        assert!(cancelled_replay_slots.remove(slot));
+        resume();
+        process_commands(&mut cancelled_replay_slots, &mut progress);
     }
 
-    // Replay recreates the bank, and replays the block from its first shred. Re-executing the
-    // transactions the cancelled bank committed must not conflict with leftovers of that bank (e.g.
-    // its status cache entries), so that the block reaches the same hash.
-    generate_new_bank_forks(&mut progress);
+    // In the same iteration, replay recreates the bank, and replays the block from its first shred.
+    // Re-executing the transactions the cancelled bank committed must not conflict with leftovers
+    // of that bank (e.g. its status cache entries), so that the block reaches the same hash.
+    generate_new_bank_forks(&cancelled_replay_slots, &mut progress);
     let recreated_bank = bank_forks.read().unwrap().get(slot).unwrap();
     assert_ne!(recreated_bank.bank_id(), cancelled_bank.bank_id());
     assert!(!recreated_bank.is_replay_cancel_requested());
     assert!(!progress.contains_key(&slot));
-    process_cancelled_banks(&mut progress);
     assert_eq!(process_active_banks(&mut progress), vec![slot]);
 
     assert!(recreated_bank.is_frozen());
@@ -1790,6 +1827,317 @@ fn test_cancelled_replay_resumes_from_start(resume_before_replay_handles_cancel:
     }
     assert_eq!(progress.dead_reason(slot), None);
     assert!(!blockstore.is_dead(slot));
+}
+
+/// Votor cancels replay of a slot after replay started every batch of its block (here, a block
+/// without transactions), but before replay froze the bank. Replay freezes the bank as usual, the
+/// frozen bank admits execution (e.g. to build our leader block on it), and processing the
+/// `Cancel` command keeps it.
+#[test]
+fn test_cancelled_replay_that_started_every_batch_freezes_bank() {
+    let ReplayBlockstoreComponents {
+        blockstore,
+        vote_simulator,
+        leader_schedule_cache,
+        ..
+    } = replay_blockstore_components(Some(tr(0)), 1, None);
+    let VoteSimulator {
+        bank_forks,
+        mut progress,
+        ..
+    } = vote_simulator;
+    let mut cancelled_replay_slots = CancelledReplaySlots::default();
+    let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
+    // Not the leader of `slot`, so that the slot is replayed from the blockstore.
+    let my_pubkey = Pubkey::new_unique();
+    let slot = 1;
+
+    {
+        let bank0 = bank_forks.read().unwrap().root_bank();
+        let entries = make_complete_slot_entries_one_tx_per_entry(&bank0, Vec::new());
+        // Chain to the parent's block id, which is in the blockstore.
+        let chained_merkle_root = blockstore
+            .get_last_shred_merkle_root(bank0.slot())
+            .unwrap()
+            .unwrap();
+        let shreds = Shredder::new(slot, bank0.slot(), 0, 0)
+            .unwrap()
+            .make_merkle_shreds_from_entries(
+                &Keypair::new(),
+                &entries,
+                true, // is_last_in_slot
+                chained_merkle_root,
+                0, // next_shred_index
+                0, // next_code_index
+                &mut ProcessShredsStats::default(),
+            );
+        blockstore.insert_shreds(shreds, false).unwrap();
+    }
+
+    ReplayStage::generate_new_bank_forks(
+        NewBankForksContext {
+            blockstore: &blockstore,
+            bank_forks: &bank_forks,
+            leader_schedule_cache: &leader_schedule_cache,
+            rpc_subscriptions: None,
+            slot_status_notifier: &None,
+            transaction_status_sender: None,
+            migration_status: &MigrationStatus::default(),
+            my_pubkey: &my_pubkey,
+            cancelled_replay_slots: &cancelled_replay_slots,
+        },
+        &mut progress,
+        &mut ReplayLoopTiming::default(),
+    )
+    .unwrap();
+    let bank = bank_forks.read().unwrap().get(slot).unwrap();
+
+    // Votor observes a Skip certificate without NotarizeFallback-or-stronger for the slot.
+    bank.request_replay_cancel();
+    replay_cancel_sender
+        .send(ReplayCancelCommand::Cancel {
+            slot,
+            cancelled_at: Instant::now(),
+        })
+        .unwrap();
+    assert!(bank.try_enter_transaction_execution().is_none());
+
+    // Replay has no batch left to cancel, so it freezes the bank.
+    let new_frozen_slots = {
+        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
+        let process_active_banks_context = ProcessActiveBanksContext::new_for_tests(
+            bank_forks.clone(),
+            blockstore.clone(),
+            replay_vote_sender,
+        );
+        let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
+        ReplayStage::process_active_banks(
+            cluster_info_for_tests().my_shred_version(),
+            &process_active_banks_context,
+            &mut progress,
+            &mut Vec::new(),
+            &mut LatestValidatorVotesForFrozenBanks::default(),
+            &mut DuplicateSlotsToRepair::default(),
+            &mut PurgeRepairSlotCounter::default(),
+            None,
+            &my_pubkey,
+            &Pubkey::new_unique(),
+            &mut ReplayLoopTiming::default(),
+            &finalization_cert_sender,
+        )
+        .unwrap()
+    };
+    assert_eq!(new_frozen_slots, vec![slot]);
+    assert!(bank.is_frozen());
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_some());
+    assert_eq!(progress.dead_reason(slot), None);
+
+    // The next replay iteration keeps the frozen bank when processing the cancel command.
+    cancelled_replay_slots.process_commands(
+        &my_pubkey,
+        &replay_cancel_receiver,
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+    );
+    assert!(cancelled_replay_slots.contains(slot));
+    assert_eq!(
+        bank_forks.read().unwrap().get(slot).unwrap().bank_id(),
+        bank.bank_id()
+    );
+    assert!(progress.contains_key(&slot));
+}
+
+/// Replay state for testing how `CancelledReplaySlots` resumes the cancelled ancestors of
+/// NotarizeFallback-or-stronger blocks: banks for slots 0 and 1, and the blockstore to store other
+/// blocks in.
+struct ResumeAncestorsTestContext {
+    blockstore: Blockstore,
+    bank_forks: Arc<RwLock<BankForks>>,
+    progress: ProgressMap,
+    cancelled_replay_slots: CancelledReplaySlots,
+    replay_cancel_sender: ReplayCancelSender,
+    replay_cancel_receiver: ReplayCancelReceiver,
+    /// The block of the frozen bank in slot 1.
+    block_1: Block,
+}
+
+impl ResumeAncestorsTestContext {
+    fn new() -> Self {
+        let (vote_simulator, blockstore) =
+            setup_forks_from_tree(tr(0) / tr(1), 1, None::<GenerateVotes>);
+        let VoteSimulator {
+            bank_forks,
+            progress,
+            ..
+        } = vote_simulator;
+        let block_1 = {
+            let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+            if bank1.block_id().is_none() {
+                bank1.set_block_id(Some(BlockId::new_unique()));
+            }
+            Block {
+                slot: 1,
+                block_id: bank1.block_id().unwrap(),
+            }
+        };
+        let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
+        Self {
+            blockstore,
+            bank_forks,
+            progress,
+            cancelled_replay_slots: CancelledReplaySlots::default(),
+            replay_cancel_sender,
+            replay_cancel_receiver,
+            block_1,
+        }
+    }
+
+    /// Stores `block` in the blockstore as a complete block built on `parent`, without any
+    /// shreds.
+    fn insert_complete_block(&self, block: Block, parent: Block) {
+        let slot_meta = SlotMeta {
+            slot: block.slot,
+            parent_slot: Some(parent.slot),
+            parent_block_id: parent.block_id.to_hash(),
+            ..SlotMeta::default()
+        };
+        self.blockstore.put_meta(block.slot, &slot_meta).unwrap();
+        self.blockstore
+            .set_double_merkle_root(
+                block.slot,
+                BlockLocation::Original,
+                block.block_id.to_hash(),
+            )
+            .unwrap();
+    }
+
+    /// Sends votor's `command`, without processing it.
+    fn send(&self, command: ReplayCancelCommand) {
+        self.replay_cancel_sender.send(command).unwrap();
+    }
+
+    fn cancel(&self, slot: Slot) {
+        self.send(ReplayCancelCommand::Cancel {
+            slot,
+            cancelled_at: Instant::now(),
+        });
+    }
+
+    /// Runs the replay-loop step that processes votor's commands.
+    fn process_commands(&mut self) {
+        self.cancelled_replay_slots.process_commands(
+            &Pubkey::new_unique(),
+            &self.replay_cancel_receiver,
+            &self.blockstore,
+            &self.bank_forks,
+            &mut self.progress,
+            &mut Vec::new(),
+        );
+    }
+}
+
+#[test]
+fn test_resume_resumes_cancelled_ancestor() {
+    let mut context = ResumeAncestorsTestContext::new();
+    // Slot 1 is replayed, slot 2 is cancelled, and slot 3 is built on slot 2. Our pool sees a
+    // NotarizeFallback-or-stronger certificate for slot 3, but never for slot 2.
+    let block_2 = Block::new_unique(2);
+    let block_3 = Block::new_unique(3);
+    context.insert_complete_block(block_2, context.block_1);
+    context.insert_complete_block(block_3, block_2);
+    context.cancel(2);
+    context.process_commands();
+    assert!(context.cancelled_replay_slots.contains(2));
+
+    context.send(ReplayCancelCommand::Resume(block_3));
+    context.process_commands();
+
+    // Slot 2 is an ancestor of a block that may be finalized, so replay must replay it again
+    assert!(!context.cancelled_replay_slots.contains(2));
+}
+
+#[test]
+fn test_resume_resumes_ancestor_cancelled_later() {
+    let mut context = ResumeAncestorsTestContext::new();
+    let block_2 = Block::new_unique(2);
+    let block_3 = Block::new_unique(3);
+    context.insert_complete_block(block_2, context.block_1);
+    context.insert_complete_block(block_3, block_2);
+
+    // Our pool sees slot 3's certificate before it sees the Skip certificate for slot 2.
+    context.send(ReplayCancelCommand::Resume(block_3));
+    context.process_commands();
+    context.cancel(2);
+    context.process_commands();
+
+    assert!(!context.cancelled_replay_slots.contains(2));
+}
+
+#[test]
+fn test_resume_ancestor_walk_resumes_after_missing_slot_meta() {
+    let mut context = ResumeAncestorsTestContext::new();
+    let block_2 = Block::new_unique(2);
+    let block_3 = Block::new_unique(3);
+    let block_4 = Block::new_unique(4);
+    // Slot 3's block is still being repaired, so the walk can't learn that slot 2 is on the
+    // chain of slot 4
+    context.insert_complete_block(block_2, context.block_1);
+    context.insert_complete_block(block_4, block_3);
+    context.cancel(2);
+    context.send(ReplayCancelCommand::Resume(block_4));
+    context.process_commands();
+    assert!(context.cancelled_replay_slots.contains(2));
+
+    // Repair completes slot 3, and the next replay iteration retries the walk
+    context.insert_complete_block(block_3, block_2);
+    context.process_commands();
+    assert!(!context.cancelled_replay_slots.contains(2));
+}
+
+#[test]
+fn test_resume_ancestor_walk_leaves_other_slots_cancelled() {
+    let mut context = ResumeAncestorsTestContext::new();
+    // Slot 2 is a cancelled sibling of the cancelled slot 3, which the resumed slot 4 is built
+    // on. Slots 1 and 5 are cancelled as well, but slot 1 is already replayed and
+    // slot 5 is not an ancestor of slot 4.
+    let block_2 = Block::new_unique(2);
+    let block_3 = Block::new_unique(3);
+    let block_4 = Block::new_unique(4);
+    let block_5 = Block::new_unique(5);
+    context.insert_complete_block(block_2, context.block_1);
+    context.insert_complete_block(block_3, context.block_1);
+    context.insert_complete_block(block_4, block_3);
+    context.insert_complete_block(block_5, block_2);
+    for slot in [1, 2, 3, 5] {
+        context.cancel(slot);
+    }
+
+    context.send(ReplayCancelCommand::Resume(block_4));
+    context.process_commands();
+
+    assert!(context.cancelled_replay_slots.contains(1));
+    assert!(context.cancelled_replay_slots.contains(2));
+    assert!(!context.cancelled_replay_slots.contains(3));
+    assert!(context.cancelled_replay_slots.contains(5));
+}
+
+#[test]
+fn test_cancelled_replay_slots_forgets_slots_at_or_below_root() {
+    let mut context = ResumeAncestorsTestContext::new();
+    for slot in [1, 2] {
+        context.cancel(slot);
+    }
+    context.process_commands();
+    assert!(context.cancelled_replay_slots.contains(1));
+
+    context.bank_forks.write().unwrap().set_root(1, None, None);
+    context.process_commands();
+
+    assert!(!context.cancelled_replay_slots.contains(1));
+    assert!(context.cancelled_replay_slots.contains(2));
 }
 
 #[test]

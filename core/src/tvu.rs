@@ -34,7 +34,6 @@ use {
     },
     agave_jemalloc::jemalloc::Arena,
     agave_votor::{
-        cancelled_replay_slots::CancelledReplaySlots,
         event::{LatestSwitchRequest, LeaderWindowInfo, VotorEventReceiver, VotorEventSender},
         peer_list_updater::PeerListService,
         slot_clock::SharedAlpenglowSlotClock,
@@ -456,8 +455,9 @@ impl Tvu {
 
         // Shared latest switch-bank request from Votor to ReplayStage.
         let latest_switch_request = LatestSwitchRequest::default();
-        // Shared set of skip-certified slots whose replay Votor cancelled.
-        let cancelled_replay_slots = CancelledReplaySlots::default();
+        // Commands from Votor to ReplayStage to cancel or resume replay of skip-certified slots.
+        // Unbounded, since dropping a command would break cancellation.
+        let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
 
         let window_service = {
             let epoch_schedule = bank_forks
@@ -552,7 +552,7 @@ impl Tvu {
             highest_parent_ready: highest_parent_ready.clone(),
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
-            cancelled_replay_slots: cancelled_replay_slots.clone(),
+            replay_cancel_sender,
             own_vote_sender: own_votes_sender.clone(),
             own_reward_aggregates_sender: reward_aggregates_sender.clone(),
             repair_event_sender,
@@ -599,6 +599,7 @@ impl Tvu {
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
+            replay_cancel_receiver,
         };
 
         let replay_stage_config = ReplayStageConfig {
@@ -623,7 +624,6 @@ impl Tvu {
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
-            cancelled_replay_slots,
             replay_arena: tvu_config.replay_arena,
         };
 

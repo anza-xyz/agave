@@ -220,7 +220,7 @@ use {
             Arc, LazyLock, LockResult, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
             Weak,
             atomic::{
-                AtomicBool, AtomicI64, AtomicU64,
+                AtomicBool, AtomicI64, AtomicU8, AtomicU64,
                 Ordering::{AcqRel, Acquire, Relaxed, Release},
             },
         },
@@ -1034,10 +1034,17 @@ pub struct Bank {
 #[derive(Default)]
 struct TransactionExecutionGate {
     lock: RwLock<()>,
-    quiesce_requested: AtomicBool,
-    /// Set (and never reset) when replay of this Bank was cancelled, e.g. because votor observed
-    /// a Skip certificate for its slot. Implies `quiesce_requested`.
-    replay_cancel_requested: AtomicBool,
+    /// Why new transaction execution is rejected, as a set of `Self::*_REQUESTED` bits. Bits are
+    /// only ever set, never cleared.
+    state: AtomicU8,
+}
+
+impl TransactionExecutionGate {
+    /// The Bank is being retired: rejects new transaction execution for good.
+    const QUIESCE_REQUESTED: u8 = 1 << 0;
+    /// Replay of the Bank was cancelled, e.g. because votor observed a Skip certificate for its
+    /// slot: rejects new transaction execution until the Bank starts freezing.
+    const REPLAY_CANCEL_REQUESTED: u8 = 1 << 1;
 }
 
 /// Proof that transaction execution has been admitted for a specific [`Bank`].
@@ -2408,29 +2415,22 @@ impl Bank {
         self.hash.read().unwrap()
     }
 
-    /// Acquires permission to execute transactions unless this Bank is being quiesced.
+    /// Acquires permission to execute transactions unless this Bank is being quiesced, or its
+    /// replay was cancelled before it started freezing.
     pub fn try_enter_transaction_execution(&self) -> Option<TxExecutionGuard<'_>> {
         // If quiesce has been requested, don't allow new transaction execution to start.
         // We do this before grabbing the lock to prevent some starvation scenario where
         // bank can't be retired because scheduler keeps scheduling and we hold the read
         // lock forever.
-        if self
-            .transaction_execution_gate
-            .quiesce_requested
-            .load(Acquire)
-        {
+        if self.is_transaction_execution_closed() {
             return None;
         }
         let lock_guard = self.transaction_execution_gate.lock.read().unwrap();
 
-        // We check the quiesce requested flag again after acquiring the lock to ensure
-        // that we don't allow new transaction execution to start if quiesce was requested
-        // while we were waiting for the lock.
-        if self
-            .transaction_execution_gate
-            .quiesce_requested
-            .load(Acquire)
-        {
+        // We check the gate's state again after acquiring the lock to ensure that we don't allow
+        // new transaction execution to start if quiesce was requested while we were waiting for
+        // the lock.
+        if self.is_transaction_execution_closed() {
             None
         } else {
             Some(TxExecutionGuard {
@@ -2448,12 +2448,23 @@ impl Bank {
         drop(self.hash.write().unwrap());
     }
 
+    /// Returns whether new transaction execution is rejected.
+    fn is_transaction_execution_closed(&self) -> bool {
+        let state = self.transaction_execution_gate.state.load(Acquire);
+        state & TransactionExecutionGate::QUIESCE_REQUESTED != 0
+            // Cancelling replay only needs to stop replay's execution, which is over once the Bank
+            // starts freezing. `freeze_started` is never reset (outside of ledger-tool), so a stale
+            // read only rejects execution.
+            || (state & TransactionExecutionGate::REPLAY_CANCEL_REQUESTED != 0
+                && !self.freeze_started())
+    }
+
     /// Rejects new transaction execution and waits for admitted execution and commits to finish.
     pub fn quiesce_transaction_execution(&self) {
         // Signal no new work should be started
         self.transaction_execution_gate
-            .quiesce_requested
-            .store(true, Release);
+            .state
+            .fetch_or(TransactionExecutionGate::QUIESCE_REQUESTED, Release);
         // Quiesce execute and load
         drop(self.transaction_execution_gate.lock.write().unwrap());
         // Quiesce record and commit
@@ -2466,20 +2477,21 @@ impl Bank {
     /// write lock, so it doesn't wait for admitted transaction execution to finish. Every batch
     /// that tries to start execution afterwards is cancelled (`CommitCancelled`), which aborts
     /// the unified scheduler session and unblocks any thread waiting on it.
+    ///
+    /// Has no effect on execution once the Bank starts freezing: if replay already started every
+    /// batch, it completes and freezes the Bank as usual instead of discarding it, and the frozen
+    /// Bank admits execution (e.g. to build a child Bank on it, or to simulate transactions).
     pub fn request_replay_cancel(&self) {
         self.transaction_execution_gate
-            .replay_cancel_requested
-            .store(true, Release);
-        self.transaction_execution_gate
-            .quiesce_requested
-            .store(true, Release);
+            .state
+            .fetch_or(TransactionExecutionGate::REPLAY_CANCEL_REQUESTED, Release);
     }
 
     /// Returns whether [`Self::request_replay_cancel`] was called on this Bank.
     pub fn is_replay_cancel_requested(&self) -> bool {
-        self.transaction_execution_gate
-            .replay_cancel_requested
-            .load(Acquire)
+        self.transaction_execution_gate.state.load(Acquire)
+            & TransactionExecutionGate::REPLAY_CANCEL_REQUESTED
+            != 0
     }
 
     pub fn hash(&self) -> Hash {
