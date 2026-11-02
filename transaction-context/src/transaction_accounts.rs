@@ -454,7 +454,7 @@ impl TransactionAccounts {
                     shared_fields.key,
                     AccountSharedData::create_from_existing_shared_data(
                         shared_fields.lamports,
-                        private_fields.payload.clone(),
+                        private_fields.payload,
                         shared_fields.owner,
                         private_fields.executable,
                         private_fields.rent_epoch,
@@ -475,7 +475,7 @@ impl TransactionAccounts {
                 let private_fields = private_fields_cell.into_inner();
                 AccountSharedData::create_from_existing_shared_data(
                     shared_fields.lamports,
-                    private_fields.payload.clone(),
+                    private_fields.payload,
                     shared_fields.owner,
                     private_fields.executable,
                     private_fields.rent_epoch,
