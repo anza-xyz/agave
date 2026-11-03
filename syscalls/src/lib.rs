@@ -2921,24 +2921,9 @@ mod tests {
         ($invoke_context:ident,
          $program_key:ident,
          $loader_key:expr $(,)?) => {
-            let $program_key = Pubkey::new_unique();
-            let transaction_accounts = vec![
-                (
-                    $loader_key,
-                    AccountSharedData::new(0, 0, &native_loader::id()),
-                ),
-                ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
-            ];
-            with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
-            $invoke_context
-                .transaction_context
-                .configure_top_level_instruction_for_tests(1, vec![], vec![])
-                .unwrap();
-            $invoke_context.push().unwrap();
+            let feature_set = &SVMFeatureSet::default();
+            prepare_mockup!($invoke_context, $program_key, $loader_key, feature_set);
         };
-    }
-
-    macro_rules! prepare_mock_with_feature_set {
         ($invoke_context:ident,
          $program_key:ident,
          $loader_key:expr,
@@ -3751,7 +3736,7 @@ mod tests {
             ..Default::default()
         };
         let feature_set = &feature_set;
-        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id(), feature_set);
 
         let message_hash = {
             let mut hasher = keccak::Hasher::default();
