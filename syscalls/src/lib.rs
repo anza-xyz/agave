@@ -32,6 +32,7 @@ use {
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
+        ebpf,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
@@ -338,10 +339,8 @@ pub fn create_program_runtime_environment(
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true,
         enable_stack_frame_gaps: !feature_set.virtual_address_space_adjustments,
         instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
         enable_symbol_and_section_labels: debugging_features,
         reject_broken_elfs: reject_deployment_of_broken_elfs,
         noop_instruction_rate: 256,
@@ -349,6 +348,8 @@ pub fn create_program_runtime_environment(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
+        aligned_region_size: ebpf::MM_REGION_SIZE as usize,
+        reject_unregistered_static_syscalls: false,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
