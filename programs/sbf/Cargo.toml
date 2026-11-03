@@ -153,7 +153,7 @@ solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version =
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=4.5.0-alpha.4" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=4.5.0-alpha.4" }
 solana-sdk-ids = "=3.1.0"
-solana-secp256k1-recover = "=3.3.0"
+solana-secp256k1-recover = "=3.3.1"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
 solana-stake-history = { version = "2.1.0", features = ["serde", "sysvar", "wincode"] }
 solana-svm = { path = "../../svm", version = "=4.5.0-alpha.4" }
