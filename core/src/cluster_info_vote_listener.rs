@@ -940,7 +940,7 @@ mod tests {
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, Vote},
-        std::{collections::BTreeSet, sync::Arc},
+        std::{assert_matches, collections::BTreeSet, sync::Arc},
     };
 
     #[test]

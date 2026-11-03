@@ -54,7 +54,6 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
-assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

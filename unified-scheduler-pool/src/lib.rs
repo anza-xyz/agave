@@ -22,7 +22,6 @@ use {
     agave_wake_channel::{
         Sender as WakeSender, SharedEventReceiver as WakeReceiver, TryRecvError, WakeEvent,
     },
-    assert_matches::assert_matches,
     crossbeam_channel::{self, RecvError, RecvTimeoutError, SendError, Sender},
     crossbeam_queue::SegQueue,
     crossbeam_utils::CachePadded,
@@ -54,6 +53,7 @@ use {
     },
     static_assertions::const_assert_eq,
     std::{
+        assert_matches,
         fmt::Debug,
         marker::PhantomData,
         mem,
@@ -2204,7 +2204,6 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         agave_jemalloc::jemalloc::{Decay, Jemalloc},
-        assert_matches::assert_matches,
         solana_clock::Slot,
         solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
@@ -2225,6 +2224,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
         std::{
+            assert_matches,
             num::Saturating,
             sync::{Arc, RwLock},
             thread::JoinHandle,
@@ -3046,7 +3046,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "does not match `Some((Ok(_), _))")]
+    #[should_panic(expected = " right: Some((Ok(_), _))")]
     fn test_scheduler_drop_abort_unhandled() {
         do_test_scheduler_drop_abort(AbortCase::Unhandled);
     }

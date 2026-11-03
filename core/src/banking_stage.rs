@@ -976,7 +976,7 @@ mod tests {
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::{sync::atomic::Ordering, thread::sleep, time::Instant},
+        std::{assert_matches, sync::atomic::Ordering, thread::sleep, time::Instant},
     };
 
     pub(crate) fn sanitize_transactions(
