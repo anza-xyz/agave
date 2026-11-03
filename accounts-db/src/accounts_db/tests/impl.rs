@@ -764,10 +764,13 @@ fn test_purge_slot_keeps_other_bank_at_same_slot() {
 /// usual `handle_dead_keys` purge.
 #[test]
 fn test_remove_unrooted_slot_purges_secondary_index_for_cache_only_account() {
-    let db = AccountsDb {
-        account_indexes: program_id_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    };
+    let db = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(program_id_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
 
     let owner = Pubkey::new_unique();
     let pubkey = Pubkey::new_unique();
@@ -878,10 +881,13 @@ fn test_scan_accounts_stays_aborted_across_steps() {
 /// instead of scanning to completion.
 #[test]
 fn test_index_scan_accounts_aborts_when_bank_removed() {
-    let db = AccountsDb {
-        account_indexes: program_id_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    };
+    let db = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(program_id_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     let slot = 1;
     let bank_id = BankId::new(1);
     let num_accounts = 10;
@@ -1909,10 +1915,13 @@ fn test_clean_zero_lamport_and_old_roots() {
 
 #[test]
 fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
-    let accounts = AccountsDb {
-        account_indexes: spl_token_mint_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    };
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(spl_token_mint_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     accounts.set_latest_full_snapshot_slot(0);
     let pubkey1 = solana_pubkey::new_rand();
     let pubkey2 = solana_pubkey::new_rand();
@@ -2090,10 +2099,13 @@ fn test_index_scan_accounts_excluded_key_does_full_scan() {
 // is still present in the write cache
 #[test]
 fn test_clean_retains_secondary_index_for_still_cached_key() {
-    let accounts = AccountsDb {
-        account_indexes: spl_token_mint_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    };
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(spl_token_mint_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     let pubkey = solana_pubkey::new_rand();
     let index_slot = 1;
     let cache_slot = 2;
@@ -2750,8 +2762,14 @@ fn test_verify_index_small_dataset_detects_mismatch() {
 
 #[test]
 fn test_shrink_candidate_slots() {
-    let mut accounts =
-        AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    // Note this shrink ratio had to change because we are WAY over-allocating append vecs when we flush the write cache at the moment.
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            shrink_ratio: AccountShrinkThreshold::TotalSpace { shrink_ratio: 0.4 },
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
 
     let pubkey_count = 30000;
     let pubkeys: Vec<_> = (0..pubkey_count)
@@ -2789,8 +2807,6 @@ fn test_shrink_candidate_slots() {
 
     // Only, try to shrink stale slots, nothing happens because shrink ratio
     // is not small enough to do a shrink
-    // Note this shrink ratio had to change because we are WAY over-allocating append vecs when we flush the write cache at the moment.
-    accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio: 0.4 };
     accounts.shrink_candidate_slots(&EpochSchedule::default());
     assert_eq!(
         pubkey_count,
@@ -3377,10 +3393,13 @@ fn test_clean_does_not_tombstone_zero_lamport_above_clean_root() {
 /// cache must be purged at flush, unless the key is still alive in another cached slot.
 #[test]
 fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
-    let accounts = AccountsDb {
-        account_indexes: spl_token_mint_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    };
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(spl_token_mint_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     let pubkey_purged = Pubkey::new_unique();
     let pubkey_cached = Pubkey::new_unique();
     let pubkey_live = Pubkey::new_unique();
@@ -3442,10 +3461,13 @@ fn test_flush_purged_zero_lamport_account_purges_secondary_index() {
 /// secondary index entries are purged along with its primary index entry.
 #[test]
 fn test_clean_tombstone_purges_secondary_index() {
-    let accounts = AccountsDb {
-        account_indexes: spl_token_mint_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    };
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(spl_token_mint_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     let pubkey = Pubkey::new_unique();
 
     // Set up token account data to be added to the secondary index.
@@ -3608,8 +3630,13 @@ fn test_flush_accounts_cache_if_needed() {
 }
 
 fn run_test_flush_accounts_cache_if_needed(num_roots: usize, num_unrooted: usize) {
-    let mut db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    db.write_cache_limit_bytes = Some(max_cache_slots() as u64);
+    let db = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            write_cache_limit_bytes: Some(max_cache_slots() as u64),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     let space = 1; // # data bytes per account. write cache counts data len
     let account0 = AccountSharedData::new_with_data(1, vec![0; space], &Pubkey::default());
     let mut keys = vec![];
@@ -4531,10 +4558,13 @@ fn setup_accounts_db_cache_clean(
     scan_slot: Option<Slot>,
     write_cache_limit_bytes: Option<u64>,
 ) -> (Arc<AccountsDb>, Vec<Pubkey>, Vec<Slot>, Option<ScanTracker>) {
-    let mut accounts_db =
-        AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
-    accounts_db.write_cache_limit_bytes = write_cache_limit_bytes;
-    let accounts_db = Arc::new(accounts_db);
+    let accounts_db = Arc::new(AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            write_cache_limit_bytes,
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    ));
 
     let slots: Vec<_> = (0..num_slots as Slot).collect();
     let stall_slot = num_slots as Slot;
@@ -5493,8 +5523,7 @@ fn test_is_shrinking_productive() {
 
 #[test]
 fn test_is_candidate_for_shrink() {
-    let mut accounts =
-        AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let accounts = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
     let (_temp_dirs, common_store_path) = get_temp_accounts_paths(1).unwrap();
     let slot = 0;
     let store_file_size = 100_000;
@@ -5542,9 +5571,21 @@ fn test_is_candidate_for_shrink() {
     entry
         .num_alive_bytes
         .store(file_size_shrink_limit + 1, Ordering::Release);
-    accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio };
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            shrink_ratio: AccountShrinkThreshold::TotalSpace { shrink_ratio },
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     assert!(accounts.is_candidate_for_shrink(&entry));
-    accounts.shrink_ratio = AccountShrinkThreshold::IndividualStore { shrink_ratio };
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            shrink_ratio: AccountShrinkThreshold::IndividualStore { shrink_ratio },
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
     assert!(!accounts.is_candidate_for_shrink(&entry));
 }
 
@@ -6999,10 +7040,13 @@ fn test_index_scan_accounts_excludes_roots_added_during_scan() {
         )
     };
 
-    let db = Arc::new(AccountsDb {
-        account_indexes: spl_token_mint_index_enabled(),
-        ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
-    });
+    let db = Arc::new(AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(spl_token_mint_index_enabled()),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    ));
 
     // 50 accounts in rooted slot 1 make it very likely (~98%) that pubkey_new
     // is visited after the handshake fires and slot 3 is rooted mid-scan.

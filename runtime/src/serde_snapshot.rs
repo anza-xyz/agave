@@ -905,7 +905,7 @@ fn reconstruct_accountsdb_from_fields(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), SnapshotError> {
-    let mut accounts_db = AccountsDb::new_with_config(
+    let accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
         accounts_db_config,
         accounts_update_notifier,

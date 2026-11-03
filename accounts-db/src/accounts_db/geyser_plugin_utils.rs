@@ -35,8 +35,9 @@ mod tests {
         super::*,
         crate::{
             accounts::Accounts,
+            accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
             accounts_update_notifier_interface::{
-                AccountForGeyser, AccountsUpdateNotifier, AccountsUpdateNotifierInterface,
+                AccountForGeyser, AccountsUpdateNotifierInterface,
             },
             ancestors::Ancestors,
             utils::create_account_shared_data,
@@ -48,12 +49,6 @@ mod tests {
             atomic::{AtomicBool, Ordering},
         },
     };
-
-    impl AccountsDb {
-        pub fn set_geyser_plugin_notifier(&mut self, notifier: Option<AccountsUpdateNotifier>) {
-            self.accounts_update_notifier = notifier;
-        }
-    }
 
     #[derive(Debug, Default)]
     struct GeyserTestPlugin {
@@ -104,7 +99,13 @@ mod tests {
 
     #[test]
     fn test_notify_account_restore_from_snapshot() {
-        let mut accounts_db = AccountsDb::default_for_tests();
+        let notifier = Arc::new(GeyserTestPlugin::default());
+        let accounts_db = AccountsDb::new_with_config(
+            Vec::new(),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            Some(notifier.clone()),
+            Arc::default(),
+        );
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
         let account = AccountSharedData::empty(1, &Pubkey::default());
@@ -139,9 +140,6 @@ mod tests {
         accounts_db.storage.insert(Arc::new(storage2));
 
         // Do the notification
-        let notifier = GeyserTestPlugin::default();
-        let notifier = Arc::new(notifier);
-        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
         accounts_db.generate_index(None, false, &[]);
 
         // Ensure key1 was notified twice in different slots
@@ -179,8 +177,12 @@ mod tests {
     #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::default_for_tests();
-        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let accounts_db = AccountsDb::new_with_config(
+            Vec::new(),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            Some(notifier.clone()),
+            Arc::default(),
+        );
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.
@@ -274,8 +276,12 @@ mod tests {
     #[test]
     fn test_notify_closed_account() {
         let notifier = Arc::new(GeyserTestPlugin::default());
-        let mut accounts_db = AccountsDb::default_for_tests();
-        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        let accounts_db = AccountsDb::new_with_config(
+            Vec::new(),
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            Some(notifier.clone()),
+            Arc::default(),
+        );
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let address = solana_pubkey::new_rand();
