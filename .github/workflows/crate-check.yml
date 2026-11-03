@@ -46,7 +46,7 @@ jobs:
       - name: Install toml-cli
         shell: bash
         run: |
-          cargo install toml-cli
+          cargo install toml-cli@0.2.3 --locked
 
       - run: |
           ci/check-crates.sh
