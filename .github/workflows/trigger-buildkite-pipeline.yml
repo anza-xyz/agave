@@ -31,14 +31,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-<<<<<<< HEAD
-          USERNAME: ${{ github.event.sender.login }}
-=======
           EVENT_SENDER: ${{ github.event.sender.login }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          COMMIT: ${{ github.event.pull_request.head.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
->>>>>>> 3fe53bf (ci: refine pipeline trigger condition (#16674))
         run: |
           TRUSTED_CI_USERS=(
             "mergify[bot]"
