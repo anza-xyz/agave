@@ -660,7 +660,6 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
         ag_epoch_type: &AlpenglowEpochType,
-        custom_commission_collector: bool,
     ) -> Option<InflationRewardWithCommission> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -708,13 +707,13 @@ impl Bank {
                 let inflation = InflationReward {
                     stake,
                     stake_reward: 0,
-                    commission_bps: (!custom_commission_collector).then_some(0),
+                    commission_bps: None,
                 };
                 // Set `is_vote_account` to `false` in order to deliberately
                 // fail during commission collector checks. This avoids
                 // creating a reward entry during payout.
                 let reward_commission = RewardCommission {
-                    commission_bps: (!custom_commission_collector).then_some(0),
+                    commission_bps: None,
                     commission_lamports: 0,
                     burned_lamports: 0,
                     is_vote_account: false,
@@ -760,21 +759,16 @@ impl Bank {
                 let inflation = InflationReward {
                     stake,
                     stake_reward,
-                    commission_bps: (!custom_commission_collector).then_some(commission_bps),
+                    commission_bps: None,
                 };
-                let (commission_pubkey, is_vote_account) = if custom_commission_collector {
-                    let commission_pubkey = *vote_state
-                        .inflation_rewards_collector()
-                        .unwrap_or(&vote_pubkey);
-                    (commission_pubkey, commission_pubkey == vote_pubkey)
-                } else {
-                    (vote_pubkey, true)
-                };
+                let commission_pubkey = *vote_state
+                    .inflation_rewards_collector()
+                    .unwrap_or(&vote_pubkey);
                 let reward_commission = RewardCommission {
-                    commission_bps: (!custom_commission_collector).then_some(commission_bps),
+                    commission_bps: None,
                     commission_lamports,
                     burned_lamports: 0,
-                    is_vote_account,
+                    is_vote_account: commission_pubkey == vote_pubkey,
                 };
                 Some(InflationRewardWithCommission {
                     inflation,
@@ -806,7 +800,6 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
-        let custom_commission_collector = feature_snapshot.custom_commission_collector;
         let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
         let remove_inactive_stakes = feature_snapshot.remove_inactive_stakes;
 
@@ -861,7 +854,6 @@ impl Bank {
                         reward_calc_tracer.as_ref(),
                         new_warmup_cooldown_rate_epoch,
                         ag_epoch_type,
-                        custom_commission_collector,
                     );
 
                     let (reward, maybe_reward_record) = match (block_reward, maybe_reward_record) {
@@ -1140,7 +1132,6 @@ impl Bank {
         let reserved_account_keys = &self.reserved_account_keys;
         let rent = &self.rent_collector().rent;
         let feature_snapshot = self.feature_set.snapshot();
-        let custom_commission_collector = feature_snapshot.custom_commission_collector;
         let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
 
         let total_non_incinerator_burned_lamports = AtomicU64::new(0);
@@ -1163,26 +1154,11 @@ impl Bank {
                         )| {
                             let maybe_commission_account =
                                 self.get_account_do_not_populate_read_cache(commission_pubkey);
-                            let mut commission_account = if custom_commission_collector {
-                                // If the account doesn't exist, the vote commission
-                                // may be enough lamports to cover rent-exemption
-                                // and properly create the commission account.
-                                maybe_commission_account.unwrap_or_else(default_system_account)
-                            } else {
-                                // Before SIMD-0232, commission accounts were always
-                                // vote accounts, which cannot be closed unless the
-                                // account hasn't voted for at least a full epoch.
-                                // This means that `maybe_commission_account` should
-                                // always exist.
-                                let Some(commission_account) = maybe_commission_account else {
-                                    debug!(
-                                        "commission account {commission_pubkey} missing at \
-                                         distribution time"
-                                    );
-                                    return None;
-                                };
-                                commission_account
-                            };
+                            // If the account doesn't exist, the vote commission
+                            // may be enough lamports to cover rent-exemption
+                            // and properly create the commission account.
+                            let mut commission_account =
+                                maybe_commission_account.unwrap_or_else(default_system_account);
                             if *burned_lamports != 0 {
                                 total_non_incinerator_burned_lamports
                                     .fetch_add(*burned_lamports, Relaxed);
@@ -1487,7 +1463,6 @@ mod tests {
                 null_tracer(),
                 None, // new_rate_activation_epoch
                 &ag_epoch_type,
-                false, // custom_commission_collector
             );
 
             // `Some`: included in PER, `None`: excluded

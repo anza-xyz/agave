@@ -58,7 +58,6 @@ pub struct FeatureSnapshot {
     pub bls_pubkey_management_in_vote_account: bool,
     pub relax_programdata_account_check_migration: bool,
     pub enable_alt_bn128_g2_syscalls: bool,
-    pub custom_commission_collector: bool,
     pub set_lamports_per_byte_to_6333: bool,
     pub set_lamports_per_byte_to_5080: bool,
     pub set_lamports_per_byte_to_2575: bool,
@@ -156,7 +155,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &relax_programdata_account_check_migration::ID,
             ),
             enable_alt_bn128_g2_syscalls: is_active(&enable_alt_bn128_g2_syscalls::ID),
-            custom_commission_collector: is_active(&custom_commission_collector::ID),
             set_lamports_per_byte_to_6333: is_active(&set_lamports_per_byte_to_6333::ID),
             set_lamports_per_byte_to_5080: is_active(&set_lamports_per_byte_to_5080::ID),
             set_lamports_per_byte_to_2575: is_active(&set_lamports_per_byte_to_2575::ID),
@@ -332,7 +330,6 @@ impl FeatureSet {
             create_account_allow_prefund: snapshot.create_account_allow_prefund,
             bls_pubkey_management_in_vote_account: snapshot.bls_pubkey_management_in_vote_account,
             enable_alt_bn128_g2_syscalls: snapshot.enable_alt_bn128_g2_syscalls,
-            custom_commission_collector: snapshot.custom_commission_collector,
             block_revenue_sharing: snapshot.block_revenue_sharing,
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
