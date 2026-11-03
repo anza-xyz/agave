@@ -49,7 +49,7 @@ use {
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
             ReclaimsWithNewestSlot, ScanFilter, Startup, UpsertReclaim,
-            in_mem_accounts_index::StartupStats,
+            account_map_entry::LockedSlotListItem, in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -2437,7 +2437,8 @@ impl AccountsDb {
         self.accounts_index.scan_accounts(
             ancestors,
             max_root,
-            |pubkey, (account_info, slot)| {
+            |pubkey, slot_list_item| {
+                let slot = slot_list_item.slot();
                 if let Some((cached_account, cache_slot)) = cached_versions.remove(pubkey)
                     && cache_slot >= slot
                 {
@@ -2445,8 +2446,7 @@ impl AccountsDb {
                     return;
                 }
 
-                let mut account_accessor =
-                    self.get_account_accessor(slot, &account_info.storage_location());
+                let mut account_accessor = self.get_account_accessor(slot_list_item);
 
                 let account_slot = account_accessor.get_loaded_account(|loaded_account| {
                     (pubkey, loaded_account.take_account(), slot)
@@ -2688,15 +2688,14 @@ impl AccountsDb {
 
         // Get the storage under the index entry's lock: storages are removed only after the index
         // stops referring to them, so it is present
-        let (slot, mut account_accessor) = self.accounts_index.get_with_and_then(
-            pubkey,
-            ancestors,
-            true,
-            |(slot, account_info)| {
-                let storage_location = account_info.storage_location();
-                (slot, self.get_account_accessor(slot, &storage_location))
-            },
-        )?;
+        let (slot, mut account_accessor) =
+            self.accounts_index
+                .get_with_and_then(pubkey, ancestors, true, |slot_list_item| {
+                    (
+                        slot_list_item.slot(),
+                        self.get_account_accessor(slot_list_item),
+                    )
+                })?;
         self.load_account_stats
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
@@ -2746,20 +2745,19 @@ impl AccountsDb {
     #[cfg_attr(test, qualifiers(pub(crate)))]
     fn get_account_accessor(
         &self,
-        slot: Slot,
-        storage_location: &StorageLocation,
+        slot_list_item: LockedSlotListItem<'_, AccountInfo>,
     ) -> LoadedAccountAccessor {
-        match storage_location {
+        match slot_list_item.info().storage_location() {
             StorageLocation::AccountsFile(store_id, offset) => {
-                // Callers hold the index entry's lock, and storages are removed only after the
-                // index stops referring to them, so the storage is present
+                // `slot_list_item` borrows the index entry's lock, and storages are removed only after
+                // the index stops referring to them, so the storage is present
                 let storage_entry = self
                     .storage
-                    .get_account_storage_entry(slot, *store_id)
+                    .get_account_storage_entry(slot_list_item.slot(), store_id)
                     .expect("the storage of a locked index entry is present");
                 LoadedAccountAccessor {
                     storage_entry,
-                    offset: *offset,
+                    offset,
                 }
             }
         }
@@ -3577,18 +3575,15 @@ impl AccountsDb {
                     for pubkey in accounts_index_bin.keys() {
                         let account_lt_hash = self
                             .accounts_index
-                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
-                                (!account_info.is_zero_lamport()).then(|| {
-                                    self.get_account_accessor(
-                                        slot,
-                                        &account_info.storage_location(),
-                                    )
-                                    .get_loaded_account(|loaded_account| {
-                                        Self::lt_hash_account(&loaded_account, &pubkey)
-                                    })
-                                    // SAFETY: The index said this pubkey exists, so
-                                    // there must be an account to load.
-                                    .unwrap()
+                            .get_with_and_then(&pubkey, ancestors, false, |slot_list_item| {
+                                (!slot_list_item.info().is_zero_lamport()).then(|| {
+                                    self.get_account_accessor(slot_list_item)
+                                        .get_loaded_account(|loaded_account| {
+                                            Self::lt_hash_account(&loaded_account, &pubkey)
+                                        })
+                                        // SAFETY: The index said this pubkey exists, so
+                                        // there must be an account to load.
+                                        .unwrap()
                                 })
                             })
                             .flatten();
@@ -3608,18 +3603,14 @@ impl AccountsDb {
             let mut cache_lt_hash = LtHash::identity();
             for pubkey in self.accounts_cache.cached_pubkeys().iter() {
                 // mix out whatever older version the index walk produced (if any)
-                self.accounts_index.get_with_and_then(
-                    pubkey,
-                    ancestors,
-                    false,
-                    |(slot, account_info)| {
-                        self.get_account_accessor(slot, &account_info.storage_location())
+                self.accounts_index
+                    .get_with_and_then(pubkey, ancestors, false, |slot_list_item| {
+                        self.get_account_accessor(slot_list_item)
                             .get_loaded_account(|loaded_account| {
                                 cache_lt_hash
                                     .mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
                             });
-                    },
-                );
+                    });
                 // mix in the cache version
                 if let Some((account, _slot)) = self.load(
                     ancestors,
@@ -3648,9 +3639,9 @@ impl AccountsDb {
     pub fn calculate_capitalization_at_startup_from_index(&self, ancestors: &Ancestors) -> u64 {
         let stored_lamports = |pubkey: &Pubkey| {
             self.accounts_index
-                .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
-                    (!account_info.is_zero_lamport()).then(|| {
-                        self.get_account_accessor(slot, &account_info.storage_location())
+                .get_with_and_then(pubkey, ancestors, false, |slot_list_item| {
+                    (!slot_list_item.info().is_zero_lamport()).then(|| {
+                        self.get_account_accessor(slot_list_item)
                             .get_loaded_account(|loaded_account| loaded_account.lamports())
                             // SAFETY: The index said this pubkey exists, so
                             // there must be an account to load.
@@ -4234,8 +4225,8 @@ impl AccountsDb {
             Some(cached_account.account.lamports() == 0)
         } else {
             self.accounts_index
-                .get_with_and_then(pubkey, ancestors, true, |(_, account)| {
-                    account.is_zero_lamport()
+                .get_with_and_then(pubkey, ancestors, true, |slot_list_item| {
+                    slot_list_item.info().is_zero_lamport()
                 })
         }
     }
@@ -5100,14 +5091,13 @@ impl AccountsDb {
                     // Then sum up the remaining data len, which are the duplicates.
                     // All of the slots need to go in the 'uncleaned_slots' list. For clean to work properly,
                     // the slot where duplicate accounts are found in the index need to be in 'uncleaned_slots' list, too.
-                    let max = slot_list.iter().map(|(slot, _)| slot).max().unwrap();
-                    slot_list.iter().for_each(|(slot, account_info)| {
-                        if slot == max {
+                    let max = slot_list.iter().map(|(slot, _)| *slot).max().unwrap();
+                    slot_list.locked_items().for_each(|slot_list_item| {
+                        if slot_list_item.slot() == max {
                             // the info in 'max' is the most recent, current info for this pubkey
                             return;
                         }
-                        let mut accessor =
-                            self.get_account_accessor(*slot, &account_info.storage_location());
+                        let mut accessor = self.get_account_accessor(slot_list_item);
                         accessor.check_and_get_loaded_account(|loaded_account| {
                             let data_len = loaded_account.data_len();
                             let lamports = loaded_account.lamports();
@@ -5345,7 +5335,9 @@ impl AccountsDb {
                 let key = *accounts.pubkey(i);
                 if self
                     .accounts_index
-                    .get_with_and_then(&key, &ancestors, true, |(_, info)| info.is_zero_lamport())
+                    .get_with_and_then(&key, &ancestors, true, |slot_list_item| {
+                        slot_list_item.info().is_zero_lamport()
+                    })
                     .is_none_or(|is_zero| is_zero)
                 {
                     pre_populate_zero_lamport.push((key, placeholder.clone()));

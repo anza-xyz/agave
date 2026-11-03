@@ -1,4 +1,4 @@
-mod account_map_entry;
+pub(crate) mod account_map_entry;
 mod accounts_index_storage;
 mod bucket_map_holder;
 pub(crate) mod in_mem_accounts_index;
@@ -12,7 +12,10 @@ use {
         is_zero_lamport::IsZeroLamport,
         pubkey_bins::{PubkeyBinCalculator, PubkeyBinCalculatorBuilder},
     },
-    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
+    account_map_entry::{
+        AccountMapEntry, LockedSlotListItem, PreAllocatedAccountMapEntry, SlotListReadGuard,
+        SlotListWriteGuard,
+    },
     accounts_index_storage::AccountsIndexStorage,
     bucket_map_holder::Age,
     in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
@@ -272,7 +275,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         pubkey: &Pubkey,
         ancestors: &Ancestors,
         should_add_to_in_mem_cache: bool,
-        callback: impl FnOnce(SlotListItem<T>) -> R,
+        callback: impl FnOnce(LockedSlotListItem<'_, T>) -> R,
     ) -> Option<R> {
         let max_root = ancestors.min_slot();
         self.get_and_then(pubkey, |entry| {
@@ -290,11 +293,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         entry: &AccountMapEntry<T>,
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
-        callback: impl FnOnce(SlotListItem<T>) -> R,
+        callback: impl FnOnce(LockedSlotListItem<'_, T>) -> R,
     ) -> Option<R> {
         let slot_list = entry.slot_list_read_lock();
         self.latest_slot(ancestors, &slot_list, max_root)
-            .map(|found_index| callback(slot_list[found_index]))
+            .map(|found_index| callback(slot_list.locked_item(found_index)))
     }
 
     /// Is `pubkey` in the index?
@@ -348,7 +351,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         mut func: F,
         mut should_abort: impl FnMut() -> bool,
     ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
+        F: FnMut(&Pubkey, LockedSlotListItem<'_, T>),
     {
         for pubkeys in self.iter() {
             for pubkey in pubkeys {
@@ -358,7 +361,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         if let Some(index) =
                             self.latest_slot(Some(ancestors), list_r, Some(max_root))
                         {
-                            func(&pubkey, (&list_r[index].1, list_r[index].0));
+                            func(&pubkey, list_r.locked_item(index));
                         }
                     }
                     let add_to_in_mem_cache = false;
@@ -476,7 +479,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ///   - the second an option of the SlotList
     pub(crate) fn scan<'a, F, I>(&self, pubkeys: I, mut callback: F, filter: ScanFilter)
     where
-        F: FnMut(&'a Pubkey, Option<&[SlotListItem<T>]>),
+        F: FnMut(&'a Pubkey, Option<&SlotListReadGuard<'_, T>>),
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -492,7 +495,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
                 if let Some(locked_entry) = entry {
                     let slot_list = locked_entry.slot_list_read_lock();
-                    callback(pubkey, Some(slot_list.as_ref()));
+                    callback(pubkey, Some(&slot_list));
                 } else {
                     callback(pubkey, None);
                 }
@@ -1524,9 +1527,9 @@ mod tests {
 
         let ancestors = Ancestors::from(vec![0]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert!(slot_list_item.info());
             })
             .unwrap();
 
@@ -1616,9 +1619,9 @@ mod tests {
 
         let ancestors = Ancestors::from(vec![0]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert!(slot_list_item.info());
             })
             .unwrap();
     }
@@ -1632,9 +1635,9 @@ mod tests {
         index.upsert(0, 0, &key, 1, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
         assert!(gc.is_empty());
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert_eq!(account_info, 1);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert_eq!(slot_list_item.info(), 1);
             })
             .unwrap();
 
@@ -1642,9 +1645,9 @@ mod tests {
         index.upsert(0, 0, &key, 0, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
         assert_eq!(gc, ReclaimsSlotList::from([(0, 1)]));
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert_eq!(account_info, 0);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert_eq!(slot_list_item.info(), 0);
             })
             .unwrap();
     }
@@ -1660,16 +1663,16 @@ mod tests {
         index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert!(slot_list_item.info());
             })
             .unwrap();
         let ancestors = Ancestors::from(vec![1]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 1);
-                assert!(!account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 1);
+                assert!(!slot_list_item.info());
             })
             .unwrap();
     }
@@ -1692,9 +1695,9 @@ mod tests {
         assert_eq!(gc, ReclaimsSlotList::new());
         let ancestors = Ancestors::from(vec![max_root]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 3);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 3);
+                assert!(slot_list_item.info());
             })
             .unwrap();
 
@@ -1706,7 +1709,7 @@ mod tests {
             |pubkey, index| {
                 if pubkey == &key {
                     found_key = true;
-                    assert_eq!(index, (&true, 3));
+                    assert_eq!((index.info(), index.slot()), (true, 3));
                 };
                 num += 1
             },
@@ -1990,18 +1993,18 @@ mod tests {
         // Verify that the item added is in in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, reclaim_slot);
-                assert_eq!(account_info, account_value);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), reclaim_slot);
+                assert_eq!(slot_list_item.info(), account_value);
             })
             .unwrap();
 
         // Verify that the newer item remains in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot + 1]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, reclaim_slot + 1);
-                assert_eq!(account_info, account_value + 1);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), reclaim_slot + 1);
+                assert_eq!(slot_list_item.info(), account_value + 1);
             })
             .unwrap();
     }
