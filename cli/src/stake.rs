@@ -2589,24 +2589,16 @@ pub async fn get_epoch_boundary_timestamps(
     epoch_schedule: &EpochSchedule,
 ) -> Result<(UnixTimestamp, UnixTimestamp), Box<dyn std::error::Error>> {
     let epoch_end_time = rpc_client.get_block_time(reward.effective_slot).await?;
-    let mut epoch_start_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
-    let epoch_start_time = loop {
-        if epoch_start_slot >= reward.effective_slot {
-            return Err("epoch_start_time not found".to_string().into());
-        }
-        match rpc_client.get_block_time(epoch_start_slot).await {
-            Ok(block_time) => {
-                break block_time;
-            }
-            Err(_) => {
-                // TODO This is wrong.  We should not just increase the slot index if the RPC
-                // request failed.  It could have failed for a number of reasons, including, for
-                // example a network failure.
-                epoch_start_slot = epoch_start_slot
-                    .checked_add(1)
-                    .ok_or("Reached last slot that fits into u64")?;
-            }
-        }
+    let epoch_start_slot = epoch_schedule.get_first_slot_in_epoch(reward.epoch);
+    let first_block_in_epoch = rpc_client
+        .get_blocks_with_limit(epoch_start_slot, 1)
+        .await?
+        .into_iter()
+        .next();
+
+    let epoch_start_time = match first_block_in_epoch {
+        Some(slot) if slot < reward.effective_slot => rpc_client.get_block_time(slot).await?,
+        _ => return Err("epoch_start_time not found".to_string().into()),
     };
     Ok((epoch_start_time, epoch_end_time))
 }
