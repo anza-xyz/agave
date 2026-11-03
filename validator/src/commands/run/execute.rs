@@ -57,6 +57,7 @@ use {
     solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
+    solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
@@ -593,10 +594,16 @@ pub fn execute(
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
-        validator_exit_backpressure: [(
-            SnapshotPackagerService::NAME.to_string(),
-            Arc::new(AtomicBool::new(false)),
-        )]
+        validator_exit_backpressure: [
+            (
+                SnapshotPackagerService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            ),
+            (
+                TransactionStatusService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            ),
+        ]
         .into(),
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,

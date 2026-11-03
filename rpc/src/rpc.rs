@@ -4783,6 +4783,7 @@ pub fn populate_blockstore_for_tests(
             false,
             None,
             tss_exit.clone(),
+            None,
         );
 
     let transaction_status_sender =
@@ -4806,7 +4807,7 @@ pub fn populate_blockstore_for_tests(
     // that they are matched properly by get_rooted_block
     solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries).unwrap();
 
-    transaction_status_service.quiesce_and_join_for_tests(tss_exit);
+    transaction_status_service.join().unwrap();
 }
 
 #[cfg(test)]

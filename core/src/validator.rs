@@ -2038,12 +2038,6 @@ impl Validator {
                 .expect("optimistically_confirmed_bank_tracker");
         }
 
-        if let Some(transaction_status_service) = self.transaction_status_service {
-            transaction_status_service
-                .join()
-                .expect("transaction_status_service");
-        }
-
         if let Some(system_monitor_service) = self.system_monitor_service {
             system_monitor_service
                 .join()
@@ -2084,6 +2078,12 @@ impl Validator {
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
+        // TSS can drain safely once its producers have stopped.
+        if let Some(transaction_status_service) = self.transaction_status_service {
+            transaction_status_service
+                .join()
+                .expect("transaction_status_service");
+        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()
@@ -2541,6 +2541,10 @@ fn load_blockstore(
                 config.rpc_config.enable_extended_tx_metadata_storage,
                 transaction_notifier,
                 dependency_tracker,
+                config
+                    .validator_exit_backpressure
+                    .get(TransactionStatusService::NAME)
+                    .cloned(),
             )
         } else {
             TransactionHistoryServices::default()
@@ -3022,6 +3026,7 @@ fn initialize_rpc_transaction_history_services(
     enable_extended_tx_metadata_storage: bool,
     transaction_notifier: Option<TransactionNotifierArc>,
     dependency_tracker: Option<Arc<DependencyTracker>>,
+    exit_backpressure: Option<Arc<AtomicBool>>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
@@ -3038,6 +3043,7 @@ fn initialize_rpc_transaction_history_services(
         enable_extended_tx_metadata_storage,
         dependency_tracker,
         exit,
+        exit_backpressure,
     ));
 
     TransactionHistoryServices {
