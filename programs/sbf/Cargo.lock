@@ -7160,7 +7160,6 @@ dependencies = [
  "agave-votor-messages",
  "arc-swap",
  "arrayvec",
- "assert_matches",
  "bv",
  "bytes",
  "crossbeam-channel",
