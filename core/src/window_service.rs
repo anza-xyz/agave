@@ -51,7 +51,7 @@ pub(crate) type DuplicateSlotReceiver = Receiver<Slot>;
 
 // Each message contains one recovered FEC set, so channel capacity bounds
 // the number of recovered FEC sets awaiting insertion.
-const RECOVERED_CHANNEL_CAPACITY: usize = 64;
+const RECOVERED_CHANNEL_CAPACITY: usize = 1024;
 const MAX_RECOVERED_BATCHES_PER_INSERT: usize = 16;
 
 #[derive(Default)]
