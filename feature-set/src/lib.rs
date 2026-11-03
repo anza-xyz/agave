@@ -82,6 +82,7 @@ pub struct FeatureSnapshot {
     pub increase_tx_v1_account_lock_limit: bool,
     pub invoke_signed_v2: bool,
     pub loaderv3_programdata_size_floor: bool,
+    pub disable_sol_alloc_free_again: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -187,6 +188,9 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
             invoke_signed_v2: is_active(&invoke_signed_v2::ID),
             loaderv3_programdata_size_floor: is_active(&loaderv3_programdata_size_floor::ID),
+            disable_sol_alloc_free_again: is_active(
+                &disable_sol_alloc_free_again::ID,
+            ),
         }
     }
 }
@@ -347,6 +351,7 @@ impl FeatureSet {
             loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
             invoke_signed_v2: snapshot.invoke_signed_v2,
             loaderv3_programdata_size_floor: snapshot.loaderv3_programdata_size_floor,
+            disable_sol_alloc_free_again: snapshot.disable_sol_alloc_free_again,
         }
     }
 
@@ -418,6 +423,7 @@ impl FeatureSet {
             loader_v3_remove_extend_program,
             invoke_signed_v2,
             loaderv3_programdata_size_floor,
+            disable_sol_alloc_free_again,
         }
     }
 }
@@ -1678,6 +1684,10 @@ pub mod loaderv3_programdata_size_floor {
     solana_pubkey::declare_id!("8whkDenELnfwYLirBc4Wb4H2Z1z5K7tiykpdxJS7cWg1");
 }
 
+pub mod disable_sol_alloc_free_again {
+    solana_pubkey::declare_id!("TodoFeatureKeyForSimdSix1111111111111111111");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2823,6 +2833,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loaderv3_programdata_size_floor::id(),
             "Apply a minimum loaded data size to loader-v3 ProgramData accounts",
+        ),
+        (
+            disable_sol_alloc_free_again::id(),
+            "SIMD-0706: Disable the sol_alloc_free_ syscall again",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
