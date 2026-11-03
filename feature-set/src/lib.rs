@@ -2748,7 +2748,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             increase_tx_v1_account_lock_limit::id(),
-            "Increase transaction v1 account lock limit to 96",
+            "SIMD-0596: Increase transaction v1 account lock limit to 96",
         ),
         (
             invoke_signed_v2::id(),
