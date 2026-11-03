@@ -75,7 +75,6 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 solana-account-info = { workspace = true }

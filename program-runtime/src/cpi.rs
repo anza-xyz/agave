@@ -1292,7 +1292,6 @@ mod tests {
             memory_context::{MemoryContext, SerializedAccountMetadata},
             with_mock_invoke_context_with_feature_set,
         },
-        assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
         solana_sbpf::{
@@ -1308,6 +1307,7 @@ mod tests {
             transaction_accounts::KeyedAccountSharedData,
         },
         std::{
+            assert_matches,
             cell::{Cell, RefCell},
             mem, ptr,
             rc::Rc,

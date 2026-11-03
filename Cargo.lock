@@ -7513,7 +7513,6 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "criterion",
  "qualifier_attr",
  "rand 0.9.4",
@@ -9760,7 +9759,6 @@ dependencies = [
 name = "solana-program-runtime"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "base64 0.23.1",
  "itertools 0.15.0",
  "libsecp256k1",
@@ -10970,7 +10968,6 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "ahash 0.8.12",
- "assert_matches",
  "env_logger",
  "libsecp256k1",
  "log",
@@ -11103,7 +11100,6 @@ dependencies = [
 name = "solana-syscalls"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "libsecp256k1",
  "num-traits",
  "solana-account",
@@ -11171,7 +11167,6 @@ dependencies = [
 name = "solana-system-program"
 version = "4.5.0-alpha.4"
 dependencies = [
- "assert_matches",
  "criterion",
  "log",
  "solana-account",
