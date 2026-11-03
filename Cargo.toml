@@ -217,7 +217,7 @@ agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
-agave-geyser-plugin-interface = "=6.0.0"
+agave-geyser-plugin-interface = "=7.0.0"
 agave-io-uring = { path = "io-uring", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 agave-jemalloc = { path = "jemalloc", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=4.5.0-alpha.4", features = ["agave-unstable-api"] }
@@ -646,8 +646,6 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
-# Bank creation callback, pending an agave-geyser-plugin-interface release.
-agave-geyser-plugin-interface = { git = "https://github.com/sam0x17/agave-sdk", rev = "fbecb363996dc181c60c226d451c86700136593c" }
 blstrs = { git = "https://github.com/anza-xyz/blstrs", rev = "a1faffa3420bdaf4102425c43f00cdd815d4f145" }
 # for details, see https://github.com/anza-xyz/crossbeam/commit/5ee1c6ec671d94db14ed9238eb99e59a84555aad
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
