@@ -3156,9 +3156,9 @@ impl AccountsDb {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        AccountLtHash(hasher.lt_hash(|hasher| {
-            Self::write_account_hash_input(account, pubkey, hasher);
-        }))
+        hasher.reset();
+        Self::write_account_hash_input(account, pubkey, &mut *hasher);
+        AccountLtHash(hasher.finish())
     }
 
     /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the

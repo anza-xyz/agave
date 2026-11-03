@@ -77,6 +77,12 @@ impl SingleLtHashUpdater for blake3::Hasher {
     }
 }
 
+impl<T: SingleLtHashUpdater + ?Sized> SingleLtHashUpdater for &mut T {
+    fn write_part(&mut self, bytes: &[u8]) {
+        (**self).write_part(bytes);
+    }
+}
+
 /// Number of input bytes that [`BufferingHasher`] buffers before streaming the rest directly:
 /// 16 BLAKE3 chunks, the widest SIMD batch.
 const BUFFERED_PREFIX_LEN: usize = 16 * blake3::CHUNK_LEN;
@@ -94,21 +100,25 @@ pub struct BufferingHasher {
 }
 
 impl BufferingHasher {
-    /// Returns the lt hash of the input that `write_input` writes into `self`.
-    #[must_use]
-    pub fn lt_hash(&mut self, write_input: impl FnOnce(&mut Self)) -> LtHash {
+    /// Discards the input written so far.
+    pub fn reset(&mut self) {
         self.hasher.reset();
         self.buffer.clear();
         self.is_prefix_hashed = false;
-        write_input(self);
+    }
+
+    /// Returns the lt hash of the input written since the last `reset()`.
+    #[must_use]
+    pub fn finish(&mut self) -> LtHash {
         if !self.is_prefix_hashed {
             self.hasher.update(&self.buffer);
+            self.is_prefix_hashed = true;
         }
         LtHash::with(&self.hasher)
     }
 }
 
-impl SingleLtHashUpdater for &mut BufferingHasher {
+impl SingleLtHashUpdater for BufferingHasher {
     fn write_part(&mut self, bytes: &[u8]) {
         if self.is_prefix_hashed {
             self.hasher.update(bytes);
@@ -473,12 +483,11 @@ mod tests {
             let input = (0..len).map(|i| i as u8).collect::<Vec<_>>();
             let expected = LtHash::with(blake3::Hasher::new().update(&input));
             for part_len in [1, 7, 8, 1000, 16384, usize::MAX] {
-                let lt_hash = hasher.lt_hash(|mut hasher| {
-                    for part in input.chunks(part_len.min(len.max(1))) {
-                        hasher.write_part(part);
-                    }
-                });
-                assert_eq!(lt_hash, expected, "len={len} part_len={part_len}");
+                hasher.reset();
+                for part in input.chunks(part_len.min(len.max(1))) {
+                    hasher.write_part(part);
+                }
+                assert_eq!(hasher.finish(), expected, "len={len} part_len={part_len}");
             }
         }
     }
