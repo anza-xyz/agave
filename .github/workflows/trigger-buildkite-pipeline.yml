@@ -31,24 +31,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+<<<<<<< HEAD
           USERNAME: ${{ github.event.sender.login }}
+=======
+          EVENT_SENDER: ${{ github.event.sender.login }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+>>>>>>> 3fe53bf (ci: refine pipeline trigger condition (#16674))
         run: |
           TRUSTED_CI_USERS=(
             "mergify[bot]"
           )
           for trusted_ci_user in "${TRUSTED_CI_USERS[@]}"; do
-            if [[ "$USERNAME" == "$trusted_ci_user" ]]; then
+            if [[ "$EVENT_SENDER" == "$trusted_ci_user" && "$PR_AUTHOR" == "$trusted_ci_user" ]]; then
               echo "should_trigger=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           done
 
-          ENCODED_USERNAME=$(jq -rn --arg username "$USERNAME" '$username | @uri')
+          ENCODED_EVENT_SENDER=$(jq -rn --arg event_sender "$EVENT_SENDER" '$event_sender | @uri')
           ROLE_NAME=$(curl -sS -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
-            "https://api.github.com/repos/$REPO/collaborators/$ENCODED_USERNAME/permission" | jq -r ".role_name")
+            "https://api.github.com/repos/$REPO/collaborators/$ENCODED_EVENT_SENDER/permission" | jq -r ".role_name")
 
           case "$ROLE_NAME" in
             admin|maintain|write|triage)
