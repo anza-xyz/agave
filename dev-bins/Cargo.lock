@@ -6032,12 +6032,14 @@ name = "solana-accounts-db"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-fs",
+ "agave-io-uring",
  "agave-memory",
  "ahash 0.8.12",
  "blake3",
  "bv",
  "dashmap",
  "hashbrown 0.17.1",
+ "io-uring",
  "itertools 0.15.0",
  "log",
  "modular-bitfield",
@@ -6047,6 +6049,7 @@ dependencies = [
  "rayon",
  "semver",
  "seqlock",
+ "shaq",
  "smallvec",
  "solana-account",
  "solana-address-lookup-table-interface",

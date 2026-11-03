@@ -46,10 +46,10 @@ use {
         },
     },
 };
-pub use {common::LogicalOffset, error::Error as SplitFileError};
+pub use {common::LogicalOffset, error::Error as SplitFileError, meta::META_ENTRY_MAX_SIZE};
 pub(crate) use {
     common::{DataLen, FileOffset},
-    data::read_data_entry,
+    data::{DATA_ENTRY_FIXED_SIZE, parse_data_entry_fixed, read_data_entry},
     error::ReadDataEntryError,
 };
 

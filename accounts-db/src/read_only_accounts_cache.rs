@@ -191,6 +191,12 @@ impl ReadOnlyAccountsCache {
         found
     }
 
+    /// Is `pubkey` cached, at any slot? Not a load: the entry's LRU timestamp and the hit/miss
+    /// counters are left alone.
+    pub(crate) fn contains_key(&self, pubkey: &Pubkey) -> bool {
+        self.cache.contains_key(pubkey)
+    }
+
     fn account_size(account: &AccountSharedData) -> usize {
         CACHE_ENTRY_SIZE + account.data().len()
     }

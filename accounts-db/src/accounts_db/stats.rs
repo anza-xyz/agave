@@ -790,3 +790,177 @@ impl LoadAccountsStats {
         );
     }
 }
+
+#[derive(Debug, Default)]
+pub struct PrefetchAccountsStats {
+    /// pubkeys dropped because the prefetch thread's queue was full
+    pub num_dropped: AtomicU64,
+    /// pubkeys dropped because there is no prefetch thread: none without io_uring
+    pub num_disconnected: AtomicU64,
+    /// pubkeys the prefetch thread took from its queue
+    pub num_received: AtomicU64,
+    /// pubkeys dropped because a cache already held them
+    pub num_skipped_cached: AtomicU64,
+    /// pubkeys dropped because an earlier prefetch was still loading them
+    pub num_skipped_outstanding: AtomicU64,
+    /// pubkeys with no rooted version in the index
+    pub num_not_in_index: AtomicU64,
+    /// reads issued to storage
+    pub num_issued: AtomicU64,
+    /// accounts stored in the read cache
+    pub num_stored: AtomicU64,
+    /// of them, ones the read cache already held: a load on the critical path got there first
+    pub num_stored_already_cached: AtomicU64,
+    /// meta entry reads that completed during their own submission: the entry was in the page
+    /// cache
+    pub num_page_cache_reads: AtomicU64,
+    /// meta entry reads that completed later, nearly all from disk
+    pub num_disk_reads: AtomicU64,
+    /// data entry reads, of accounts whose meta entry did not hold all their data, each on a
+    /// kernel worker
+    pub num_data_reads: AtomicU64,
+    /// accounts not read: the index put them at or past their file's end
+    pub num_past_end: AtomicU64,
+    /// time from pushing each read to its completion, summed
+    pub read_us: AtomicU64,
+    /// the slowest of them
+    pub max_read_us: AtomicU64,
+    /// the most reads in flight at once
+    pub max_in_flight: AtomicU64,
+}
+
+/// What one pass of the prefetch thread did, accumulated once per pass rather than per pubkey
+/// or per read
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Debug, Default)]
+pub struct PrefetchAccountsStatsSub {
+    pub num_received: u64,
+    pub num_skipped_cached: u64,
+    pub num_skipped_outstanding: u64,
+    pub num_not_in_index: u64,
+    pub num_issued: u64,
+    pub num_stored: u64,
+    pub num_stored_already_cached: u64,
+    pub num_page_cache_reads: u64,
+    pub num_disk_reads: u64,
+    pub num_data_reads: u64,
+    pub num_past_end: u64,
+    pub read_us: u64,
+    pub max_read_us: u64,
+    pub max_in_flight: usize,
+}
+
+impl PrefetchAccountsStats {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn accumulate_sub_stats(&self, stats_sub: PrefetchAccountsStatsSub) {
+        self.num_received
+            .fetch_add(stats_sub.num_received, Ordering::Relaxed);
+        self.num_skipped_cached
+            .fetch_add(stats_sub.num_skipped_cached, Ordering::Relaxed);
+        self.num_skipped_outstanding
+            .fetch_add(stats_sub.num_skipped_outstanding, Ordering::Relaxed);
+        self.num_not_in_index
+            .fetch_add(stats_sub.num_not_in_index, Ordering::Relaxed);
+        self.num_issued
+            .fetch_add(stats_sub.num_issued, Ordering::Relaxed);
+        self.num_stored
+            .fetch_add(stats_sub.num_stored, Ordering::Relaxed);
+        self.num_stored_already_cached
+            .fetch_add(stats_sub.num_stored_already_cached, Ordering::Relaxed);
+        self.num_page_cache_reads
+            .fetch_add(stats_sub.num_page_cache_reads, Ordering::Relaxed);
+        self.num_disk_reads
+            .fetch_add(stats_sub.num_disk_reads, Ordering::Relaxed);
+        self.num_data_reads
+            .fetch_add(stats_sub.num_data_reads, Ordering::Relaxed);
+        self.num_past_end
+            .fetch_add(stats_sub.num_past_end, Ordering::Relaxed);
+        self.read_us.fetch_add(stats_sub.read_us, Ordering::Relaxed);
+        self.max_read_us
+            .fetch_max(stats_sub.max_read_us, Ordering::Relaxed);
+        self.max_in_flight
+            .fetch_max(stats_sub.max_in_flight as u64, Ordering::Relaxed);
+    }
+
+    pub fn report(&self) {
+        datapoint_info!(
+            "accounts_db_prefetch_accounts",
+            (
+                "num_dropped",
+                self.num_dropped.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_disconnected",
+                self.num_disconnected.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_received",
+                self.num_received.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_skipped_cached",
+                self.num_skipped_cached.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_skipped_outstanding",
+                self.num_skipped_outstanding.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_not_in_index",
+                self.num_not_in_index.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_issued",
+                self.num_issued.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_stored",
+                self.num_stored.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_stored_already_cached",
+                self.num_stored_already_cached.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_page_cache_reads",
+                self.num_page_cache_reads.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_disk_reads",
+                self.num_disk_reads.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_data_reads",
+                self.num_data_reads.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_past_end",
+                self.num_past_end.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            ("read_us", self.read_us.swap(0, Ordering::Relaxed), i64),
+            (
+                "max_read_us",
+                self.max_read_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "max_in_flight",
+                self.max_in_flight.swap(0, Ordering::Relaxed),
+                i64
+            ),
+        );
+    }
+}

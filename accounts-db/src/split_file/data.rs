@@ -346,6 +346,22 @@ pub fn parse_data_entry<'a>(
             actual: bytes.len(),
         });
     }
+    parse_data_entry_fixed(bytes, expected_address, expected_data_len)?;
+    Ok(&bytes[DATA_ENTRY_OFFSET_OF_DATA..stored_size])
+}
+
+/// Parses the fixed portion of a data entry and checks it is the entry for the account.
+pub fn parse_data_entry_fixed(
+    bytes: &[u8],
+    expected_address: &Pubkey,
+    expected_data_len: DataLen,
+) -> Result<(), ReadDataEntryError> {
+    if bytes.len() < DATA_ENTRY_FIXED_SIZE {
+        return Err(ReadDataEntryError::ShortRead {
+            expected: DATA_ENTRY_FIXED_SIZE,
+            actual: bytes.len(),
+        });
+    }
 
     let address_bytes = &bytes[DATA_ENTRY_OFFSET_OF_ADDRESS..][..size_of::<Pubkey>()];
     if address_bytes != expected_address.as_ref() {
@@ -370,8 +386,7 @@ pub fn parse_data_entry<'a>(
             actual: data_len,
         });
     }
-
-    Ok(&bytes[DATA_ENTRY_OFFSET_OF_DATA..stored_size])
+    Ok(())
 }
 
 /// Returns the number of bytes required to store a data entry for an account with `data_len`.

@@ -20,6 +20,7 @@
 
 mod accounts_db_config;
 mod geyser_plugin_utils;
+mod prefetch;
 pub(crate) mod stats;
 pub(crate) mod tests;
 
@@ -38,13 +39,16 @@ use {
         account_storage_entry::AccountStorageEntry,
         account_storage_reader::{ACCOUNT_STORAGE_MAX_BUFFER_SIZE, storage_file_buf_reader},
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
-        accounts_db::stats::{
-            AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
-            ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
-            StoreAccountsForFlushStats, StoreAccountsForShrinkStats, StoreAccountsForSquashStats,
-            StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
+        accounts_db::{
+            prefetch::AccountsPrefetcher,
+            stats::{
+                AccountsStats, CleanAccountsStats, FlushStats, LoadAccountsStats,
+                ObsoleteAccountsStats, PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub,
+                StoreAccountsForFlushStats, StoreAccountsForShrinkStats,
+                StoreAccountsForSquashStats, StoreAccountsUnfrozenStats, WriteAccountsToCacheStats,
+            },
         },
-        accounts_file::{self, AccountsFileProvider},
+        accounts_file::{self, AccountsFile, AccountsFileProvider, MetaEntryRead},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
@@ -96,7 +100,7 @@ use {
         ops::{ControlFlow, RangeBounds},
         path::{Path, PathBuf},
         sync::{
-            Arc, Mutex, RwLock,
+            Arc, Mutex, RwLock, Weak,
             atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         },
         thread,
@@ -527,7 +531,7 @@ pub enum PopulateReadCache {
     False,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoadedAccountAccessor {
     // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
@@ -536,6 +540,20 @@ pub struct LoadedAccountAccessor {
 }
 
 impl LoadedAccountAccessor {
+    /// The read of the account's meta entry
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn construct_meta_entry_read(&self) -> Option<MetaEntryRead> {
+        self.storage_entry
+            .accounts
+            .construct_meta_entry_read(self.offset)
+    }
+
+    /// The file the account is stored in
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn accounts_file(&self) -> &AccountsFile {
+        &self.storage_entry.accounts
+    }
+
     fn check_and_get_loaded_account_shared_data(
         &mut self,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
@@ -732,6 +750,9 @@ pub struct AccountsDb {
     /// Stats for loading accounts during transaction processing
     load_account_stats: LoadAccountsStats,
 
+    /// Warms the read cache in the background; see `prefetch_accounts`
+    prefetcher: AccountsPrefetcher,
+
     /// Stats from storing accounts unfrozen
     store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats,
 
@@ -875,7 +896,7 @@ impl AccountsDb {
             .build()
             .expect("new rayon threadpool");
 
-        let new = Arc::new(Self {
+        let new = Arc::new_cyclic(|accounts_db| Self {
             accounts_index,
             paths,
             bank_hash_details_dir: accounts_db_config.bank_hash_details_dir,
@@ -918,6 +939,7 @@ impl AccountsDb {
             shrink_ancient_stats: ShrinkAncientStats::default(),
             stats: AccountsStats::default(),
             load_account_stats: LoadAccountsStats::default(),
+            prefetcher: AccountsPrefetcher::new(Weak::clone(accounts_db)),
             store_accounts_unfrozen_stats: StoreAccountsUnfrozenStats::default(),
             is_bank_drop_callback_enabled: AtomicBool::default(),
             latest_full_snapshot_slot_advanced_since_clean: AtomicBool::default(),
@@ -2675,16 +2697,8 @@ impl AccountsDb {
             return should_load_account.then_some((account, slot));
         }
 
-        // Get the storage under the index entry's lock: storages are removed only after the index
-        // stops referring to them, so it is present
         let (slot, mut account_accessor) =
-            self.accounts_index
-                .get_with_and_then(pubkey, ancestors, true, |slot_list_item| {
-                    (
-                        slot_list_item.slot(),
-                        self.get_account_accessor(slot_list_item),
-                    )
-                })?;
+            self.get_account_accessor_from_index(pubkey, ancestors)?;
         self.load_account_stats
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
@@ -2700,6 +2714,22 @@ impl AccountsDb {
             self.store_in_read_cache_if_newest(pubkey, slot, account);
         }
         maybe_account.map(|account| (account, slot))
+    }
+
+    /// Returns the slot of `pubkey`'s version visible from `ancestors`, and its storage
+    fn get_account_accessor_from_index(
+        &self,
+        pubkey: &Pubkey,
+        ancestors: &Ancestors,
+    ) -> Option<(Slot, LoadedAccountAccessor)> {
+        // the storage is taken under the index entry's lock, so it is present
+        self.accounts_index
+            .get_with_and_then(pubkey, ancestors, true, |slot_list_item| {
+                (
+                    slot_list_item.slot(),
+                    self.get_account_accessor(slot_list_item),
+                )
+            })
     }
 
     /// Stores `account` in the read cache if `slot` is the newest version of `pubkey` in the
@@ -4397,6 +4427,7 @@ impl AccountsDb {
             );
 
             self.load_account_stats.report();
+            self.prefetcher.stats.report();
         }
     }
 

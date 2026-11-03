@@ -5317,6 +5317,12 @@ impl Bank {
         self.rc.accounts.load(ancestors, pubkey)
     }
 
+    /// Loads accounts in the background for the passed in keys if they are not present in the
+    /// read cache or write cache. Inserts them into the read cache
+    pub fn prefetch_accounts(&self, pubkeys: &[Pubkey]) {
+        self.rc.accounts.prefetch_accounts(pubkeys)
+    }
+
     pub fn get_program_accounts(
         &self,
         program_id: &Pubkey,

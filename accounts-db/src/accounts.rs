@@ -200,6 +200,12 @@ impl Accounts {
         )
     }
 
+    /// Loads accounts in the background for the passed in keys if they are not present in the
+    /// read cache or write cache. Inserts them into the read cache
+    pub fn prefetch_accounts(&self, pubkeys: &[Pubkey]) {
+        self.accounts_db.prefetch_accounts(pubkeys)
+    }
+
     /// scans underlying accounts_db for this delta (slot) with a map function
     ///   from LoadedAccount to B
     /// returns only the latest/current version of B for this slot

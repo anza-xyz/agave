@@ -185,7 +185,7 @@ pub struct AppendVec {
     is_dirty: AtomicBool,
 }
 
-const PAGE_SIZE: usize = 4 * 1024;
+pub(crate) const PAGE_SIZE: usize = 4 * 1024;
 
 pub struct AppendVecStat {
     pub files_open: AtomicU64,
