@@ -249,7 +249,7 @@ pub fn set_bank_forks_root<CB>(
         }
     }
 
-    bank_forks.read().unwrap().prune_program_cache(new_root);
+    bank_forks.read().unwrap().root_program_cache(new_root);
     let removed_banks = bank_forks.write().unwrap().set_root(
         new_root,
         snapshot_controller,

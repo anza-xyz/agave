@@ -1808,7 +1808,7 @@ pub(crate) mod tests {
             SlotLeader::default(),
             slots_per_epoch / 2,
         );
-        bank.prune_program_cache(&bank_forks.read().unwrap());
+        bank.root_program_cache(&bank_forks.read().unwrap());
 
         // Advance to the last slot of the epoch, observe the two environments.
         goto_end_of_slot(bank.clone());

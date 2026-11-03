@@ -157,7 +157,7 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     // Advance the bank to middle of epoch and root it, latching EBPP. The next
     // slot starts the recompilation phase.
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
-    bank.prune_program_cache(&bank_forks.read().unwrap());
+    bank.root_program_cache(&bank_forks.read().unwrap());
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 17);
     let current_env = bank
@@ -295,7 +295,7 @@ fn test_feature_activation_loaded_programs_epoch_transition(
     // Advance the bank into the window and root it, latching EBPP.
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
-    bank.prune_program_cache(&bank_forks.read().unwrap());
+    bank.root_program_cache(&bank_forks.read().unwrap());
 
     // Advance the bank to the end of the epoch.
     goto_end_of_slot(bank.clone());
@@ -459,7 +459,7 @@ fn test_feature_activation_loaded_programs_late_activation() {
     // contents should be unchanged. Also, EBPP should not have latched yet,
     // since the root hasn't seen a changed environment yet.
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
-    bank.prune_program_cache(&bank_forks.read().unwrap());
+    bank.root_program_cache(&bank_forks.read().unwrap());
     let current_env = bank
         .get_transaction_processor()
         .program_runtime_environment_for_epoch(0);
@@ -500,7 +500,7 @@ fn test_feature_activation_loaded_programs_late_activation() {
     // Root the bank. See that EBPP does in fact latch, now that the root
     // observes a changed upcoming environment. Go a few more slots, and we
     // also recompile our first few programs.
-    bank.prune_program_cache(&bank_forks.read().unwrap());
+    bank.root_program_cache(&bank_forks.read().unwrap());
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 30);
     let current_env = bank
@@ -669,7 +669,7 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(
     // Enter the window and root the bank, latching EBPP.
     goto_end_of_slot(bank.clone());
     let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
-    bank.prune_program_cache(&bank_forks.read().unwrap());
+    bank.root_program_cache(&bank_forks.read().unwrap());
 
     // Check on our environments.
     goto_end_of_slot(bank.clone());

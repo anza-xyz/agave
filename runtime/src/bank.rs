@@ -1748,7 +1748,7 @@ impl Bank {
         }
     }
 
-    pub fn prune_program_cache(&self, bank_forks: &BankForks) {
+    pub fn root_program_cache(&self, bank_forks: &BankForks) {
         let upcoming_environment = self
             .transaction_processor
             .epoch_boundary_preparation
