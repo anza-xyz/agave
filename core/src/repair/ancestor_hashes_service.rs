@@ -903,7 +903,7 @@ mod test {
         solana_perf::packet::BytesPacket,
         solana_runtime::bank_forks::BankForks,
         solana_signer::Signer,
-        std::collections::HashMap,
+        std::{assert_matches, collections::HashMap},
         trees::tr,
     };
 

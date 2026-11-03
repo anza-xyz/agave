@@ -46,7 +46,7 @@ jobs:
       - name: Setup
         run: |
           # install toml-cli
-          cargo install toml-cli --locked
+          cargo install toml-cli@0.2.3 --locked
 
           # install xtask
           cargo install anza-xtask@0.2.6 --locked

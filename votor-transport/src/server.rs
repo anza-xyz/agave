@@ -34,7 +34,33 @@ use {
 pub(crate) struct PeerEntry {
     connections: ArrayVec<Connection, MAX_INBOUND_CONNECTIONS_PER_PEER>,
     /// Shared ingress data ratelimiter for all connections of this peer.
-    rate_limiter: Arc<TokenBucket>,
+    rate_limiter: Arc<PeerRateLimiter>,
+}
+
+/// Per-peer ingress traffic shaping and flood detection.
+pub(crate) struct PeerRateLimiter {
+    /// Shapes delivered traffic, consumed only by delivered datagrams.
+    traffic_shaper: TokenBucket,
+    /// Consumed only by datagrams dropped by the shaper.
+    /// Draining it dry results in connection closure.
+    flood_detection: TokenBucket,
+    /// Capacity of `flood_detection`.
+    burst_dos: u64,
+}
+
+impl PeerRateLimiter {
+    fn new(tokens_per_second: f64, burst: u64, burst_dos: u64) -> Self {
+        Self {
+            traffic_shaper: TokenBucket::new(burst, burst, tokens_per_second),
+            flood_detection: TokenBucket::new(burst_dos, burst_dos, tokens_per_second),
+            burst_dos,
+        }
+    }
+
+    /// Returns true if the peer has not exceeded its rate limits recently.
+    fn is_idle(&self) -> bool {
+        self.flood_detection.current_tokens() >= self.burst_dos
+    }
 }
 
 /// Event reported to the InboundLoop.
@@ -232,9 +258,7 @@ pub(crate) struct ConnectionReader {
     peer: Pubkey,
     remote_addr: SocketAddr,
     ingress: Sender<Datagram>,
-    rate_limiter: Arc<TokenBucket>,
-    /// Tokens that may remain before shaping kicks in (burst headroom).
-    rate_limit_watermark: u64,
+    rate_limiter: Arc<PeerRateLimiter>,
     events_sender: mpsc::Sender<InboundConnectionEvent>,
     stats: Arc<ServerStats>,
 }
@@ -247,7 +271,6 @@ impl ConnectionReader {
             remote_addr,
             ingress,
             rate_limiter,
-            rate_limit_watermark,
             events_sender,
             stats,
         } = self;
@@ -255,21 +278,17 @@ impl ConnectionReader {
         loop {
             match connection.read_datagram().await {
                 Ok(bytes) => {
-                    match rate_limiter.consume_tokens(1) {
-                        // normal operation
-                        Ok(remaining) if remaining >= rate_limit_watermark => {}
-                        // drop excess packets if peer exceeds normal rate
-                        Ok(_) => {
-                            stats.datagram_rate_limited.fetch_add(1, Ordering::Relaxed);
-                            continue;
-                        }
-                        // peer drained bucket dry - kick them
-                        Err(_) => {
+                    // drop excess packets if peer exceeds normal rate
+                    if rate_limiter.traffic_shaper.consume_tokens(1).is_err() {
+                        // peer drained flood bucket dry - kick them
+                        if rate_limiter.flood_detection.consume_tokens(1).is_err() {
                             let _ = events_sender
                                 .send(InboundConnectionEvent::FloodDetected { peer })
                                 .await;
                             break;
                         }
+                        stats.datagram_rate_limited.fetch_add(1, Ordering::Relaxed);
+                        continue;
                     }
 
                     match ingress.try_send(Datagram {
@@ -332,9 +351,9 @@ pub(crate) struct InboundLoop {
     cancel: CancellationToken,
     /// Sustained datagrams-per-second each peer is allowed to send.
     max_datagrams_per_second_per_peer: usize,
-    /// Burst headroom above the sustained rate, in tokens.
+    /// Shaper bucket capacity, burst headroom above the sustained rate.
     peer_rate_limit_burst: u64,
-    /// Bucket capacity; draining it dry trips flood control.
+    /// Flood bucket capacity, draining it dry trips flood control.
     peer_rate_limit_burst_dos: u64,
 }
 
@@ -357,7 +376,7 @@ impl InboundLoop {
         };
         let peer_rate_limit_burst = tokens_over(PEER_RATE_LIMIT_BURST_WINDOW).max(1);
         let peer_rate_limit_burst_dos =
-            tokens_over(PEER_RATE_LIMIT_DOS_WINDOW).max(peer_rate_limit_burst.saturating_add(1));
+            tokens_over(PEER_RATE_LIMIT_DOS_WINDOW).max(peer_rate_limit_burst);
         Self {
             ingress,
             banlist: Banlist::default(),
@@ -445,11 +464,8 @@ impl InboundLoop {
                     self.stats.report(self.total_peers());
                     self.banlist.prune();
                     // Reclaim empty connection slots
-                    let burst_dos = self.peer_rate_limit_burst_dos;
-                    self.peer_state.retain(|_, e| {
-                        !e.connections.is_empty()
-                            || e.rate_limiter.current_tokens() < burst_dos
-                    });
+                    self.peer_state
+                        .retain(|_, e| !e.connections.is_empty() || !e.rate_limiter.is_idle());
                 }
                 _ = self.cancel.cancelled() => {
                     break
@@ -569,10 +585,10 @@ impl InboundLoop {
         }
         let rate_limiter = match self.peer_state.entry(peer) {
             Entry::Vacant(slot) => {
-                let rate_limiter = Arc::new(TokenBucket::new(
-                    self.peer_rate_limit_burst_dos,
-                    self.peer_rate_limit_burst_dos,
+                let rate_limiter = Arc::new(PeerRateLimiter::new(
                     self.max_datagrams_per_second_per_peer as f64,
+                    self.peer_rate_limit_burst,
+                    self.peer_rate_limit_burst_dos,
                 ));
                 let mut connections = ArrayVec::new();
                 connections.push(connection.clone());
@@ -609,9 +625,6 @@ impl InboundLoop {
                 remote_addr,
                 ingress: self.ingress.clone(),
                 rate_limiter,
-                rate_limit_watermark: self
-                    .peer_rate_limit_burst_dos
-                    .saturating_sub(self.peer_rate_limit_burst),
                 events_sender: self.events_sender.clone(),
                 stats: self.stats.clone(),
             }

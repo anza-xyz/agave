@@ -708,7 +708,6 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
-        assert_matches::assert_matches,
         rand::Rng,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
@@ -731,7 +730,7 @@ mod test {
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
         solana_signer::Signer,
-        std::{ops::Deref, sync::Arc, time::Duration},
+        std::{assert_matches, ops::Deref, sync::Arc, time::Duration},
         test_case::test_case,
     };
 

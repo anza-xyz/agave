@@ -1193,7 +1193,6 @@ pub mod test {
                 spawn_stake_weighted_qos_server,
             },
         },
-        assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError, EndpointConfig, TokioRuntime},
         solana_keypair::Keypair,
@@ -1201,7 +1200,7 @@ pub mod test {
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
-        std::collections::HashMap,
+        std::{assert_matches, collections::HashMap},
         tokio::time::sleep,
     };
 

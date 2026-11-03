@@ -280,10 +280,12 @@ mod tests {
             recvmmsg::{PacketBufferPool, recv_mmsg},
             sendmmsg::{batch_send, multi_target_send},
         },
-        assert_matches::assert_matches,
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
-        std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        std::{
+            assert_matches,
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        },
     };
 
     #[test]
