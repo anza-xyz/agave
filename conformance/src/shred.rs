@@ -7,14 +7,12 @@
 
 use {
     agave_feature_set::FeatureSet,
-    agave_transaction_view::transaction_view::SanitizedTransactionView,
     agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::bounded,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_accounts_db::{
-        account_locks::validate_account_locks,
         accounts::Accounts,
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
         ancestors::Ancestors,
@@ -30,16 +28,13 @@ use {
             wire,
         },
     },
-    solana_message::AccountKeys,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar,
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
-    solana_transaction::sanitized::MessageHash,
     std::{
         borrow::Cow,
         cell::{Cell, RefCell},
@@ -217,26 +212,10 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         if entries.is_empty() {
             continue;
         }
-        // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
-        // The MTU depends on the transaction version, as in `Bank::verify_transaction`.
+        // Check transaction format without applying runtime transaction policy.
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
-            let bad_locks = bank
-                .get_transaction_account_lock_limits()
-                .for_version(tx.version().into())
-                .and_then(|limit| {
-                    validate_account_locks(AccountKeys::new(tx.static_account_keys(), None), limit)
-                })
-                .is_err();
-            let invalid_tx = match (*tx).clone().sanitize() {
-                Ok(view) => RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                    view,
-                    MessageHash::Compute,
-                    None,
-                )
-                .is_err(),
-                Err(_) => true,
-            };
-            if invalid_tx || bad_locks {
+            let invalid_tx = (*tx).clone().sanitize().is_err();
+            if invalid_tx {
                 effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
             }
         }
