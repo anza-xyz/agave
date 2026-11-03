@@ -7,6 +7,7 @@ use {
         memory_context::SerializedAccountMetadata,
         serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
+    solana_account_view::RuntimeAccount,
     solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
@@ -70,7 +71,7 @@ const ACCOUNT_INFO_BYTE_SIZE: usize = 80;
 /// Rust representation of C's SolInstruction
 #[derive(Debug)]
 #[repr(C)]
-struct SolInstruction {
+pub struct SolInstruction {
     pub program_id_addr: u64,
     pub accounts_addr: u64,
     pub accounts_len: u64,
@@ -100,6 +101,27 @@ struct SolAccountInfo {
     pub is_signer: bool,
     pub is_writable: bool,
     pub executable: bool,
+}
+
+/// Representation of an `AccountMeta` used in `invoke_signed_v2` syscall.
+#[derive(Debug)]
+#[repr(C)]
+struct SolAccountMetaV2 {
+    pub account_index: u16,
+    pub is_writable: u8,
+    pub is_signer: u8,
+}
+
+impl SolAccountMetaV2 {
+    #[inline(always)]
+    pub fn is_writable(&self) -> bool {
+        self.is_writable != 0
+    }
+
+    #[inline(always)]
+    pub fn is_signer(&self) -> bool {
+        self.is_signer != 0
+    }
 }
 
 mod stable {
@@ -540,6 +562,69 @@ impl<'a> CallerAccount<'a> {
             ref_to_len_in_vm,
         })
     }
+
+    // Create a `CallerAccount` given a `SolAccountMetaV2`.
+    fn from_account_meta_v2(
+        invoke_context: &InvokeContext,
+        memory_mapping: &MemoryMapping,
+        check_aligned: bool,
+        _vm_addr: u64,
+        account_meta: &SolAccountMetaV2,
+        account_metadata: &crate::memory_context::SerializedAccountMetadata,
+    ) -> Result<CallerAccount<'a>, Error> {
+        use crate::memory::translate_type_mut_for_cpi;
+
+        let virtual_address_space_adjustments = invoke_context
+            .get_feature_set()
+            .virtual_address_space_adjustments;
+        let account_data_direct_mapping =
+            invoke_context.get_feature_set().account_data_direct_mapping;
+
+        let accounts_metadata = &invoke_context
+            .memory_contexts
+            .memory_context_abi_v1()
+            .unwrap()
+            .accounts_metadata;
+        let account = accounts_metadata
+            .get(account_meta.account_index as usize)
+            .ok_or(InstructionError::MissingAccount)?;
+
+        check_account_info_pointer(
+            invoke_context,
+            account.vm_addr,
+            account_metadata.vm_addr,
+            "account",
+        )?;
+
+        let runtime_account = translate_type_mut_for_cpi::<RuntimeAccount>(
+            memory_mapping,
+            account.vm_addr,
+            check_aligned,
+        )?;
+        let lamports = &mut runtime_account.lamports;
+        let owner = &mut runtime_account.owner;
+
+        let serialized_data = unsafe {
+            CallerAccount::get_serialized_data(
+                memory_mapping,
+                check_aligned,
+                account.vm_data_addr,
+                account_metadata.original_data_len,
+                runtime_account.data_len as usize,
+                virtual_address_space_adjustments,
+                account_data_direct_mapping,
+            )?
+        };
+
+        Ok(CallerAccount {
+            lamports,
+            owner,
+            original_data_len: account_metadata.original_data_len,
+            serialized_data,
+            vm_data_addr: account.vm_data_addr,
+            ref_to_len_in_vm: &mut runtime_account.data_len,
+        })
+    }
 }
 
 /// Implemented by language specific data structure translators
@@ -628,7 +713,7 @@ pub fn translate_accounts_rust<'a>(
     translate_account_infos(
         account_infos_addr,
         account_infos_len,
-        |account_info: &stable::AccountInfo| account_info.key_addr(),
+        |account_info: &stable::AccountInfo| Ok(account_info.key_addr()),
         invoke_context,
         memory_mapping,
         check_aligned,
@@ -691,16 +776,22 @@ pub fn translate_signers(
     }
 }
 
-pub fn translate_instruction_c(
+// Translate the shared `SolInstruction` layout before resolving specific account metas.
+fn translate_instruction_common<T>(
     addr: u64,
     invoke_context: &InvokeContext,
+    translate_account_metas: impl FnOnce(
+        &[mem::MaybeUninit<T>],
+        &MemoryMapping,
+        bool,
+    ) -> Result<Vec<AccountMeta>, Error>,
 ) -> Result<Instruction, Error> {
     let check_aligned = invoke_context.get_check_aligned();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
 
     let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
-    let account_metas = translate_slice::<mem::MaybeUninit<SolAccountMeta>>(
+    let account_metas = translate_slice::<mem::MaybeUninit<T>>(
         memory_mapping,
         ix_c.accounts_addr,
         ix_c.accounts_len,
@@ -710,51 +801,68 @@ pub fn translate_instruction_c(
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
-    let mut total_cu_translation_cost: u64 = (data.len() as u64)
+    let instruction_data_translation_cost: u64 = (data.len() as u64)
         .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
         .unwrap_or(u64::MAX);
 
-    // Each account meta is 34 bytes (32 for pubkey, 1 for is_signer, 1 for is_writable)
+    // Charge for the translated `AccountMeta` (34 bytes) regardless of the input layout
+    // since the translated layout is what will be used for the CPI.
     let account_meta_translation_cost = (ix_c
         .accounts_len
         .saturating_mul(size_of::<AccountMeta>() as u64))
     .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
     .unwrap_or(u64::MAX);
 
-    total_cu_translation_cost =
-        total_cu_translation_cost.saturating_add(account_meta_translation_cost);
+    invoke_context.consume_checked(
+        instruction_data_translation_cost.saturating_add(account_meta_translation_cost),
+    )?;
 
-    invoke_context.consume_checked(total_cu_translation_cost)?;
-
-    let mut accounts = Vec::with_capacity(ix_c.accounts_len as usize);
-    for account_meta in account_metas {
-        // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
-        // contain valid boolean values to prevent UB.
-        let account_meta = unsafe {
-            let ptr = account_meta.as_ptr();
-            if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
-                || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
-            {
-                return Err(Box::new(InstructionError::InvalidArgument));
-            }
-            // SAFETY: VM memory is initialized, and we have validated that the boolean fields
-            // contain valid data.
-            account_meta.assume_init_ref()
-        };
-        let pubkey =
-            translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, check_aligned)?;
-        accounts.push(AccountMeta {
-            pubkey: *pubkey,
-            is_signer: account_meta.is_signer,
-            is_writable: account_meta.is_writable,
-        });
-    }
+    let accounts = translate_account_metas(account_metas, memory_mapping, check_aligned)?;
 
     Ok(Instruction {
         accounts,
         data: data.to_vec(),
         program_id: *program_id,
     })
+}
+
+pub fn translate_instruction_c(
+    addr: u64,
+    invoke_context: &InvokeContext,
+) -> Result<Instruction, Error> {
+    translate_instruction_common::<SolAccountMeta>(
+        addr,
+        invoke_context,
+        |account_metas, memory_mapping, check_aligned| {
+            let mut accounts = Vec::with_capacity(account_metas.len());
+            for account_meta in account_metas {
+                // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
+                // contain valid boolean values to prevent UB.
+                let account_meta = unsafe {
+                    let ptr = account_meta.as_ptr();
+                    if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
+                        || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
+                    {
+                        return Err(Box::new(InstructionError::InvalidArgument));
+                    }
+                    // SAFETY: VM memory is initialized, and we have validated that the boolean fields
+                    // contain valid data.
+                    account_meta.assume_init_ref()
+                };
+                let pubkey = translate_type::<Pubkey>(
+                    memory_mapping,
+                    account_meta.pubkey_addr,
+                    check_aligned,
+                )?;
+                accounts.push(AccountMeta {
+                    pubkey: *pubkey,
+                    is_signer: account_meta.is_signer,
+                    is_writable: account_meta.is_writable,
+                });
+            }
+            Ok(accounts)
+        },
+    )
 }
 
 pub fn translate_accounts_c<'a>(
@@ -767,7 +875,7 @@ pub fn translate_accounts_c<'a>(
     translate_account_infos(
         account_infos_addr,
         account_infos_len,
-        |account_info: &SolAccountInfo| account_info.key_addr,
+        |account_info: &SolAccountInfo| Ok(account_info.key_addr),
         invoke_context,
         memory_mapping,
         check_aligned,
@@ -783,6 +891,91 @@ pub fn translate_accounts_c<'a>(
             )
         },
     )?
+}
+
+pub fn translate_accounts_v2<'a>(
+    account_metas_addr: u64,
+    account_metas_len: u64,
+    invoke_context: &InvokeContext,
+) -> Result<Vec<TranslatedAccount<'a>>, Error> {
+    let check_aligned = invoke_context.get_check_aligned();
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
+    let accounts_metadata = &invoke_context
+        .memory_contexts
+        .memory_context_abi_v1()
+        .unwrap()
+        .accounts_metadata;
+
+    translate_account_infos(
+        account_metas_addr,
+        account_metas_len,
+        |account_meta: &SolAccountMetaV2| {
+            Ok(accounts_metadata
+                .get(account_meta.account_index as usize)
+                .ok_or(InstructionError::MissingAccount)?
+                .vm_key_addr)
+        },
+        invoke_context,
+        memory_mapping,
+        check_aligned,
+        |account_metas, account_meta_keys| {
+            translate_accounts_common(
+                &account_meta_keys,
+                account_metas,
+                account_metas_addr,
+                invoke_context,
+                memory_mapping,
+                check_aligned,
+                CallerAccount::from_account_meta_v2,
+            )
+        },
+    )?
+}
+
+pub fn translate_instruction_v2(
+    addr: u64,
+    invoke_context: &InvokeContext,
+) -> Result<Instruction, Error> {
+    translate_instruction_common::<SolAccountMetaV2>(
+        addr,
+        invoke_context,
+        |account_metas, _memory_mapping, _check_aligned| {
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_current_instruction_context()?;
+
+            let mut accounts = Vec::with_capacity(account_metas.len());
+            for account_meta in account_metas {
+                // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
+                // contain valid boolean values to prevent UB.
+                let account_meta = unsafe {
+                    let ptr = account_meta.as_ptr();
+                    if (&raw const (*ptr).is_signer).cast::<u8>().read_volatile() > 1
+                        || (&raw const (*ptr).is_writable).cast::<u8>().read_volatile() > 1
+                    {
+                        return Err(Box::new(InstructionError::InvalidArgument));
+                    }
+                    // SAFETY: VM memory is initialized, and we have validated that the boolean fields
+                    // contain valid data.
+                    account_meta.assume_init_ref()
+                };
+
+                let instruction_account = instruction_context
+                    .try_borrow_instruction_account(account_meta.account_index)?;
+
+                accounts.push(AccountMeta {
+                    pubkey: *invoke_context
+                        .transaction_context
+                        .get_key_of_account_at_index(
+                            instruction_account.get_index_in_transaction(),
+                        )?,
+                    is_signer: account_meta.is_signer(),
+                    is_writable: account_meta.is_writable(),
+                });
+            }
+            Ok(accounts)
+        },
+    )
 }
 
 /// Call process instruction, common to both Rust and C
@@ -910,7 +1103,7 @@ pub struct TranslatedAccount<'a> {
 fn translate_account_infos<T, R>(
     account_infos_addr: u64,
     account_infos_len: u64,
-    key_addr: impl Fn(&T) -> u64,
+    key_addr: impl Fn(&T) -> Result<u64, Error>,
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping,
     check_aligned: bool,
@@ -948,7 +1141,7 @@ fn translate_account_infos<T, R>(
         let account_info = &account_infos[account_index];
         account_info_keys.push(translate_type::<Pubkey>(
             memory_mapping,
-            key_addr(account_info),
+            key_addr(account_info)?,
             check_aligned,
         )?);
     }
@@ -1572,6 +1765,95 @@ mod tests {
         }
     }
 
+    struct MockAccountMetaV2<'a> {
+        key: Pubkey,
+        account: &'a AccountSharedData,
+    }
+
+    impl<'a> MockAccountMetaV2<'a> {
+        fn new(key: Pubkey, account: &'a AccountSharedData) -> Self {
+            Self { key, account }
+        }
+
+        fn into_regions(
+            self,
+            account_metas_addr: u64,
+        ) -> (
+            Vec<u64>,
+            Vec<SolAccountMetaV2>,
+            Vec<MemoryRegion>,
+            SerializedAccountMetadata,
+        ) {
+            let original_data_len = self.account.data().len();
+            let runtime_account_size = mem::size_of::<RuntimeAccount>();
+            let runtime_memory_size = runtime_account_size + original_data_len;
+            let mut runtime_memory =
+                vec![0u64; runtime_memory_size.div_ceil(mem::size_of::<u64>())];
+            let runtime_account_ptr = runtime_memory.as_mut_ptr().cast::<RuntimeAccount>();
+            unsafe {
+                ptr::write(
+                    runtime_account_ptr,
+                    RuntimeAccount {
+                        borrow_state: u8::MAX,
+                        is_signer: 0,
+                        is_writable: 1,
+                        executable: self.account.executable() as u8,
+                        padding: [0; 4],
+                        address: self.key,
+                        owner: *self.account.owner(),
+                        lamports: self.account.lamports(),
+                        data_len: original_data_len as u64,
+                    },
+                );
+                ptr::copy_nonoverlapping(
+                    self.account.data().as_ptr(),
+                    runtime_account_ptr.cast::<u8>().add(runtime_account_size),
+                    original_data_len,
+                );
+            }
+
+            let runtime_account_addr = runtime_account_ptr as u64;
+            let data_addr = runtime_account_addr + runtime_account_size as u64;
+            let runtime_memory_slice = unsafe {
+                slice::from_raw_parts_mut(runtime_account_ptr.cast::<u8>(), runtime_memory_size)
+            };
+            let runtime_account_region =
+                MemoryRegion::new(&raw mut runtime_memory_slice[..], runtime_account_addr);
+
+            let mut account_metas = vec![SolAccountMetaV2 {
+                account_index: 0,
+                is_writable: 1, // true
+                is_signer: 0,   // false
+            }];
+            let account_metas_size = mem::size_of_val(account_metas.as_slice());
+            let account_metas_memory = unsafe {
+                slice::from_raw_parts_mut(
+                    account_metas.as_mut_ptr().cast::<u8>(),
+                    account_metas_size,
+                )
+            };
+            let account_metas_region =
+                MemoryRegion::new(&raw mut account_metas_memory[..], account_metas_addr);
+
+            let account_metadata = SerializedAccountMetadata {
+                vm_addr: runtime_account_addr,
+                original_data_len,
+                vm_key_addr: runtime_account_addr + mem::offset_of!(RuntimeAccount, address) as u64,
+                vm_lamports_addr: runtime_account_addr
+                    + mem::offset_of!(RuntimeAccount, lamports) as u64,
+                vm_owner_addr: runtime_account_addr + mem::offset_of!(RuntimeAccount, owner) as u64,
+                vm_data_addr: data_addr,
+            };
+
+            (
+                runtime_memory,
+                account_metas,
+                vec![account_metas_region, runtime_account_region],
+                account_metadata,
+            )
+        }
+    }
+
     struct MockInstruction {
         program_id: Pubkey,
         accounts: Vec<AccountMeta>,
@@ -1883,6 +2165,206 @@ mod tests {
         let caller_account = &accounts[0].caller_account;
         assert_eq!(caller_account.serialized_data, account.data());
         assert_eq!(caller_account.original_data_len, original_data_len);
+    }
+
+    #[test]
+    fn test_translate_accounts_v2() {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let key = transaction_accounts[1].0;
+        let original_data_len = account.data().len();
+        let account_metas_addr = solana_sbpf::ebpf::MM_HEAP_START;
+        let (_runtime_memory, _account_metas, regions, account_metadata) =
+            MockAccountMetaV2::new(key, &account).into_regions(account_metas_addr);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1, 1]
+        );
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                vec![account_metadata],
+                memory_mapping,
+            ))
+            .unwrap();
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(
+                0,
+                vec![
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
+                ],
+                vec![],
+            )
+            .unwrap();
+
+        let accounts = translate_accounts_v2(account_metas_addr, 1, &invoke_context).unwrap();
+        assert_eq!(accounts.len(), 1);
+        let caller_account = &accounts[0].caller_account;
+        assert_eq!(*caller_account.lamports, account.lamports());
+        assert_eq!(caller_account.owner, account.owner());
+        assert_eq!(caller_account.serialized_data, account.data());
+        assert_eq!(caller_account.original_data_len, original_data_len);
+        assert_eq!(*caller_account.ref_to_len_in_vm as usize, original_data_len);
+    }
+
+    #[test]
+    fn test_caller_account_from_account_meta_v2_with_invalid_pointer() {
+        let mut transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let key = transaction_accounts[1].0;
+        let other_key = Pubkey::new_unique();
+        transaction_accounts.push((other_key, account.clone(), true));
+
+        let account_metas_addr = solana_sbpf::ebpf::MM_HEAP_START;
+        let (_runtime_memory, account_metas, mut regions, account_metadata) =
+            MockAccountMetaV2::new(key, &account).into_regions(account_metas_addr);
+
+        let other_account_metas_addr = account_metas_addr + size_of::<SolAccountMetaV2>() as u64;
+        let (_other_runtime_memory, mut other_account_metas, other_regions, other_account_metadata) =
+            MockAccountMetaV2::new(other_key, &account).into_regions(other_account_metas_addr);
+
+        other_account_metas[0].account_index = 1;
+        regions.extend(other_regions);
+
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1, 2]
+        );
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                vec![account_metadata.clone(), other_account_metadata.clone()],
+                memory_mapping,
+            ))
+            .unwrap();
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
+
+        // Both accounts translate successfully when paired with their own metadata.
+        for (vm_addr, account_meta, metadata) in [
+            (account_metas_addr, &account_metas[0], &account_metadata),
+            (
+                other_account_metas_addr,
+                &other_account_metas[0],
+                &other_account_metadata,
+            ),
+        ] {
+            assert!(
+                CallerAccount::from_account_meta_v2(
+                    &invoke_context,
+                    memory_mapping,
+                    invoke_context.get_check_aligned(),
+                    vm_addr,
+                    account_meta,
+                    metadata,
+                )
+                .is_ok()
+            );
+        }
+
+        // Selecting the first account with the second account's metadata must fail.
+        assert_matches!(
+            CallerAccount::from_account_meta_v2(
+                &invoke_context,
+                memory_mapping,
+                invoke_context.get_check_aligned(),
+                account_metas_addr,
+                &account_metas[0],
+                &other_account_metadata,
+            ),
+            Err(error) if error.downcast_ref::<CpiError>() == Some(&CpiError::InvalidPointer)
+        );
+    }
+
+    #[case(0, 0; "empty_account_metadata")]
+    #[case(1, 1; "index_past_last_account")]
+    #[case(1, u16::MAX; "maximum_account_index")]
+    fn test_caller_account_from_account_meta_v2_with_invalid_account_index(
+        available_accounts: usize,
+        account_index: u16,
+    ) {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let key = transaction_accounts[1].0;
+        let account_metas_addr = solana_sbpf::ebpf::MM_HEAP_START;
+        let (_runtime_memory, mut account_metas, regions, account_metadata) =
+            MockAccountMetaV2::new(key, &account).into_regions(account_metas_addr);
+
+        // Simulate a guest selecting an account outside the serialized account metadata.
+        account_metas[0].account_index = account_index;
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        // Set up the memory context with the serialized account metadata and memory mapping.
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                vec![account_metadata.clone(); available_accounts],
+                memory_mapping,
+            ))
+            .unwrap();
+
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
+        let check_aligned = invoke_context.get_check_aligned();
+        let account_meta =
+            translate_type::<SolAccountMetaV2>(memory_mapping, account_metas_addr, check_aligned)
+                .unwrap();
+
+        assert_matches!(
+            CallerAccount::from_account_meta_v2(
+                &invoke_context,
+                memory_mapping,
+                check_aligned,
+                account_metas_addr,
+                account_meta,
+                &account_metadata,
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>() == Some(&InstructionError::MissingAccount)
+        );
     }
 
     #[test]
