@@ -5661,7 +5661,7 @@ fn test_program_sbf_invoke_signed_v2(is_signer: Option<bool>, request_signers: b
 
     if request_signers && is_signer != Some(true) {
         assert_eq!(effects.result, Some(InstructionError::PrivilegeEscalation));
-        // Check that there was an attempt to invoke the noop program.
+        // Check that there was NOT an attempt to invoke the noop program.
         assert!(
             !effects
                 .logs
