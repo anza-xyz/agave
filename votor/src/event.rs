@@ -30,7 +30,6 @@ pub type VotorEventSender = Sender<VotorEvent>;
 pub type VotorEventReceiver = Receiver<VotorEvent>;
 
 /// Events that trigger actions in Votor
-/// TODO: remove bank hash once we update votes
 #[derive(Debug, Clone)]
 pub enum VotorEvent {
     /// A block has completed replay and is ready for voting
@@ -48,7 +47,7 @@ pub enum VotorEvent {
     /// The pool has marked the given block as a ready parent for `slot`
     ParentReady { slot: Slot, parent_block: Block },
 
-    //// Timeout to early detect that a honest that has crashed and
+    /// Timeout to early detect that an honest leader has crashed and
     /// if the leader window should be skipped.
     TimeoutCrashedLeader(Slot),
 
@@ -66,7 +65,7 @@ pub enum VotorEvent {
     ProduceWindow(LeaderWindowInfo),
 
     /// The block has received a slow or fast finalization certificate and is eligible for rooting
-    /// The second bool indicates whether the block is a fast finalization
+    /// The bool indicates whether the block is a fast finalization
     Finalized(Block, bool),
 
     /// We have not observed a finalization and reached the standstill timeout
