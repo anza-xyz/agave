@@ -4900,7 +4900,6 @@ pub fn populate_blockstore_for_tests(
         None,
         Some(transaction_status_sender),
         None,
-        None,
     );
 
     let context = SchedulingContext::new(bank.clone());

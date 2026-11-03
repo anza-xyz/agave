@@ -659,8 +659,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
+        let committer = Committer::new(transaction_status_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
         TestFrame {
@@ -682,8 +681,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }

@@ -764,7 +764,7 @@ pub(crate) mod external {
                 transaction_recorder::TransactionRecorder,
             },
             solana_pubkey::Pubkey,
-            solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_runtime::bank_forks::BankForks,
             solana_signer::Signer,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
@@ -785,7 +785,6 @@ pub(crate) mod external {
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
             bank_forks: Arc<RwLock<BankForks>>,
-            _replay_vote_receiver: ReplayVoteReceiver,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
             pack_to_worker: shaq::spsc::Producer<PackToExecutionWorkerMessage>,
@@ -963,8 +962,7 @@ pub(crate) mod external {
 
             let (record_sender, record_receiver) = record_channels(false);
             let recorder = TransactionRecorder::new(record_sender);
-            let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-            let committer = Committer::new(None, replay_vote_sender, None);
+            let committer = Committer::new(None, None);
             let consumer = Consumer::new(committer, recorder, None);
             let shared_leader_state = SharedLeaderState::new(0, None, None);
             let exit = Arc::new(AtomicBool::new(false));
@@ -982,7 +980,6 @@ pub(crate) mod external {
                 genesis_config,
                 bank,
                 bank_forks,
-                _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 allocator: client_session.allocator,
                 pack_to_worker: client_worker.pack_to_worker,
@@ -1530,11 +1527,10 @@ pub(crate) mod external {
             let agave_session = test_frame.simulate_workers.pop().unwrap();
             let client_session = test_frame.client_simulate_workers.take().unwrap();
             let (record_sender, _record_receiver) = record_channels(false);
-            let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
             let mut worker = ExternalWorker::new(
                 Arc::new(AtomicBool::new(false)),
                 Consumer::new(
-                    Committer::new(None, replay_vote_sender, None),
+                    Committer::new(None, None),
                     TransactionRecorder::new(record_sender),
                     None,
                 ),
@@ -1588,11 +1584,10 @@ pub(crate) mod external {
             let (response_sender, response_receiver) = shaq::mpmc::pair(1).unwrap();
             let make_worker = || {
                 let (record_sender, _record_receiver) = record_channels(false);
-                let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
                 ExternalWorker::new(
                     Arc::new(AtomicBool::new(false)),
                     Consumer::new(
-                        Committer::new(None, replay_vote_sender, None),
+                        Committer::new(None, None),
                         TransactionRecorder::new(record_sender),
                         None,
                     ),
@@ -1940,7 +1935,7 @@ impl ConsumeWorkerMetrics {
             freeze_lock_us,
             record_us,
             commit_us,
-            find_and_send_votes_us,
+            post_commit_us,
             ..
         }: &LeaderExecuteAndCommitTimings,
     ) {
@@ -1963,8 +1958,8 @@ impl ConsumeWorkerMetrics {
             .commit_us
             .fetch_add(*commit_us, Ordering::Relaxed);
         self.timing_metrics
-            .find_and_send_votes_us
-            .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
+            .post_commit_us
+            .fetch_add(*post_commit_us, Ordering::Relaxed);
         self.timing_metrics
             .num_batches_processed
             .fetch_add(1, Ordering::Relaxed);
@@ -2147,7 +2142,7 @@ struct ConsumeWorkerTimingMetrics {
     freeze_lock_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
-    find_and_send_votes_us: AtomicU64,
+    post_commit_us: AtomicU64,
     num_batches_processed: AtomicU64,
 }
 
@@ -2189,8 +2184,8 @@ impl ConsumeWorkerTimingMetrics {
             ("record_us", self.record_us.swap(0, Ordering::Relaxed), i64),
             ("commit_us", self.commit_us.swap(0, Ordering::Relaxed), i64),
             (
-                "find_and_send_votes_us",
-                self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
+                "post_commit_us",
+                self.post_commit_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -2367,9 +2362,7 @@ mod tests {
             transaction_recorder::TransactionRecorder,
         },
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
-        },
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
@@ -2393,7 +2386,6 @@ mod tests {
         genesis_config: GenesisConfig,
         bank: Arc<Bank>,
         _bank_forks: Arc<RwLock<BankForks>>,
-        _replay_vote_receiver: ReplayVoteReceiver,
         record_receiver: RecordReceiver,
         shared_leader_state: SharedLeaderState,
 
@@ -2422,8 +2414,7 @@ mod tests {
         let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
@@ -2443,7 +2434,6 @@ mod tests {
                 genesis_config,
                 bank,
                 _bank_forks: bank_forks,
-                _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 shared_leader_state,
                 consume_sender,
