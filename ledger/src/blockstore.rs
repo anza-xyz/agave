@@ -1877,10 +1877,21 @@ impl Blockstore {
                 if !(actions.recover_missing_data_shreds || actions.run_fec_checks) {
                     return None;
                 }
+                // Missing only if this batch touched the set solely at an
+                // Alternate location. Its stored shreds are then unchanged, so
+                // retrying a failed recovery would fail again.
+                let Some(merkle_root_meta) =
+                    merkle_root_metas.get(&(BlockLocation::Original, erasure_set))
+                else {
+                    debug_assert!(
+                        !actions.run_fec_checks,
+                        "inserting a shred at the original location loads or creates the merkle \
+                         root meta of its set"
+                    );
+                    return None;
+                };
                 // The rebuilt batch must match the root which the block id commits to.
-                let merkle_root = merkle_root_metas
-                    .get(&(BlockLocation::Original, erasure_set))
-                    .expect("inserting a shred loads or creates the merkle root meta of its set")
+                let merkle_root = merkle_root_meta
                     .as_ref()
                     .merkle_root()
                     .expect("merkle root meta is created from a merkle shred");
