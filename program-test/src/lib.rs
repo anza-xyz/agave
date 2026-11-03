@@ -1547,3 +1547,30 @@ impl ProgramTestContext {
             .register_hard_fork(hard_fork_slot)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_warp_updates_committed_bank_identity() {
+        let mut context = ProgramTest::default().start_with_context().await;
+        for warp_slot in [Some(10), Some(11), None] {
+            let old_id = context.bank_forks.read().unwrap().working_bank().bank_id();
+            if let Some(slot) = warp_slot {
+                context.warp_to_slot(slot).unwrap();
+            } else {
+                context.warp_forward_force_reward_interval_end().unwrap();
+            }
+            let bank = context.bank_forks.read().unwrap().working_bank();
+            assert_ne!(bank.bank_id(), old_id);
+            {
+                let cache = context.block_commitment_cache.read().unwrap();
+                assert_eq!(cache.slot(), bank.slot());
+                assert_eq!(cache.bank_id(), bank.bank_id());
+            }
+            let clock: Clock = context.banks_client.get_sysvar().await.unwrap();
+            assert_eq!(clock.slot, bank.slot());
+        }
+    }
+}

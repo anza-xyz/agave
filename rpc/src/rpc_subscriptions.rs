@@ -1506,6 +1506,117 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn test_block_subscription_retries_incomplete_block() {
+        let genesis = create_genesis_config(1_000_000_000);
+        let forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let root = forks.read().unwrap().root_bank();
+        let bank = forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1))
+            .clone_without_scheduler();
+        let mut tracker = SubscriptionsTracker::new(forks.clone());
+        tracker.subscribe(
+            SubscriptionParams::Block(BlockSubscriptionParams {
+                kind: BlockSubscriptionKind::All,
+                commitment: CommitmentConfig::confirmed(),
+                encoding: UiTransactionEncoding::Json,
+                transaction_details: TransactionDetails::Signatures,
+                show_rewards: false,
+                max_supported_transaction_version: None,
+            }),
+            0.into(),
+            LastNotifiedSlot::default,
+        );
+        let (sender, mut receiver) = broadcast::channel(16);
+        let notifier = RpcNotifier {
+            sender,
+            recent_items: Mutex::new(RecentItems::new(16, 1_000_000)),
+        };
+        let ledger = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger.path()).unwrap());
+        let complete_slot = Arc::new(AtomicU64::new(0));
+        let slots = CommitmentSlots {
+            highest_confirmed_slot: 1,
+            ..CommitmentSlots::default()
+        };
+        let notify = || {
+            RpcSubscriptions::notify_watchers(
+                complete_slot.clone(),
+                tracker.gossip_watchers(),
+                &forks,
+                &blockstore,
+                &slots,
+                &notifier,
+                "test",
+            );
+        };
+        let next_slot = || {
+            tracker.gossip_watchers()[&0.into()]
+                .last_notified_slot
+                .read()
+                .unwrap()
+                .slot
+        };
+
+        // Commitment can arrive before transaction status has finished writing.
+        notify();
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(next_slot(), 1);
+
+        complete_slot.store(1, Ordering::SeqCst);
+        notify();
+        let response: serde_json::Value =
+            serde_json::from_str(&receiver.try_recv().unwrap().json.upgrade().unwrap()).unwrap();
+        let update: RpcBlockUpdate =
+            serde_json::from_value(response["params"]["result"]["value"].clone()).unwrap();
+        assert_eq!(update.slot, 1);
+        assert!(update.block.is_none());
+        assert_eq!(update.err, Some(RpcBlockUpdateError::BlockStoreError));
+        assert_eq!(next_slot(), 1);
+
+        let keypairs = [Keypair::new(), Keypair::new(), Keypair::new()];
+        bank.transfer(
+            bank.get_minimum_balance_for_rent_exemption(0),
+            &genesis.mint_keypair,
+            &keypairs[1].pubkey(),
+        )
+        .unwrap();
+        let (entries, signatures) = create_test_transaction_entries(
+            vec![
+                &genesis.mint_keypair,
+                &keypairs[0],
+                &keypairs[1],
+                &keypairs[2],
+            ],
+            bank.clone(),
+        );
+        populate_blockstore_for_tests(
+            entries,
+            bank.clone(),
+            blockstore.clone(),
+            complete_slot.clone(),
+        );
+        bank.freeze();
+        notify();
+        let response: serde_json::Value =
+            serde_json::from_str(&receiver.try_recv().unwrap().json.upgrade().unwrap()).unwrap();
+        let update: RpcBlockUpdate =
+            serde_json::from_value(response["params"]["result"]["value"].clone()).unwrap();
+        assert_eq!(update.slot, 1);
+        assert_eq!(update.err, None);
+        assert_eq!(
+            update.block.unwrap().signatures.unwrap(),
+            signatures
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(next_slot(), 2);
+        assert!(receiver.try_recv().is_err());
+    }
+
     struct AccountResult {
         lamports: u64,
         subscription: u64,

@@ -5601,6 +5601,107 @@ pub mod tests {
     }
 
     #[test]
+    fn test_processed_signature_queries_follow_bank_identity() {
+        let rpc = RpcHandler::start();
+        let root = rpc.working_bank();
+        let original = rpc
+            .bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1))
+            .clone_without_scheduler();
+        let tx = solana_system_transaction::transfer(
+            &rpc.mint_keypair,
+            &Pubkey::new_unique(),
+            original.get_minimum_balance_for_rent_exemption(0),
+            original.last_blockhash(),
+        );
+        original.process_transaction(&tx).unwrap();
+        original.freeze();
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_slot(1, original.bank_id());
+        let signature = tx.signatures[0];
+        let commitment = Some(CommitmentConfig::processed());
+        let check_status = |expected: bool| {
+            let confirmation = rpc
+                .meta
+                .confirm_transaction(&signature, commitment)
+                .unwrap();
+            assert_eq!(confirmation.value, expected);
+            assert_eq!(
+                rpc.meta
+                    .get_signature_status(signature, commitment)
+                    .unwrap(),
+                expected.then_some(Ok(()))
+            );
+            let status = rpc
+                .meta
+                .get_signature_confirmation_status(signature, commitment)
+                .unwrap();
+            assert_eq!(status.is_some(), expected);
+            if let Some(status) = status {
+                assert_eq!(status.status, Ok(()));
+            }
+        };
+        check_status(true);
+
+        // Replay clears discarded transaction statuses before replaying the slot.
+        original.clear_slot_signatures(1);
+        rpc.bank_forks
+            .write()
+            .unwrap()
+            .dump_slots([1].iter(), false);
+        let replacement = rpc
+            .bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1))
+            .clone_without_scheduler();
+        check_status(false);
+        assert_eq!(
+            rpc.meta
+                .confirm_transaction(&signature, commitment)
+                .unwrap()
+                .context
+                .slot,
+            0
+        );
+
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_slot(1, replacement.bank_id());
+        for error in [
+            rpc.meta
+                .confirm_transaction(&signature, commitment)
+                .unwrap_err(),
+            rpc.meta
+                .get_signature_status(signature, commitment)
+                .unwrap_err(),
+            rpc.meta
+                .get_signature_confirmation_status(signature, commitment)
+                .unwrap_err(),
+        ] {
+            assert_eq!(
+                error.code,
+                ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE)
+            );
+        }
+        replacement.freeze();
+        check_status(false);
+        assert_eq!(
+            rpc.meta
+                .confirm_transaction(&signature, commitment)
+                .unwrap()
+                .context
+                .slot,
+            1
+        );
+    }
+
+    #[test]
     fn test_rpc_rejects_unfrozen_banks_at_all_commitments() {
         let rpc = RpcHandler::start();
         let bank = rpc.working_bank();
@@ -8102,6 +8203,29 @@ pub mod tests {
     }
 
     #[test]
+    fn test_request_airdrop_rejects_unfrozen_bank() {
+        let rpc = RpcHandler::start_with_config(JsonRpcConfig {
+            faucet_addr: Some(socketaddr!(Ipv4Addr::LOCALHOST, 0)),
+            ..JsonRpcConfig::default()
+        });
+        let request = create_test_request(
+            "requestAirdrop",
+            Some(json!([Pubkey::new_unique().to_string(), 50, {
+                "recentBlockhash": "invalid",
+            }])),
+        );
+        assert_eq!(
+            parse_failure_response(rpc.handle_request_sync(request.clone())).0,
+            JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE
+        );
+        rpc.working_bank().freeze();
+        assert_eq!(
+            parse_failure_response(rpc.handle_request_sync(request)).0,
+            ErrorCode::InvalidParams.code()
+        );
+    }
+
+    #[test]
     fn test_rpc_fail_request_airdrop() {
         let RpcHandler { meta, io, .. } = RpcHandler::start();
 
@@ -8710,6 +8834,82 @@ pub mod tests {
     }
 
     #[test]
+    fn test_confirmed_history_metadata_requires_frozen_bank() {
+        let rpc = RpcHandler::start();
+        rpc.create_test_transactions_and_populate_blockstore();
+        let root = rpc.working_bank();
+        let bank = rpc
+            .bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1))
+            .clone_without_scheduler();
+        let signature = rpc.create_test_transactions_and_populate_blockstore()[0];
+        bank.freeze();
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank.clone();
+        rpc.max_complete_transaction_status_slot
+            .store(1, Ordering::SeqCst);
+        let config = json!({"commitment": "confirmed"});
+        let requests = [
+            create_test_request("getBlock", Some(json!([1, config]))),
+            create_test_request(
+                "getTransaction",
+                Some(json!([signature.to_string(), config])),
+            ),
+            create_test_request(
+                "getSignaturesForAddress",
+                Some(json!([rpc.mint_keypair.pubkey().to_string(), config])),
+            ),
+        ];
+        let check_metadata = || {
+            let block: Value = parse_success_result(rpc.handle_request_sync(requests[0].clone()));
+            assert_eq!(block["blockTime"], bank.clock().unix_timestamp);
+            assert_eq!(block["blockHeight"], bank.block_height());
+            let tx: Value = parse_success_result(rpc.handle_request_sync(requests[1].clone()));
+            assert_eq!(tx["slot"], 1);
+            assert_eq!(tx["blockTime"], bank.clock().unix_timestamp);
+            let signatures: Vec<RpcConfirmedTransactionStatusWithSignature> =
+                parse_success_result(rpc.handle_request_sync(requests[2].clone()));
+            let status = signatures
+                .iter()
+                .find(|status| status.signature == signature.to_string())
+                .unwrap();
+            assert_eq!(status.slot, 1);
+            assert_eq!(status.block_time, Some(bank.clock().unix_timestamp));
+            assert_eq!(
+                status.confirmation_status,
+                Some(TransactionConfirmationStatus::Confirmed)
+            );
+        };
+        check_metadata();
+
+        // The confirmed result is still in blockstore while its bank is replaced.
+        rpc.bank_forks
+            .write()
+            .unwrap()
+            .dump_slots([1].iter(), false);
+        rpc.bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1));
+        for request in &requests {
+            assert_eq!(
+                parse_failure_response(rpc.handle_request_sync(request.clone())).0,
+                JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE
+            );
+        }
+
+        // Stored metadata does not need to consult the replacement bank.
+        rpc.blockstore
+            .set_block_time(1, bank.clock().unix_timestamp)
+            .unwrap();
+        rpc.blockstore
+            .set_block_height(1, bank.block_height())
+            .unwrap();
+        check_metadata();
+    }
+
+    #[test]
     fn test_get_block() {
         let mut rpc = RpcHandler::start();
         let confirmed_block_signatures = rpc.create_test_transactions_and_populate_blockstore();
@@ -9024,12 +9224,17 @@ pub mod tests {
     #[test]
     fn test_get_block_time() {
         let rpc = RpcHandler::start();
+        let genesis_time = rpc.working_bank().genesis_creation_time();
         rpc.add_roots_to_blockstore(vec![1, 2, 3, 4, 5, 6, 7]);
 
         rpc.block_commitment_cache
             .write()
             .unwrap()
             .set_highest_super_majority_root(7);
+
+        let request = create_test_request("getBlockTime", Some(json!([0u64])));
+        let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result, Some(genesis_time));
 
         let request = create_test_request("getBlockTime", Some(json!([2u64])));
         let result: Option<UnixTimestamp> = parse_success_result(rpc.handle_request_sync(request));
