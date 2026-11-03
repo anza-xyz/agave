@@ -566,23 +566,12 @@ impl LoadedAccountAccessor {
         })
     }
 
-    fn check_and_get_loaded_account<T>(
-        &mut self,
-        callback: impl for<'local> FnMut(LoadedAccount<'local>) -> T,
-    ) -> T {
-        // all of these following .expect() and .unwrap() are like serious logic errors,
-        // ideal for representing this as rust type system....
-
-        // The storage was taken from the storage map under the index entry's lock, and holding it
-        // keeps it readable even after it is removed from the map.
-        self.get_loaded_account(callback)
-            .expect("a held storage is readable")
-    }
-
     fn get_loaded_account<T>(
         &mut self,
         mut callback: impl for<'local> FnMut(LoadedAccount<'local>) -> T,
-    ) -> Option<T> {
+    ) -> T {
+        // The storage was taken from the storage map under the index entry's lock, and holding it
+        // keeps it readable even after it is removed from the map.
         self.storage_entry
             .accounts
             .get_stored_account_callback(self.offset, |account| {
@@ -596,7 +585,7 @@ impl LoadedAccountAccessor {
                     self.offset,
                 );
             })
-            .ok()
+            .expect("a held storage is readable")
     }
 }
 
@@ -2451,7 +2440,7 @@ impl AccountsDb {
                 let account_slot = account_accessor.get_loaded_account(|loaded_account| {
                     (pubkey, loaded_account.take_account(), slot)
                 });
-                scan_func(account_slot)
+                scan_func(Some(account_slot))
             },
             || config.is_aborted() || scan_guard.is_bank_removed(),
         );
@@ -3581,9 +3570,6 @@ impl AccountsDb {
                                         .get_loaded_account(|loaded_account| {
                                             Self::lt_hash_account(&loaded_account, &pubkey)
                                         })
-                                        // SAFETY: The index said this pubkey exists, so
-                                        // there must be an account to load.
-                                        .unwrap()
                                 })
                             })
                             .flatten();
@@ -3643,9 +3629,6 @@ impl AccountsDb {
                     (!slot_list_item.info().is_zero_lamport()).then(|| {
                         self.get_account_accessor(slot_list_item)
                             .get_loaded_account(|loaded_account| loaded_account.lamports())
-                            // SAFETY: The index said this pubkey exists, so
-                            // there must be an account to load.
-                            .unwrap()
                     })
                 })
                 .flatten()
@@ -5098,7 +5081,7 @@ impl AccountsDb {
                             return;
                         }
                         let mut accessor = self.get_account_accessor(slot_list_item);
-                        accessor.check_and_get_loaded_account(|loaded_account| {
+                        accessor.get_loaded_account(|loaded_account| {
                             let data_len = loaded_account.data_len();
                             let lamports = loaded_account.lamports();
                             if lamports > 0 {
