@@ -2,9 +2,9 @@
 
 #[cfg(target_os = "linux")]
 use {
-    crate::msghdr::create_msghdr,
+    crate::msghdr::{SockAddrInet, create_msghdr},
     itertools::izip,
-    libc::{AF_INET, AF_INET6, MSG_WAITFORONE, iovec, mmsghdr, sockaddr_storage, socklen_t},
+    libc::{AF_INET, AF_INET6, MSG_WAITFORONE, iovec, mmsghdr, socklen_t},
     std::{
         mem::{self, MaybeUninit},
         net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -89,35 +89,39 @@ pub(crate) fn recv_mmsg(
 }
 
 #[cfg(target_os = "linux")]
-fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr> {
+fn cast_socket_addr(addr: &MaybeUninit<SockAddrInet>, hdr: &mmsghdr) -> Option<SocketAddr> {
     use libc::{sa_family_t, sockaddr_in, sockaddr_in6};
-    const SOCKADDR_IN_SIZE: usize = std::mem::size_of::<sockaddr_in>();
-    const SOCKADDR_IN6_SIZE: usize = std::mem::size_of::<sockaddr_in6>();
-    if addr.ss_family == AF_INET as sa_family_t
-        && hdr.msg_hdr.msg_namelen == SOCKADDR_IN_SIZE as socklen_t
-    {
-        // ref: https://github.com/rust-lang/socket2/blob/65085d9dff270e588c0fbdd7217ec0b392b05ef2/src/sockaddr.rs#L167-L172
-        let addr = unsafe { &*(addr as *const _ as *const sockaddr_in) };
-        return Some(SocketAddr::V4(SocketAddrV4::new(
-            std::net::Ipv4Addr::from(addr.sin_addr.s_addr.to_ne_bytes()),
-            u16::from_be(addr.sin_port),
-        )));
-    }
-    if addr.ss_family == AF_INET6 as sa_family_t
-        && hdr.msg_hdr.msg_namelen == SOCKADDR_IN6_SIZE as socklen_t
-    {
-        // ref: https://github.com/rust-lang/socket2/blob/65085d9dff270e588c0fbdd7217ec0b392b05ef2/src/sockaddr.rs#L174-L189
-        let addr = unsafe { &*(addr as *const _ as *const sockaddr_in6) };
-        return Some(SocketAddr::V6(SocketAddrV6::new(
-            std::net::Ipv6Addr::from(addr.sin6_addr.s6_addr),
-            u16::from_be(addr.sin6_port),
-            addr.sin6_flowinfo,
-            addr.sin6_scope_id,
-        )));
+    const SOCKADDR_IN_SIZE: socklen_t = mem::size_of::<sockaddr_in>() as socklen_t;
+    const SOCKADDR_IN6_SIZE: socklen_t = mem::size_of::<sockaddr_in6>() as socklen_t;
+    // recvmmsg() wrote msg_namelen bytes of the address, so read no more than that.
+    match hdr.msg_hdr.msg_namelen {
+        SOCKADDR_IN_SIZE => {
+            // SAFETY: the kernel wrote all SOCKADDR_IN_SIZE bytes of a sockaddr_in.
+            let addr = unsafe { addr.as_ptr().cast::<sockaddr_in>().read() };
+            if addr.sin_family == AF_INET as sa_family_t {
+                return Some(SocketAddr::V4(SocketAddrV4::new(
+                    std::net::Ipv4Addr::from(addr.sin_addr.s_addr.to_ne_bytes()),
+                    u16::from_be(addr.sin_port),
+                )));
+            }
+        }
+        SOCKADDR_IN6_SIZE => {
+            // SAFETY: the kernel wrote all SOCKADDR_IN6_SIZE bytes of a sockaddr_in6.
+            let addr = unsafe { addr.as_ptr().cast::<sockaddr_in6>().read() };
+            if addr.sin6_family == AF_INET6 as sa_family_t {
+                return Some(SocketAddr::V6(SocketAddrV6::new(
+                    std::net::Ipv6Addr::from(addr.sin6_addr.s6_addr),
+                    u16::from_be(addr.sin6_port),
+                    addr.sin6_flowinfo,
+                    addr.sin6_scope_id,
+                )));
+            }
+        }
+        _ => {}
     }
     error!(
-        "recvmmsg unexpected ss_family:{} msg_namelen:{}",
-        addr.ss_family, hdr.msg_hdr.msg_namelen
+        "recvmmsg unexpected address of msg_namelen:{}",
+        hdr.msg_hdr.msg_namelen
     );
     None
 }
@@ -150,10 +154,11 @@ pub(crate) fn recv_mmsg(
         return Ok(0);
     }
     packets.reserve(count);
-    const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
+    const SOCKADDR_INET_SIZE: socklen_t = mem::size_of::<SockAddrInet>() as socklen_t;
 
     let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
-    let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
+    // Left uninitialized: only the msg_namelen bytes the kernel writes are read.
+    let mut addrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
     let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
 
     let sock_fd = sock.as_raw_fd();
@@ -161,12 +166,17 @@ pub(crate) fn recv_mmsg(
     for (hdr, iov, addr, buffer) in
         izip!(&mut hdrs, &mut iovs, &mut addrs, pool.0.iter_mut()).take(count)
     {
+        let spare = buffer.spare_capacity_mut();
+        debug_assert!(
+            spare.len() >= PACKET_DATA_SIZE,
+            "pooled buffers must have room for a full packet"
+        );
         iov.write(iovec {
-            iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
+            iov_base: spare.as_mut_ptr().cast(),
             iov_len: PACKET_DATA_SIZE,
         });
 
-        let msg_hdr = create_msghdr(addr, SOCKADDR_STORAGE_SIZE, iov);
+        let msg_hdr = create_msghdr(addr, SOCKADDR_INET_SIZE, iov);
 
         hdr.write(mmsghdr {
             msg_len: 0,
@@ -183,7 +193,7 @@ pub(crate) fn recv_mmsg(
     let nrecv = unsafe {
         libc::recvmmsg(
             sock_fd,
-            hdrs[0].assume_init_mut(),
+            hdrs.as_mut_ptr().cast::<mmsghdr>(),
             count as u32,
             MSG_WAITFORONE.try_into().unwrap(),
             &mut ts,
@@ -195,39 +205,21 @@ pub(crate) fn recv_mmsg(
         usize::try_from(nrecv).unwrap()
     };
     // Consume the buffers from the pool matching number of received packets.
-    for (addr, hdr, mut buffer) in izip!(addrs, hdrs, pool.0.drain(..nrecv)) {
+    for (addr, hdr, mut buffer) in izip!(&addrs, &hdrs, pool.0.drain(..nrecv)) {
         // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
         // passed to recvmmsg() as the limit of messages that can be read. So,
         // `nrevc <= count` which means we initialized this `hdr` and
         // recvmmsg() will have updated it appropriately
         let hdr_ref = unsafe { hdr.assume_init_ref() };
-        // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
-        // will have populated it
-        let addr_ref = unsafe { addr.assume_init_ref() };
         let msg_len = hdr_ref.msg_len as usize;
         // SAFETY: `recvmmsg` wrote `msg_len` initialized bytes into the buffer.
         unsafe { buffer.set_len(msg_len) };
         let mut meta = Meta::default();
         meta.size = msg_len;
-        if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
+        if let Some(addr) = cast_socket_addr(addr, hdr_ref) {
             meta.set_socket_addr(&addr);
         }
         packets.push(BytesPacket::new(buffer.freeze(), meta));
-    }
-
-    for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
-        // SAFETY: We initialized `count` elements of each array above
-        //
-        // It may be that `packets.len() != PACKETS_PER_BATCH`; thus, some elements
-        // in `iovs` / `addrs` / `hdrs` may not get initialized. So, we must
-        // manually drop `count` elements from each array instead of being able
-        // to convert [MaybeUninit<T>] to [T] and letting `Drop` do the work
-        // for us when these items go out of scope at the end of the function
-        unsafe {
-            iov.assume_init_drop();
-            addr.assume_init_drop();
-            hdr.assume_init_drop();
-        }
     }
 
     Ok(nrecv)

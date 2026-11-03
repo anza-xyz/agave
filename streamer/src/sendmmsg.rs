@@ -2,13 +2,12 @@
 
 #[cfg(target_os = "linux")]
 use {
-    crate::msghdr::create_msghdr,
+    crate::msghdr::{SockAddrInet, create_msghdr},
     itertools::izip,
-    libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t},
+    libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, socklen_t},
     std::{
         mem::{self, MaybeUninit},
         os::unix::io::AsRawFd,
-        ptr,
     },
 };
 use {
@@ -92,54 +91,27 @@ fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
     iov: &mut MaybeUninit<iovec>,
-    addr: &mut MaybeUninit<sockaddr_storage>,
+    addr: &mut MaybeUninit<SockAddrInet>,
     hdr: &mut MaybeUninit<mmsghdr>,
 ) {
-    const SIZE_OF_SOCKADDR_IN: usize = mem::size_of::<sockaddr_in>();
-    const SIZE_OF_SOCKADDR_IN6: usize = mem::size_of::<sockaddr_in6>();
-    const SIZE_OF_SOCKADDR_STORAGE: usize = mem::size_of::<sockaddr_storage>();
-    const SOCKADDR_IN_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN;
-    const SOCKADDR_IN6_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN6;
-
     iov.write(iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
         iov_len: packet.len(),
     });
 
+    // The kernel reads only msg_namelen bytes of the address.
     let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
-            let ptr: *mut sockaddr_in = addr.as_mut_ptr() as *mut _;
-            unsafe {
-                ptr::write(
-                    ptr,
-                    *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
-                );
-                // Zero the remaining bytes after sockaddr_in
-                ptr::write_bytes(
-                    (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN),
-                    0,
-                    SOCKADDR_IN_PADDING,
-                );
-            }
-            SIZE_OF_SOCKADDR_IN as socklen_t
+            let v4 = *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref();
+            addr.write(SockAddrInet { v4 });
+            mem::size_of::<sockaddr_in>()
         }
         SocketAddr::V6(socket_addr_v6) => {
-            let ptr: *mut sockaddr_in6 = addr.as_mut_ptr() as *mut _;
-            unsafe {
-                ptr::write(
-                    ptr,
-                    *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
-                );
-                // Zero the remaining bytes after sockaddr_in6
-                ptr::write_bytes(
-                    (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN6),
-                    0,
-                    SOCKADDR_IN6_PADDING,
-                );
-            }
-            SIZE_OF_SOCKADDR_IN6 as socklen_t
+            let v6 = *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref();
+            addr.write(SockAddrInet { v6 });
+            mem::size_of::<sockaddr_in6>()
         }
-    };
+    } as socklen_t;
 
     let msg_hdr = create_msghdr(addr, msg_namelen, iov);
 
@@ -159,19 +131,20 @@ fn sendmmsg_retry(
 
     let mut pkts = &mut *hdrs;
     while !pkts.is_empty() {
-        let npkts = match unsafe { libc::sendmmsg(sock_fd, &mut pkts[0], pkts.len() as u32, 0) } {
-            -1 => {
-                check_fatal(io::Error::last_os_error())?;
-                // skip over the failing packet
-                1_usize
-            }
-            n => {
-                // if we fail to send all packets we advance to the failing
-                // packet and retry in order to capture the error code
-                num_sent += n as usize;
-                n as usize
-            }
-        };
+        let npkts =
+            match unsafe { libc::sendmmsg(sock_fd, pkts.as_mut_ptr(), pkts.len() as u32, 0) } {
+                -1 => {
+                    check_fatal(io::Error::last_os_error())?;
+                    // skip over the failing packet
+                    1_usize
+                }
+                n => {
+                    // if we fail to send all packets we advance to the failing
+                    // packet and retry in order to capture the error code
+                    num_sent += n as usize;
+                    n as usize
+                }
+            };
         pkts = &mut pkts[npkts..];
     }
 
@@ -208,19 +181,7 @@ where
     let hdrs_slice =
         unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut mmsghdr, num_packets) };
 
-    let result = sendmmsg_retry(sock, hdrs_slice);
-
-    // SAFETY: The first `packets.len()` elements of `hdrs`, `iovs`, and `addrs` are
-    // guaranteed to be initialized by `mmsghdr_for_packet` before this loop.
-    for (hdr, iov, addr) in izip!(&mut hdrs, &mut iovs, &mut addrs).take(num_packets) {
-        unsafe {
-            hdr.assume_init_drop();
-            iov.assume_init_drop();
-            addr.assume_init_drop();
-        }
-    }
-
-    result
+    sendmmsg_retry(sock, hdrs_slice)
 }
 
 /// Send every `(packet, destination)` pair over `sock`.
@@ -281,7 +242,10 @@ mod tests {
             sendmmsg::{batch_send, multi_target_send},
         },
         assert_matches::assert_matches,
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::sockets::{
+            SocketConfiguration, bind_in_range_with_config, bind_to_localhost_unique,
+            unique_port_range_for_tests,
+        },
         solana_packet::PACKET_DATA_SIZE,
         std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     };
@@ -301,6 +265,42 @@ mod tests {
         let mut packets = BytesPacketBatch::with_capacity(32);
         let recv = recv_mmsg(&reader, &mut packets, &mut PacketBufferPool::new()).unwrap();
         assert_eq!(32, recv);
+    }
+
+    #[test]
+    fn test_send_mmsg_ipv6() {
+        let port_range = unique_port_range_for_tests(2);
+        let bind = || {
+            bind_in_range_with_config(
+                IpAddr::V6(Ipv6Addr::LOCALHOST),
+                (port_range.start, port_range.end),
+                SocketConfiguration::default(),
+            )
+            .map(|(_, socket)| socket)
+        };
+        let Ok(reader) = bind() else {
+            warn!("IPv6 is unavailable, skipping");
+            return;
+        };
+        let addr = reader.local_addr().unwrap();
+        let sender = bind().unwrap();
+
+        let packets: Vec<_> = (1..=4u8).map(|i| vec![i; 100]).collect();
+        let packet_refs = packets.iter().map(|p| (&p[..], &addr));
+        let num_sent = batch_send(&sender, packet_refs).expect("socket should be usable");
+        assert_eq!(num_sent, packets.len(), "every packet must be sent");
+
+        let mut batch = BytesPacketBatch::with_capacity(32);
+        let recv = recv_mmsg(&reader, &mut batch, &mut PacketBufferPool::new()).unwrap();
+        assert_eq!(recv, packets.len(), "every packet must be received");
+        for (packet, sent) in batch.iter().zip(&packets) {
+            assert_eq!(packet.data(..), Some(&sent[..]), "payload must be intact");
+            assert_eq!(
+                packet.meta().socket_addr(),
+                sender.local_addr().unwrap(),
+                "the source must be the IPv6 sender"
+            );
+        }
     }
 
     #[test]
