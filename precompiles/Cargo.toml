@@ -21,6 +21,7 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 ed25519-dalek = "=1.0.1"
+k256 = { workspace = true }
 libsecp256k1 = { workspace = true, features = ["hmac"] }
 openssl = { workspace = true }
 solana-ed25519-program = { workspace = true }
