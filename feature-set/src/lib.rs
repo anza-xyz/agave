@@ -2673,7 +2673,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             validate_chained_block_id_2::id(),
-            "SIMD-340: Encompassing check for validate chained block ID",
+            "SIMD-0340: Encompassing check for validate chained block ID",
         ),
         (
             upgrade_bpf_stake_program_to_v5_1::id(),
