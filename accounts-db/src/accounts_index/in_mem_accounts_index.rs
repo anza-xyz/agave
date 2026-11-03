@@ -1507,9 +1507,8 @@ mod tests {
             INDEX_LIMIT_THRESHOLD_FOR_TESTING, IndexLimit, IndexLimitThreshold,
             bucket_map_holder::ThresholdEntriesPerBin,
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
-        std::{collections::HashMap, iter},
+        std::{assert_matches, collections::HashMap, iter},
         test_case::test_case,
     };
 

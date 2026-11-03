@@ -1134,12 +1134,12 @@ fn stored_account_from<'a>(stored_account_meta: StoredAccountMeta<'a>) -> Stored
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
         solana_account::{AccountSharedData, WritableAccount, accounts_equal},
         solana_clock::Slot,
         std::{
+            assert_matches,
             io::{Seek as _, SeekFrom, Write as _},
             iter,
             mem::ManuallyDrop,
