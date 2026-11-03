@@ -2,6 +2,7 @@ use {
     crate::{
         account_locks::{AccountLocks, TransactionAccountLockLimits, validate_account_locks},
         account_storage::stored_account_info::StoredAccountInfo,
+        accounts_cache::SlotCache,
         accounts_db::{
             AccountsAddRootTiming, AccountsDb, LoadedAccount, PopulateReadCache,
             ScanAccountStorageData, ScanStorageResult,
@@ -40,6 +41,49 @@ use {
 
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
+/// A slot's account delta, retained independently of cache flushing and cleaning.
+pub struct SlotAccounts(SlotAccountsStorage);
+
+enum SlotAccountsStorage {
+    Cached(Arc<SlotCache>),
+    Copied(Vec<KeyedAccountSharedData>),
+}
+
+impl SlotAccounts {
+    pub fn load_by_program(&self, program: &Pubkey) -> Vec<KeyedAccountSharedData> {
+        match &self.0 {
+            SlotAccountsStorage::Cached(cache) => cache
+                .iter()
+                .filter_map(|entry| {
+                    (entry.account.owner() == program)
+                        .then(|| (*entry.key(), entry.account.clone()))
+                })
+                .collect(),
+            SlotAccountsStorage::Copied(accounts) => accounts
+                .iter()
+                .filter(|(_, account)| account.owner() == program)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Estimate retained bytes, including per-account bookkeeping.
+    pub fn size(&self) -> usize {
+        match &self.0 {
+            SlotAccountsStorage::Cached(cache) => {
+                cache.data_size() as usize
+                    + cache.len() * (std::mem::size_of::<KeyedAccountSharedData>() + 128)
+            }
+            SlotAccountsStorage::Copied(accounts) => accounts
+                .iter()
+                .map(|(_, account)| {
+                    account.data().len() + std::mem::size_of::<KeyedAccountSharedData>()
+                })
+                .sum(),
+        }
+    }
+}
+
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
     transaction: &'a T,
 }
@@ -77,6 +121,20 @@ pub enum AccountAddressFilter {
 }
 
 impl Accounts {
+    /// Capture before rooting can make this slot's older account versions
+    /// eligible for cleaning. Frozen cache entries are shared without a scan.
+    pub fn snapshot_slot(&self, slot: Slot, bank_id: BankId) -> SlotAccounts {
+        SlotAccounts(
+            if let Some(cache) = self.accounts_db.accounts_cache.bank_cache(bank_id)
+                && cache.is_frozen()
+            {
+                SlotAccountsStorage::Cached(cache)
+            } else {
+                SlotAccountsStorage::Copied(self.load_by_program_slot(slot, bank_id, None))
+            },
+        )
+    }
+
     pub fn new(accounts_db: Arc<AccountsDb>) -> Self {
         Self {
             accounts_db,
