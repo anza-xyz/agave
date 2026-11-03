@@ -466,12 +466,21 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
 fn refresh_next_leader_slot(ctx: &LeaderContext) {
     let schedule_bank = ctx.bank_forks.read().unwrap().root_bank();
 
-    // next_leader_slot() searches strictly after this slot. Using the latest
-    // observed window minus one keeps the current window eligible.
+    // next_leader_slot() searches strictly after this slot. Keep the latest
+    // observed window eligible unless it has already expired.
     let search_after_slot = ctx
         .alpenglow_slot_clock
         .load()
-        .map_or(schedule_bank.slot(), |clock| clock.slot.saturating_sub(1))
+        .map_or(schedule_bank.slot(), |clock| {
+            let window_end = last_of_consecutive_leader_slots(clock.slot);
+            let remaining_slots = window_end - clock.slot + 1;
+            let window_duration = clock.slot_duration.saturating_mul(remaining_slots as u32);
+            if clock.started_at.elapsed() >= window_duration {
+                window_end
+            } else {
+                clock.slot.saturating_sub(1)
+            }
+        })
         .max(schedule_bank.slot());
 
     let next_leader_slot = ctx.leader_schedule_cache.next_leader_slot(
@@ -1857,6 +1866,21 @@ mod tests {
                 .load()
                 .next_leader_slot_range(),
             Some((4, 7))
+        );
+        ctx.alpenglow_slot_clock.update_leader(
+            4,
+            Instant::now() - Duration::from_secs(2),
+            Duration::from_millis(400),
+        );
+        refresh_next_leader_slot(&ctx);
+        assert_eq!(
+            ctx.poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .next_leader_slot_range(),
+            Some((8, 11))
         );
 
         let bank = start_leader_wait_for_parent_replay(
