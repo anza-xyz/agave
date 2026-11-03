@@ -88,6 +88,7 @@ enum CheckPoint<'a> {
     IdleSchedulerCleaned(usize),
     IdlingSchedulerTrashed,
     ReturningSchedulerTrashed,
+    TrashedSchedulerCleaning,
     TrashedSchedulerCleaned(usize),
     TimeoutListenerTriggered(usize),
     DiscardRequested,
@@ -368,6 +369,7 @@ where
                     idle_inner_count
                 };
 
+                sleepless_testing::at(CheckPoint::TrashedSchedulerCleaning);
                 let trashed_inner_count = {
                     let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
                     else {
@@ -2589,7 +2591,7 @@ mod tests {
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTrashedSchedulerCleaned,
-            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaning,
             &CheckPoint::TrashedSchedulerCleaned(1),
             &TestCheckPoint::AfterTrashedSchedulerCleaned,
         ]);
@@ -3380,7 +3382,7 @@ mod tests {
             &CheckPoint::SchedulerThreadAborted,
             &TestCheckPoint::AfterSchedulerThreadAborted,
             &TestCheckPoint::BeforeTrashedSchedulerCleaned,
-            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaning,
             &CheckPoint::TrashedSchedulerCleaned(1),
             &TestCheckPoint::AfterTrashedSchedulerCleaned,
         ]);
