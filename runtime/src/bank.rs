@@ -155,7 +155,8 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
         loaded_programs::{
-            MAX_LOADED_ENTRY_COUNT, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+            EpochBoundaryPreparation, MAX_LOADED_ENTRY_COUNT, ProgramRuntimeEnvironment,
+            ProgramRuntimeEnvironments,
         },
         program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
@@ -1705,13 +1706,17 @@ impl Bank {
     }
 
     // Once the root enters the EBPP window, it latches EBPP onto its upcoming
-    // environment, relatching as that changes.
+    // environment, relatching as that changes, and unlatching if it reverts to
+    // the current environment (ie. a pending activation was revoked).
+    //
+    // Returns whether EBPP was unlatched, in which case anything already
+    // recompiled for the abandoned environment should be purged.
     //
     // Only called on the new root bank.
-    fn latch_ebpp_from_root(&self) {
+    fn latch_ebpp_from_root(&self, ebpp: &mut EpochBoundaryPreparation) -> bool {
         if !self.in_ebpp_recompilation_window() {
             // Not in the window, nothing to do.
-            return;
+            return false;
         }
 
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
@@ -1721,17 +1726,16 @@ impl Bank {
             .program_runtime_environment
             .clone();
 
-        let mut ebpp = self
-            .transaction_processor
-            .epoch_boundary_preparation
-            .write()
-            .unwrap();
+        if *current_env == *upcoming_env {
+            // No different environment is upcoming. Unlatch, if latched.
+            ebpp.programs_to_recompile.clear();
+            return ebpp.upcoming_environment.take().is_some();
+        }
 
-        if *current_env != *upcoming_env
-            && ebpp
-                .upcoming_environment
-                .as_ref()
-                .is_none_or(|e| **e != *upcoming_env)
+        if ebpp
+            .upcoming_environment
+            .as_ref()
+            .is_none_or(|e| **e != *upcoming_env)
         {
             // A different environment is upcoming and we are not preparing for
             // it yet. Initiate or restart EBPP.
@@ -1746,29 +1750,34 @@ impl Bank {
             ebpp.upcoming_epoch = self.epoch.saturating_add(1);
             ebpp.upcoming_environment = Some(upcoming_env);
         }
+        false
     }
 
     pub fn root_program_cache(&self, bank_forks: &BankForks) {
-        let upcoming_environment = self
-            .transaction_processor
-            .epoch_boundary_preparation
-            .write()
-            .unwrap()
-            .reroot(self.epoch());
+        let purge_stale_envs = {
+            // If this is an epoch rollover, rerooting will signal a purge of
+            // the old environments. Otherwise, an unlatching of EBPP could
+            // signal a purge of stale upcoming environments.
+            let mut ebpp = self
+                .transaction_processor
+                .epoch_boundary_preparation
+                .write()
+                .unwrap();
+            ebpp.reroot(self.epoch()) || self.latch_ebpp_from_root(&mut ebpp)
+        };
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
             .prune(
                 self.slot(),
-                upcoming_environment.map(|_| {
+                purge_stale_envs.then(|| {
                     ProgramRuntimeEnvironment::clone(
                         &self.transaction_processor.program_runtime_environment,
                     )
                 }),
                 bank_forks,
             );
-        self.latch_ebpp_from_root();
     }
 
     pub fn prune_program_cache_by_deployment_slot(&self, deployment_slot: Slot) {

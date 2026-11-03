@@ -361,13 +361,13 @@ fn test_feature_activation_loaded_programs_epoch_transition(
 
     {
         // Prune for rerooting and thus finishing the recompilation phase.
-        let upcoming_environment = bank
-            .get_transaction_processor()
-            .epoch_boundary_preparation
-            .write()
-            .unwrap()
-            .reroot(bank.epoch());
-        assert!(upcoming_environment.is_some());
+        assert!(
+            bank.get_transaction_processor()
+                .epoch_boundary_preparation
+                .write()
+                .unwrap()
+                .reroot(bank.epoch())
+        );
         let mut program_cache = bank
             .get_transaction_processor()
             .global_program_cache
@@ -375,7 +375,11 @@ fn test_feature_activation_loaded_programs_epoch_transition(
             .unwrap();
         program_cache.prune(
             bank.slot(),
-            upcoming_environment,
+            Some(
+                bank.get_transaction_processor()
+                    .program_runtime_environment
+                    .clone(),
+            ),
             &bank_forks.read().unwrap(),
         );
 
@@ -571,6 +575,141 @@ fn test_feature_activation_loaded_programs_late_activation() {
             },
         ],
     );
+}
+
+#[test]
+fn test_feature_activation_loaded_programs_revoked_activation() {
+    agave_logger::setup();
+
+    // Bank Setup
+    let (mut genesis_config, mint_keypair) =
+        solana_genesis_config::create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    genesis_config
+        .accounts
+        .remove(&feature_set::disable_sbpf_v0_execution::id());
+    genesis_config
+        .accounts
+        .remove(&feature_set::reenable_sbpf_v0_execution::id());
+    let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    // Program Setup
+    let program_keypair = Keypair::new();
+    let program_data = include_bytes!("../../programs/bpf_loader/test_elfs/out/noop_aligned.so");
+    let program_account = AccountSharedData::from(Account {
+        lamports: Rent::default().minimum_balance(program_data.len()).min(1),
+        data: program_data.to_vec(),
+        owner: bpf_loader::id(),
+        executable: true,
+        rent_epoch: 0,
+    });
+    root_bank.store_account(&program_keypair.pubkey(), &program_account);
+
+    // Compose message using the desired program.
+    let instruction = Instruction::new_with_bytes(program_keypair.pubkey(), &[], Vec::new());
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let binding = mint_keypair.insecure_clone();
+    let signers = vec![&binding];
+
+    // Advance the bank so that the program becomes effective.
+    goto_end_of_slot(root_bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(
+        bank_forks.as_ref(),
+        root_bank.clone(),
+        SlotLeader::default(),
+        root_bank.slot() + 1,
+    );
+
+    // Load the program with the old environment.
+    let transaction = Transaction::new(&signers, message.clone(), bank.last_blockhash());
+    assert_eq!(bank.process_transaction(&transaction), Ok(()));
+    let current_env = current_env(&bank);
+
+    // Advance the bank to the middle of the epoch, stage the feature, and root
+    // the bank. EBPP latches onto the upcoming environment.
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 16);
+    let feature_account_balance =
+        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+    bank.store_account(
+        &feature_set::disable_sbpf_v0_execution::id(),
+        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
+    );
+    bank.root_program_cache(&bank_forks.read().unwrap());
+    let upcoming_env = bank
+        .get_transaction_processor()
+        .program_runtime_environment_for_epoch(1);
+    assert_ne!(*current_env, *upcoming_env);
+
+    // Go a few more slots, recompiling the program for the upcoming
+    // environment.
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 20);
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &current_env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::FailedVerification,
+                deployment_slot: 0,
+                environment: &upcoming_env,
+            },
+        ],
+    );
+
+    // Revoke the pending activation and root the bank. EBPP unlatches, and the
+    // entry recompiled for the abandoned environment is purged.
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 24);
+    bank.store_account(
+        &feature_set::disable_sbpf_v0_execution::id(),
+        &AccountSharedData::default(),
+    );
+    bank.root_program_cache(&bank_forks.read().unwrap());
+    let ebpp = bank
+        .get_transaction_processor()
+        .epoch_boundary_preparation
+        .read()
+        .unwrap();
+    assert!(ebpp.upcoming_environment.is_none());
+    assert!(ebpp.programs_to_recompile.is_empty());
+    drop(ebpp);
+    assert_eq!(
+        bank.get_transaction_processor()
+            .program_runtime_environment_for_epoch(1),
+        current_env
+    );
+    assert_cache_contents(
+        &bank,
+        &program_keypair.pubkey(),
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 0,
+            environment: &current_env,
+        }],
+    );
+
+    // Cross the epoch boundary. The feature never activates, so the
+    // environment is unchanged and the program still runs.
+    goto_end_of_slot(bank.clone());
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 33);
+    assert!(
+        !bank
+            .feature_set
+            .is_active(&feature_set::disable_sbpf_v0_execution::id())
+    );
+    assert_eq!(
+        bank.get_transaction_processor()
+            .program_runtime_environment
+            .clone(),
+        current_env
+    ); // `Arc::ptr_eq`
+    let transaction = Transaction::new(&signers, message, bank.last_blockhash());
+    assert_eq!(bank.process_transaction(&transaction), Ok(()));
 }
 
 #[test_case(false; "legacy")]
