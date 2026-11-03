@@ -429,7 +429,6 @@ impl Tvu {
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.turbine_xdp_sender,
-            votor_event_sender.clone(),
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
@@ -497,6 +496,7 @@ impl Tvu {
                 tvu_config.shred_version,
                 outstanding_repair_requests,
                 tvu_config.repair_xdp_sender,
+                votor_event_sender.clone(),
             )
         };
 

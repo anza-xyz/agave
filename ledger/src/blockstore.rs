@@ -320,7 +320,10 @@ impl<T> AsRef<T> for WorkingEntry<T> {
 }
 
 pub struct InsertResults {
-    completed_data_set_infos: Vec<CompletedDataSetInfo>,
+    pub completed_data_set_infos: Vec<CompletedDataSetInfo>,
+    /// Slots whose first data or coding shred at a block location was committed by this insertion.
+    /// Sorted and deduplicated within the batch; another location may report the slot again later.
+    pub first_shred_slots: Vec<Slot>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
 }
 
@@ -434,6 +437,8 @@ pub struct Blockstore {
 
 pub struct IndexMetaWorkingSetEntry {
     index: Index,
+    // Whether this location had no data or coding shreds before this batch.
+    was_empty: bool,
     // true only if at least one shred for this Index was inserted since the time this
     // struct was created
     did_insert_occur: bool,
@@ -2271,6 +2276,21 @@ impl Blockstore {
         Ok(signal_updates)
     }
 
+    /// Finds newly populated block locations using only the insertion working set.
+    /// Multiple locations for a slot are coalesced within this batch.
+    fn first_shred_slots(
+        indexes: &HashMap<(BlockLocation, Slot), IndexMetaWorkingSetEntry>,
+    ) -> Vec<Slot> {
+        let mut slots: Vec<_> = indexes
+            .iter()
+            .filter(|(_, entry)| entry.was_empty && entry.did_insert_occur)
+            .map(|((_, slot), _)| *slot)
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
     /// The main helper function that performs the shred insertion logic
     /// and updates corresponding meta-data.
     ///
@@ -2423,6 +2443,8 @@ impl Blockstore {
             update_parent_signals,
         } = self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
 
+        let first_shred_slots = Self::first_shred_slots(&shred_insertion_tracker.index_working_set);
+
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
         self.write_batch(&mut *shred_insertion_tracker.write_batch)?;
@@ -2452,6 +2474,7 @@ impl Blockstore {
 
         Ok(InsertResults {
             completed_data_set_infos: shred_insertion_tracker.newly_completed_data_sets,
+            first_shred_slots,
             duplicate_shreds: shred_insertion_tracker.duplicate_shreds,
         })
     }
@@ -2486,6 +2509,7 @@ impl Blockstore {
             handle_duplicate,
             metrics,
         )
+        .map(|result| result.completed_data_set_infos)
     }
 
     /// Inserts `shreds` into the column specified by  the `BlockLocation`.
@@ -2493,7 +2517,8 @@ impl Blockstore {
     /// Additionally attempts to recover and retransmit recovered shreds (also identifying
     /// and handling duplicate shreds). Broadcast stage should instead call
     /// Blockstore::insert_shreds when inserting own shreds during leader slots.
-    /// The pinnable slice and write batch can be reused across calls.
+    /// The pinnable slice and write batch can be reused across calls. Returns
+    /// completed data sets and slots with newly populated block locations after the batch is committed.
     pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
         &'db self,
         shreds: impl IntoIterator<
@@ -2511,14 +2536,11 @@ impl Blockstore {
         write_batch: &mut WriteBatch,
         handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
+    ) -> Result<InsertResults>
     where
         F: Fn(PossibleDuplicateShred),
     {
-        let InsertResults {
-            completed_data_set_infos,
-            duplicate_shreds,
-        } = self.do_insert_shreds(
+        let mut result = self.do_insert_shreds(
             shreds,
             is_trusted,
             Some(shred_recovery_context),
@@ -2527,11 +2549,11 @@ impl Blockstore {
             metrics,
         )?;
 
-        for shred in duplicate_shreds {
+        for shred in result.duplicate_shreds.drain(..) {
             handle_duplicate(shred);
         }
 
-        Ok(completed_data_set_infos)
+        Ok(result)
     }
 
     pub fn add_new_shred_signal(&self, s: Sender<bool>) {
@@ -4034,6 +4056,36 @@ impl Blockstore {
 
     pub fn get_index(&self, slot: Slot) -> Result<Option<Index>> {
         self.index_cf.get(slot)
+    }
+
+    /// Returns sorted, unique slots strictly above `root` with stored data or coding shreds
+    /// in either the original or an alternate block location.
+    pub fn slots_with_shreds_after(&self, root: Slot) -> Result<Vec<Slot>> {
+        let Some(start) = root.checked_add(1) else {
+            return Ok(Vec::new());
+        };
+        // Keep both indexes consistent while blocks move between locations.
+        let _lock = self.insert_shreds_lock.lock().unwrap();
+        let original = self
+            .index_cf
+            .iter(IteratorMode::From(start, IteratorDirection::Forward))?;
+        let alternate = self
+            .alt_index_cf
+            .iter(IteratorMode::From(
+                (start, Hash::default()),
+                IteratorDirection::Forward,
+            ))?
+            .map(|((slot, _), bytes)| (slot, bytes));
+        let mut slots = Vec::new();
+        for (slot, bytes) in original.chain(alternate) {
+            let index = cf::Index::deserialize(&bytes)?;
+            if index.data().num_shreds() != 0 || index.coding().num_shreds() != 0 {
+                slots.push(slot);
+            }
+        }
+        slots.sort_unstable();
+        slots.dedup();
+        Ok(slots)
     }
 
     /// Get a DB pinned reference to the [`Index`] via [`IndexRef`].
@@ -6304,6 +6356,7 @@ impl Blockstore {
                 }
                 .unwrap_or_else(|| Index::new(slot));
                 let index_entry = IndexMetaWorkingSetEntry {
+                    was_empty: index.data().num_shreds() == 0 && index.coding().num_shreds() == 0,
                     index,
                     did_insert_occur: false,
                 };

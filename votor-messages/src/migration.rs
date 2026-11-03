@@ -260,7 +260,7 @@ impl MigrationPhase {
         self.is_alpenglow_block(slot)
     }
 
-    /// Should retransmit send a `FirstShred` event to Votor?
+    /// Should window insertion send a `FirstShred` event to Votor?
     ///
     /// Normally only the first slot in a leader window needs an event. The first
     /// slot after the migration genesis is also included because the genesis

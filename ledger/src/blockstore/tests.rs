@@ -8607,3 +8607,167 @@ fn test_connectivity_does_not_propagate_through_incomplete_slot() {
     assert!(!blockstore.meta(60).unwrap().unwrap().is_connected());
     assert!(!blockstore.meta(70).unwrap().unwrap().is_connected());
 }
+
+fn insert_first_shred_test_batch(
+    blockstore: &Blockstore,
+    shreds: Vec<(Shred, bool, BlockLocation)>,
+) -> InsertResults {
+    blockstore
+        .do_insert_shreds(
+            shreds
+                .into_iter()
+                .map(|(shred, repair, location)| (Cow::Owned(shred), repair, location, None)),
+            false, // is_trusted
+            None,  // shred_recovery_context
+            &mut blockstore.new_pinnable_slice(),
+            &mut blockstore.get_write_batch(),
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap()
+}
+
+#[test_matrix([false, true], [false, true])]
+fn test_first_shred_slots(coding_first: bool, repaired_first: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 4;
+    let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+    let first = if coding_first { &coding[0] } else { &data[0] };
+    let batch = vec![(first.clone(), repaired_first, BlockLocation::Original); 2];
+    assert_eq!(
+        insert_first_shred_test_batch(&blockstore, batch).first_shred_slots,
+        vec![slot],
+    );
+    let batch = data
+        .iter()
+        .chain(&coding)
+        .map(|shred| (shred.clone(), false, BlockLocation::Original))
+        .collect();
+    assert!(
+        insert_first_shred_test_batch(&blockstore, batch)
+            .first_shred_slots
+            .is_empty()
+    );
+}
+
+#[test_matrix([false, true], [false, true])]
+fn test_first_shred_slots_across_locations(alternate_first: bool, same_batch: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 4;
+    let (data, _) = setup_erasure_shreds(slot, slot - 1, 10);
+    let alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    let mut batch = vec![
+        (data[0].clone(), false, BlockLocation::Original),
+        (data[0].clone(), true, alternate),
+    ];
+    if alternate_first {
+        batch.reverse();
+    }
+    let second = (!same_batch).then(|| batch.pop().unwrap());
+    assert_eq!(
+        insert_first_shred_test_batch(&blockstore, batch).first_shred_slots,
+        vec![slot],
+    );
+    if let Some(second) = second {
+        // A different location populated in a later batch reports the slot again.
+        assert_eq!(
+            insert_first_shred_test_batch(&blockstore, vec![second]).first_shred_slots,
+            vec![slot],
+        );
+    }
+    let another_alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    assert_eq!(
+        insert_first_shred_test_batch(
+            &blockstore,
+            vec![(data[0].clone(), true, another_alternate)],
+        )
+        .first_shred_slots,
+        vec![slot],
+    );
+}
+
+#[test]
+fn test_first_shred_slots_rejected_shreds() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 4;
+    let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+    blockstore.set_roots([slot + 1].iter()).unwrap();
+    let batch = [&data[0], &coding[0]]
+        .into_iter()
+        .map(|shred| (shred.clone(), false, BlockLocation::Original))
+        .collect();
+    assert!(
+        insert_first_shred_test_batch(&blockstore, batch)
+            .first_shred_slots
+            .is_empty()
+    );
+    assert!(blockstore.get_index(slot).unwrap().is_none());
+}
+
+#[test]
+fn test_slots_with_shreds_after_reopen() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    {
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let alternate = BlockLocation::Alternate {
+            block_id: Hash::new_unique(),
+        };
+        for slot in [4, 8, 12, 16] {
+            let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+            let shred = if slot == 8 { &coding[0] } else { &data[0] };
+            let location = if slot == 12 {
+                alternate
+            } else {
+                BlockLocation::Original
+            };
+            insert_first_shred_test_batch(&blockstore, vec![(shred.clone(), true, location)]);
+            if slot == 16 {
+                // The same slot may be present in several locations.
+                insert_first_shred_test_batch(
+                    &blockstore,
+                    vec![
+                        (shred.clone(), true, alternate),
+                        (
+                            shred.clone(),
+                            true,
+                            BlockLocation::Alternate {
+                                block_id: Hash::new_unique(),
+                            },
+                        ),
+                    ],
+                );
+            }
+        }
+        assert!(blockstore.meta(8).unwrap().is_none());
+        assert!(blockstore.get_index(12).unwrap().is_none());
+        // Empty indexes and orphan metadata do not count as receiving a shred.
+        blockstore.index_cf.put(20, &Index::new(20)).unwrap();
+        blockstore
+            .alt_index_cf
+            .put((20, Hash::new_unique()), &Index::new(20))
+            .unwrap();
+        blockstore.put_meta(24, &SlotMeta::new_orphan(24)).unwrap();
+    }
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    assert_eq!(
+        blockstore.slots_with_shreds_after(0).unwrap(),
+        vec![4, 8, 12, 16],
+    );
+    assert_eq!(
+        blockstore.slots_with_shreds_after(4).unwrap(),
+        vec![8, 12, 16],
+    );
+    assert!(blockstore.slots_with_shreds_after(16).unwrap().is_empty());
+    assert!(
+        blockstore
+            .slots_with_shreds_after(Slot::MAX)
+            .unwrap()
+            .is_empty()
+    );
+}
