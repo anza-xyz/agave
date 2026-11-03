@@ -37,7 +37,7 @@ use {
     thiserror::Error,
 };
 
-pub const DEFAULT_RPC_TIMEOUT_SECONDS: &str = "30";
+pub const DEFAULT_RPC_TIMEOUT_SECONDS: &str = "60";
 pub const DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS: &str = "5";
 const CHECKED: bool = true;
 
