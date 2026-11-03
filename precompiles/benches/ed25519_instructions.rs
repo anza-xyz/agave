@@ -2,8 +2,8 @@ use {
     agave_feature_set::FeatureSet,
     agave_precompiles::ed25519::verify,
     criterion::{Criterion, criterion_group, criterion_main},
-    ed25519_dalek::ed25519::signature::Signer,
     rand::Rng,
+    solana_ed25519::ed_sigs::SigningKey,
     solana_ed25519_program::new_ed25519_instruction_with_signature,
     solana_instruction::Instruction,
     std::time::Duration,
@@ -25,13 +25,11 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
     (0..ix_count)
         .map(|_| {
             let secret_bytes: [u8; 32] = rand::random();
-            let secret = ed25519_dalek::SecretKey::from_bytes(&secret_bytes).unwrap();
-            let public: ed25519_dalek::PublicKey = (&secret).into();
-            let privkey = ed25519_dalek::Keypair { secret, public };
+            let privkey = SigningKey::from_bytes(&secret_bytes);
             let mut message = vec![0u8; usize::from(message_length)];
             rng.fill(message.as_mut_slice());
             let signature = privkey.sign(&message).to_bytes();
-            let pubkey = privkey.public.to_bytes();
+            let pubkey: [u8; 32] = privkey.verification_key().into();
             new_ed25519_instruction_with_signature(&message, &signature, &pubkey)
         })
         .collect()

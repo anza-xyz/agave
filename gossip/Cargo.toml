@@ -50,7 +50,6 @@ assert_matches = { workspace = true }
 bv = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
-ed25519-dalek = { workspace = true }
 flate2 = { workspace = true }
 indexmap = { workspace = true, features = ["rayon"] }
 itertools = { workspace = true }
@@ -64,6 +63,7 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clock = { workspace = true }
+solana-ed25519 = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
