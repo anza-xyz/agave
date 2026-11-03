@@ -7,7 +7,7 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::uninlined_format_args)]
 
-#[cfg(any(feature = "sbf_c", all(feature = "sbf_rust", not(feature = "sbpf-v3"))))]
+#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
 use solana_account::state_traits::StateMutWincode as _;
 #[cfg(not(feature = "sbf_sanity_list"))]
 use solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT;
@@ -455,28 +455,23 @@ fn test_program_sbf_loader_deprecated() {
     }
 }
 
-#[test]
-#[cfg(all(feature = "sbf_rust", not(feature = "sbpf-v3")))]
-// In SBPFv3, we don't have a verification step for undefined syscalls, and we don't do dynamic
-// symbol resolution, so this test would pass.
-fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
-    agave_logger::setup();
-
-    // Populate loader account with `solana_sbf_rust_deprecated_loader` elf, which
-    // depends on `sol_alloc_free_` syscall. This can be verified with
-    // $ elfdump solana_sbf_rust_deprecated_loader.so
-    // : 0000000000001ab8  000000070000000a R_BPF_64_32            0000000000000000 sol_alloc_free_
-    // In the symbol table, there is `sol_alloc_free_`.
-    // In fact, `sol_alloc_free_` is called from sbf allocator, which is originated from
-    // AccountInfo::realloc() in the program code.
-
+/// Attempts to deploy `solana_sbf_rust_deprecated_loader` with `DeployWithMaxDataLen`.
+///
+/// The program depends on the `sol_alloc_free_` syscall. This can be verified with
+/// $ elfdump solana_sbf_rust_deprecated_loader.so
+/// : 0000000000001ab8  000000070000000a R_BPF_64_32            0000000000000000 sol_alloc_free_
+/// In the symbol table, there is `sol_alloc_free_`.
+/// In fact, `sol_alloc_free_` is called from sbf allocator, which is originated from
+/// AccountInfo::realloc() in the program code.
+#[cfg(feature = "sbf_rust")]
+fn deploy_deprecated_loader_program(
+    feature_set: SVMFeatureSet,
+) -> solana_svm::conformance::instr::effects::InstrEffects {
     let program_elf = load_program_elf("solana_sbf_rust_deprecated_loader");
     let program_id = Pubkey::new_unique();
     let authority_pubkey = Pubkey::new_unique();
     let buffer_pubkey = Pubkey::new_unique();
     let payer_pubkey = Pubkey::new_unique();
-
-    let feature_set = SVMFeatureSet::all_enabled();
 
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_id.as_ref()], &bpf_loader_upgradeable::id());
@@ -546,14 +541,33 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    // Expect that deployment to fail. B/C during deployment, there is an elf
-    // verification step, which uses the runtime to look up relocatable symbols
-    // in elf inside syscall table. In this case, `sol_alloc_free_` can't be
-    // found in syscall table. Hence, the verification fails and the deployment
-    // fails.
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    execute_instr(&context, &mut program_cache, &sysvar_cache)
+}
 
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
+    agave_logger::setup();
+
+    // Expect that deployment fails. During deployment there is an elf
+    // verification step. Before SBPFv3 it uses relocations to look up
+    // `sol_alloc_free_` in the syscall table of the deployment environment,
+    // where it is not registered. With SBPFv3 static syscalls there are no
+    // relocations, so SIMD-0706 makes the verifier look up the syscalls
+    // instead. Either way the syscall can't be found and the deployment fails.
+    let effects = deploy_deprecated_loader_program(SVMFeatureSet::all_enabled());
     assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
+}
+
+#[test]
+#[cfg(all(feature = "sbf_rust", feature = "sbpf-v3"))]
+fn test_sol_alloc_free_deployable_without_simd_0706() {
+    agave_logger::setup();
+    let effects = deploy_deprecated_loader_program(SVMFeatureSet {
+        disable_sol_alloc_free_again: false,
+        ..SVMFeatureSet::all_enabled()
+    });
+    assert_eq!(effects.result, None);
 }
 
 #[test]

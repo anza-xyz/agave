@@ -752,6 +752,12 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAllocFree {
         _: u64,
         _: u64,
     ) -> Result<u64, Error> {
+        if invoke_context.get_feature_set().disable_sol_alloc_free_again {
+            // SIMD-0706: discourage remaining users of this syscall.
+            // Remove this comment when cleaning up the gate.
+            let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
+            invoke_context.consume_checked(syscall_base_cost)?;
+        }
         let align = if invoke_context.get_check_aligned() {
             BPF_ALIGN_OF_U128
         } else {
@@ -2986,7 +2992,7 @@ mod tests {
             error::EbpfError,
             memory_region::{MemoryMapping, MemoryRegion},
             program::SBPFVersion,
-            vm::Config,
+            vm::{Config, ContextObject},
         },
         solana_sdk_ids::{
             bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader, sysvar,
@@ -3525,6 +3531,59 @@ mod tests {
                 ))
                 .unwrap();
         };
+    }
+
+    #[test_case(false, 0; "feature inactive")]
+    #[test_case(true, 100; "feature active")]
+    fn test_syscall_sol_alloc_free_cu_charge(feature_active: bool, expected_charge: u64) {
+        let feature_set = &SVMFeatureSet {
+            disable_sol_alloc_free_again: feature_active,
+            ..SVMFeatureSet::default()
+        };
+        let program_id = Pubkey::new_unique();
+        let transaction_accounts = vec![
+            (
+                bpf_loader::id(),
+                AccountSharedData::new(0, 0, &native_loader::id()),
+            ),
+            (program_id, AccountSharedData::new(0, 0, &bpf_loader::id())),
+        ];
+        with_mock_invoke_context_with_feature_set!(
+            invoke_context,
+            transaction_context,
+            feature_set,
+            1,
+            transaction_accounts
+        );
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(1, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let mut heap = AlignedMemory::<{ HOST_ALIGN }>::zero_filled(MAX_HEAP_FRAME_BYTES as usize);
+        let regions = vec![MemoryRegion::new(&mut heap, ebpf::MM_HEAP_START)];
+        let mapping = unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+        invoke_context
+            .memory_contexts
+            .set_memory_context_abi_v1(MemoryContext::new(
+                BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                Vec::new(),
+                mapping,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            invoke_context.get_execution_cost().syscall_base_cost,
+            100,
+            "update the expected charge"
+        );
+        let before = invoke_context.get_remaining();
+        SyscallAllocFree::rust(&mut invoke_context, 8, 0, 0, 0, 0).unwrap();
+        assert_eq!(before - invoke_context.get_remaining(), expected_charge);
     }
 
     #[test]

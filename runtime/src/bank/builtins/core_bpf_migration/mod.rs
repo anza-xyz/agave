@@ -204,6 +204,7 @@ impl Bank {
                 dummy_invoke_context.program_cache_for_tx_batch,
                 ProgramRuntimeEnvironment::clone(&program_runtime_environment),
                 false, // disable_sbpf_v0_v1_v2_deployment // explicitly continue to allow them for core program migrations
+                false, // disable_sol_alloc_free_again // do not newly reject core programs
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 elf,
