@@ -32,13 +32,10 @@ pub fn create_stake_account_with_activation_and_deactivation_epochs(
     activation_epoch: Epoch,
     deactivation_epoch: Epoch,
 ) -> AccountSharedData {
-    let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
-
     let vote_state = VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
     let credits_observed = vote_state.credits();
 
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
     let stake_amount = lamports
         .checked_sub(rent_exempt_reserve)
         .expect("lamports >= rent_exempt_reserve");
@@ -57,11 +54,13 @@ pub fn create_stake_account_with_activation_and_deactivation_epochs(
         credits_observed,
     };
 
-    stake_account
-        .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-        .expect("set_state");
-
-    stake_account
+    AccountSharedData::new_data_with_space(
+        lamports,
+        &StakeStateV2::Stake(meta, stake, StakeFlags::empty()),
+        StakeStateV2::size_of(),
+        &stake_program::id(),
+    )
+    .expect("stake state fits StakeStateV2::size_of()")
 }
 
 /// Utility function for creating a stake account from basic parameters.

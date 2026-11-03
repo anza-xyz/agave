@@ -425,7 +425,7 @@ mod tests {
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let present_account_key = Keypair::new();
-        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         // Create array of two transactions which throw different errors

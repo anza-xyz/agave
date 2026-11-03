@@ -1514,8 +1514,11 @@ pub(crate) mod tests {
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
             create_staked_node_accounts(10, &Rent::default());
         let undelegated_pubkey = Pubkey::new_unique();
-        let undelegated_account =
-            AccountSharedData::new(1, StakeStateV2::size_of(), &stake::program::id());
+        let undelegated_account = AccountSharedData::new_with_data(
+            1,
+            vec![0; StakeStateV2::size_of()],
+            &stake::program::id(),
+        );
         let other_pubkey = Pubkey::new_unique();
         let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let missing_pubkey = Pubkey::new_unique();
@@ -1564,10 +1567,14 @@ pub(crate) mod tests {
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
             create_staked_node_accounts(10, &Rent::default());
         let uninitialized_pubkey = Pubkey::new_unique();
-        let uninitialized_account =
-            AccountSharedData::new(1, VoteStateV4::size_of(), &solana_vote_program::id());
+        let uninitialized_account = AccountSharedData::new_with_data(
+            1,
+            vec![0; VoteStateV4::size_of()],
+            &solana_vote_program::id(),
+        );
         let wrong_size_pubkey = Pubkey::new_unique();
-        let wrong_size_account = AccountSharedData::new(1, 1, &solana_vote_program::id());
+        let wrong_size_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &solana_vote_program::id());
         let other_pubkey = Pubkey::new_unique();
         let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
         let missing_pubkey = Pubkey::new_unique();

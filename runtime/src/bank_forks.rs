@@ -1003,8 +1003,7 @@ mod tests {
             };
             let cert_data = wincode::serialize(&cert).unwrap();
             let lamports = Rent::default().minimum_balance(cert_data.len());
-            let mut cert_account = Account::new(lamports, cert_data.len(), &system_program::ID);
-            cert_account.data = cert_data;
+            let cert_account = Account::new_with_data(lamports, cert_data, &system_program::ID);
             genesis_config
                 .accounts
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);

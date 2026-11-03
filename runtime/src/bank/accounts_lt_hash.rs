@@ -1439,8 +1439,16 @@ mod tests {
         let update = |prev_len, curr_len| {
             AccountsLtHashUpdate::new(
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(1, prev_len, &owner)),
-                Some(AccountSharedData::new(2, curr_len, &owner)),
+                Some(AccountSharedData::new_with_data(
+                    1,
+                    vec![0; prev_len],
+                    &owner,
+                )),
+                Some(AccountSharedData::new_with_data(
+                    2,
+                    vec![0; curr_len],
+                    &owner,
+                )),
             )
         };
         assert!(!update(0, SPLIT_ACCOUNT_DATA_LEN - 1).should_split());
@@ -1463,7 +1471,13 @@ mod tests {
     #[test]
     fn test_dedup_keeps_large_version() {
         let owner = Pubkey::default();
-        let version = |data_len| Some(AccountSharedData::new(1, data_len, &owner));
+        let version = |data_len| {
+            Some(AccountSharedData::new_with_data(
+                1,
+                vec![0; data_len],
+                &owner,
+            ))
+        };
         // A large held prev version and a large newer curr version both survive the merge.
         for (held_prev_len, newer_curr_len) in
             [(SPLIT_ACCOUNT_DATA_LEN, 0), (0, SPLIT_ACCOUNT_DATA_LEN)]
@@ -1541,7 +1555,7 @@ mod tests {
                     // Spread sizes from 0.5KiB to 128KiB, since dispatch may treat large
                     // accounts apart.
                     let data_len = 512 << (index % 9);
-                    let curr = AccountSharedData::new(round, data_len, &owner);
+                    let curr = AccountSharedData::new_with_data(round, vec![0; data_len], &owner);
                     AccountsLtHashUpdate::new(
                         *address,
                         last_version.replace(curr.clone()),

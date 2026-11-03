@@ -99,9 +99,8 @@ mod tests {
     fn store_account(bank: &Bank, address: &Pubkey, data: &[u8], owner: &Pubkey, executable: bool) {
         let space = data.len();
         let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-        let mut account = AccountSharedData::new(lamports, space, owner);
+        let mut account = AccountSharedData::new_with_data(lamports, data.to_vec(), owner);
         account.set_executable(executable);
-        account.data_as_mut_slice().copy_from_slice(data);
         bank.store_account_and_update_capitalization(address, &account);
     }
 

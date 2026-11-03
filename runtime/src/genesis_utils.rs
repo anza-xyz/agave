@@ -17,9 +17,7 @@ use {
     },
     bitvec::vec::BitVec,
     log::*,
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
-    },
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_bls_signatures::{
         BLS_SIGNATURE_AFFINE_SIZE, Pubkey as BLSPubkey, Signature as BLSSignature,
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
@@ -707,25 +705,24 @@ pub fn create_lockup_stake_account(
     rent: &Rent,
     lamports: u64,
 ) -> AccountSharedData {
-    let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
-
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
     assert!(
         lamports >= rent_exempt_reserve,
         "lamports: {lamports} is less than rent_exempt_reserve {rent_exempt_reserve}"
     );
 
-    stake_account
-        .set_state(&StakeStateV2::Initialized(Meta {
+    AccountSharedData::new_data_with_space(
+        lamports,
+        &StakeStateV2::Initialized(Meta {
             authorized: *authorized,
             lockup: *lockup,
             #[expect(deprecated)]
             rent_exempt_reserve,
-        }))
-        .expect("set_state");
-
-    stake_account
+        }),
+        StakeStateV2::size_of(),
+        &stake_program::id(),
+    )
+    .expect("stake state fits StakeStateV2::size_of()")
 }
 
 #[cfg(test)]
