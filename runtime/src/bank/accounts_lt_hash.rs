@@ -27,8 +27,18 @@ use {
     },
 };
 
-/// Number of threads for the async accounts hasher thread pool.
-const NUM_ACCOUNTS_HASHER_THREADS: usize = 4;
+/// Mainnet measurements under Alpenglow show 8 hashers suffice for the footer's vote state
+/// burst, which then holds up the freeze for only a few hundred microseconds.
+const MAX_ACCOUNTS_HASHER_THREADS: usize = 8;
+
+/// More hashers shorten bursts that the freeze waits on, such as the footer's vote state
+/// updates, but each hasher spins while idle and competes with replay for cores, so the
+/// pool grows with the machine's cores.
+static NUM_ACCOUNTS_HASHER_THREADS: LazyLock<usize> = LazyLock::new(|| {
+    thread::available_parallelism()
+        .map_or(4, |num_cores| num_cores.get() / 4)
+        .clamp(4, MAX_ACCOUNTS_HASHER_THREADS)
+});
 
 // Maximum size, in bytes, for the seen-accounts freelist.
 const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
@@ -247,7 +257,7 @@ pub struct AccountsLtHashAsyncProgress {
     //  │       │                │         │       │                │         │
     //  │0      │6 <-- unaligned │2054     │2176   │2182            │4230     │4352
     //
-    accumulators: [Mutex<CachePadded<LtHash>>; NUM_ACCOUNTS_HASHER_THREADS],
+    accumulators: [Mutex<CachePadded<LtHash>>; MAX_ACCOUNTS_HASHER_THREADS],
     num_updates_pending: AtomicUsize,
     num_updates_total: AtomicU64,
     /// Flag to indicate if the bank has reached the end of the slot.
@@ -363,7 +373,7 @@ impl AccountsLtHashAsyncProgress {
                 // SAFETY: We always call from the same/correct Rayon thread pool.
                 let worker_index = thread_pool.current_thread_index().unwrap();
 
-                // SAFETY: There are num_threads accumulators, and each
+                // SAFETY: There are at least num_threads accumulators, and each
                 // thread's index shall always be in range 0..num_threads.
                 debug_assert!(worker_index < self.accumulators.len());
                 let accumulator = unsafe { self.accumulators.get_unchecked(worker_index) };
@@ -459,7 +469,7 @@ fn chunk_len(num_updates: usize) -> usize {
     /// rebalance a chunk full of large accounts.
     const CHUNKS_PER_THREAD: usize = 2;
     num_updates
-        .div_ceil(NUM_ACCOUNTS_HASHER_THREADS * CHUNKS_PER_THREAD)
+        .div_ceil(*NUM_ACCOUNTS_HASHER_THREADS * CHUNKS_PER_THREAD)
         .max(1)
 }
 
@@ -832,7 +842,7 @@ struct FreelistStats {
 fn accounts_hasher_thread_pool() -> &'static ThreadPool {
     static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
         ThreadPoolBuilder::new()
-            .num_threads(NUM_ACCOUNTS_HASHER_THREADS)
+            .num_threads(*NUM_ACCOUNTS_HASHER_THREADS)
             .stack_size(8 * 1024 * 1024)
             .thread_name(|i| format!("solAcctsHashr{i:02}"))
             .build()
