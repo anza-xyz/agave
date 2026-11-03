@@ -1032,6 +1032,11 @@ impl UsageQueue {
     pub fn new(capability: &Capability) -> Self {
         Self(Arc::new(TokenCell::new(UsageQueueInner::new(capability))))
     }
+
+    /// Returns whether another owner currently holds this queue.
+    pub fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
+    }
 }
 
 type TaskHash = Hash;

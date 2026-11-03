@@ -120,7 +120,6 @@ args=(
   --enable-rpc-transaction-history
   --enable-extended-tx-metadata-storage
   --init-complete-file "$dataDir"/init-completed
-  --require-tower
   --no-wait-for-vote-to-start-leader
   --no-os-network-limits-test
   --no-xdp

@@ -17,7 +17,7 @@ mod common;
 
 #[test]
 fn test_bpf_loader_upgradeable_set_upgrade_authority() {
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
@@ -205,7 +205,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
 #[test]
 fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     let instruction =
-        bincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
+        wincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
@@ -437,7 +437,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
 
 #[test]
 fn test_bpf_loader_upgradeable_set_buffer_authority() {
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
@@ -605,7 +605,7 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
 #[test]
 fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     let instruction =
-        bincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
+        wincode::serialize(&UpgradeableLoaderInstruction::SetAuthorityChecked).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();

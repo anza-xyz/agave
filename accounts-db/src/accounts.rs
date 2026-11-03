@@ -1,6 +1,6 @@
 use {
     crate::{
-        account_locks::{AccountLocks, validate_account_locks},
+        account_locks::{AccountLocks, TransactionAccountLockLimits, validate_account_locks},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountsAddRootTiming, AccountsDb, LoadedAccount, PopulateReadCache,
@@ -456,7 +456,7 @@ impl Accounts {
         &self,
         txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
         results: impl Iterator<Item = Result<()>>,
-        tx_account_lock_limit: usize,
+        tx_account_lock_limits: TransactionAccountLockLimits,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get keys and is_writable if successful validation.
         // We collect to fully evaluate before taking the account_locks mutex.
@@ -464,7 +464,10 @@ impl Accounts {
             .zip(results)
             .map(|(tx, result)| {
                 result
-                    .and_then(|_| validate_account_locks(tx.account_keys(), tx_account_lock_limit))
+                    .and_then(|_| {
+                        let limit = tx_account_lock_limits.for_version(tx.version())?;
+                        validate_account_locks(tx.account_keys(), limit)
+                    })
                     .map(|_| TransactionAccountLocksIterator::new(tx).accounts_with_is_writable())
             })
             .collect::<Vec<_>>();
@@ -536,6 +539,7 @@ impl Accounts {
 mod tests {
     use {
         super::*,
+        crate::account_locks::DEFAULT_TX_ACCOUNT_LOCKS,
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{AccountSharedData, WritableAccount},
         solana_address_lookup_table_interface::state::LookupTableMeta,
@@ -549,7 +553,7 @@ mod tests {
         solana_sdk_ids::native_loader,
         solana_signature::Signature,
         solana_signer::{Signer, signers::Signers},
-        solana_transaction::{Transaction, sanitized::MAX_TX_ACCOUNT_LOCKS},
+        solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         std::{
             borrow::Cow,
@@ -557,6 +561,12 @@ mod tests {
             sync::atomic::{AtomicBool, AtomicU64, Ordering},
             thread, time,
         },
+    };
+
+    const TEST_ACCOUNT_LOCK_LIMITS: TransactionAccountLockLimits = TransactionAccountLockLimits {
+        legacy: DEFAULT_TX_ACCOUNT_LOCKS,
+        v0: DEFAULT_TX_ACCOUNT_LOCKS,
+        v1: DEFAULT_TX_ACCOUNT_LOCKS,
     };
 
     fn new_sanitized_tx<T: Signers>(
@@ -755,7 +765,7 @@ mod tests {
 
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
         let results =
-            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), MAX_TX_ACCOUNT_LOCKS);
+            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), TEST_ACCOUNT_LOCK_LIMITS);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
     }
 
@@ -766,9 +776,9 @@ mod tests {
 
         let keypair = Keypair::new();
 
-        // Allow up to MAX_TX_ACCOUNT_LOCKS
+        // Allow up to DEFAULT_TX_ACCOUNT_LOCKS
         {
-            let num_account_keys = MAX_TX_ACCOUNT_LOCKS;
+            let num_account_keys = DEFAULT_TX_ACCOUNT_LOCKS;
             let mut account_keys: Vec<_> = (0..num_account_keys)
                 .map(|_| Pubkey::new_unique())
                 .collect();
@@ -786,15 +796,15 @@ mod tests {
             let results = accounts.lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
-                MAX_TX_ACCOUNT_LOCKS,
+                TEST_ACCOUNT_LOCK_LIMITS,
             );
             assert_eq!(results, vec![Ok(())]);
             accounts.unlock_accounts(txs.iter().zip(&results));
         }
 
-        // Disallow over MAX_TX_ACCOUNT_LOCKS
+        // Disallow over DEFAULT_TX_ACCOUNT_LOCKS
         {
-            let num_account_keys = MAX_TX_ACCOUNT_LOCKS + 1;
+            let num_account_keys = DEFAULT_TX_ACCOUNT_LOCKS + 1;
             let mut account_keys: Vec<_> = (0..num_account_keys)
                 .map(|_| Pubkey::new_unique())
                 .collect();
@@ -812,7 +822,7 @@ mod tests {
             let results = accounts.lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
-                MAX_TX_ACCOUNT_LOCKS,
+                TEST_ACCOUNT_LOCK_LIMITS,
             );
             assert_eq!(results[0], Err(TransactionError::TooManyAccountLocks));
         }
@@ -850,7 +860,7 @@ mod tests {
         let results0 = accounts.lock_accounts(
             [tx.clone()].iter(),
             [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
 
         assert_eq!(results0, vec![Ok(())]);
@@ -886,7 +896,7 @@ mod tests {
         let results1 = accounts.lock_accounts(
             txs.iter(),
             vec![Ok(()); txs.len()].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
         assert_eq!(
             results1,
@@ -916,7 +926,7 @@ mod tests {
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
         let results2 =
-            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), MAX_TX_ACCOUNT_LOCKS);
+            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), TEST_ACCOUNT_LOCK_LIMITS);
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -984,7 +994,7 @@ mod tests {
                 let results = accounts_clone.clone().lock_accounts(
                     txs.iter(),
                     vec![Ok(()); txs.len()].into_iter(),
-                    MAX_TX_ACCOUNT_LOCKS,
+                    TEST_ACCOUNT_LOCK_LIMITS,
                 );
                 for result in results.iter() {
                     if result.is_ok() {
@@ -1003,7 +1013,7 @@ mod tests {
             let results = accounts_arc.clone().lock_accounts(
                 txs.iter(),
                 vec![Ok(()); txs.len()].into_iter(),
-                MAX_TX_ACCOUNT_LOCKS,
+                TEST_ACCOUNT_LOCK_LIMITS,
             );
             if results[0].is_ok() {
                 let counter_value = counter_clone.clone().load(Ordering::Acquire);
@@ -1046,7 +1056,7 @@ mod tests {
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
         let results0 =
-            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), MAX_TX_ACCOUNT_LOCKS);
+            accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), TEST_ACCOUNT_LOCK_LIMITS);
 
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
@@ -1145,8 +1155,11 @@ mod tests {
             Ok(()),
         ];
 
-        let results =
-            accounts.lock_accounts(txs.iter(), qos_results.into_iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results = accounts.lock_accounts(
+            txs.iter(),
+            qos_results.into_iter(),
+            TEST_ACCOUNT_LOCK_LIMITS,
+        );
 
         assert_eq!(
             results,
@@ -1206,7 +1219,7 @@ mod tests {
         let results = accounts.lock_accounts(
             [w_tx.clone()].iter(),
             [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
 
         assert_eq!(results, vec![Ok(())]);
@@ -1215,7 +1228,7 @@ mod tests {
         let results = accounts.lock_accounts(
             [r_tx.clone()].iter(),
             [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
 
         assert_eq!(results, vec![Err(TransactionError::AccountInUse)]);
@@ -1224,7 +1237,7 @@ mod tests {
         let results = accounts.lock_accounts(
             [w_tx.clone()].iter(),
             [Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
 
         assert_eq!(results, vec![Err(TransactionError::AccountInUse)]);
@@ -1234,7 +1247,7 @@ mod tests {
         let results = accounts.lock_accounts(
             [w_tx.clone(), r_tx.clone()].iter(),
             [Ok(()), Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
 
         assert_eq!(results, vec![Ok(()), Ok(())]);
@@ -1244,7 +1257,7 @@ mod tests {
         let results = accounts.lock_accounts(
             [w_tx, r_tx].iter(),
             [Ok(()), Ok(())].into_iter(),
-            MAX_TX_ACCOUNT_LOCKS,
+            TEST_ACCOUNT_LOCK_LIMITS,
         );
 
         assert_eq!(results, vec![Ok(()), Ok(())]);

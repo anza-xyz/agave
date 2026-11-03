@@ -15,7 +15,6 @@ use {
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     bytes::Bytes,
     core::ops::Deref,
-    solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
     solana_message::{AccountKeys, TransactionSignatureDetails},
     solana_pubkey::Pubkey,

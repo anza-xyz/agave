@@ -11,7 +11,6 @@ use {
         },
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
-    agave_transaction_view::transaction_data::TransactionData,
     agave_votor_messages::{
         certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
         consensus_message::Block,
@@ -373,7 +372,7 @@ impl BlockComponentProcessor {
     /// Validates that a parent marker (header or update parent) has been processed
     /// before any entry batches. The terminal Alpenglow tick is the only entry
     /// batch allowed after the block footer.
-    pub fn on_entry_batch<D: TransactionData>(
+    pub fn on_entry_batch<D: AsRef<[u8]>>(
         &mut self,
         migration_status: &MigrationStatus,
         slot: Slot,

@@ -43,6 +43,9 @@ use {
         },
         loader_utils::load_upgradeable_buffer,
     },
+    solana_sbf_rust_invoked_dep::{
+        ARGUMENT_LAMPORTS, CREATE_ACCOUNT_LAMPORTS, INVOKED_ARGUMENT_LAMPORTS,
+    },
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,
     solana_sdk_ids::sysvar,
@@ -71,7 +74,7 @@ use {
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_client::BankClient,
-        genesis_utils::{GenesisConfigInfo, create_genesis_config},
+        genesis_utils::{GenesisConfigInfo, create_genesis_config_with_default_rent},
         loader_utils::create_program,
     },
     solana_sbf_rust_invoke_dep::*,
@@ -235,6 +238,19 @@ fn bank_with_feature_deactivated(
 
 #[cfg(feature = "sbf_rust")]
 const LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST: u32 = 64 * 1024 * 1024;
+
+#[cfg(feature = "sbf_rust")]
+const MINT_LAMPORTS: u64 = 1_000_000_000_000;
+
+#[cfg(feature = "sbf_rust")]
+fn rent_exempt_lamports(space: usize) -> u64 {
+    Rent::default().minimum_balance(space)
+}
+
+#[cfg(feature = "sbf_rust")]
+fn rent_exempt_account(space: usize, owner: &Pubkey) -> AccountSharedData {
+    AccountSharedData::new_with_data(rent_exempt_lamports(space), vec![0; space], owner)
+}
 
 #[test]
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
@@ -544,7 +560,7 @@ fn test_program_sbf_duplicate_accounts() {
         let payer_pubkey = Pubkey::new_unique();
         let payee_pubkey = Pubkey::new_unique();
         let pubkey = Pubkey::new_unique();
-        let account = Account::new(10, 1, &program_id);
+        let account = Account::new_with_data(10, vec![0; 1], &program_id);
 
         let account_metas = vec![
             AccountMeta::new(payer_pubkey, true),
@@ -558,7 +574,10 @@ fn test_program_sbf_duplicate_accounts() {
             let mut accounts = program_accounts.clone();
             accounts.extend([
                 (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
-                (payee_pubkey, Account::new(10, 1, &program_id)),
+                (
+                    payee_pubkey,
+                    Account::new_with_data(10, vec![0; 1], &program_id),
+                ),
                 (pubkey, account.clone()),
             ]);
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
@@ -607,8 +626,11 @@ fn test_program_sbf_duplicate_accounts() {
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.extend([
             (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
-            (payee_pubkey, Account::new(10, 1, &program_id)),
-            (pubkey, Account::new(10, 1, &program_id)),
+            (
+                payee_pubkey,
+                Account::new_with_data(10, vec![0; 1], &program_id),
+            ),
+            (pubkey, Account::new_with_data(10, vec![0; 1], &program_id)),
         ]);
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
@@ -795,7 +817,7 @@ fn test_program_sbf_invoke_sanity() {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(50);
+        } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
 
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let invoke_program_id = create_program(&bank, &bpf_loader_upgradeable::id(), program.1);
@@ -807,15 +829,22 @@ fn test_program_sbf_invoke_sanity() {
             .unwrap();
 
         let argument_keypair = Keypair::new();
-        let account = AccountSharedData::new(42, 100, &invoke_program_id);
+        let account =
+            AccountSharedData::new_with_data(ARGUMENT_LAMPORTS, vec![0; 100], &invoke_program_id);
         bank.store_account(&argument_keypair.pubkey(), &account);
 
         let invoked_argument_keypair = Keypair::new();
-        let account = AccountSharedData::new(20, 10, &invoked_program_id);
+        let account = AccountSharedData::new_with_data(
+            INVOKED_ARGUMENT_LAMPORTS,
+            vec![0; 10],
+            &invoked_program_id,
+        );
         bank.store_account(&invoked_argument_keypair.pubkey(), &account);
 
+        // Covers the two `CREATE_ACCOUNT_LAMPORTS` CPIs and stays rent-exempt.
+        let from_lamports = CREATE_ACCOUNT_LAMPORTS.saturating_mul(3);
         let from_keypair = Keypair::new();
-        let account = AccountSharedData::new(84, 0, &system_program::id());
+        let account = AccountSharedData::new(from_lamports, 0, &system_program::id());
         bank.store_account(&from_keypair.pubkey(), &account);
 
         let unexecutable_program_keypair = Keypair::new();
@@ -823,7 +852,7 @@ fn test_program_sbf_invoke_sanity() {
         bank.store_account(&unexecutable_program_keypair.pubkey(), &account);
 
         let noop_program_keypair = Keypair::new();
-        let account = AccountSharedData::new(42, 5, &noop_program_id);
+        let account = rent_exempt_account(5, &noop_program_id);
         bank.store_account(&noop_program_keypair.pubkey(), &account);
 
         let (derived_key1, bump_seed1) =
@@ -992,10 +1021,18 @@ fn test_program_sbf_invoke_sanity() {
         assert!(bank.feature_set.snapshot().raise_cpi_nesting_limit_to_8);
         {
             // Reset the account balances for `ARGUMENT` and `INVOKED_ARGUMENT`
-            let account = AccountSharedData::new(42, 100, &invoke_program_id);
+            let account = AccountSharedData::new_with_data(
+                ARGUMENT_LAMPORTS,
+                vec![0; 100],
+                &invoke_program_id,
+            );
             bank.store_account(&argument_keypair.pubkey(), &account);
 
-            let account = AccountSharedData::new(20, 10, &invoked_program_id);
+            let account = AccountSharedData::new_with_data(
+                INVOKED_ARGUMENT_LAMPORTS,
+                vec![0; 10],
+                &invoked_program_id,
+            );
             bank.store_account(&invoked_argument_keypair.pubkey(), &account);
         }
         do_invoke_success(
@@ -1032,27 +1069,12 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_tx_account_lock_limit::id(),
-        );
-        assert!(!bank.feature_set.snapshot().increase_tx_account_lock_limit);
-
         do_invoke_success(
             TEST_MAX_ACCOUNT_INFOS_OK_BEFORE_INCREASE_TX_ACCOUNT_LOCK_BEFORE_SIMD_0339,
             &[],
             std::slice::from_ref(&invoked_program_id),
             &bank,
         );
-        let bank = bank_with_feature_activated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_tx_account_lock_limit::id(),
-        );
-
-        assert!(bank.feature_set.snapshot().increase_tx_account_lock_limit);
-
         // failure cases
 
         let do_invoke_failure_test_local_with_compute_check =
@@ -1221,14 +1243,6 @@ fn test_program_sbf_invoke_sanity() {
             &bank,
         );
 
-        let bank = bank_with_feature_deactivated(
-            &bank_forks,
-            bank,
-            &feature_set::increase_tx_account_lock_limit::id(),
-        );
-
-        assert!(!bank.feature_set.snapshot().increase_tx_account_lock_limit);
-
         do_invoke_failure_test_local(
             TEST_RETURN_ERROR,
             TransactionError::InstructionError(0, InstructionError::Custom(42)),
@@ -1334,7 +1348,10 @@ fn test_program_sbf_invoke_sanity() {
 
         // Check resulting state
 
-        assert_eq!(43, bank.get_balance(&derived_key1));
+        assert_eq!(
+            CREATE_ACCOUNT_LAMPORTS.saturating_add(1),
+            bank.get_balance(&derived_key1)
+        );
         let account = bank.get_account(&derived_key1).unwrap();
         assert_eq!(&invoke_program_id, account.owner());
         assert_eq!(
@@ -1346,7 +1363,7 @@ fn test_program_sbf_invoke_sanity() {
         }
 
         // Attempt to realloc into unauthorized address space
-        let account = AccountSharedData::new(84, 0, &system_program::id());
+        let account = AccountSharedData::new(from_lamports, 0, &system_program::id());
         bank.store_account(&from_keypair.pubkey(), &account);
         bank.store_account(&derived_key1, &AccountSharedData::default());
         let instruction = Instruction::new_with_bytes(
@@ -1702,7 +1719,7 @@ fn test_program_sbf_instruction_introspection() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50_000);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let program_id = create_program(
@@ -1777,7 +1794,10 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -1815,7 +1835,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
     let stake_pubkey = Pubkey::from_str("HGq9JF77xFXRgWRJy8VQuhdbdugrT856RvQDzr1KJo6E").unwrap();
 
     let mut genesis_config = create_genesis_config_with_leader_ex(
-        123,
+        MINT_LAMPORTS,
         &mint_keypair.pubkey(),
         &validator_pubkey,
         &voting_keypair.pubkey(),
@@ -1824,7 +1844,7 @@ fn get_stable_genesis_config() -> GenesisConfigInfo {
         bootstrap_validator_stake_lamports(),
         42,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
-        Rent::free(),               // most tests don't expect rent
+        Rent::default(),
         ClusterType::Development,
         &FeatureSet::all_enabled(),
         vec![],
@@ -2029,7 +2049,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -2119,7 +2139,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -2205,7 +2225,7 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -2422,7 +2442,7 @@ fn test_program_sbf_upgrade() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank);
 
@@ -2487,7 +2507,7 @@ fn test_program_sbf_upgrade_via_cpi() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mut bank_client = BankClient::new_shared(bank);
@@ -2595,7 +2615,10 @@ fn test_program_sbf_ro_account_modify() {
 
     let argument_pubkey = Pubkey::new_unique();
     let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
-    accounts.push((argument_pubkey, Account::new(42, 100, &program_id)));
+    accounts.push((
+        argument_pubkey,
+        Account::new_with_data(42, vec![0; 100], &program_id),
+    ));
 
     let account_metas = vec![
         AccountMeta::new_readonly(argument_pubkey, false),
@@ -2625,7 +2648,7 @@ fn test_program_sbf_realloc() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(1_000_000_000_000);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
 
     let mint_pubkey = mint_keypair.pubkey();
     let signer = &[&mint_keypair];
@@ -2652,7 +2675,7 @@ fn test_program_sbf_realloc() {
         let mut bump = 0;
         let keypair = Keypair::new();
         let pubkey = keypair.pubkey();
-        let account = AccountSharedData::new(START_BALANCE, 5, &program_id);
+        let account = AccountSharedData::new_with_data(START_BALANCE, vec![0; 5], &program_id);
         bank.store_account(&pubkey, &account);
 
         // Realloc RO account
@@ -3045,11 +3068,10 @@ fn test_program_sbf_realloc_invoke() {
     const START_BALANCE: u64 = 100_000_000_000;
 
     let GenesisConfigInfo {
-        mut genesis_config,
+        genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(1_000_000_000_000);
-    genesis_config.rent = Rent::default();
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
 
     let mint_pubkey = mint_keypair.pubkey();
     let signer = &[&mint_keypair];
@@ -3073,7 +3095,7 @@ fn test_program_sbf_realloc_invoke() {
     let mut bump = 0;
     let keypair = Keypair::new();
     let pubkey = keypair.pubkey().clone();
-    let account = AccountSharedData::new(START_BALANCE, 5, &realloc_program_id);
+    let account = AccountSharedData::new_with_data(START_BALANCE, vec![0; 5], &realloc_program_id);
     bank.store_account(&pubkey, &account);
     let invoke_keypair = Keypair::new();
     let invoke_pubkey = invoke_keypair.pubkey().clone();
@@ -3329,7 +3351,8 @@ fn test_program_sbf_realloc_invoke() {
     assert_eq!(0, data.len());
 
     // Realloc to 100 and check via CPI
-    let invoke_account = AccountSharedData::new(START_BALANCE, 5, &realloc_invoke_program_id);
+    let invoke_account =
+        AccountSharedData::new_with_data(START_BALANCE, vec![0; 5], &realloc_invoke_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
     bank_client
         .send_and_confirm_message(
@@ -3705,7 +3728,7 @@ fn test_program_sbf_processed_inner_instruction() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let sibling_program_id = create_program(
@@ -3878,7 +3901,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(50);
+    } = create_genesis_config_with_default_rent(MINT_LAMPORTS);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let noop = create_program(&bank, &bpf_loader_deprecated::id(), "solana_sbf_rust_noop");
     let inner_instruction_alignment_check = create_program(
@@ -3917,7 +3940,7 @@ fn test_cpi_account_ownership_writability() {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(100_123_456_789);
+        } = create_genesis_config_with_default_rent(100_123_456_789);
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
@@ -3972,7 +3995,7 @@ fn test_cpi_account_ownership_writability() {
                 TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLER,
             ] {
                 bank.register_unique_recent_blockhash_for_test();
-                let account = AccountSharedData::new(42, account_size, &invoke_program_id);
+                let account = rent_exempt_account(account_size, &invoke_program_id);
                 bank.store_account(&account_keypair.pubkey(), &account);
                 let mut instruction_data = vec![instruction_id];
                 instruction_data.extend_from_slice(byte_index.to_le_bytes().as_ref());
@@ -4007,7 +4030,7 @@ fn test_cpi_account_ownership_writability() {
         // because we move the account data pointer.
         // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE is able to make more
         // progress when virtual_address_space_adjustments is on.
-        let account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let account = rent_exempt_account(0, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
         let instruction_data = vec![
             TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER,
@@ -4037,9 +4060,9 @@ fn test_cpi_account_ownership_writability() {
         for target_account in [1, account_metas.len() as u8 - 1] {
             // Similar to the test above where we try to make CPI write into account
             // data. This variant is for when virtual_address_space_adjustments is enabled.
-            let account = AccountSharedData::new(42, 0, &invoke_program_id);
+            let account = rent_exempt_account(0, &invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
-            let account = AccountSharedData::new(42, 0, &invoke_program_id);
+            let account = rent_exempt_account(0, &invoke_program_id);
             bank.store_account(&account2_keypair.pubkey(), &account);
             let instruction_data = vec![
                 TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE,
@@ -4069,7 +4092,7 @@ fn test_cpi_account_ownership_writability() {
         }
 
         // Test that the caller can write to an account which it received from the callee
-        let account = AccountSharedData::new(42, 0, &invoked_program_id);
+        let account = rent_exempt_account(0, &invoked_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
         let instruction_data = vec![TEST_ALLOW_WRITE_AFTER_OWNERSHIP_CHANGE_TO_CALLER, 1, 42, 42];
         let instruction =
@@ -4095,7 +4118,7 @@ fn test_cpi_account_data_updates() {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(100_123_456_789);
+        } = create_genesis_config_with_default_rent(100_123_456_789);
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
         if !virtual_address_space_adjustments {
@@ -4152,8 +4175,10 @@ fn test_cpi_account_data_updates() {
         // This tests the case where a caller extends an account beyond the original
         // data length. The callee should see the extended data (asserted in the
         // callee program, not here).
+        // Stays rent-exempt as the account is resized.
+        let lamports = rent_exempt_lamports(MAX_PERMITTED_DATA_INCREASE);
         let account =
-            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[3].pubkey);
+            AccountSharedData::new_with_data(lamports, b"foo".to_vec(), &account_metas[3].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4187,7 +4212,7 @@ fn test_cpi_account_data_updates() {
         // region contains the new data. In this test the callee owns the account,
         // the caller can't write but the CPI glue still updates correctly.
         let account =
-            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[2].pubkey);
+            AccountSharedData::new_with_data(lamports, b"foo".to_vec(), &account_metas[2].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
         instruction_data.extend_from_slice(b"bar");
@@ -4219,8 +4244,11 @@ fn test_cpi_account_data_updates() {
         // be zeroed (zeroing is checked in the invoked program not here). Same as
         // above, the callee owns the account but the changes are still reflected in
         // the caller even if things are readonly from the caller's POV.
-        let account =
-            AccountSharedData::new_with_data(42, b"foobar".to_vec(), &account_metas[2].pubkey);
+        let account = AccountSharedData::new_with_data(
+            lamports,
+            b"foobar".to_vec(),
+            &account_metas[2].pubkey,
+        );
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
@@ -4262,7 +4290,7 @@ fn test_cpi_account_data_updates() {
         // correct value in the caller frame, and the realloc region must be zeroed
         // (again tested in the invoked program).
         let account =
-            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[3].pubkey);
+            AccountSharedData::new_with_data(lamports, b"foo".to_vec(), &account_metas[3].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4299,7 +4327,7 @@ fn test_cpi_account_data_updates() {
         // _below_ the original data length. Both the spare capacity in the account
         // data _end_ the realloc region must be zeroed.
         let account =
-            AccountSharedData::new_with_data(42, b"foo".to_vec(), &account_metas[3].pubkey);
+            AccountSharedData::new_with_data(lamports, b"foo".to_vec(), &account_metas[3].pubkey);
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
@@ -4343,7 +4371,7 @@ fn test_cpi_invalid_account_info_pointers() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     let bank = Bank::new_for_tests(&genesis_config);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4387,7 +4415,7 @@ fn test_cpi_invalid_account_info_pointers() {
             TEST_CPI_INVALID_OWNER_POINTER,
             TEST_CPI_INVALID_DATA_POINTER,
         ] {
-            let account = AccountSharedData::new(42, 5, invoke_program_id);
+            let account = AccountSharedData::new_with_data(42, vec![0; 5], invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
             let instruction = Instruction::new_with_bytes(
                 *invoke_program_id,
@@ -4416,7 +4444,7 @@ fn test_cpi_invalid_account_info_rc() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
     let account_keypair = Keypair::new();
 
     for virtual_address_space_adjustments in [false, true] {
@@ -4456,7 +4484,7 @@ fn test_cpi_invalid_account_info_rc() {
 
         for invoke_program_id in &program_ids {
             for ix in [TEST_CPI_INVALID_LAMPORTS_RC, TEST_CPI_INVALID_DATA_RC] {
-                let account = AccountSharedData::new(42, 5, invoke_program_id);
+                let account = AccountSharedData::new_with_data(42, vec![0; 5], invoke_program_id);
                 bank.store_account(&account_keypair.pubkey(), &account);
                 let instruction = Instruction::new_with_bytes(
                     *invoke_program_id,
@@ -4495,7 +4523,7 @@ fn test_deplete_cost_meter_with_access_violation() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     let bank = Bank::new_for_tests(&genesis_config);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4588,7 +4616,7 @@ fn test_deny_access_beyond_current_length() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
@@ -4657,7 +4685,7 @@ fn test_deny_executable_write() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
@@ -4713,7 +4741,7 @@ fn test_update_callee_account() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     for virtual_address_space_adjustments in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
@@ -4747,7 +4775,9 @@ fn test_update_callee_account() {
 
         // I. do CPI with account in read only (separate code path with virtual_address_space_adjustments)
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
+        // Stays rent-exempt at the largest size the account is resized to.
+        let lamports = rent_exempt_lamports(20480);
+        let account = AccountSharedData::new_with_data(lamports, data, &invoke_program_id);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -4793,7 +4823,7 @@ fn test_update_callee_account() {
 
         // II. do CPI with account with resize to smaller and write
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
+        let account = AccountSharedData::new_with_data(lamports, data, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4834,7 +4864,7 @@ fn test_update_callee_account() {
 
         // III. do CPI with account with resize to larger and write
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
+        let account = AccountSharedData::new_with_data(lamports, data, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4874,7 +4904,7 @@ fn test_update_callee_account() {
 
         // IV. do CPI with account with resize to larger and write
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
+        let account = AccountSharedData::new_with_data(lamports, data, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
         let mut instruction_data = vec![TEST_CALLEE_ACCOUNT_UPDATES, 1, 0];
@@ -4924,7 +4954,7 @@ fn test_update_callee_account() {
 
         // V. clone data, modify and CPI
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
-        let account = AccountSharedData::new_with_data(42, data, &invoke_program_id);
+        let account = AccountSharedData::new_with_data(lamports, data, &invoke_program_id);
 
         bank.store_account(&account_keypair.pubkey(), &account);
 
@@ -4976,7 +5006,7 @@ fn test_clone_account_data() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     let account_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
@@ -5122,7 +5152,7 @@ fn test_stack_heap_zeroed() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     let bank = Bank::new_for_tests(&genesis_config);
 
@@ -5190,7 +5220,7 @@ fn test_function_call_args() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config(100_123_456_789);
+    } = create_genesis_config_with_default_rent(100_123_456_789);
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let program_id = create_program(
@@ -5331,7 +5361,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(100_123_456_789);
+        } = create_genesis_config_with_default_rent(100_123_456_789);
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
@@ -5374,7 +5404,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 AccountMeta::new(account_keypair.pubkey(), false),
             ];
 
-            let account = AccountSharedData::new(42, 1024, &program_id);
+            let account = AccountSharedData::new_with_data(42, vec![0; 1024], &program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
@@ -5456,7 +5486,10 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -5515,7 +5548,10 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), &program_id)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], &program_id),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {

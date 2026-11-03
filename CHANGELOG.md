@@ -25,13 +25,34 @@ Release channels have their own copy of this changelog:
   `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
   below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
   `getBlocks` behavior.
-* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
-  for the epoch containing a requested slot, with an optional identity filter. Always queries
-  finalized state; there is no commitment parameter.
-* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `getVatActiveSetRankMap` to return validator ranks, vote accounts, identities, BLS keys,
+  and stakes for the epoch containing a requested slot, with an optional identity filter.
+  Always queries finalized state; there is no commitment parameter.
+* Added `RpcClient::get_vat_active_set_rank_map`, which accepts an optional identity filter
+  and minimum context slot through its config argument.
 * Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
   instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
   preserves the existing parsed output.
+* `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
+  `--full-rpc-api`.
+* `getFeeForMessage` now computes the fee from the message alone. It no longer returns `null` when
+  the message's recent blockhash has expired or its durable nonce is invalid, and no longer returns
+  an `invalid transaction message` error when it references missing or invalid address lookup
+  tables.
+* `getInflationReward` provides the block rewards for stake accounts as a separate
+  `blockRewardAmount` field in the response, if block revenue sharing is enabled in the epoch.
+  Otherwise, the field is present with a value of `null`. The `amount` field always contains
+  both inflation and block rewards. To get inflation rewards, calculate `amount - blockRewardAmount`.
+* `getBlock` returns block revenue rewards as separate entries in the `rewards` field. This
+  means a single stake account has two separate reward entries in a block if it received
+  block rewards and inflation rewards. The new entries can only appear when block revenue
+  sharing is enabled.
+* Some error messages from `sendTransaction`, `simulateTransaction` and `getFeeForMessage` changed,
+  error codes are unchanged. Size errors say `data` instead of a type name
+  (`base64 encoded data too large: …`), malformed transactions return
+  `failed to deserialize transaction` (including some previously reported as
+  `Transaction failed to sanitize accounts offsets correctly`), and malformed messages return
+  `invalid transaction message` without further detail.
 
 ### Validator
 
@@ -48,19 +69,24 @@ Release channels have their own copy of this changelog:
 * The default full snapshot interval is now 200,000 slots.
 * XDP interface, address, and transmitter setup failures now report startup errors instead of
   panicking.
+* Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
+  the ledger, and an existing one can be deleted.
 
 #### Deprecations
 
 * `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--enable-banking-trace` is deprecated and a no-op, since banking trace has been removed.
 * `--tpu-max-connections-per-peer` is deprecated and will be removed in a future release. Until then,
   it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
   Replace `--tpu-max-connections-per-peer N` with
   `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
+* `--require-tower` is deprecated and will be removed in a future release.
 
 ### CLI
 
 #### Breaking
 
+* Prebuilt MacOS x86-64 releases are no longer provided.
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
 * **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave
@@ -73,6 +99,8 @@ Release channels have their own copy of this changelog:
   `which cargo-build-sbf` to confirm which copy you're using. Releases are
   published in the
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
+  support parsing and signing txv1 transactions may no longer work with the CLI.
 
 #### Changes
 

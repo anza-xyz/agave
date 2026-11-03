@@ -1,18 +1,24 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-#[cfg(feature = "stable-abi")]
-use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 #[cfg(any(test, feature = "stable-abi"))]
 use wincode::SchemaWrite;
+#[cfg(not(feature = "stable-abi"))]
+use wincode::{adapter::DiscardSeq, len::BincodeLen};
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
+    solana_account::AccountSharedData,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{collections::HashMap, sync::Arc},
     wincode::SchemaRead,
+};
+#[cfg(feature = "stable-abi")]
+use {
+    solana_frozen_abi::stable_abi::StableAbi as _,
+    solana_frozen_abi_macro::{StableAbi, StableAbiSample},
 };
 
 /// Wrapper struct with custom serialization to support serializing
@@ -62,11 +68,10 @@ impl From<Stakes<StakeAccount>> for SerdeStakesToStakeFormat {
     }
 }
 
-/// Simplified, intermediate representation of [`Stakes<T>`]
+/// Wire format of [`Stakes<T>`] in the snapshot manifest, which startup no longer uses.
 ///
-/// Its bincode serializaiton format is identical as Stakes<T>, but allows faster
-/// deserialization without creating imbl::HashMap (such conversion is deferred until
-/// data is actually needed).
+/// Reads skip the vote accounts and stake delegations without parsing their elements. Stable-abi
+/// builds decode them, so the sample roundtrips and matches the populated serialize-side digest.
 #[cfg_attr(
     feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample)
@@ -74,16 +79,42 @@ impl From<Stakes<StakeAccount>> for SerdeStakesToStakeFormat {
 #[derive(Clone, Debug, SchemaRead)]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableDelegationStakes {
-    pub vote_accounts: VoteAccounts,
+    // Sampled as `VoteAccounts` (as the serialize side does), with each `VoteAccount` reduced to
+    // its written `AccountSharedData`.
+    #[cfg_attr(
+        feature = "stable-abi",
+        stable_abi_sample(with = "stable_abi_sample_vote_accounts(rng)")
+    )]
+    #[cfg_attr(
+        not(feature = "stable-abi"),
+        wincode(with = "DiscardSeq<(Pubkey, (u64, AccountSharedData)), BincodeLen>")
+    )]
+    pub unused_vote_accounts: Vec<(Pubkey, (u64, AccountSharedData))>,
     // Sampled as `StakeAccount`s (as the serialize side does) reduced to the written `Delegation`.
     #[cfg_attr(
         feature = "stable-abi",
         stable_abi_sample(with = "stable_abi_sample_stake_delegations(rng)")
     )]
-    pub stake_delegations: Vec<(Pubkey, Delegation)>,
+    #[cfg_attr(
+        not(feature = "stable-abi"),
+        wincode(with = "DiscardSeq<(Pubkey, Delegation), BincodeLen>")
+    )]
+    pub unused_stake_delegations: Vec<(Pubkey, Delegation)>,
     pub unused: u64,
     pub epoch: Epoch,
     pub stake_history: StakeHistory,
+}
+
+#[cfg(feature = "stable-abi")]
+fn stable_abi_sample_vote_accounts(
+    rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
+) -> Vec<(Pubkey, (u64, AccountSharedData))> {
+    let vote_accounts = VoteAccounts::random(rng);
+    vote_accounts
+        .as_ref()
+        .iter()
+        .map(|(pubkey, (stake, account))| (*pubkey, (*stake, AccountSharedData::from(account))))
+        .collect()
 }
 
 #[cfg(feature = "stable-abi")]
@@ -177,15 +208,16 @@ mod tests {
         assert_eq!(other.head, dummy.head);
         assert_eq!(other.tail, dummy.tail);
 
-        assert!(other.stakes.vote_accounts.as_ref().len() >= 5);
-        assert_eq!(other.stakes.vote_accounts, stakes.vote_accounts);
-
         assert_eq!(other.stakes.epoch, stakes.epoch);
         assert_eq!(other.stakes.stake_history, stakes.stake_history);
 
-        assert!(other.stakes.stake_delegations.len() >= 50);
-        // DeserializableDelegationStakes doesn't preserve same order of elements as Stakes, compare converted
-        let other_stakes = Stakes::from_deserialized(other.stakes);
-        assert_eq!(other_stakes, dummy.stakes.into());
+        assert_eq!(
+            other.stakes.unused_vote_accounts.is_empty(),
+            !cfg!(feature = "stable-abi")
+        );
+        assert_eq!(
+            other.stakes.unused_stake_delegations.is_empty(),
+            !cfg!(feature = "stable-abi")
+        );
     }
 }

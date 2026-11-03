@@ -34,7 +34,7 @@ solana-signature = { workspace = true, features = ["serde"] }
 solana-transaction = { workspace = true, features = ["serde"] }
 solana-transaction-context = { workspace = true, features = ["serde"] }
 solana-transaction-error = { workspace = true, features = ["serde"] }
-tarpc = { workspace = true, features = ["full"] }
+tarpc = { workspace = true, features = ["tokio1"] }
 
 [lints]
 workspace = true

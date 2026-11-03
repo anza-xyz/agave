@@ -460,7 +460,7 @@ pub(crate) mod external {
             let Ok((transaction, _)) = translate_sanitized_to_runtime_view(
                 transaction,
                 root_bank,
-                root_bank.get_transaction_account_lock_limit(),
+                root_bank.get_transaction_account_lock_limits(),
                 preloaded_addresses,
             ) else {
                 if flags & check_message_flags::CALCULATE_SCHEDULING_DETAILS != 0 {
@@ -1214,7 +1214,8 @@ pub(crate) mod external {
             }
             .serialize_for_tests()
             .unwrap();
-            let mut table_account = AccountSharedData::new(1, table_data.len(), &program::id());
+            let mut table_account =
+                AccountSharedData::new_with_data(1, vec![0; table_data.len()], &program::id());
             table_account.set_data_from_slice(&table_data);
             test_frame.bank.store_account(&table_key, &table_account);
             let make_transaction = |recipient, data_limit| {

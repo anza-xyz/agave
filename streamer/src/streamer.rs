@@ -66,6 +66,26 @@ where
     }
 }
 
+impl<T> ChannelSend<T> for agave_wake_channel::Sender<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
+        self.try_send(msg)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 /// The receiving-side counterpart of [`ChannelSend`], for code that needs to pop from a channel it
 /// also sends to, such as [`crate::evicting_sender::EvictingSender`].
 pub trait ChannelTryRecv<T>: Clone + Send + 'static {
@@ -75,6 +95,17 @@ pub trait ChannelTryRecv<T>: Clone + Send + 'static {
 impl<T> ChannelTryRecv<T> for Receiver<T>
 where
     T: Send + 'static,
+{
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
+    }
+}
+
+impl<T, Mode> ChannelTryRecv<T> for agave_wake_channel::common::Receiver<T, Mode>
+where
+    T: Send + 'static,
+    Mode: Send + 'static,
 {
     #[inline]
     fn try_recv(&self) -> std::result::Result<T, TryRecvError> {

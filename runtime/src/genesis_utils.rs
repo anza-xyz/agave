@@ -143,6 +143,18 @@ pub fn create_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_genesis_config_with_default_rent(mint_lamports: u64) -> GenesisConfigInfo {
+    create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
+        Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap(),
+        mint_lamports,
+        &solana_pubkey::new_rand(), // validator_pubkey
+        0,                          // validator_stake_lamports
+        &FeatureSet::all_enabled(),
+        Rent::default(),
+    )
+}
+
 pub fn create_genesis_config_with_vote_accounts(
     mint_lamports: u64,
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
@@ -295,6 +307,7 @@ pub fn create_genesis_config_with_tower_leader(
         validator_pubkey,
         validator_stake_lamports,
         &feature_set,
+        Rent::free(),
     )
 }
 
@@ -310,6 +323,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         validator_pubkey,
         validator_stake_lamports,
         &FeatureSet::all_enabled(),
+        Rent::free(),
     )
 }
 
@@ -319,6 +333,7 @@ fn create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
     feature_set: &FeatureSet,
+    rent: Rent,
 ) -> GenesisConfigInfo {
     // Use deterministic keypair so we don't get confused by randomness in tests
     let voting_keypair = Keypair::from_seed(&[
@@ -344,7 +359,7 @@ fn create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
-        Rent::free(),               // most tests don't expect rent
+        rent,
         ClusterType::Development,
         feature_set,
         vec![],

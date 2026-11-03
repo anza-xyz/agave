@@ -21,6 +21,10 @@ pub const CREATE_AND_INIT: u8 = 12;
 pub const SET_RETURN_DATA: u8 = 13;
 pub const ASSIGN_ACCOUNT_TO_CALLER: u8 = 14;
 
+pub const ARGUMENT_LAMPORTS: u64 = 10_000_000;
+pub const INVOKED_ARGUMENT_LAMPORTS: u64 = 5_000_000;
+pub const CREATE_ACCOUNT_LAMPORTS: u64 = 100_000_000;
+
 pub fn create_instruction(
     program_id: Pubkey,
     arguments: &[(&Pubkey, bool, bool)],

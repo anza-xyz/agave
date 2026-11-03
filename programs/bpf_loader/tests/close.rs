@@ -19,7 +19,7 @@ mod common;
 
 #[test]
 fn test_bpf_loader_upgradeable_close() {
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
@@ -243,7 +243,7 @@ fn test_bpf_loader_upgradeable_close() {
     // Case: Reopen should fail
     process_instruction(
         &loader_id,
-        &bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
+        &wincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
             max_data_len: 0,
         })
         .unwrap(),

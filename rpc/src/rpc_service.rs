@@ -693,7 +693,7 @@ impl JsonRpcService {
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
             largest_accounts_cache,
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
@@ -1474,7 +1474,7 @@ mod tests {
             let mut file = std::fs::File::create(ledger_path.path().join("wrong")).unwrap();
             file.write_all(b"wrong file").unwrap();
         }
-        symlink::symlink_file("wrong", &genesis_path).unwrap();
+        agave_fs::symlink("wrong", &genesis_path).unwrap();
 
         // File is a symbolic link => request should fail.
         let action = rrm.process_file_get(DEFAULT_GENESIS_DOWNLOAD_PATH);

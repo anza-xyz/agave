@@ -376,8 +376,8 @@ impl PrunedBanksRequestHandler {
         // Banks for the same slot are purged sequentially
         let accounts_db = bank.rc.accounts.accounts_db.as_ref();
         grouped_banks_to_purge.into_iter().for_each(|group| {
-            group.iter().for_each(|(slot, bank_id)| {
-                accounts_db.purge_slot(*slot, *bank_id, true);
+            group.iter().for_each(|(_, bank_id)| {
+                accounts_db.purge_slot(*bank_id, true);
             })
         });
         num_banks_to_purge
@@ -1024,7 +1024,6 @@ mod test {
 
     /// Ensure that we can prune banks with the same slot (if they were on different forks)
     #[test]
-    #[ignore = "the accounts write cache holds one bank per slot"]
     fn test_pruned_banks_request_handler_handle_request() {
         let (pruned_banks_sender, pruned_banks_receiver) = bounded(1024);
         let pruned_banks_request_handler = PrunedBanksRequestHandler {

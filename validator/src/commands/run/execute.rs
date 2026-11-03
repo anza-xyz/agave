@@ -60,7 +60,6 @@ use {
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
     solana_turbine::broadcast_stage::BroadcastStageType,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -124,18 +123,7 @@ pub fn execute(
 
     let unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
-    let replay_arenas = value_t!(matches, "replay_arenas", usize).ok();
-    if let Some(arena_count) = replay_arenas {
-        let max_replay_arenas = unified_scheduler_handler_threads
-            .unwrap_or_else(DefaultSchedulerPool::default_handler_count)
-            .saturating_add(1);
-        if arena_count > max_replay_arenas {
-            Err(format!(
-                "--experimental-replay-arenas must be at most {max_replay_arenas} (the unified \
-                 scheduler handler thread count plus one)"
-            ))?;
-        }
-    }
+    let execution_arenas = value_t!(matches, "execution_arenas", usize).ok();
 
     let identity_keypair = Arc::new(run_args.identity_keypair);
 
@@ -177,6 +165,13 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
+    // Must happen before the XDP setup below: attaching a zero-copy XDP
+    // program makes some drivers (e.g. igb, ixgbe) reset the NIC, and while
+    // the link is down this query fails against every entrypoint.
+    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
+        .ok()
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
+
     #[cfg(target_os = "linux")]
     let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
         .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
@@ -433,13 +428,6 @@ pub fn execute(
     let use_direct_io = !matches.is_present("no_accounts_db_snapshots_direct_io");
     let accounts_db_config =
         args::accounts_db_config::new_config(matches, &ledger_path, &num_threads, use_direct_io)?;
-    // TODO: Once entrypoints are updated to return shred-version, this should
-    // abort if it fails to obtain a shred-version, so that nodes always join
-    // gossip with a valid shred-version. The code to adopt entrypoint shred
-    // version can then be deleted from gossip and get_rpc_node above.
-    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
-        .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
 
     let tower_path = value_t!(matches, "tower", PathBuf)
         .ok()
@@ -501,7 +489,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        require_tower: matches.is_present("require_tower"),
+        require_tower: false,
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
         tower_storage,
         vote_history_storage,
@@ -588,7 +576,7 @@ pub fn execute(
             BlockVerificationMethod
         ),
         unified_scheduler_handler_threads,
-        replay_arenas,
+        execution_arenas,
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",
@@ -604,11 +592,6 @@ pub fn execute(
         },
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
-        banking_trace_dir_byte_limit: value_t_or_exit!(
-            matches,
-            "banking_trace_dir_byte_limit",
-            u64
-        ),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),
@@ -790,7 +773,7 @@ pub fn execute(
     info!("Validator initialized");
     validator.listen_for_signals()?;
     validator.close();
-    info!("Validator exiting...");
+    info!("Validator exiting");
 
     Ok(())
 }

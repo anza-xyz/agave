@@ -192,7 +192,7 @@ pub(crate) mod external {
         agave_scheduler_bindings::{
             ExecutionResponseRegion, ExecutionWorkerToPackMessage, MAX_TRANSACTIONS_PER_MESSAGE,
             PackToExecutionWorkerMessage, execution_message_flags,
-            worker_message_types::{ExecutionResponse, not_included_reasons},
+            worker_message_types::{ExecutionResponse, execution_statuses, not_included_reasons},
         },
         agave_scheduling_utils::{
             error::transaction_error_to_not_included_reason,
@@ -201,6 +201,7 @@ pub(crate) mod external {
         },
         agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
         arrayvec::ArrayVec,
+        solana_accounts_db::account_locks::TransactionAccountLockLimits,
         solana_cost_model::cost_model::CostModel,
         solana_runtime::bank::Bank,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -472,6 +473,7 @@ pub(crate) mod external {
                         Ok(_) => not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
                         Err(err) => Self::reason_from_packet_handling_error(err),
                     },
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 })
@@ -509,6 +511,7 @@ pub(crate) mod external {
                     Err(err) => ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: Self::reason_from_packet_handling_error(err),
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
@@ -528,6 +531,7 @@ pub(crate) mod external {
                 (0..message.batch.num_transactions).map(|_| ExecutionResponse {
                     execution_slot,
                     not_included_reason: reason,
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 }),
@@ -569,7 +573,7 @@ pub(crate) mod external {
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<MaxAge, MAX_TRANSACTIONS_PER_MESSAGE>,
         ) {
-            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+            let transaction_account_lock_limits = bank.get_transaction_account_lock_limits();
 
             let mut translation_results = ArrayVec::new();
             let mut transactions = ArrayVec::new();
@@ -578,7 +582,7 @@ pub(crate) mod external {
                 match Self::translate_transaction(
                     transaction_ptr,
                     bank,
-                    transaction_account_lock_limit,
+                    transaction_account_lock_limits,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -595,9 +599,9 @@ pub(crate) mod external {
         fn translate_transaction(
             transaction_ptr: TransactionPtr,
             bank: &Bank,
-            transaction_account_lock_limit: usize,
+            transaction_account_lock_limits: TransactionAccountLockLimits,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
-            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limit).map(
+            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limits).map(
                 |(view, deactivation_slot)| {
                     (
                         view,
@@ -635,10 +639,15 @@ pub(crate) mod external {
                     compute_units,
                     loaded_accounts_data_size,
                     fee_payer_post_balance,
-                    ..
+                    result,
                 } => ExecutionResponse {
                     execution_slot: bank.slot(),
                     not_included_reason: not_included_reasons::NONE,
+                    execution_status: if result.is_ok() {
+                        execution_statuses::SUCCESS
+                    } else {
+                        execution_statuses::FAILED
+                    },
                     cost_units: CostModel::calculate_cost_for_executed_transaction(
                         tx,
                         *compute_units,
@@ -654,6 +663,7 @@ pub(crate) mod external {
                         transaction_error,
                         execution_flags.all_or_nothing,
                     ),
+                    execution_status: execution_statuses::NOT_INCLUDED,
                     cost_units: 0,
                     fee_payer_balance: 0,
                 },
@@ -737,6 +747,7 @@ pub(crate) mod external {
             },
             solana_pubkey::Pubkey,
             solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_signer::Signer,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
             std::{
@@ -1025,7 +1036,7 @@ pub(crate) mod external {
                     translate_to_runtime_view(
                         &simple_tx[..],
                         &bank,
-                        bank.get_transaction_account_lock_limit(),
+                        bank.get_transaction_account_lock_limits(),
                     )
                     .ok()
                     .unwrap()
@@ -1077,24 +1088,28 @@ pub(crate) mod external {
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
+                        execution_status: execution_statuses::FAILED,
                         cost_units: 1337,
                         fee_payer_balance: 1_000_000,
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::NONE,
+                        execution_status: execution_statuses::SUCCESS,
                         cost_units: 1341,
                         fee_payer_balance: 2_000_000,
                     },
                     ExecutionResponse {
                         execution_slot: bank.slot(),
                         not_included_reason: not_included_reasons::INSUFFICIENT_FUNDS_FOR_FEE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     }
@@ -1127,7 +1142,7 @@ pub(crate) mod external {
             let tx = translate_to_runtime_view(
                 &simple_tx[..],
                 &bank,
-                bank.get_transaction_account_lock_limit(),
+                bank.get_transaction_account_lock_limits(),
             )
             .ok()
             .unwrap()
@@ -1167,18 +1182,21 @@ pub(crate) mod external {
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0
                     },
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::SANITIZE_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
                     ExecutionResponse {
                         execution_slot: test_slot,
                         not_included_reason: not_included_reasons::ALL_OR_NOTHING_BATCH_FAILURE,
+                        execution_status: execution_statuses::NOT_INCLUDED,
                         cost_units: 0,
                         fee_payer_balance: 0,
                     },
@@ -1434,9 +1452,43 @@ pub(crate) mod external {
             assert_eq!(responses.len(), 1);
             assert_eq!(responses[0].execution_slot, test_frame.bank.slot());
             assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(responses[0].execution_status, execution_statuses::SUCCESS);
             assert!(responses[0].cost_units > 0);
             assert!(responses[0].fee_payer_balance > 0);
             assert_eq!(test_frame.bank.get_balance(&recipient), 1);
+
+            test_frame.free_batch(batch);
+        }
+
+        #[test]
+        fn test_run_execute_failed_transaction() {
+            let mut test_frame = setup_external_test_frame();
+            test_frame.enable_execution();
+
+            let payer = test_frame.mint_keypair.pubkey();
+            let balance = test_frame.bank.get_balance(&payer);
+            let recipient = Pubkey::new_unique();
+            let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
+                &test_frame.mint_keypair,
+                &recipient,
+                balance + 1,
+                test_frame.bank.confirmed_last_blockhash(),
+            ))
+            .unwrap()]);
+
+            test_frame.send_message(PackToExecutionWorkerMessage {
+                flags: 0,
+                max_working_slot: test_frame.bank.slot(),
+                batch: batch.region,
+            });
+            test_frame.iterate().unwrap();
+            let response = test_frame.recv_response();
+            assert_eq!(response.processed_code, processed_codes::PROCESSED);
+            let responses = test_frame.execution_responses(&response.responses);
+            assert_eq!(responses.len(), 1);
+            assert_eq!(responses[0].not_included_reason, not_included_reasons::NONE);
+            assert_eq!(responses[0].execution_status, execution_statuses::FAILED);
+            assert_eq!(test_frame.bank.get_balance(&recipient), 0);
 
             test_frame.free_batch(batch);
         }

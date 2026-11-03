@@ -1501,9 +1501,9 @@ mod tests {
                     assert_eq!(meta.authorized.withdrawer, identity_pk);
 
                     assert_eq!(stake.delegation.voter_pubkey, vote_pk);
-                    let stake_account = AccountSharedData::new(
+                    let stake_account = AccountSharedData::new_with_data(
                         b64_account.stake_lamports,
-                        StakeStateV2::size_of(),
+                        vec![0; StakeStateV2::size_of()],
                         &stake::program::id(),
                     );
                     let rent_exempt_reserve =

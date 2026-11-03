@@ -2,7 +2,6 @@
 use {
     crate::{
         banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
-        banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -459,7 +458,6 @@ pub struct ReplayStageConfig {
     pub tower: Tower,
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
-    pub banking_tracer: Arc<BankingTracer>,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
@@ -782,7 +780,6 @@ impl ReplayStage {
             mut tower,
             vote_tracker,
             cluster_slots,
-            banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -932,7 +929,7 @@ impl ReplayStage {
                 ForkReplayMode::Parallel(pool)
             };
             let replay_verification_worker_pool =
-                ReplayVerificationWorkerPool::new(replay_transactions_threads.get());
+                ReplayVerificationWorkerPool::new(replay_transactions_threads);
 
             let process_active_banks_context = ProcessActiveBanksContext {
                 bank_forks: bank_forks.clone(),
@@ -977,6 +974,7 @@ impl ReplayStage {
                 while poh_controller.has_pending_message() && !exit.load(Ordering::Relaxed) {}
             }
 
+            info!("ReplayStage has started");
             loop {
                 // Stop getting entries if we get exit signal
                 if exit.load(Ordering::Relaxed) {
@@ -1496,7 +1494,7 @@ impl ReplayStage {
                                              set-identity, Exiting: {err}"
                                         );
                                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
-                                        return;
+                                        break;
                                     }
                                 };
                                 // Ensure the validator can land votes with the new identity before
@@ -1590,7 +1588,6 @@ impl ReplayStage {
                             &mut progress,
                             &retransmit_slots_sender,
                             &mut skipped_slots_info,
-                            &banking_tracer,
                             has_new_vote_been_rooted,
                             migration_status.as_ref(),
                         )
@@ -1666,6 +1663,7 @@ impl ReplayStage {
                     wait_receive_time.as_us(),
                 );
             }
+            info!("ReplayStage has stopped");
         };
         let t_replay = Builder::new()
             .name("solReplayStage".to_string())
@@ -2368,14 +2366,13 @@ impl ReplayStage {
             )
         };
 
-        // Clear the accounts for these slots so that any ongoing RPC scans fail.
-        // These have to be atomically cleared together in the same batch, in order
+        // Mark these banks removed so that any ongoing RPC scans fail.
+        // These have to be atomically marked together in the same batch, in order
         // to prevent RPC from seeing inconsistent results in scans.
-        root_bank.remove_unrooted_slots(&slots_to_purge);
+        root_bank.mark_banks_removed(&slots_to_purge);
 
-        // Once the slots above have been purged, now it's safe to remove the banks from
-        // BankForks, allowing the Bank::drop() purging to run and not race with the
-        // `remove_unrooted_slots()` call.
+        // Once the banks above are marked, it's safe to drop them. Bank::drop() purges and
+        // unmarks them, so it must not run before the `mark_banks_removed()` call.
         drop(removed_banks);
 
         for (slot, bank_id) in slots_to_purge {
@@ -2701,16 +2698,15 @@ impl ReplayStage {
             (root_bank, slot_bank_ids_to_purge, removed_banks)
         };
 
-        // Clear the accounts for these slots so that any ongoing RPC scans fail.
-        // These have to be atomically cleared together in the same batch, in order
+        // Mark these banks removed so that any ongoing RPC scans fail.
+        // These have to be atomically marked together in the same batch, in order
         // to prevent RPC from seeing inconsistent results in scans.
         if !slot_bank_ids_to_purge.is_empty() {
-            root_bank.remove_unrooted_slots(&slot_bank_ids_to_purge);
+            root_bank.mark_banks_removed(&slot_bank_ids_to_purge);
         }
 
-        // Once the slots above have been purged, now it's safe to remove the banks from
-        // BankForks, allowing the Bank::drop() purging to run and not race with the
-        // `remove_unrooted_slots()` call.
+        // Once the banks above are marked, it's safe to drop them. Bank::drop() purges and
+        // unmarks them, so it must not run before the `mark_banks_removed()` call.
         drop(banks_to_clear);
         drop(removed_banks);
 
@@ -3031,7 +3027,6 @@ impl ReplayStage {
         progress_map: &mut ProgressMap,
         retransmit_slots_sender: &Sender<Slot>,
         skipped_slots_info: &mut SkippedSlotsInfo,
-        banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
         migration_status: &MigrationStatus,
     ) -> Option<Slot> {
@@ -3143,9 +3138,6 @@ impl ReplayStage {
                 NewBankOptions { vote_only_bank },
             )
             .mark_leader_bank();
-            // make sure parent is frozen for finalized hashes via the above
-            // new()-ing of its child bank
-            banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 bank_forks,
@@ -5429,11 +5421,10 @@ impl ReplayStage {
                         // The normal case where bank parent meta matches what's in bank forks.
                         Some(bank_forks.insert(*bank))
                     } else {
-                        // Purge these banks inline so we are not waiting on the lazy Accounts
-                        // Background Service for cleanup.
+                        // Clear this bank's slot-keyed caches inline so we are not waiting on
+                        // the lazy Accounts Background Service.
                         drop(bank_forks);
                         let slot = bank.slot();
-                        bank.remove_unrooted_slots(&[(slot, bank.bank_id())]);
                         bank.clear_slot_signatures(slot);
                         bank.prune_program_cache_by_deployment_slot(slot);
                         drop(bank);

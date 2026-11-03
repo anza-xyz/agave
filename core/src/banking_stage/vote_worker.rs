@@ -493,12 +493,13 @@ fn consume_scan_should_process_packet(
     };
 
     // Check the number of locks and whether there are duplicates
-    if validate_account_locks(
-        view.account_keys(),
-        bank.get_transaction_account_lock_limit(),
-    )
-    .is_err()
-    {
+    let Ok(limit) = bank
+        .get_transaction_account_lock_limits()
+        .for_version(view.version().into())
+    else {
+        return None;
+    };
+    if validate_account_locks(view.account_keys(), limit).is_err() {
         return None;
     }
 

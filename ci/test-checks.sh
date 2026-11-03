@@ -26,6 +26,9 @@ _ rumdl check CHANGELOG.md
 # check dev-context-only-utils isn't used in normal dependencies
 _ scripts/check-dev-context-only-utils.sh tree
 
+# workspace-member dev-deps must be path-only so `cargo package` strips them
+_ cargo xtask dev-deps check
+
 # fmt; nightly for the unstable import and string options in rustfmt.toml
 _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 

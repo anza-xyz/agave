@@ -6,7 +6,6 @@ pub struct SVMFeatureSet {
     pub account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub deplete_cu_meter_on_vm_failure: bool,
-    pub abort_on_invalid_curve: bool,
     pub blake3_syscall_enabled: bool,
     pub disable_fees_sysvar: bool,
     pub disable_sbpf_v0_execution: bool,
@@ -25,7 +24,6 @@ pub struct SVMFeatureSet {
     pub deprecate_legacy_vote_ixs: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
@@ -51,6 +49,9 @@ pub struct SVMFeatureSet {
     pub early_instruction_trace_overflow_detection: bool,
     pub unbound_loader_v3_instruction_data: bool,
     pub pass_input_metadata_in_vm_r3_r5: bool,
+    pub secp256r1_syscall_enabled: bool,
+    pub loader_v3_allow_prefunded_programdata: bool,
+    pub loader_v3_remove_extend_program: bool,
 }
 
 impl SVMFeatureSet {
@@ -61,7 +62,6 @@ impl SVMFeatureSet {
             account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
             deplete_cu_meter_on_vm_failure: true,
-            abort_on_invalid_curve: true,
             blake3_syscall_enabled: true,
             disable_fees_sysvar: true,
             disable_sbpf_v0_execution: true,
@@ -80,7 +80,6 @@ impl SVMFeatureSet {
             deprecate_legacy_vote_ixs: true,
             simplify_alt_bn128_syscall_error_codes: true,
             fix_alt_bn128_multiplication_input_length: true,
-            increase_tx_account_lock_limit: true,
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
@@ -106,6 +105,9 @@ impl SVMFeatureSet {
             early_instruction_trace_overflow_detection: true,
             unbound_loader_v3_instruction_data: true,
             pass_input_metadata_in_vm_r3_r5: true,
+            secp256r1_syscall_enabled: true,
+            loader_v3_allow_prefunded_programdata: true,
+            loader_v3_remove_extend_program: true,
         }
     }
 }

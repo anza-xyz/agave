@@ -126,7 +126,7 @@ mod tests {
         let prioritization = ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price);
         let message = Message::new(&[transfer, prioritization], Some(&mint.pubkey()));
         let tx = Transaction::new(&[mint], message, recent_blockhash);
-        bincode::serialize(&VersionedTransaction::from(tx)).unwrap()
+        wincode::serialize(&VersionedTransaction::from(tx)).unwrap()
     }
 
     fn priority_from(bank: &Bank, bytes: &[u8]) -> u64 {

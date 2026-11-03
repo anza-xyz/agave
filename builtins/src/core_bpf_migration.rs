@@ -31,9 +31,9 @@ pub struct CoreBpfMigrationConfig {
     pub feature_id: Pubkey,
     /// The type of target to replace.
     pub migration_target: CoreBpfMigrationTargetType,
-    /// If specified, the expected verifiable build hash of the bpf program.
+    /// The expected verifiable build hash of the BPF program.
     /// This will be checked against the buffer account before migration.
-    pub verified_build_hash: Option<Hash>,
+    pub verified_build_hash: Hash,
     /// Static message used to emit datapoint logging.
     /// This is used to identify the migration in the logs.
     /// Should be unique to the migration, ie:

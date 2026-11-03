@@ -43,7 +43,7 @@ fn process_instruction(
             assert_eq!(&instruction_data[1..], &[1, 2, 3, 4, 5]);
             assert_eq!(accounts.len(), 4);
 
-            assert_eq!(accounts[ARGUMENT_INDEX].lamports(), 42);
+            assert_eq!(accounts[ARGUMENT_INDEX].lamports(), ARGUMENT_LAMPORTS);
             assert_eq!(accounts[ARGUMENT_INDEX].data_len(), 100);
             assert!(accounts[ARGUMENT_INDEX].is_signer);
             assert!(accounts[ARGUMENT_INDEX].is_writable);
@@ -59,7 +59,10 @@ fn process_instruction(
                 accounts[INVOKED_ARGUMENT_INDEX].owner,
                 accounts[INVOKED_PROGRAM_INDEX].key
             );
-            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].lamports(), 20);
+            assert_eq!(
+                accounts[INVOKED_ARGUMENT_INDEX].lamports(),
+                INVOKED_ARGUMENT_LAMPORTS
+            );
             assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].data_len(), 10);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_signer);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_writable);
@@ -266,7 +269,7 @@ fn process_instruction(
                 let instruction = system_instruction::create_account(
                     accounts[FROM_INDEX].key,
                     accounts[DERIVED_KEY2_INDEX].key,
-                    1,
+                    CREATE_ACCOUNT_LAMPORTS,
                     MAX_PERMITTED_DATA_INCREASE as u64,
                     program_id,
                 );
@@ -276,8 +279,14 @@ fn process_instruction(
                     &[&[b"Lil'", b"Bits", &[bump_seed2]]],
                 )?;
 
-                assert_eq!(accounts[FROM_INDEX].lamports(), from_lamports - 1);
-                assert_eq!(accounts[DERIVED_KEY2_INDEX].lamports(), to_lamports + 1);
+                assert_eq!(
+                    accounts[FROM_INDEX].lamports(),
+                    from_lamports - CREATE_ACCOUNT_LAMPORTS
+                );
+                assert_eq!(
+                    accounts[DERIVED_KEY2_INDEX].lamports(),
+                    to_lamports + CREATE_ACCOUNT_LAMPORTS
+                );
                 assert_eq!(program_id, accounts[DERIVED_KEY2_INDEX].owner);
                 assert_eq!(
                     accounts[DERIVED_KEY2_INDEX].data_len(),

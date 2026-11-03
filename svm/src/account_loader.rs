@@ -891,7 +891,7 @@ mod tests {
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
         accounts.push((key0, account));
 
-        let account = AccountSharedData::new(2, 1, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
         accounts.push((key1, account));
 
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0])];
@@ -935,7 +935,7 @@ mod tests {
         account.set_rent_epoch(1);
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new(2, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
         account.set_rent_epoch(1);
         accounts.push((key1, account));
 
@@ -981,7 +981,7 @@ mod tests {
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new(40, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(40, vec![0; 1], &Pubkey::default());
         account.set_executable(true);
         accounts.push((key1, account));
 
@@ -1073,13 +1073,13 @@ mod tests {
         account.set_rent_epoch(1);
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new(40, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(40, vec![0; 1], &Pubkey::default());
         account.set_executable(true);
         account.set_rent_epoch(1);
         account.set_owner(native_loader::id());
         accounts.push((key1, account));
 
-        let mut account = AccountSharedData::new(41, 1, &Pubkey::default());
+        let mut account = AccountSharedData::new_with_data(41, vec![0; 1], &Pubkey::default());
         account.set_executable(true);
         account.set_rent_epoch(1);
         account.set_owner(key1);

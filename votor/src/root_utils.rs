@@ -239,10 +239,10 @@ pub fn set_bank_forks_root<CB>(
     }
 
     if !orphaned_slot_bank_ids.is_empty() {
-        // Purge these banks inline so we are not waiting on the lazy Accounts Background Service for cleanup.
-        // Waiting could stall replay if we recreate a bank for this slot.
+        // Clear these banks' slot-keyed caches inline so we are not waiting on the lazy Accounts
+        // Background Service. Waiting could stall replay if we recreate a bank for this slot.
         let root_bank = bank_forks.read().unwrap().root_bank();
-        root_bank.remove_unrooted_slots(&orphaned_slot_bank_ids);
+        root_bank.mark_banks_removed(&orphaned_slot_bank_ids);
         for (slot, _) in &orphaned_slot_bank_ids {
             root_bank.clear_slot_signatures(*slot);
             root_bank.prune_program_cache_by_deployment_slot(*slot);

@@ -9,6 +9,7 @@ use {
     agave_feature_set::FeatureSet,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     agave_votor_messages::migration::MigrationStatus,
+    crossbeam_channel::bounded,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -21,13 +22,10 @@ use {
     solana_clock::{DEFAULT_HASHES_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
-            handle_duplicate_shred,
-        },
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
         blockstore_processor::verify_ticks,
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
             filter::{ShredFilterContext, ShredRecoveryContext},
             wire,
         },
@@ -40,9 +38,8 @@ use {
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
-    solana_transaction::sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash},
+    solana_transaction::sanitized::MessageHash,
     std::{
         borrow::Cow,
         cell::{Cell, RefCell},
@@ -166,13 +163,11 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             open_ledger()
         }
     };
-    let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
+    let (retransmit_sender, _retransmit_rx) = bounded(0);
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
-    let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        let _duplicate_proof =
-            handle_duplicate_shred(&blockstore, duplicate).expect("handle duplicate shred");
-    };
+    // Blockstore stores duplicate proofs at insert time.
+    let handle_duplicate = |_| {};
     let shreds_iter = parsed
         .iter()
         .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
@@ -225,11 +220,13 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
         // The MTU depends on the transaction version, as in `Bank::verify_transaction`.
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
-            let bad_locks = validate_account_locks(
-                AccountKeys::new(tx.static_account_keys(), None),
-                MAX_TX_ACCOUNT_LOCKS,
-            )
-            .is_err();
+            let bad_locks = bank
+                .get_transaction_account_lock_limits()
+                .for_version(tx.version().into())
+                .and_then(|limit| {
+                    validate_account_locks(AccountKeys::new(tx.static_account_keys(), None), limit)
+                })
+                .is_err();
             let invalid_tx = match (*tx).clone().sanitize() {
                 Ok(view) => RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                     view,

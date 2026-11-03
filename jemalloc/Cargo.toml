@@ -21,13 +21,13 @@ name = "agave_jemalloc"
 
 [features]
 agave-unstable-api = []
-metrics = ["dep:log", "dep:solana-metrics"]
+metrics = ["dep:solana-metrics"]
 
 [dependencies]
 jemalloc-ctl = { workspace = true }
 jemalloc-sys = { workspace = true }
 jemallocator = { workspace = true }
-log = { workspace = true, optional = true }
+log = { workspace = true }
 solana-metrics = { workspace = true, optional = true }
 thiserror = { workspace = true }
 

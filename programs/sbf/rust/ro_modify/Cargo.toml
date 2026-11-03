@@ -11,7 +11,7 @@ edition = { workspace = true }
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
+[target.'cfg(target_os = "solana")'.dependencies]
 solana-account-info = { workspace = true }
 solana-msg = { workspace = true }
 solana-program = { workspace = true }

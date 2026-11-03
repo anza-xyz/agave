@@ -778,7 +778,10 @@ mod tests {
         rand::{Rng, rng, seq::SliceRandom as _},
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount, accounts_equal},
         solana_pubkey::Pubkey,
-        std::{collections::HashSet, ops::Range},
+        std::{
+            collections::HashSet,
+            ops::{ControlFlow, Range},
+        },
         strum::IntoEnumIterator,
         strum_macros::EnumIter,
         test_case::test_case,
@@ -972,6 +975,7 @@ mod tests {
                     .accounts
                     .scan_accounts(&mut reader, |_offset, account| {
                         vec.push((*account.pubkey(), create_account_shared_data(&account)));
+                        ControlFlow::Continue(())
                     })
                     .expect("must scan accounts storage");
                 // make sure scan_pubkeys results match
@@ -2211,6 +2215,7 @@ mod tests {
                                     .accounts
                                     .scan_accounts_without_data(|offset, account| {
                                         accounts.push(AccountFromStorage::new(offset, &account));
+                                        ControlFlow::Continue(())
                                     })
                                     .expect("must scan accounts storage");
                                 (storage.slot(), accounts)
@@ -2295,6 +2300,7 @@ mod tests {
                                 .accounts
                                 .scan_accounts(&mut reader, |_offset, meta| {
                                     two.push((*meta.pubkey(), create_account_shared_data(&meta)));
+                                    ControlFlow::Continue(())
                                 })
                                 .expect("must scan accounts storage");
 

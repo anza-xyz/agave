@@ -3,13 +3,11 @@ use {
         checks::{check_account_for_fee_with_commitment, check_unique_pubkeys},
         cli::{
             CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
-            log_instruction_custom_error,
+            log_instruction_custom_error, message_into_signed_transaction,
         },
-        compute_budget::{
-            ComputeUnitConfig, WithComputeUnitConfig, simulate_and_update_compute_unit_limit,
-        },
+        compute_budget::{ComputeUnitConfig, simulate_and_update_compute_unit_limit},
         feature::get_feature_is_active,
-        memo::WithMemo,
+        message_builder::MessageBuilder,
         nonce::check_nonce_account,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
         stake::check_current_authority,
@@ -38,14 +36,12 @@ use {
     },
     solana_commitment_config::CommitmentConfig,
     solana_feature_gate_interface::from_account,
-    solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_system_interface::error::SystemError,
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_vote_program::{
         vote_error::VoteError,
         vote_instruction::{self, CommissionKind, CreateVoteAccountConfig, withdraw},
@@ -1267,7 +1263,7 @@ pub async fn process_create_vote_account(
             )
         };
 
-        let ixs = ixs
+        let ixs = MessageBuilder::new(ixs)
             .with_memo(memo)
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
@@ -1275,14 +1271,10 @@ pub async fn process_create_vote_account(
             });
 
         if let Some(nonce_account) = &nonce_account {
-            Message::new_with_nonce(
-                ixs,
-                Some(&fee_payer.pubkey()),
-                nonce_account,
-                &nonce_authority.pubkey(),
-            )
+            ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+                .build(&fee_payer.pubkey())
         } else {
-            Message::new(&ixs, Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -1297,7 +1289,10 @@ pub async fn process_create_vote_account(
         &recent_blockhash,
         &config.signers[0].pubkey(),
         &fee_payer.pubkey(),
-        compute_unit_limit,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )
@@ -1329,9 +1324,9 @@ pub async fn process_create_vote_account(
         }
     }
 
-    let mut tx = Transaction::new_unsigned(message);
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1340,7 +1335,6 @@ pub async fn process_create_vote_account(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         let result = rpc_client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
@@ -1505,7 +1499,7 @@ pub async fn process_vote_authorize(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_ix]
+    let ixs = MessageBuilder::new(vec![vote_ix])
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -1520,20 +1514,22 @@ pub async fn process_vote_authorize(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        )
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(&fee_payer.pubkey())
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1542,7 +1538,6 @@ pub async fn process_vote_authorize(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1553,7 +1548,6 @@ pub async fn process_vote_authorize(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1602,11 +1596,11 @@ pub async fn process_vote_update_validator(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_validator_identity(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_validator_identity(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         &new_identity_pubkey,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1616,20 +1610,22 @@ pub async fn process_vote_update_validator(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        )
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(&fee_payer.pubkey())
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
 
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1638,7 +1634,6 @@ pub async fn process_vote_update_validator(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1649,7 +1644,6 @@ pub async fn process_vote_update_validator(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1692,11 +1686,11 @@ pub async fn process_vote_update_commission(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_commission(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_commission(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         commission,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1706,19 +1700,21 @@ pub async fn process_vote_update_commission(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        )
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(&fee_payer.pubkey())
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1727,7 +1723,6 @@ pub async fn process_vote_update_commission(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1738,7 +1733,6 @@ pub async fn process_vote_update_commission(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1801,12 +1795,12 @@ pub async fn process_vote_update_commission_bps(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_commission_bps(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_commission_bps(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         commission_kind,
         commission_bps,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1816,19 +1810,21 @@ pub async fn process_vote_update_commission_bps(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        )
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(&fee_payer.pubkey())
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1837,7 +1833,6 @@ pub async fn process_vote_update_commission_bps(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1848,7 +1843,6 @@ pub async fn process_vote_update_commission_bps(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -1904,12 +1898,12 @@ pub async fn process_vote_update_commission_collector(
         BlockhashQuery::Static(_) | BlockhashQuery::Validated(_, _) => ComputeUnitLimit::Default,
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
-    let ixs = vec![vote_instruction::update_commission_collector(
+    let ixs = MessageBuilder::new(vec![vote_instruction::update_commission_collector(
         vote_account_pubkey,
         &authorized_withdrawer.pubkey(),
         new_collector,
         commission_kind,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
@@ -1919,19 +1913,21 @@ pub async fn process_vote_update_commission_collector(
     let fee_payer = config.signers[fee_payer];
 
     let mut message = if let Some(nonce_account) = &nonce_account {
-        Message::new_with_nonce(
-            ixs,
-            Some(&fee_payer.pubkey()),
-            nonce_account,
-            &nonce_authority.pubkey(),
-        )
+        ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+            .build(&fee_payer.pubkey())
     } else {
-        Message::new(&ixs, Some(&fee_payer.pubkey()))
+        ixs.build(&fee_payer.pubkey())
     };
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -1940,7 +1936,6 @@ pub async fn process_vote_update_commission_collector(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -1951,7 +1946,6 @@ pub async fn process_vote_update_commission_collector(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &config.signers[0].pubkey(),
@@ -2125,12 +2119,12 @@ pub async fn process_withdraw_from_vote_account(
         BlockhashQuery::Rpc(_) => ComputeUnitLimit::Simulated,
     };
     let build_message = |lamports| {
-        let ixs = vec![withdraw(
+        let ixs = MessageBuilder::new(vec![withdraw(
             vote_account_pubkey,
             &withdraw_authority.pubkey(),
             lamports,
             destination_account_pubkey,
-        )]
+        )])
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
@@ -2138,14 +2132,10 @@ pub async fn process_withdraw_from_vote_account(
         });
 
         if let Some(nonce_account) = &nonce_account {
-            Message::new_with_nonce(
-                ixs,
-                Some(&fee_payer.pubkey()),
-                nonce_account,
-                &nonce_authority.pubkey(),
-            )
+            ixs.with_nonce(nonce_account, &nonce_authority.pubkey())
+                .build(&fee_payer.pubkey())
         } else {
-            Message::new(&ixs, Some(&fee_payer.pubkey()))
+            ixs.build(&fee_payer.pubkey())
         }
     };
 
@@ -2156,7 +2146,10 @@ pub async fn process_withdraw_from_vote_account(
         &recent_blockhash,
         vote_account_pubkey,
         &fee_payer.pubkey(),
-        compute_unit_limit,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )
@@ -2176,10 +2169,9 @@ pub async fn process_withdraw_from_vote_account(
         )?;
     }
 
-    let mut tx = Transaction::new_unsigned(message);
-
+    let tx =
+        message_into_signed_transaction(message, &config.signers, recent_blockhash, sign_only)?;
     if sign_only {
-        tx.try_partial_sign(&config.signers, recent_blockhash)?;
         return_signers_with_config(
             &tx,
             &config.output_format,
@@ -2188,7 +2180,6 @@ pub async fn process_withdraw_from_vote_account(
             },
         )
     } else {
-        tx.try_sign(&config.signers, recent_blockhash)?;
         if let Some(nonce_account) = &nonce_account {
             let nonce_account =
                 solana_rpc_client_nonce_utils::nonblocking::get_account_with_commitment(
@@ -2199,7 +2190,6 @@ pub async fn process_withdraw_from_vote_account(
                 .await?;
             check_nonce_account(&nonce_account, &nonce_authority.pubkey(), &recent_blockhash)?;
         }
-        let tx = VersionedTransaction::from(tx);
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.static_account_keys()[0],
@@ -2255,23 +2245,27 @@ pub async fn process_close_vote_account(
     let current_balance = rpc_client.get_balance(vote_account_pubkey).await?;
 
     let compute_unit_limit = ComputeUnitLimit::Simulated;
-    let ixs = vec![withdraw(
+    let ixs = MessageBuilder::new(vec![withdraw(
         vote_account_pubkey,
         &withdraw_authority.pubkey(),
         current_balance,
         destination_account_pubkey,
-    )]
+    )])
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
         compute_unit_limit,
     });
 
-    let mut message = Message::new(&ixs, Some(&fee_payer.pubkey()));
-    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message).await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&config.signers, latest_blockhash)?;
-    let tx = VersionedTransaction::from(tx);
+    let mut message = ixs.build(&fee_payer.pubkey());
+    simulate_and_update_compute_unit_limit(
+        &compute_unit_limit,
+        compute_unit_price,
+        rpc_client,
+        &mut message,
+    )
+    .await?;
+    let tx = message_into_signed_transaction(message, &config.signers, latest_blockhash, false)?;
     check_account_for_fee_with_commitment(
         rpc_client,
         &tx.message.static_account_keys()[0],

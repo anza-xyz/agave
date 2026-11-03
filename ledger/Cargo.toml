@@ -31,10 +31,11 @@ agave-unstable-api = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-shred-wire-format = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
-agave-wake-channel = { workspace = true }
+agave-worker-pool = { workspace = true }
 anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bitflags = { workspace = true }
@@ -51,7 +52,6 @@ lazy-lru = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 mockall = { workspace = true }
-num_cpus = { workspace = true }
 num_enum = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }

@@ -8,8 +8,8 @@
 //!
 
 pub mod admin_rpc_post_init;
+pub mod banking_channels;
 pub mod banking_stage;
-pub mod banking_trace;
 pub(crate) mod block_creation_loop;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;

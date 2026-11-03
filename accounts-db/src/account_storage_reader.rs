@@ -14,6 +14,7 @@ use {
     std::{
         cmp,
         io::{self, Write},
+        ops::ControlFlow,
     },
 };
 
@@ -172,15 +173,12 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             self.storage
                 .accounts
                 .scan_accounts_with(self.reader, |offset, account| {
-                    if write_result.is_err() {
-                        return;
-                    }
                     if self
                         .sorted_excluded_offsets
                         .pop_if(|excluded_offset| *excluded_offset == offset)
                         .is_some()
                     {
-                        return;
+                        return ControlFlow::Continue(());
                     }
                     let stored_size = AppendVec::calculate_stored_size(account.data.len());
                     if stored_size > remaining {
@@ -188,10 +186,14 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
                             io::ErrorKind::InvalidData,
                             "account exceeds archive size",
                         ));
-                        return;
+                        return ControlFlow::Break(());
                     }
-                    write_result = account_writer.write_account(&account);
                     remaining -= stored_size;
+                    write_result = account_writer.write_account(&account);
+                    match &write_result {
+                        Ok(_) => ControlFlow::Continue(()),
+                        Err(_) => ControlFlow::Break(()),
+                    }
                 });
         // Preserve the original output error if a later scan also fails.
         write_result?;
@@ -323,6 +325,7 @@ mod tests {
                     assert_eq!(*stored.pubkey, pubkey);
                     assert_eq!(stored.lamports, account.lamports());
                     assert_eq!(stored.data, account.data());
+                    ControlFlow::Continue(())
                 },
             )
             .unwrap();
@@ -501,6 +504,7 @@ mod tests {
                             create_account_shared_data(&stored_account),
                         );
                         assert!(old_value.is_none());
+                        ControlFlow::Continue(())
                     })
                     .unwrap();
                 accounts
@@ -652,6 +656,7 @@ mod tests {
                             create_account_shared_data(&stored_account),
                         );
                         assert!(old_value.is_none());
+                        ControlFlow::Continue(())
                     })
                     .unwrap();
                 accounts
@@ -758,6 +763,7 @@ mod tests {
                     assert_eq!(account.executable, original.executable());
                     assert_eq!(account.rent_epoch, original.rent_epoch());
                     archived_num_accounts += 1;
+                    ControlFlow::Continue(())
                 },
             )
             .unwrap();

@@ -2,11 +2,10 @@ use {
     super::Bank,
     crate::{
         inflation_rewards::points::PointValue,
-        sysvar_account::{create_account, from_account},
+        sysvar_account::{RENT_UNADJUSTED_INITIAL_BALANCE, create_account, from_account},
     },
     log::info,
     solana_account::{ReadableAccount, WritableAccount},
-    solana_clock::INITIAL_RENT_EPOCH,
     solana_sysvar::{self as sysvar, epoch_rewards::EpochRewards},
 };
 
@@ -49,10 +48,7 @@ impl Bank {
         // Do the first store to create the account from scratch, update
         // capitalization if needed, etc
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            create_account(
-                &epoch_rewards,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&epoch_rewards, self.inherit_lamports(account))
         });
 
         // Now add the lamports separately without updating capitalization,
@@ -83,10 +79,7 @@ impl Bank {
         epoch_rewards.distribute(inflation_reward_lamports_minted_and_burned);
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
-            create_account(
-                &epoch_rewards,
-                self.inherit_specially_retained_account_fields(account),
-            )
+            create_account(&epoch_rewards, self.inherit_lamports(account))
         });
 
         // Debit the lamports separately without updating capitalization,
@@ -111,33 +104,19 @@ impl Bank {
     /// Update EpochRewards sysvar with distributed rewards and burn any
     /// remaining lamports over the rent-exempt reserve
     pub(in crate::bank::partitioned_epoch_rewards) fn set_epoch_rewards_sysvar_to_inactive(&self) {
-        const RENT_UNADJUSTED_INITIAL_BALANCE: u64 = 1;
-
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
         assert!(epoch_rewards.total_rewards >= epoch_rewards.distributed_rewards);
         epoch_rewards.active = false;
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
             if self.feature_set.snapshot().block_revenue_sharing {
-                // Don't use `inherit_specially_retained_account_fields()` to
-                // ensure that any remaining lamports get burned, lamports are
-                // set to the rent-exempt minimum during `update_sysvar_account`,
-                // and capitalization is updated
-                create_account(
-                    &epoch_rewards,
-                    (
-                        RENT_UNADJUSTED_INITIAL_BALANCE,
-                        account
-                            .as_ref()
-                            .map(|a| a.rent_epoch())
-                            .unwrap_or(INITIAL_RENT_EPOCH),
-                    ),
-                )
+                // Don't use `inherit_lamports()` to ensure that any remaining
+                // lamports get burned, lamports are set to the rent-exempt
+                // minimum during `update_sysvar_account`, and capitalization
+                // is updated
+                create_account(&epoch_rewards, RENT_UNADJUSTED_INITIAL_BALANCE)
             } else {
-                create_account(
-                    &epoch_rewards,
-                    self.inherit_specially_retained_account_fields(account),
-                )
+                create_account(&epoch_rewards, self.inherit_lamports(account))
             }
         });
 

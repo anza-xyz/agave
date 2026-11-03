@@ -7,14 +7,23 @@ use {
     crate::{
         blockstore_meta::ErasureConfig,
         shred::{
-            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, ShredFlags, ShredId, ShredType,
-            ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred as ShredTrait,
+            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_NONCE, ShredFlags, ShredId,
+            ShredType, ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT,
         },
+    },
+    agave_shred_wire_format::{
+        constants::{
+            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION, SIZE_OF_SIGNATURE, Section,
+            Sections, sections_with_proof_entries,
+        },
+        headers::{peek_header, peek_variant_byte},
+        kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
     },
     solana_clock::Slot,
     solana_hash::Hash,
     solana_perf::packet::BytesPacket,
-    solana_signature::{SIGNATURE_BYTES, Signature},
+    solana_signature::Signature,
     std::ops::Range,
 };
 #[cfg(test)]
@@ -28,8 +37,29 @@ use {
 #[inline]
 fn get_shred_size(shred_variant: ShredVariant) -> usize {
     match shred_variant {
-        ShredVariant::MerkleCode { .. } => shred::merkle::ShredCode::SIZE_OF_PAYLOAD,
-        ShredVariant::MerkleData { .. } => shred::merkle::ShredData::SIZE_OF_PAYLOAD,
+        ShredVariant::MerkleCode { .. } => CodeLayout::SIZE_OF_PAYLOAD,
+        ShredVariant::MerkleData { .. } => DataLayout::SIZE_OF_PAYLOAD,
+    }
+}
+
+#[inline]
+fn get_sections(shred: &[u8]) -> Result<Sections, Error> {
+    sections_of(get_shred_variant(shred)?)
+}
+
+#[inline]
+fn sections_of(variant: ShredVariant) -> Result<Sections, Error> {
+    match variant {
+        ShredVariant::MerkleCode {
+            proof_size,
+            resigned,
+        } => sections_with_proof_entries::<CodeLayout>(usize::from(proof_size), resigned)
+            .ok_or_else(|| Error::InvalidProofSize(proof_size)),
+        ShredVariant::MerkleData {
+            proof_size,
+            resigned,
+        } => sections_with_proof_entries::<DataLayout>(usize::from(proof_size), resigned)
+            .ok_or_else(|| Error::InvalidProofSize(proof_size)),
     }
 }
 
@@ -54,8 +84,8 @@ pub fn get_shred_and_repair_nonce(packet: &BytesPacket) -> Option<(&[u8], Option
     if !packet.meta().repair() {
         return Some((shred, None));
     }
-    let offset = data.len().checked_sub(4)?;
-    let nonce = <[u8; 4]>::try_from(data.get(offset..)?).ok()?;
+    let offset = data.len().checked_sub(SIZE_OF_NONCE)?;
+    let nonce = <[u8; SIZE_OF_NONCE]>::try_from(data.get(offset..)?).ok()?;
     let nonce = u32::from_le_bytes(nonce);
     Some((shred, Some(nonce)))
 }
@@ -67,17 +97,16 @@ pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
 
 #[inline]
 pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {
-    let bytes = <[u8; SIGNATURE_BYTES]>::try_from(shred.get(SIGNATURE_RANGE)?).unwrap();
+    let bytes = <[u8; SIZE_OF_SIGNATURE]>::try_from(shred.get(SIGNATURE_RANGE)?)
+        .expect("the checked slice is exactly one signature wide");
     Some(Signature::from(bytes))
 }
 
-pub(crate) const SIGNATURE_RANGE: Range<usize> = 0..SIGNATURE_BYTES;
+pub(crate) const SIGNATURE_RANGE: Range<usize> = 0..SIZE_OF_SIGNATURE;
 
 #[inline]
 pub(super) fn get_shred_variant(shred: &[u8]) -> Result<ShredVariant, Error> {
-    let Some(&shred_variant) = shred.get(64) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
+    let shred_variant = peek_variant_byte(shred)?;
     ShredVariant::try_from(shred_variant).map_err(|_| Error::InvalidShredVariant)
 }
 
@@ -88,25 +117,30 @@ pub fn get_shred_type(shred: &[u8]) -> Result<ShredType, Error> {
 
 #[inline]
 pub fn get_slot(shred: &[u8]) -> Option<Slot> {
-    let bytes = <[u8; 8]>::try_from(shred.get(65..65 + 8)?).unwrap();
+    let bytes = <[u8; 8]>::try_from(shred.get(OFFSET_OF_SLOT..OFFSET_OF_SLOT + 8)?)
+        .expect("the checked slice contains exactly eight bytes");
     Some(Slot::from_le_bytes(bytes))
 }
 
 #[inline]
 pub fn get_index(shred: &[u8]) -> Option<u32> {
-    let bytes = <[u8; 4]>::try_from(shred.get(73..73 + 4)?).unwrap();
+    let bytes = <[u8; 4]>::try_from(shred.get(OFFSET_OF_INDEX..OFFSET_OF_INDEX + 4)?)
+        .expect("the checked slice contains exactly four bytes");
     Some(u32::from_le_bytes(bytes))
 }
 
 #[inline]
 pub(super) fn get_version(shred: &[u8]) -> Option<u16> {
-    let bytes = <[u8; 2]>::try_from(shred.get(77..77 + 2)?).unwrap();
+    let bytes = <[u8; 2]>::try_from(shred.get(OFFSET_OF_VERSION..OFFSET_OF_VERSION + 2)?)
+        .expect("the checked slice contains exactly two bytes");
     Some(u16::from_le_bytes(bytes))
 }
 
 #[inline]
 pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
-    let bytes = <[u8; 4]>::try_from(shred.get(79..79 + 4)?).unwrap();
+    let bytes =
+        <[u8; 4]>::try_from(shred.get(OFFSET_OF_FEC_SET_INDEX..OFFSET_OF_FEC_SET_INDEX + 4)?)
+            .expect("the checked slice contains exactly four bytes");
     Some(u32::from_le_bytes(bytes))
 }
 
@@ -114,7 +148,9 @@ pub fn get_fec_set_index(shred: &[u8]) -> Option<u32> {
 #[inline]
 pub(crate) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
     debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-    let bytes = <[u8; 2]>::try_from(shred.get(83..83 + 2)?).unwrap();
+    let bytes =
+        <[u8; 2]>::try_from(shred.get(OFFSET_OF_PARENT_OFFSET..OFFSET_OF_PARENT_OFFSET + 2)?)
+            .expect("the checked slice contains exactly two bytes");
     Some(u16::from_le_bytes(bytes))
 }
 
@@ -123,7 +159,10 @@ pub(crate) fn get_parent_offset(shred: &[u8]) -> Option<u16> {
 pub(crate) fn corrupt_and_set_parent_offset(shred: &mut [u8], parent_offset: u16) {
     let bytes = parent_offset.to_le_bytes();
     assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-    shred.get_mut(83..83 + 2).unwrap().copy_from_slice(&bytes);
+    shred
+        .get_mut(OFFSET_OF_PARENT_OFFSET..OFFSET_OF_PARENT_OFFSET + 2)
+        .unwrap()
+        .copy_from_slice(&bytes);
 }
 
 // Returns DataShredHeader.flags if the shred is data.
@@ -133,7 +172,7 @@ pub fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
     match get_shred_type(shred)? {
         ShredType::Code => Err(Error::InvalidShredType),
         ShredType::Data => {
-            let Some(flags) = shred.get(85).copied() else {
+            let Some(flags) = shred.get(OFFSET_OF_FLAGS).copied() else {
                 return Err(Error::InvalidPayloadSize(shred.len()));
             };
             ShredFlags::from_bits(flags).ok_or(Error::InvalidShredFlags(flags))
@@ -146,10 +185,10 @@ pub fn get_flags(shred: &[u8]) -> Result<ShredFlags, Error> {
 #[inline]
 fn get_data_size(shred: &[u8]) -> Result<u16, Error> {
     debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
-    let Some(bytes) = shred.get(86..86 + 2) else {
+    let Some(bytes) = shred.get(OFFSET_OF_DATA_SIZE..OFFSET_OF_DATA_SIZE + 2) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
-    let bytes = <[u8; 2]>::try_from(bytes).unwrap();
+    let bytes = <[u8; 2]>::try_from(bytes).expect("the checked slice contains exactly two bytes");
     Ok(u16::from_le_bytes(bytes))
 }
 
@@ -169,28 +208,24 @@ pub(crate) fn get_data(shred: &[u8]) -> Result<&[u8], Error> {
 /// the shred is a data shred
 #[inline]
 pub(crate) fn get_erasure_config(shred: &[u8]) -> Result<ErasureConfig, Error> {
-    if !matches!(get_shred_type(shred).unwrap(), ShredType::Code) {
+    if !matches!(get_shred_type(shred)?, ShredType::Code) {
         return Err(Error::InvalidShredType);
     }
-    let Some(num_data_bytes) = shred.get(83..83 + 2) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    let Some(num_coding_bytes) = shred.get(85..85 + 2) else {
-        return Err(Error::InvalidPayloadSize(shred.len()));
-    };
-    let num_data = <[u8; 2]>::try_from(num_data_bytes)
-        .map(u16::from_le_bytes)
-        .map(usize::from)
-        .map_err(|_| Error::InvalidErasureConfig)?;
-    let num_coding = <[u8; 2]>::try_from(num_coding_bytes)
-        .map(u16::from_le_bytes)
-        .map(usize::from)
-        .map_err(|_| Error::InvalidErasureConfig)?;
-
+    let header = peek_header::<CodeLayout>(shred)?;
     Ok(ErasureConfig {
-        num_data,
-        num_coding,
+        num_data: usize::from(header.num_data_shreds),
+        num_coding: usize::from(header.num_code_shreds),
     })
+}
+
+/// Returns the position of the coding shred in its erasure batch, or an Error
+/// if the shred is a data shred
+#[inline]
+pub(crate) fn get_position(shred: &[u8]) -> Result<u16, Error> {
+    if !matches!(get_shred_type(shred)?, ShredType::Code) {
+        return Err(Error::InvalidShredType);
+    }
+    Ok(peek_header::<CodeLayout>(shred)?.position)
 }
 
 #[inline]
@@ -216,50 +251,34 @@ pub fn get_merkle_root(shred: &[u8]) -> Option<Hash> {
 }
 
 pub(crate) fn get_chained_merkle_root(shred: &[u8]) -> Option<Hash> {
-    let offset = match get_shred_variant(shred).ok()? {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredCode::get_chained_merkle_root_offset(proof_size, resigned),
-        ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredData::get_chained_merkle_root_offset(proof_size, resigned),
-    }
-    .ok()?;
-    let merkle_root = shred.get(offset..offset + SIZE_OF_MERKLE_ROOT)?;
+    let section = get_sections(shred).ok()?.chained_merkle_root;
+    let merkle_root = shred.get(section.as_range())?;
     Some(Hash::from(
-        <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(merkle_root).unwrap(),
+        <[u8; SIZE_OF_MERKLE_ROOT]>::try_from(merkle_root)
+            .expect("the chained Merkle root section is exactly one hash wide"),
     ))
 }
 
-fn get_retransmitter_signature_offset_from_variant(
-    shred_variant: ShredVariant,
-) -> Result<usize, Error> {
-    match shred_variant {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredCode::get_retransmitter_signature_offset(proof_size, resigned),
-        ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => shred::merkle::ShredData::get_retransmitter_signature_offset(proof_size, resigned),
+fn get_retransmitter_signature_section(variant: ShredVariant) -> Result<Section, Error> {
+    // Checked first so an unresigned variant is reported regardless of proof size.
+    let (ShredVariant::MerkleCode { resigned, .. } | ShredVariant::MerkleData { resigned, .. }) =
+        variant;
+    if !resigned {
+        return Err(Error::InvalidShredVariant);
     }
-}
-
-fn get_retransmitter_signature_offset(shred: &[u8]) -> Result<usize, Error> {
-    get_retransmitter_signature_offset_from_variant(get_shred_variant(shred)?)
+    sections_of(variant)?
+        .retransmitter_signature
+        .ok_or_else(|| Error::InvalidShredVariant)
 }
 
 #[inline]
 fn truncate_retransmitter_signature(shred: &[u8], shred_variant: ShredVariant) -> &[u8] {
-    let Ok(offset) = get_retransmitter_signature_offset_from_variant(shred_variant) else {
+    let Ok(section) = get_retransmitter_signature_section(shred_variant) else {
         return shred;
     };
     // The retransmitter signature is at the very end of the shred payload.
-    debug_assert_eq!(offset + SIGNATURE_BYTES, shred.len());
-    shred.get(..offset).unwrap_or(shred)
+    debug_assert_eq!(section.as_range().end, shred.len());
+    shred.get(..section.start).unwrap_or(shred)
 }
 
 /// Returns the canonical shred bytes from the packet, excluding the
@@ -273,7 +292,7 @@ pub fn get_shred_without_retransmitter_signature(packet: &BytesPacket) -> Option
 }
 
 #[inline]
-pub(super) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
+pub(crate) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8] {
     let Ok(shred_variant) = get_shred_variant(shred) else {
         return shred;
     };
@@ -281,12 +300,13 @@ pub(super) fn get_payload_without_retransmitter_signature(shred: &[u8]) -> &[u8]
 }
 
 pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
-    let offset = get_retransmitter_signature_offset(shred)?;
-    let Some(bytes) = shred.get(offset..offset + SIGNATURE_BYTES) else {
+    let section = get_retransmitter_signature_section(get_shred_variant(shred)?)?;
+    let Some(bytes) = shred.get(section.as_range()) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     Ok(Signature::from(
-        <[u8; SIGNATURE_BYTES]>::try_from(bytes).unwrap(),
+        <[u8; SIZE_OF_SIGNATURE]>::try_from(bytes)
+            .expect("the retransmitter signature section is exactly one signature wide"),
     ))
 }
 
@@ -304,8 +324,8 @@ pub fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
 }
 
 pub fn set_retransmitter_signature(shred: &mut [u8], signature: &Signature) -> Result<(), Error> {
-    let offset = get_retransmitter_signature_offset(shred)?;
-    let Some(buffer) = shred.get_mut(offset..offset + SIGNATURE_BYTES) else {
+    let section = get_retransmitter_signature_section(get_shred_variant(shred)?)?;
+    let Some(buffer) = shred.get_mut(section.as_range()) else {
         return Err(Error::InvalidPayloadSize(shred.len()));
     };
     buffer.copy_from_slice(signature.as_ref());
@@ -327,25 +347,13 @@ pub(crate) fn corrupt_packet<R: Rng>(
         packet.copy_from_slice(&buffer);
     }
     let shred = get_shred(packet).unwrap();
-    let (proof_size, resigned) = match get_shred_variant(shred).unwrap() {
-        ShredVariant::MerkleCode {
-            proof_size,
-            resigned,
-        }
-        | ShredVariant::MerkleData {
-            proof_size,
-            resigned,
-        } => (proof_size, resigned),
-    };
+    let merkle_proof = get_sections(shred).unwrap().merkle_proof;
     let coin_flip: bool = rng.random();
     if coin_flip {
         // Corrupt one byte within the signature offsets.
         modify_packet(rng, packet, SIGNATURE_RANGE);
     } else {
-        // Corrupt the merkle proof. Proof entries are each 20 bytes at the end of shreds.
-        let offset = usize::from(proof_size) * 20;
-        let size = shred.len() - if resigned { SIGNATURE_BYTES } else { 0 };
-        modify_packet(rng, packet, size - offset..size);
+        modify_packet(rng, packet, merkle_proof.as_range());
     }
     // Assert that the signature no longer verifies.
     let shred = get_shred(packet).unwrap();
@@ -369,7 +377,8 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests, traits::ShredData,
+            SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests,
+            traits::{ShredCode as _, ShredData},
         },
         assert_matches::assert_matches,
         rand::Rng,
@@ -489,10 +498,13 @@ mod tests {
             assert_eq!(is_retransmitter_signed_variant(bytes).unwrap(), resigned);
             if resigned {
                 let retransmitter_signature_offset =
-                    get_retransmitter_signature_offset(bytes).unwrap();
+                    shred.retransmitter_signature_offset().unwrap();
                 assert_eq!(
-                    retransmitter_signature_offset,
-                    shred.retransmitter_signature_offset().unwrap(),
+                    get_retransmitter_signature_section(get_shred_variant(bytes).unwrap())
+                        .unwrap()
+                        .as_range(),
+                    retransmitter_signature_offset
+                        ..retransmitter_signature_offset + SIZE_OF_SIGNATURE,
                 );
                 assert_eq!(
                     get_shred_without_retransmitter_signature(packet),
@@ -512,7 +524,7 @@ mod tests {
                 }
             } else {
                 assert_matches!(
-                    get_retransmitter_signature_offset(bytes),
+                    get_retransmitter_signature_section(get_shred_variant(bytes).unwrap()),
                     Err(Error::InvalidShredVariant)
                 );
                 assert_matches!(
@@ -531,11 +543,21 @@ mod tests {
                 );
                 assert_eq!(bytes, shred.payload().as_ref());
             }
-            if let Shred::ShredCode(_) = shred {
+            if let Shred::ShredCode(shred) = shred {
                 assert_matches!(get_flags(bytes), Err(Error::InvalidShredType));
                 assert_matches!(get_data(bytes), Err(Error::InvalidShredType));
+                let coding_header = shred.coding_header();
+                assert_eq!(
+                    get_erasure_config(bytes).unwrap(),
+                    ErasureConfig {
+                        num_data: usize::from(coding_header.num_data_shreds),
+                        num_coding: usize::from(coding_header.num_coding_shreds),
+                    },
+                    "the erasure config read off the wire is the one the coding header holds",
+                );
             }
             if let Shred::ShredData(shred) = shred {
+                assert_matches!(get_erasure_config(bytes), Err(Error::InvalidShredType));
                 let shred_data_header = shred.data_header();
                 assert_eq!(
                     get_parent_offset(bytes).unwrap(),

@@ -50,7 +50,7 @@ url = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-system-interface = { workspace = true, features = ["wincode"] }
 tempfile = { workspace = true }
 
 [lints]
