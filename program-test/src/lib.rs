@@ -11,7 +11,8 @@ use {
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+        Account, AccountSharedData, ReadableAccount, WINCODE_CONFIG, WincodeConfig,
+        state_traits::StateMutWincode as _,
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -73,7 +74,7 @@ use {
     },
     thiserror::Error,
     tokio::task::JoinHandle,
-    wincode::Serialize,
+    wincode::{SchemaRead, SchemaWrite, Serialize},
 };
 // Export types so test clients can limit their solana crate dependencies
 pub use {
@@ -660,12 +661,15 @@ fn required_sysvar_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize 
         .max(serialized_len)
 }
 
-fn create_sysvar_account<T: SysvarId + Serialize<Src = T>>(sysvar: &T) -> Account {
-    let serialized_len = wincode::serialized_size(sysvar).unwrap() as usize;
+fn create_sysvar_account<T>(sysvar: &T) -> Account
+where
+    T: SysvarId
+        + SchemaWrite<WincodeConfig, Src = T>
+        + for<'de> SchemaRead<'de, WincodeConfig, Dst = T>,
+{
+    let serialized_len = wincode::config::serialized_size(sysvar, WINCODE_CONFIG).unwrap() as usize;
     let data_len = required_sysvar_data_len(&T::id(), serialized_len);
-    let mut account = Account::new(1, data_len, &sysvar::id());
-    wincode::serialize_into(account.data.as_mut_slice(), sysvar).unwrap();
-    account
+    Account::new_data_with_space(1, sysvar, data_len, &sysvar::id()).unwrap()
 }
 
 pub fn find_file(filename: &str) -> Option<PathBuf> {
@@ -841,11 +845,12 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarId + Serialize<Src = S>>(
-        &mut self,
-        address: Pubkey,
-        sysvar: &S,
-    ) {
+    pub fn add_sysvar_account<S>(&mut self, address: Pubkey, sysvar: &S)
+    where
+        S: SysvarId
+            + SchemaWrite<WincodeConfig, Src = S>
+            + for<'de> SchemaRead<'de, WincodeConfig, Dst = S>,
+    {
         self.add_account(address, create_sysvar_account(sysvar));
     }
 

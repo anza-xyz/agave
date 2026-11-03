@@ -378,7 +378,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let pubkey = Pubkey::new_unique();
             transaction_accounts.push((
                 pubkey,
-                AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(
+                    0,
+                    vec![0; allocation_size],
+                    &Pubkey::new_unique(),
+                ),
             ));
             instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]

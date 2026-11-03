@@ -1274,7 +1274,7 @@ pub(crate) mod tests {
         let owner = Pubkey::new_unique();
         let data = b"0123456789abcdef";
         let account = AccountSharedData::new_with_data(42, data.to_vec(), &owner);
-        let filtered_out = AccountSharedData::new(42, 15, &owner);
+        let filtered_out = AccountSharedData::new_with_data(42, vec![0; 15], &owner);
 
         for encoding in [
             UiAccountEncoding::Binary,
