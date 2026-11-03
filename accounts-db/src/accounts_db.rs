@@ -528,10 +528,11 @@ pub enum PopulateReadCache {
 }
 
 #[derive(Debug)]
-pub enum LoadedAccountAccessor {
+pub struct LoadedAccountAccessor {
     // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
-    Stored(Option<(Arc<AccountStorageEntry>, Offset)>),
+    storage_entry: Arc<AccountStorageEntry>,
+    offset: Offset,
 }
 
 impl LoadedAccountAccessor {
@@ -542,48 +543,27 @@ impl LoadedAccountAccessor {
         // all of these following .expect() and .unwrap() are like serious logic errors,
         // ideal for representing this as rust type system....
 
-        match self {
-            LoadedAccountAccessor::Stored(Some((maybe_storage_entry, offset))) => {
-                // If we do find the storage entry, we can guarantee that the storage entry is
-                // safe to read from because we grabbed a reference to the storage entry while it
-                // was still in the storage map. This means even if the storage entry is removed
-                // from the storage map after we grabbed the storage entry, the recycler should not
-                // reset the storage entry until we drop the reference to the storage entry.
+        // The storage was taken from the storage map under the index entry's lock, and holding it
+        // keeps it readable even after it is removed from the map.
 
-                // If there's a load filter, read only the account metadata first.
-                // This way we don't read the whole account (including its data)
-                // from disk, only to discard it later.
-                let should_load_account = load_filter.is_none_or(|load_filter| {
-                    maybe_storage_entry
-                        .accounts
-                        .get_stored_account_without_data_callback(*offset, |account| {
-                            load_filter(account.lamports, account.owner, account.data_len)
-                        })
-                        .expect(
-                            "If a storage entry was found in the storage map, it must not have \
-                             been reset yet",
-                        )
-                });
-
-                should_load_account.then(|| {
-                    maybe_storage_entry
-                        .accounts
-                        .get_account_shared_data(*offset)
-                        .expect(
-                            "If a storage entry was found in the storage map, it must not have \
-                             been reset yet",
-                        )
+        // If there's a load filter, read only the account metadata first.
+        // This way we don't read the whole account (including its data)
+        // from disk, only to discard it later.
+        let should_load_account = load_filter.is_none_or(|load_filter| {
+            self.storage_entry
+                .accounts
+                .get_stored_account_without_data_callback(self.offset, |account| {
+                    load_filter(account.lamports, account.owner, account.data_len)
                 })
-            }
+                .expect("a held storage is readable")
+        });
 
-            // It is safe ("""safe""") to skip consulting `load_filter` here because this
-            // branch immediately and invariably panics.
-            LoadedAccountAccessor::Stored(None) => {
-                let account = self
-                    .check_and_get_loaded_account(|loaded_account| loaded_account.take_account());
-                unreachable!("{account:?}");
-            }
-        }
+        should_load_account.then(|| {
+            self.storage_entry
+                .accounts
+                .get_account_shared_data(self.offset)
+                .expect("a held storage is readable")
+        })
     }
 
     fn check_and_get_loaded_account<T>(
@@ -593,56 +573,30 @@ impl LoadedAccountAccessor {
         // all of these following .expect() and .unwrap() are like serious logic errors,
         // ideal for representing this as rust type system....
 
-        match self {
-            LoadedAccountAccessor::Stored(None) => {
-                panic!(
-                    "Should have already been taken care of when creating this \
-                     LoadedAccountAccessor"
-                );
-            }
-            LoadedAccountAccessor::Stored(Some(_maybe_storage_entry)) => {
-                // If we do find the storage entry, we can guarantee that the storage entry is
-                // safe to read from because we grabbed a reference to the storage entry while it
-                // was still in the storage map. This means even if the storage entry is removed
-                // from the storage map after we grabbed the storage entry, the recycler should not
-                // reset the storage entry until we drop the reference to the storage entry.
-                self.get_loaded_account(callback).expect(
-                    "If a storage entry was found in the storage map, it must not have been reset \
-                     yet",
-                )
-            }
-        }
+        // The storage was taken from the storage map under the index entry's lock, and holding it
+        // keeps it readable even after it is removed from the map.
+        self.get_loaded_account(callback)
+            .expect("a held storage is readable")
     }
 
     fn get_loaded_account<T>(
         &mut self,
         mut callback: impl for<'local> FnMut(LoadedAccount<'local>) -> T,
     ) -> Option<T> {
-        match self {
-            LoadedAccountAccessor::Stored(maybe_storage_entry) => {
-                // storage entry may not be present if slot was cleaned up in
-                // between reading the accounts index and calling this function to
-                // get account meta from the storage entry here
-                maybe_storage_entry
-                    .as_ref()
-                    .and_then(|(storage_entry, offset)| {
-                        storage_entry
-                            .accounts
-                            .get_stored_account_callback(*offset, |account| {
-                                callback(LoadedAccount::Stored(account))
-                            })
-                            .inspect_err(|err| {
-                                trace!(
-                                    "get_loaded_account() failed! storage slot: {}, id: {}, \
-                                     offset: {offset}, err: {err}",
-                                    storage_entry.slot(),
-                                    storage_entry.id(),
-                                );
-                            })
-                            .ok()
-                    })
-            }
-        }
+        self.storage_entry
+            .accounts
+            .get_stored_account_callback(self.offset, |account| {
+                callback(LoadedAccount::Stored(account))
+            })
+            .inspect_err(|err| {
+                trace!(
+                    "get_loaded_account() failed! storage slot: {}, id: {}, offset: {}, err: {err}",
+                    self.storage_entry.slot(),
+                    self.storage_entry.id(),
+                    self.offset,
+                );
+            })
+            .ok()
     }
 }
 
@@ -2797,11 +2751,16 @@ impl AccountsDb {
     ) -> LoadedAccountAccessor {
         match storage_location {
             StorageLocation::AccountsFile(store_id, offset) => {
-                let maybe_storage_entry = self
+                // Callers hold the index entry's lock, and storages are removed only after the
+                // index stops referring to them, so the storage is present
+                let storage_entry = self
                     .storage
                     .get_account_storage_entry(slot, *store_id)
-                    .map(|account_storage_entry| (account_storage_entry, *offset));
-                LoadedAccountAccessor::Stored(maybe_storage_entry)
+                    .expect("the storage of a locked index entry is present");
+                LoadedAccountAccessor {
+                    storage_entry,
+                    offset: *offset,
+                }
             }
         }
     }
@@ -5147,12 +5106,8 @@ impl AccountsDb {
                             // the info in 'max' is the most recent, current info for this pubkey
                             return;
                         }
-                        let maybe_storage_entry = self
-                            .storage
-                            .get_account_storage_entry(*slot, account_info.store_id());
-                        let mut accessor = LoadedAccountAccessor::Stored(
-                            maybe_storage_entry.map(|entry| (entry, account_info.offset())),
-                        );
+                        let mut accessor =
+                            self.get_account_accessor(*slot, &account_info.storage_location());
                         accessor.check_and_get_loaded_account(|loaded_account| {
                             let data_len = loaded_account.data_len();
                             let lamports = loaded_account.lamports();

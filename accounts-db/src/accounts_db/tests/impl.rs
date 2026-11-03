@@ -5318,10 +5318,6 @@ fn test_load_account_and_shrink_race() {
     assert_eq!(db.shrink_candidate_slots(&epoch_schedule), 1);
     let StorageLocation::AccountsFile(store_id, _) = storage_location;
     assert_ne!(db.get_and_assert_single_storage(slot).id(), store_id);
-    assert!(matches!(
-        db.get_account_accessor(slot, &storage_location),
-        LoadedAccountAccessor::Stored(None)
-    ));
 
     // The original accessor must keep the old storage alive and readable.
     assert_eq!(
