@@ -1410,6 +1410,151 @@ pub(crate) mod tests {
     };
 
     #[test]
+    fn test_bank_delta_history_gaps_report_lag() {
+        for gap_at_start in [true, false] {
+            let genesis = create_genesis_config(1_000_000).genesis_config;
+            let forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis));
+            let owner = Pubkey::new_unique();
+            let address = Pubkey::new_unique();
+            let params = ProgramSubscriptionParams {
+                pubkey: owner,
+                encoding: UiAccountEncoding::Base64,
+                data_slice: None,
+                filters: Vec::new(),
+                with_context: true,
+                commitment: CommitmentConfig::processed(),
+            };
+            let id = SubscriptionId::from(0);
+            let mut tracker = SubscriptionsTracker::new(forks.clone());
+            tracker.subscribe(SubscriptionParams::Program(params.clone()), id, || 0);
+            let subscription = &tracker.commitment_watchers()[&id];
+            let (sender, mut receiver) = broadcast::channel(8);
+            let notifier = RpcNotifier {
+                sender,
+                recent_items: Mutex::new(RecentItems::new(8, 1024 * 1024)),
+            };
+            let mut parent = forks.read().unwrap().root_bank();
+            for slot in 1..=3 {
+                let bank = Bank::new_from_parent(parent, SlotLeader::default(), slot);
+                bank.store_account(&address, &AccountSharedData::new(slot, 0, &owner));
+                bank.freeze();
+                parent = forks
+                    .write()
+                    .unwrap()
+                    .insert(bank)
+                    .clone_without_scheduler();
+            }
+            let mut retained = NotificationBanks::new(usize::MAX);
+            let mut chain = retained.chain(3, &forks.read().unwrap());
+            chain.banks.retain(|reference| {
+                if gap_at_start {
+                    reference.slot >= 2
+                } else {
+                    reference.slot != 2
+                }
+            });
+            let notified = notify_bank_deltas(
+                &params,
+                subscription,
+                &chain,
+                |snapshot, params| snapshot.program_accounts(&params.pubkey),
+                filter_program_results,
+                &notifier,
+            );
+            assert_eq!(notified, !gap_at_start);
+            if !gap_at_start {
+                let notification = receiver.try_recv().unwrap();
+                let json: serde_json::Value =
+                    serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
+                assert_eq!(json["params"]["result"]["context"]["slot"], 1);
+            }
+            let lagged = receiver.try_recv().unwrap();
+            assert_eq!(lagged.subscription_id, id);
+            assert!(lagged.json.upgrade().is_none());
+            assert!(receiver.try_recv().is_err());
+            assert!(
+                !subscription
+                    .notified_banks
+                    .read()
+                    .unwrap()
+                    .contains_key(&parent.bank_id())
+            );
+            assert_eq!(*subscription.last_notified_slot.read().unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn test_bank_delta_deduplication_stays_bounded_across_replacements() {
+        let genesis = create_genesis_config(1_000_000).genesis_config;
+        let forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis));
+        let root = forks.read().unwrap().root_bank();
+        let owner = Pubkey::new_unique();
+        let address = Pubkey::new_unique();
+        let params = ProgramSubscriptionParams {
+            pubkey: owner,
+            encoding: UiAccountEncoding::Base64,
+            data_slice: None,
+            filters: Vec::new(),
+            with_context: true,
+            commitment: CommitmentConfig::processed(),
+        };
+        let id = SubscriptionId::from(0);
+        let mut tracker = SubscriptionsTracker::new(forks.clone());
+        tracker.subscribe(SubscriptionParams::Program(params.clone()), id, || 0);
+        let subscription = &tracker.commitment_watchers()[&id];
+        let (sender, mut receiver) = broadcast::channel(8);
+        let notifier = RpcNotifier {
+            sender,
+            recent_items: Mutex::new(RecentItems::new(8, 1024 * 1024)),
+        };
+        let mut retained = NotificationBanks::new(usize::MAX);
+        let mut first_id = None;
+        for round in 0..=MAX_NOTIFICATION_BANKS {
+            let bank = Bank::new_from_parent(root.clone(), SlotLeader::default(), 1);
+            bank.store_account(
+                &address,
+                &AccountSharedData::new(round as u64 + 1, 0, &owner),
+            );
+            bank.freeze();
+            let bank_id = bank.bank_id();
+            first_id.get_or_insert(bank_id);
+            forks.write().unwrap().insert(bank);
+            let chain = retained.chain(1, &forks.read().unwrap());
+            for expected in [true, false] {
+                assert_eq!(
+                    notify_bank_deltas(
+                        &params,
+                        subscription,
+                        &chain,
+                        |snapshot, params| snapshot.program_accounts(&params.pubkey),
+                        filter_program_results,
+                        &notifier
+                    ),
+                    expected
+                );
+                if expected {
+                    let notification = receiver.try_recv().unwrap();
+                    let json: serde_json::Value =
+                        serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
+                    assert_eq!(
+                        json["params"]["result"]["value"]["account"]["lamports"],
+                        round as u64 + 1
+                    );
+                }
+                assert!(receiver.try_recv().is_err());
+            }
+            let seen = subscription.notified_banks.read().unwrap();
+            assert!(seen.len() <= MAX_NOTIFICATION_BANKS);
+            assert!(seen.contains_key(&bank_id));
+            drop(seen);
+            forks.write().unwrap().clear_bank(1, false);
+        }
+        let seen = subscription.notified_banks.read().unwrap();
+        assert_eq!(seen.len(), MAX_NOTIFICATION_BANKS);
+        assert!(!seen.contains_key(&first_id.unwrap()));
+    }
+
+    #[test]
     #[serial]
     fn test_pubsub_delivers_skipped_commitment_deltas() {
         for commitment in [

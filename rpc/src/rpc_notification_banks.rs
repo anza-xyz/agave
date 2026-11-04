@@ -235,6 +235,72 @@ mod tests {
     };
 
     #[test]
+    fn test_root_retention_limit_and_duplicate_capture() {
+        let genesis = create_genesis_config(1_000_000).genesis_config;
+        let mut parent = Arc::new(Bank::new_for_tests(&genesis));
+        let mut retained = NotificationBanks::new(usize::MAX);
+        let mut first = None;
+        for slot in 1..=MAX_NOTIFICATION_BANKS as u64 + 1 {
+            let bank = Arc::new(Bank::new_from_parent(parent, SlotLeader::default(), slot));
+            bank.freeze();
+            retained.retain_roots(std::slice::from_ref(&bank));
+            if first.is_none() {
+                first = Some(retained.roots[&slot].bank.clone());
+            }
+            let bytes = retained.bytes;
+            let next_id = retained.next_id;
+            retained.retain_roots(std::slice::from_ref(&bank));
+            assert_eq!(retained.bytes, bytes);
+            assert_eq!(retained.next_id, next_id);
+            parent = bank;
+        }
+        assert_eq!(retained.roots.len(), MAX_NOTIFICATION_BANKS);
+        assert_eq!(retained.banks.len(), MAX_NOTIFICATION_BANKS);
+        assert!(!retained.roots.contains_key(&1));
+        assert!(first.unwrap().upgrade().is_none());
+        assert!(
+            retained.roots[&(MAX_NOTIFICATION_BANKS as u64 + 1)]
+                .bank
+                .upgrade()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_chain_excludes_pending_roots_on_other_forks() {
+        let genesis = create_genesis_config(1_000_000).genesis_config;
+        let forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis));
+        let root = forks.read().unwrap().root_bank();
+        let other = Arc::new(Bank::new_from_parent(
+            root.clone(),
+            SlotLeader::default(),
+            1,
+        ));
+        other.freeze();
+        let tip = Bank::new_from_parent(root, SlotLeader::default(), 2);
+        tip.freeze();
+        let tip = forks.write().unwrap().insert(tip).clone_without_scheduler();
+        let mut retained = NotificationBanks::new(usize::MAX);
+        retained.retain_roots(std::slice::from_ref(&other));
+        let chain = retained.chain(2, &forks.read().unwrap());
+        assert_eq!(
+            chain
+                .banks
+                .iter()
+                .map(|reference| reference.slot)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        assert_eq!(chain.banks.last().unwrap().bank_id, tip.bank_id());
+        assert!(
+            chain
+                .banks
+                .iter()
+                .all(|reference| reference.bank_id != other.bank_id())
+        );
+    }
+
+    #[test]
     fn test_rooted_deltas_survive_flush_and_clean() {
         for flush_before_capture in [false, true] {
             let genesis = create_genesis_config(1_000_000).genesis_config;
