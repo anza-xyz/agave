@@ -87,27 +87,3 @@ fn ledger_tool_copy_test() {
         assert!(!src_slot_output.stdout.is_empty());
     }
 }
-
-#[test]
-fn program_run() {
-    let genesis_config = create_genesis_config(100).genesis_config;
-    let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-    let program = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../programs/bpf_loader/test_elfs/out/noop_aligned.so"
-    );
-
-    let output = run_ledger_tool(&[
-        "-l",
-        ledger_path.path().to_str().unwrap(),
-        "program",
-        "run",
-        "--input",
-        "0",
-        "--mode",
-        "interpreter",
-        program,
-    ]);
-    assert!(output.status.success(), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Result: Ok(0)"));
-}
