@@ -374,12 +374,39 @@ pub(crate) const fn retention_score(last_access: u64, recovery_cost: u64, freque
 }
 
 #[cfg(test)]
+pub(crate) fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
+    use std::{fs::File, io::Read};
+
+    let mut elf = Vec::new();
+    File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
+        .unwrap()
+        .read_to_end(&mut elf)
+        .unwrap();
+    let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
+    ProgramCacheEntryType::Loaded(executable)
+}
+
+#[cfg(test)]
+pub(crate) fn new_test_entry_with_usage(
+    deployment_slot: Slot,
+    stats: ProgramStatistics,
+) -> Arc<ProgramCacheEntry> {
+    use crate::program_cache::env::get_mock_program_runtime_environment;
+
+    Arc::new(ProgramCacheEntry {
+        program: new_loaded_entry(get_mock_program_runtime_environment()),
+        account_owner: ProgramCacheEntryOwner::LoaderV2,
+        deployment_slot,
+        stats: Arc::new(stats),
+        latest_access_slot: AtomicU64::new(deployment_slot),
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use {
-        crate::{
-            loaded_programs::tests::new_test_entry_with_usage,
-            program_cache::metrics::ProgramStatistics,
-        },
+        super::new_test_entry_with_usage,
+        crate::program_cache::metrics::ProgramStatistics,
         std::sync::atomic::{AtomicU64, Ordering},
     };
 

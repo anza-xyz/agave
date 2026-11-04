@@ -639,23 +639,26 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use {
-        crate::{
-            loaded_programs::{IndexImplementation, Percent, ProgramCache, ProgramToLoad},
-            program_cache::{
-                MAX_TOMBSTONE_AGE_IN_SLOTS,
-                entry::{ProgramCacheEntry, ProgramCacheEntryType},
-                env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
-                fork_graph::{BlockRelation, ForkGraph},
-                metrics::ProgramStatistics,
-                owner::ProgramCacheEntryOwner,
-                tx_batch::ProgramCacheForTxBatch,
+        crate::program_cache::{
+            MAX_TOMBSTONE_AGE_IN_SLOTS,
+            entry::{
+                ProgramCacheEntry, ProgramCacheEntryType, new_loaded_entry,
+                new_test_entry_with_usage,
             },
+            env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+            fork_graph::{BlockRelation, ForkGraph},
+            global::{
+                IndexImplementation, Percent, ProgramCache, ProgramToLoad, percent_of_max_entries,
+            },
+            metrics::ProgramStatistics,
+            owner::ProgramCacheEntryOwner,
+            tx_batch::ProgramCacheForTxBatch,
         },
         solana_clock::Slot,
         solana_pubkey::Pubkey,
-        solana_sbpf::{elf::Executable, program::BuiltinProgram},
+        solana_sbpf::program::BuiltinProgram,
         solana_svm_type_overrides::{
             sync::{
                 Arc, RwLock,
@@ -663,7 +666,7 @@ pub(crate) mod tests {
             },
             thread,
         },
-        std::{assert_matches, fs::File, io::Read, ops::ControlFlow},
+        std::{assert_matches, ops::ControlFlow},
         test_case::{test_case, test_matrix},
     };
 
@@ -687,16 +690,6 @@ pub(crate) mod tests {
         ProgramCacheEntryType::Unloaded(env)
     }
 
-    fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
-        let mut elf = Vec::new();
-        File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
-            .unwrap()
-            .read_to_end(&mut elf)
-            .unwrap();
-        let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
-        ProgramCacheEntryType::Loaded(executable)
-    }
-
     fn new_test_entry_with_owner(
         deployment_slot: Slot,
         account_owner: ProgramCacheEntryOwner,
@@ -718,19 +711,6 @@ pub(crate) mod tests {
         let fork_graph = Arc::new(RwLock::new(TestForkGraph { relation }));
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
         (cache, fork_graph)
-    }
-
-    pub(crate) fn new_test_entry_with_usage(
-        deployment_slot: Slot,
-        stats: ProgramStatistics,
-    ) -> Arc<ProgramCacheEntry> {
-        Arc::new(ProgramCacheEntry {
-            program: new_loaded_entry(get_mock_program_runtime_environment()),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot,
-            stats: Arc::new(stats),
-            latest_access_slot: AtomicU64::new(deployment_slot),
-        })
     }
 
     fn new_test_builtin_entry(deployment_slot: Slot) -> Arc<ProgramCacheEntry> {
@@ -897,7 +877,7 @@ pub(crate) mod tests {
         // Evict entries from the cache
         let eviction_pct: Percent = 1;
 
-        let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
+        let num_loaded_expected = percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
         cache.evict_using_random_selection(eviction_pct, 21);
 
@@ -979,7 +959,7 @@ pub(crate) mod tests {
         // Evict entries from the cache
         let eviction_pct: Percent = 1;
 
-        let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
+        let num_loaded_expected = percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
 
         cache.sort_and_unload(eviction_pct);
@@ -1035,8 +1015,7 @@ pub(crate) mod tests {
 
         let program = Pubkey::new_unique();
         let evict_to_pct: Percent = 2;
-        let cache_capacity_after_shrink =
-            crate::loaded_programs::percent_of_max_entries(evict_to_pct);
+        let cache_capacity_after_shrink = percent_of_max_entries(evict_to_pct);
         // Add enough programs to the cache to trigger 1 eviction after shrinking.
         let num_total_programs = (cache_capacity_after_shrink + 1) as u64;
         (0..num_total_programs).for_each(|i| {

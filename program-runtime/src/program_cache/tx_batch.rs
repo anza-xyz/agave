@@ -9,15 +9,15 @@ use {
 /// while the TX batch is guaranteed it will continue to find all the programs it requires.
 /// For program management instructions this also buffers them before they are merged back into the global [ProgramCache].
 ///
-/// [ProgramCache]: crate::loaded_programs::ProgramCache
+/// [ProgramCache]: crate::program_cache::global::ProgramCache
 #[derive(Clone, Debug, Default)]
 pub struct ProgramCacheForTxBatch {
     /// Pubkey is the address of a program.
     /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a transaction is being executed.
-    pub(crate) entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    pub(super) entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     /// Program entries modified during the transaction batch.
     modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
-    pub(crate) slot: Slot,
+    pub(super) slot: Slot,
     pub hit_max_limit: bool,
     pub loaded_missing: bool,
     pub merged_modified: bool,

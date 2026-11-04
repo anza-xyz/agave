@@ -41,12 +41,12 @@ use {
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{Percent, ProgramCache, ProgramToLoad},
         program_cache::{
             ebpp::EpochBoundaryPreparation,
             entry::ProgramCacheEntry,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
             fork_graph::ForkGraph,
+            global::{Percent, ProgramCache, ProgramToLoad},
             metrics::ProgramStatistics,
             owner::ProgramCacheEntryOwner,
             tx_batch::ProgramCacheForTxBatch,

@@ -268,7 +268,7 @@ impl LoadProgramMetrics {
     }
 }
 
-impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
+impl<FG: ForkGraph> crate::program_cache::global::ProgramCache<FG> {
     /// Log per-entry statistics for each entry in the global cache.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn output_entry_stats(&self) {

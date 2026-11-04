@@ -7,7 +7,6 @@ pub mod cpi;
 pub mod deploy;
 pub mod execution_budget;
 pub mod invoke_context;
-pub mod loaded_programs;
 pub mod mem_pool;
 pub mod memory;
 pub mod memory_context;
