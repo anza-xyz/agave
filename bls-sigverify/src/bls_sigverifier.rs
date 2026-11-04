@@ -2,14 +2,14 @@
 
 use {
     crate::{
-        bls_cert_sigverify::{CertPayload, verify_and_send_certificates},
+        bls_cert_sigverify::{CertGroups, CertPayload, verify_and_send_certificates},
         bls_vote_sigverify::{batch::Batch, verify_and_send_votes},
         errors::SigVerifyError,
         generated_cert_types::GeneratedCertTypes,
         metric_types::ConsensusMetricsEventSender,
         pubkeys::VerifiedVotorSlotsMessage,
         rank_map_cache::RankMapCache,
-        rewards::{RewardInput, rewards_wants_vote},
+        rewards::{RewardInput, rewards_wants_cert, rewards_wants_vote},
         sig_verified_messages::SigVerifiedBatch,
         stats::SigVerifierStats,
         unverified_votes_batch::UnverifiedVotePayload,
@@ -19,6 +19,7 @@ use {
         certificate::CertificateType,
         consensus_message::Block,
         migration::MigrationStatus,
+        reward_certificate::NUM_SLOTS_FOR_REWARD,
         unverified_vote_message::{
             DecodedWireConsensusMessage, UnverifiedCertificate, UnverifiedVoteMessage,
         },
@@ -145,6 +146,10 @@ struct SigVerifier {
     stats: SigVerifierStats,
     /// Set of recently verified certs to avoid duplicate work.
     verified_certs: HashSet<CertificateType>,
+    /// Set of recently verified certs that only rewards needed. A cert from another validator can
+    /// contain votes that never reached this node, even if consensus already has a cert of its
+    /// type, so rewards get one more of each type.
+    certs_verified_for_rewards: HashSet<CertificateType>,
     /// Tracks when the cache was last pruned.
     last_checked_root_slot: Slot,
     cluster_info: Arc<ClusterInfo>,
@@ -181,6 +186,7 @@ impl SigVerifier {
             highest_parent_ready,
             stats: SigVerifierStats::default(),
             verified_certs: HashSet::new(),
+            certs_verified_for_rewards: HashSet::new(),
             vote_pool: VotePool::default(),
             last_checked_root_slot: 0,
             cluster_info,
@@ -270,9 +276,10 @@ impl SigVerifier {
                 verify_and_send_certificates(
                     my_pubkey,
                     &mut self.verified_certs,
+                    &mut self.certs_verified_for_rewards,
                     certs,
                     &root_bank,
-                    &self.channels.channel_to_pool,
+                    &self.channels,
                     &self.ban_sender,
                     &self.thread_pool,
                 )
@@ -293,31 +300,84 @@ impl SigVerifier {
         if self.last_checked_root_slot < root_slot {
             self.last_checked_root_slot = root_slot;
             self.verified_certs.retain(|cert| cert.slot() >= root_slot);
+            let reward_slot_to_keep = root_slot.saturating_sub(NUM_SLOTS_FOR_REWARD);
+            self.certs_verified_for_rewards
+                .retain(|cert| cert.slot() >= reward_slot_to_keep);
             self.vote_pool.prune(root_slot);
         }
         self.rank_map_cache.purge(root_epoch);
     }
 
+    /// Adds `cert` to the certs to verify if consensus or rewards need it.
+    ///
+    /// `carrier_slot` is the slot of the block that carried `cert`, for a cert from blockstore.
     fn add_certificate_to_group(
         &mut self,
-        cert_groups: &mut HashMap<CertificateType, Vec<CertPayload>>,
+        my_pubkey: &Pubkey,
+        root_bank: &Bank,
+        cert_groups: &mut CertGroups,
         cert: UnverifiedCertificate,
         sender_identity_pubkey: Pubkey,
+        carrier_slot: Option<Slot>,
     ) {
-        if self.verified_certs.contains(&cert.cert_type) {
-            self.stats.num_verified_certs_received += 1;
+        let cert_type = cert.cert_type;
+        let cert_slot = cert_type.slot();
+        let root_slot = root_bank.slot();
+        if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
+            self.stats.cert_too_far_in_future += 1;
             return;
         }
-        if self.generated_cert_types.has_cert(&cert.cert_type) {
+        // Consensus ignores blocks below the root. Such a block can only carry an older cert that
+        // rewards need.
+        if carrier_slot.is_some_and(|carrier_slot| carrier_slot < root_slot)
+            && cert_slot >= root_slot
+        {
+            return;
+        }
+        if cert_slot < root_slot {
+            self.stats.num_old_certs_received += 1;
+        } else if self.verified_certs.contains(&cert_type) {
+            self.stats.num_verified_certs_received += 1;
+        } else if self.generated_cert_types.has_cert(&cert_type) {
             self.stats.num_generated_certs_received += 1;
+        } else {
+            cert_groups
+                .consensus
+                .entry(cert_type)
+                .or_default()
+                .push(CertPayload {
+                    rewards_wants_cert: rewards_wants_cert(
+                        my_pubkey,
+                        &self.leader_schedule,
+                        root_bank,
+                        &cert_type,
+                        &cert.bitmap,
+                    ),
+                    cert,
+                    sender_identity_pubkey,
+                });
+            return;
+        }
+        // Consensus does not need the cert, but it can contain votes that never reached this node.
+        if self.certs_verified_for_rewards.contains(&cert_type)
+            || !rewards_wants_cert(
+                my_pubkey,
+                &self.leader_schedule,
+                root_bank,
+                &cert_type,
+                &cert.bitmap,
+            )
+        {
             return;
         }
         cert_groups
-            .entry(cert.cert_type)
+            .rewards
+            .entry(cert_type)
             .or_default()
             .push(CertPayload {
                 cert,
                 sender_identity_pubkey,
+                rewards_wants_cert: true,
             });
     }
 
@@ -328,12 +388,12 @@ impl SigVerifier {
         votes_buffer: &mut HashMap<VotePayloadToSign, Batch>,
         certificates: Vec<(Slot, UnverifiedCertificate)>,
         root_bank: &Bank,
-    ) -> HashMap<CertificateType, Vec<CertPayload>> {
+    ) -> CertGroups {
         let root_slot = root_bank.slot();
         let highest_parent_ready_slot = self.highest_parent_ready.read().unwrap().0;
         let max_vote_slot = max_admitted_vote_slot(root_slot, highest_parent_ready_slot);
         let migration_slot = self.migration_status.migration_slot();
-        let mut cert_groups = HashMap::<CertificateType, Vec<CertPayload>>::new();
+        let mut cert_groups = CertGroups::default();
         let mut num_pkts = 0u64;
         let my_shred_version = self.cluster_info.my_shred_version();
         for Datagram {
@@ -366,16 +426,14 @@ impl SigVerifier {
                     );
                 }
                 DecodedWireConsensusMessage::Certificate(cert) => {
-                    let cert_slot = cert.cert_type.slot();
-                    if cert_slot < root_slot {
-                        self.stats.num_old_certs_received += 1;
-                        continue;
-                    }
-                    if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
-                        self.stats.cert_too_far_in_future += 1;
-                        continue;
-                    }
-                    self.add_certificate_to_group(&mut cert_groups, cert, *sender_identity_pubkey);
+                    self.add_certificate_to_group(
+                        my_pubkey,
+                        root_bank,
+                        &mut cert_groups,
+                        cert,
+                        *sender_identity_pubkey,
+                        None,
+                    );
                 }
             }
         }
@@ -388,19 +446,7 @@ impl SigVerifier {
                 self.migration_status
                     .should_allow_block_markers(carrier_slot)
             };
-            if carrier_slot < root_slot
-                || certificate.shred_version != my_shred_version
-                || !is_active
-            {
-                continue;
-            }
-            let cert_slot = certificate.cert_type.slot();
-            if cert_slot < root_slot {
-                self.stats.num_old_certs_received += 1;
-                continue;
-            }
-            if cert_slot > root_slot.saturating_add(NUM_SLOTS_FOR_VERIFY) {
-                self.stats.cert_too_far_in_future += 1;
+            if certificate.shred_version != my_shred_version || !is_active {
                 continue;
             }
             let Some(sender_identity_pubkey) = self
@@ -410,7 +456,14 @@ impl SigVerifier {
             else {
                 continue;
             };
-            self.add_certificate_to_group(&mut cert_groups, certificate, sender_identity_pubkey);
+            self.add_certificate_to_group(
+                my_pubkey,
+                root_bank,
+                &mut cert_groups,
+                certificate,
+                sender_identity_pubkey,
+                Some(carrier_slot),
+            );
         }
         self.stats.num_pkts += num_pkts;
         cert_groups

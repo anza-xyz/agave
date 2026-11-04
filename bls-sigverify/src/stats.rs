@@ -194,8 +194,12 @@ pub(super) struct SigVerifyCertStats {
 
     /// Number of times cert verification failed.
     pub(super) certificate_verification_failed: Saturating<u64>,
+    /// Number of certs that only rewards needed, which [`verify_and_send_certificates`]
+    /// successfully verified the signature of.
+    pub(super) certs_for_rewards_sig_verified: Saturating<u64>,
 
     pub(super) pool_sender: SenderStats,
+    pub(super) rewards_sender: SenderStats,
 
     /// Stats for [`verify_and_send_certificates`].
     pub(super) fn_verify_and_send_certs_stats: WelfordStats,
@@ -210,7 +214,9 @@ impl SigVerifyCertStats {
             redundant_certs_skipped,
             banning_validator,
             certificate_verification_failed,
+            certs_for_rewards_sig_verified,
             pool_sender,
+            rewards_sender,
             fn_verify_and_send_certs_stats,
         } = other;
         self.certs_to_sig_verify += certs_to_sig_verify;
@@ -219,7 +225,9 @@ impl SigVerifyCertStats {
         self.redundant_certs_skipped += redundant_certs_skipped;
         self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
+        self.certs_for_rewards_sig_verified += certs_for_rewards_sig_verified;
         self.pool_sender.merge(pool_sender);
+        self.rewards_sender.merge(rewards_sender);
         self.fn_verify_and_send_certs_stats
             .merge(fn_verify_and_send_certs_stats);
     }
@@ -232,11 +240,14 @@ impl SigVerifyCertStats {
             redundant_certs_skipped,
             banning_validator,
             certificate_verification_failed,
+            certs_for_rewards_sig_verified,
             pool_sender,
+            rewards_sender,
             fn_verify_and_send_certs_stats,
         } = self;
 
         pool_sender.report();
+        rewards_sender.report();
         datapoint_info!(
             "bls_cert_sigverify_stats",
             ("certs_to_sig_verify", certs_to_sig_verify.0, i64),
@@ -251,6 +262,11 @@ impl SigVerifyCertStats {
             (
                 "certificate_verification_failed",
                 certificate_verification_failed.0,
+                i64
+            ),
+            (
+                "certs_for_rewards_sig_verified",
+                certs_for_rewards_sig_verified.0,
                 i64
             ),
             (
@@ -276,7 +292,9 @@ impl Default for SigVerifyCertStats {
             redundant_certs_skipped: Saturating(0),
             banning_validator: Saturating(0),
             certificate_verification_failed: Saturating(0),
+            certs_for_rewards_sig_verified: Saturating(0),
             pool_sender: new_cert_stats_pool_sender_stats(),
+            rewards_sender: SenderStats::new("bls_cert_sigverify_rewards_sender_stats"),
             fn_verify_and_send_certs_stats: WelfordStats::default(),
         }
     }

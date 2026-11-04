@@ -51,11 +51,35 @@ pub(super) fn send_votes_to_rewards(
     }
     let len = votes.len();
     let msg = RewardInput::External(votes);
+    send_to_rewards(my_pubkey, msg, len, channel, &mut stats.rewards_sender);
+}
+
+pub(super) fn send_certs_to_rewards(
+    my_pubkey: &Pubkey,
+    certs: Vec<Certificate>,
+    channel: &Sender<RewardInput>,
+    stats: &mut SenderStats,
+) {
+    if certs.is_empty() {
+        return;
+    }
+    let len = certs.len();
+    let msg = RewardInput::Certificates(certs);
+    send_to_rewards(my_pubkey, msg, len, channel, stats);
+}
+
+fn send_to_rewards(
+    my_pubkey: &Pubkey,
+    msg: RewardInput,
+    len: usize,
+    channel: &Sender<RewardInput>,
+    stats: &mut SenderStats,
+) {
     match channel.try_send(msg) {
-        Ok(()) => stats.rewards_sender.sent += len as u64,
+        Ok(()) => stats.sent += len as u64,
         Err(TrySendError::Full(_)) => {
             warn!("{my_pubkey}: channel \"{REWARDS_CHANNEL}\" is full, dropping msg");
-            stats.rewards_sender.channel_full += 1
+            stats.channel_full += 1
         }
         Err(TrySendError::Disconnected(_)) => {
             warn!("{my_pubkey}: channel \"{REWARDS_CHANNEL}\" disconnected");

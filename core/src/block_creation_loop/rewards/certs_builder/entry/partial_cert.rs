@@ -2,11 +2,37 @@ use {
     agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor::aggregate_accumulator::{AggregateAccumulator, AggregateAccumulatorError},
     agave_votor_messages::{consensus_message::VoteMessage, stake::Stake},
-    solana_bls_signatures::{SignatureCompressed as BLSSignatureCompressed, SignatureProjective},
+    bitvec::vec::BitVec,
+    solana_bls_signatures::{
+        Signature as BLSSignature, SignatureCompressed as BLSSignatureCompressed,
+        SignatureProjective,
+    },
     solana_pubkey::Pubkey,
-    solana_signer_store::EncodeError,
-    std::sync::LazyLock,
+    solana_runtime::epoch_stakes::BLSPubkeyToRankMap,
+    solana_signer_store::{EncodeError, encode_base2},
+    std::{cmp::Reverse, sync::LazyLock},
 };
+
+/// Maximum number of certificates from other validators kept for each vote. Sigverify sends at
+/// most two certificates of each type, and three types carry notarization votes.
+const MAX_CERTIFICATES: usize = 6;
+
+/// How reward certs used certificates from other validators.
+#[derive(Default)]
+pub(in crate::block_creation_loop::rewards) struct CertificateStats {
+    /// Validators paid only because a certificate from another validator contains their vote.
+    pub(in crate::block_creation_loop::rewards) validators_from_certs: u64,
+    /// Certificates that would pay more validators, but that partly overlap a collected vote
+    /// aggregate, which cannot be split.
+    pub(in crate::block_creation_loop::rewards) partially_overlapping_certs: u64,
+}
+
+/// A verified certificate from another validator.
+#[derive(Clone)]
+struct ExternalCert {
+    ranks: BitVec<u8>,
+    signature: BLSSignature,
+}
 
 pub(super) enum BuildResult {
     Empty,
@@ -27,6 +53,11 @@ static IDENTITY_SIGNATURE: LazyLock<BLSSignatureCompressed> =
 pub(super) struct PartialCert {
     accumulator: AggregateAccumulator,
     validators: Vec<Pubkey>,
+    max_validators: usize,
+    /// The vote aggregates in `accumulator`, kept to add the ones that a certificate is missing.
+    aggregates: Vec<VoteAggregate>,
+    /// Verified certificates from other validators.
+    certificates: Vec<ExternalCert>,
 }
 
 impl PartialCert {
@@ -35,6 +66,9 @@ impl PartialCert {
         Self {
             accumulator: AggregateAccumulator::new(max_validators),
             validators: Vec::with_capacity(max_validators),
+            max_validators,
+            aggregates: Vec::new(),
+            certificates: Vec::new(),
         }
     }
 
@@ -46,6 +80,7 @@ impl PartialCert {
     ) -> Result<(), AggregateAccumulatorError> {
         self.accumulator.add_aggregate(&aggregate)?;
         self.validators.append(&mut vote_account_pubkeys);
+        self.aggregates.push(aggregate);
         Ok(())
     }
 
@@ -57,7 +92,142 @@ impl PartialCert {
     ) -> Result<(), AggregateAccumulatorError> {
         self.accumulator.add_own_vote_message(&vote_msg)?;
         self.validators.push(vote_account_pubkey);
+        self.aggregates.push(VoteAggregate::new_from_verified_vote(
+            self.max_validators,
+            vote_msg,
+        ));
         Ok(())
+    }
+
+    /// Stores a verified certificate from another validator, signed by `cert_ranks`.
+    pub(super) fn add_certificate(&mut self, cert_ranks: &BitVec<u8>, signature: BLSSignature) {
+        if self.certificates.len() >= MAX_CERTIFICATES {
+            return;
+        }
+        // A certificate's bitmap ends at its last signer. Copy the signers into a set as wide as
+        // the rank map, so that any rank of a collected aggregate can index it.
+        let mut ranks = BitVec::repeat(false, self.max_validators);
+        for rank in cert_ranks.iter_ones() {
+            if rank >= self.max_validators {
+                return;
+            }
+            ranks.set(rank, true);
+        }
+        if ranks.any() && self.certificates.iter().all(|cert| cert.ranks != ranks) {
+            self.certificates.push(ExternalCert { ranks, signature });
+        }
+    }
+
+    /// Builds the reward cert from the collected votes.
+    ///
+    /// A certificate from another validator can contain votes that never reached this node. If
+    /// one pays additional stake, it is combined with the collected votes that it is missing.
+    pub(super) fn build(
+        self,
+        rank_map: &BLSPubkeyToRankMap,
+        stats: &mut CertificateStats,
+    ) -> BuildResult {
+        match self.build_from_certificates(rank_map, stats) {
+            Some(result) => result,
+            None => self.build_sig_bitmap(),
+        }
+    }
+
+    /// Returns the certificate that pays the most additional stake once combined with the
+    /// collected votes, if any.
+    fn build_from_certificates(
+        &self,
+        rank_map: &BLSPubkeyToRankMap,
+        stats: &mut CertificateStats,
+    ) -> Option<BuildResult> {
+        if self.certificates.is_empty() || rank_map.len() != self.max_validators {
+            return None;
+        }
+        let mut collected = BitVec::<u8>::repeat(false, self.max_validators);
+        for aggregate in &self.aggregates {
+            collected |= aggregate.ranks();
+        }
+        let mut certificates = self
+            .certificates
+            .iter()
+            .filter_map(|cert| {
+                let added_stake = cert
+                    .ranks
+                    .iter_ones()
+                    .filter(|&rank| !collected[rank])
+                    .filter_map(|rank| rank_map.get_pubkey_stake_entry(rank))
+                    .fold(0u64, |stake, entry| {
+                        stake.saturating_add(entry.stake.get().get())
+                    });
+                (added_stake > 0).then_some((added_stake, cert))
+            })
+            .collect::<Vec<_>>();
+        certificates.sort_unstable_by_key(|&(added_stake, _)| Reverse(added_stake));
+        for (_, cert) in certificates {
+            let Some((signature, mut ranks)) = self.combine(cert, stats) else {
+                continue;
+            };
+            // As in `build_sig_bitmap`, an identity aggregate is never packed.
+            let signature = BLSSignatureCompressed::from(signature);
+            if signature == *IDENTITY_SIGNATURE {
+                continue;
+            }
+            let validators = ranks
+                .iter_ones()
+                .map(|rank| {
+                    rank_map
+                        .get_pubkey_stake_entry(rank)
+                        .map(|entry| entry.vote_account_pubkey)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            ranks.resize(
+                ranks.last_one().map_or(0, |rank| rank.saturating_add(1)),
+                false,
+            );
+            let bitmap = match encode_base2(&ranks) {
+                Ok(bitmap) => bitmap,
+                Err(e) => return Some(BuildResult::EncodingError(e)),
+            };
+            stats.validators_from_certs +=
+                validators.len().saturating_sub(collected.count_ones()) as u64;
+            return Some(BuildResult::Success {
+                signature,
+                bitmap,
+                validators,
+            });
+        }
+        None
+    }
+
+    /// Combines `cert` with the collected aggregates that do not overlap it, and returns the
+    /// signature and the signers.
+    ///
+    /// The certificate and each aggregate were verified, and their signers are disjoint, so the
+    /// combination verifies too. An aggregate was only verified as a whole, so `cert` cannot be
+    /// used if an aggregate partly overlaps it.
+    fn combine(
+        &self,
+        cert: &ExternalCert,
+        stats: &mut CertificateStats,
+    ) -> Option<(SignatureProjective, BitVec<u8>)> {
+        let mut signature = SignatureProjective::identity();
+        signature
+            .aggregate_with(std::iter::once(&cert.signature))
+            .ok()?;
+        let mut ranks = cert.ranks.clone();
+        for aggregate in &self.aggregates {
+            let signers = aggregate.ranks();
+            if signers.iter_ones().all(|rank| !cert.ranks[rank]) {
+                signature
+                    .aggregate_with(std::iter::once(aggregate.signature()))
+                    .ok()?;
+                ranks |= signers;
+            } else if signers.iter_ones().any(|rank| !cert.ranks[rank]) {
+                stats.partially_overlapping_certs += 1;
+                return None;
+            }
+        }
+        Some((signature, ranks))
     }
 
     /// Builds a signature and associated bitmap from the collected votes.
