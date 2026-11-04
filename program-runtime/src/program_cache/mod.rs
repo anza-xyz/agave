@@ -3,6 +3,7 @@
 pub mod ebpp;
 pub mod env;
 pub mod fork_graph;
+pub(crate) mod loading_task;
 pub mod owner;
 
 use solana_clock::Slot;

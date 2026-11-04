@@ -1,10 +1,10 @@
 use {
     crate::{
-        loading_task::LoadingTaskWaiter,
         program_cache::{
             MAX_LOADED_ENTRY_COUNT, MAX_TOMBSTONE_AGE_IN_SLOTS,
             env::ProgramRuntimeEnvironment,
             fork_graph::{BlockRelation, ForkGraph},
+            loading_task::LoadingTaskWaiter,
             owner::ProgramCacheEntryOwner,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
