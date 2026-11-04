@@ -22,7 +22,7 @@ const DATA_SIZES: [usize; 4] = [
 fn bench_account_serialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("serde_account_serialize");
     for data_size in DATA_SIZES {
-        let account = Account::new(0, data_size, &Pubkey::default());
+        let account = Account::new_with_data(0, vec![0; data_size], &Pubkey::default());
         let num_bytes = wincode::config::serialized_size(&account, WINCODE_CONFIG).unwrap();
         group.throughput(Throughput::Bytes(num_bytes));
         group.bench_function(BenchmarkId::new("wincode", data_size), |b| {
@@ -41,7 +41,7 @@ fn bench_account_serialize(c: &mut Criterion) {
 fn bench_account_deserialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("serde_account_deserialize");
     for data_size in DATA_SIZES {
-        let account = Account::new(0, data_size, &Pubkey::default());
+        let account = Account::new_with_data(0, vec![0; data_size], &Pubkey::default());
         let serialized_account = wincode::config::serialize(&account, WINCODE_CONFIG).unwrap();
         group.throughput(Throughput::Bytes(serialized_account.len() as u64));
         group.bench_function(BenchmarkId::new("wincode", data_size), |b| {

@@ -877,7 +877,7 @@ mod tests {
         // Need to write accounts into split to ensure its data file is created.
         // Account data must be large enough to ensure it is written into external data.
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         split
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
@@ -898,7 +898,7 @@ mod tests {
         // Need to write accounts into split2 to ensure its data file is created.
         // Account data must be large enough to ensure it is written into external data.
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         split2
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
@@ -941,7 +941,11 @@ mod tests {
         let accounts = [
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(101, inline_data_min, &owner),
+                AccountSharedData::new_with_data(
+                    101,
+                    rand::random_iter().take(inline_data_min).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
@@ -949,15 +953,27 @@ mod tests {
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(103, external_data_max, &owner),
+                AccountSharedData::new_with_data(
+                    103,
+                    rand::random_iter().take(external_data_max).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(104, inline_data_max, &owner),
+                AccountSharedData::new_with_data(
+                    104,
+                    rand::random_iter().take(inline_data_max).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(105, external_data_min, &owner),
+                AccountSharedData::new_with_data(
+                    105,
+                    rand::random_iter().take(external_data_min).collect(),
+                    &owner,
+                ),
             ),
         ];
 
@@ -1014,7 +1030,11 @@ mod tests {
         let accounts = [
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(101, inline_data_min, &owner),
+                AccountSharedData::new_with_data(
+                    101,
+                    rand::random_iter().take(inline_data_min).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
@@ -1022,7 +1042,11 @@ mod tests {
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(104, inline_data_max, &owner),
+                AccountSharedData::new_with_data(
+                    104,
+                    rand::random_iter().take(inline_data_max).collect(),
+                    &owner,
+                ),
             ),
         ];
 
@@ -1142,7 +1166,11 @@ mod tests {
         for i in 0..5 {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, inline_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(inline_data + i).collect(),
+                    &owner,
+                ),
             ));
             accounts.push((
                 Pubkey::new_unique(),
@@ -1150,11 +1178,19 @@ mod tests {
             ));
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, small_external_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(small_external_data + i).collect(),
+                    &owner,
+                ),
             ));
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, large_external_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(large_external_data + i).collect(),
+                    &owner,
+                ),
             ));
         }
         // Include enough accounts to ensure the meta file size is larger than
@@ -1162,7 +1198,13 @@ mod tests {
         for _ in 0..META_SCAN_BUFFER_SIZE.div_ceil(META_ENTRY_INLINE_DATA_MAX_SIZE) {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, META_ENTRY_INLINE_DATA_MAX_SIZE, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter()
+                        .take(META_ENTRY_INLINE_DATA_MAX_SIZE)
+                        .collect(),
+                    &owner,
+                ),
             ));
         }
 
@@ -1230,7 +1272,11 @@ mod tests {
         for i in 0..5 {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, inline_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(inline_data + i).collect(),
+                    &owner,
+                ),
             ));
             accounts.push((
                 Pubkey::new_unique(),
@@ -1242,7 +1288,13 @@ mod tests {
         for _ in 0..META_SCAN_BUFFER_SIZE.div_ceil(META_ENTRY_INLINE_DATA_MAX_SIZE) {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, META_ENTRY_INLINE_DATA_MAX_SIZE, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter()
+                        .take(META_ENTRY_INLINE_DATA_MAX_SIZE)
+                        .collect(),
+                    &owner,
+                ),
             ));
         }
 
@@ -1356,7 +1408,8 @@ mod tests {
         let write_split = |name: &str| {
             let split = SplitFile::new(temp_dir.path().join(name)).unwrap();
             let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-            let account = AccountSharedData::new(1, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(1, vec![0; data_len], &Pubkey::default());
             split
                 .write_accounts(&(0, [(Pubkey::new_unique(), account)].as_slice()))
                 .unwrap();
@@ -1445,7 +1498,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
-        let account = AccountSharedData::new(123, 165, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; 165], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1511,7 +1564,7 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1577,7 +1630,7 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1635,7 +1688,7 @@ mod tests {
         let expected_address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(&expected_address, &account)].as_slice()))
             .unwrap();
@@ -1706,7 +1759,8 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let expected_data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, expected_data_len, &Pubkey::default());
+        let account =
+            AccountSharedData::new_with_data(123, vec![0; expected_data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1777,7 +1831,8 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let expected_data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, expected_data_len, &Pubkey::default());
+        let account =
+            AccountSharedData::new_with_data(123, vec![0; expected_data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1837,7 +1892,7 @@ mod tests {
         for i in 0..2 {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, inline_data + i, &owner),
+                AccountSharedData::new_with_data(123, vec![0; inline_data + i], &owner),
             ));
             accounts.push((
                 Pubkey::new_unique(),
@@ -1845,7 +1900,7 @@ mod tests {
             ));
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, external_data + i, &owner),
+                AccountSharedData::new_with_data(123, vec![0; external_data + i], &owner),
             ));
         }
 
@@ -1925,7 +1980,11 @@ mod tests {
     fn test_rejected_flush_preserves_dirty_state() {
         let temp_dir = TempDir::new().unwrap();
         let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
-        let account = AccountSharedData::new(1, 32, &Pubkey::new_unique());
+        let account = AccountSharedData::new_with_data(
+            1,
+            rand::random_iter().take(32).collect(),
+            &Pubkey::new_unique(),
+        );
         split
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
