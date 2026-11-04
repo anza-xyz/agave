@@ -26,7 +26,6 @@ impl From<AccountsLtHash> for SerdeAccountsLtHash {
 }
 
 /// Snapshot serde-safe RentCollector, which is now unused
-#[repr(C)]
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct UnusedRentCollector {
