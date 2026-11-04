@@ -20,8 +20,10 @@ use {
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
-        program_cache::env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
-        program_metrics::LoadProgramMetrics,
+        program_cache::{
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            metrics::LoadProgramMetrics,
+        },
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,

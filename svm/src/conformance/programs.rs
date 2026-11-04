@@ -1,7 +1,7 @@
 //! Program helpers: builtins, keyed accounts, and program cache.
 
 #[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
+use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
 use {
     crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},

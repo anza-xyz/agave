@@ -1,13 +1,12 @@
 #[cfg(feature = "metrics")]
-use crate::program_metrics::LoadProgramMetrics;
+use crate::program_cache::metrics::LoadProgramMetrics;
 use {
     crate::{
         invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
         program_cache::{
             DELAY_VISIBILITY_SLOT_OFFSET, env::ProgramRuntimeEnvironment,
-            owner::ProgramCacheEntryOwner,
+            metrics::ProgramStatistics, owner::ProgramCacheEntryOwner,
         },
-        program_metrics::ProgramStatistics,
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
@@ -378,7 +377,8 @@ pub(crate) const fn retention_score(last_access: u64, recovery_cost: u64, freque
 mod tests {
     use {
         crate::{
-            loaded_programs::tests::new_test_entry_with_usage, program_metrics::ProgramStatistics,
+            loaded_programs::tests::new_test_entry_with_usage,
+            program_cache::metrics::ProgramStatistics,
         },
         std::sync::atomic::{AtomicU64, Ordering},
     };
