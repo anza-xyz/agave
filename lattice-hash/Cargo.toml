@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
+arrayvec = { workspace = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }
 bs58 = { workspace = true }

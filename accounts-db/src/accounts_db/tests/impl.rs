@@ -7018,3 +7018,20 @@ fn test_create_store_size_limit(size: u64, expect_split: bool) {
         expected_accounts_file_provider == AccountsFileProvider::Split,
     );
 }
+
+/// Buffering the hash input's prefix must not change any account's lt hash.
+#[test]
+fn test_lt_hash_account_matches_streamed_input() {
+    let pubkey = Pubkey::new_unique();
+    for data_len in [0, 1023, 1024, 3762, 16310, 16311, 16312, 100_000, 1_600_000] {
+        let data = (0..data_len).map(|i| i as u8).collect();
+        let account = AccountSharedData::new_with_data(123, data, &Pubkey::new_unique());
+        let streamed =
+            AccountsDb::write_account_hash_input(&account, &pubkey, blake3::Hasher::new());
+        assert_eq!(
+            AccountsDb::lt_hash_account(&account, &pubkey).0,
+            LtHash::with(&streamed),
+            "data_len={data_len}",
+        );
+    }
+}
