@@ -78,8 +78,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemcmp {
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let s1 = translate_slice::<u8>(memory_mapping, s1_addr, n, check_aligned)?;
         let s2 = translate_slice::<u8>(memory_mapping, s2_addr, n, check_aligned)?;
 
@@ -92,7 +91,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemcmp {
         let result = unsafe { memcmp(s1, s2, n as usize) };
 
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let cmp_result_ref_mut: (&mut std::mem::MaybeUninit<i32>) = map(cmp_result_addr)?;
         );
@@ -118,9 +117,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemset {
         mem_op_consume(invoke_context, n)?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let s: (&mut [MaybeUninit<u8>]) = map(dst_addr, n)?;
         );
@@ -136,10 +134,10 @@ fn memmove(
     n: u64,
 ) -> Result<u64, Error> {
     let check_aligned = invoke_context.get_check_aligned();
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     // In a rare exception to the rule we manually translate addresses to a raw pointer rather than
     // using `translate_mut!` because the src and dst memory regions may overlap for this syscall.
-    touch_slice_mut::<MaybeUninit<u8>>(memory_mapping, dst_addr, n)?;
+    touch_slice_mut::<MaybeUninit<u8>>(invoke_context, dst_addr, n)?;
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     let slice = translate_slice_inner!(
         memory_mapping,
         AccessType::Store,
