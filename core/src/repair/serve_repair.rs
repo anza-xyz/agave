@@ -793,6 +793,7 @@ pub struct ServeRepair {
 pub(crate) struct RepairPeers {
     asof: Instant,
     weight_source: RepairPeerWeightSource,
+    excluded_identity: Pubkey,
     peers: Vec<Node>,
     weighted_index: WeightedIndex<u64>,
 }
@@ -812,6 +813,7 @@ impl RepairPeers {
     fn new(
         asof: Instant,
         weight_source: RepairPeerWeightSource,
+        excluded_identity: Pubkey,
         peers: &[ContactInfo],
         weights: &[u64],
     ) -> Result<Self> {
@@ -836,6 +838,7 @@ impl RepairPeers {
         Ok(Self {
             asof,
             weight_source,
+            excluded_identity,
             peers,
             weighted_index,
         })
@@ -846,10 +849,14 @@ impl RepairPeers {
         &self.peers[index]
     }
 
-    /// Excludes our new identity from cached peers after rotation to avoid self-repair.
+    /// Excludes our current identity from cached peers after rotation to avoid self-repair.
     /// Returns an error without changing the cache if no positively weighted peer remains.
     fn try_remove_identity(&mut self, identity: &Pubkey) -> std::result::Result<(), WeightedError> {
+        if &self.excluded_identity == identity {
+            return Ok(());
+        }
         let Some(index) = self.peers.iter().position(|peer| &peer.pubkey == identity) else {
+            self.excluded_identity = *identity;
             return Ok(());
         };
         let mut weights: Vec<_> = self.weighted_index.weights().collect();
@@ -857,6 +864,7 @@ impl RepairPeers {
         let weighted_index = WeightedIndex::new(weights)?;
         self.peers.remove(index);
         self.weighted_index = weighted_index;
+        self.excluded_identity = *identity;
         Ok(())
     }
 
@@ -997,8 +1005,13 @@ impl ServeRepair {
         peers_cache.pop(&slot);
         let repair_peers = self.repair_peers(repair_validators, &identity);
         let weights = self.repair_peer_weights(slot, cluster_slots, &repair_peers, weight_source);
-        let repair_peers =
-            RepairPeers::new(Instant::now(), weight_source, &repair_peers, &weights)?;
+        let repair_peers = RepairPeers::new(
+            Instant::now(),
+            weight_source,
+            identity,
+            &repair_peers,
+            &weights,
+        )?;
         peers_cache.put(slot, repair_peers);
         Ok(peers_cache.get(&slot).unwrap())
     }
@@ -2843,6 +2856,45 @@ mod tests {
         assert_eq!(repair_peers.asof, cached_at);
         assert_eq!(repair_peers.peers.len(), 1);
         assert_ne!(repair_peers.peers[0].pubkey, identity.pubkey());
+        assert_eq!(repair_peers.excluded_identity, identity.pubkey());
+
+        let repair_peers = serve_repair
+            .repair_peers_from_cache(
+                0,
+                &cluster_slots,
+                &Some(peer_ids),
+                &mut peers_cache,
+                &identity,
+                RepairPeerWeightSource::CurrentEpochStake,
+            )
+            .unwrap();
+        assert_eq!(repair_peers.asof, cached_at);
+        assert_eq!(repair_peers.peers.len(), 1);
+    }
+
+    #[test]
+    fn test_repair_peers_identity_removal_failure_preserves_cache() {
+        let identity = Pubkey::new_unique();
+        let peer_id = Pubkey::new_unique();
+        let mut peer = ContactInfo::new_localhost(&peer_id, timestamp());
+        peer.set_serve_repair(Protocol::UDP, socketaddr!(Ipv4Addr::LOCALHOST, 1234))
+            .unwrap();
+        let mut repair_peers = RepairPeers::new(
+            Instant::now(),
+            RepairPeerWeightSource::CurrentEpochStake,
+            identity,
+            &[peer],
+            &[1],
+        )
+        .unwrap();
+
+        assert_matches!(
+            repair_peers.try_remove_identity(&peer_id),
+            Err(WeightedError::InvalidInput)
+        );
+        assert_eq!(repair_peers.excluded_identity, identity);
+        assert_eq!(repair_peers.peers.len(), 1);
+        assert_eq!(repair_peers.peers[0].pubkey, peer_id);
     }
 
     #[test]
