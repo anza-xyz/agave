@@ -86,6 +86,7 @@ else
   solana-genesis \
     --hashes-per-tick sleep \
     --faucet-lamports 500000000000000000 \
+    --faucet-pubkey "$(solana-keygen pubkey)" \
     --bootstrap-validator \
       "$validator_identity" \
       "$validator_vote_account" \
