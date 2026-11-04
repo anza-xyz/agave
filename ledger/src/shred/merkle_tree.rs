@@ -182,8 +182,9 @@ pub const fn get_proof_size(num_shreds: usize) -> u8 {
 #[cfg(test)]
 mod tests {
     use {
-        crate::shred::merkle_tree::*, assert_matches::assert_matches, rand::Rng,
-        std::iter::repeat_with,
+        crate::shred::merkle_tree::*,
+        rand::Rng,
+        std::{assert_matches, iter::repeat_with},
     };
 
     #[test]

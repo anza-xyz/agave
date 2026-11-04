@@ -9113,7 +9113,6 @@ dependencies = [
  "agave-votor-messages",
  "agave-worker-pool",
  "anyhow",
- "assert_matches",
  "bitflags 2.13.2",
  "bs58",
  "bytes",

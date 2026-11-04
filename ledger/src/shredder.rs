@@ -274,7 +274,6 @@ mod tests {
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ShredType,
             max_ticks_per_n_shreds, verify_test_data_shred,
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
         rand::Rng,
         solana_hash::Hash,
@@ -283,7 +282,7 @@ mod tests {
         solana_shred_version as shred_version,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        std::{collections::HashSet, sync::Arc},
+        std::{assert_matches, collections::HashSet, sync::Arc},
         test_case::test_matrix,
     };
 
