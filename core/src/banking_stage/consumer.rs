@@ -563,9 +563,6 @@ impl Consumer {
             error_counters,
             &bank.rent_collector().rent,
             fee,
-            bank.feature_set
-                .snapshot()
-                .relax_post_exec_min_balance_check,
         )
     }
 }

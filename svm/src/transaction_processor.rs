@@ -536,7 +536,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &environment.blockhash,
                     environment.blockhash_lamports_per_signature,
                     &environment.rent,
-                    environment.feature_set.relax_post_exec_min_balance_check,
                     config.strict_nonce_size_check,
                     &mut error_metrics,
                 ),
@@ -766,7 +765,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment_blockhash: &Hash,
         next_lamports_per_signature: u64,
         rent: &Rent,
-        relax_post_exec_min_balance_check: bool,
         strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionValidationResult {
@@ -807,7 +805,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             nonce_info,
             compute_budget_and_limits,
             rent,
-            relax_post_exec_min_balance_check,
             error_counters,
         );
 
@@ -848,7 +845,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_info: Option<NonceInfo>,
         compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
         rent: &Rent,
-        relax_post_exec_min_balance_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let fee_payer_address = message.fee_payer();
@@ -872,7 +868,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters,
             rent,
             compute_budget_and_limits.fee_details.total_fee(),
-            relax_post_exec_min_balance_check,
         )?;
 
         // Capture fee-subtracted fee payer account and next nonce account state
@@ -1154,14 +1149,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             },
         );
 
-        let relax_post_exec_min_balance_check =
-            environment.feature_set.relax_post_exec_min_balance_check;
-        let pre_account_state_info = TransactionAccountStateInfo::new_pre_exec(
-            &transaction_context,
-            tx,
-            &environment.rent,
-            relax_post_exec_min_balance_check,
-        );
+        let pre_account_state_info =
+            TransactionAccountStateInfo::new_pre_exec(&transaction_context, tx, &environment.rent);
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -1210,7 +1199,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     tx,
                     &pre_account_state_info,
                     &environment.rent,
-                    relax_post_exec_min_balance_check,
                 );
                 verify_changes(
                     &pre_account_state_info,
@@ -2623,7 +2611,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2690,7 +2677,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2743,7 +2729,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2799,7 +2784,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2851,7 +2835,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -3047,7 +3030,6 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -3110,7 +3092,6 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
