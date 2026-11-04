@@ -201,7 +201,10 @@ and the following fields are required
                 )
                 .arg(
                     Arg::with_name("trace")
-                        .help("Output instruction trace")
+                        .help(
+                            "Output instruction trace. Requires agave-ledger-tool to be built \
+                             with the `sbpf-tracer` feature.",
+                        )
                         .short("t")
                         .long("trace")
                         .takes_value(true)
@@ -258,6 +261,46 @@ impl<'a, 'b> LazyAnalysis<'a, 'b> {
         }
         self.analysis
             .insert(Analysis::from_executable(self.executable).unwrap())
+    }
+}
+
+fn write_register_trace<'a>(
+    trace_option: &str,
+    instruction_context: &InstructionContext,
+    executable: &Executable<InvokeContext<'a, 'a>>,
+    register_trace: &[[u64; 12]],
+) {
+    let mut analysis = LazyAnalysis::new(executable);
+    if trace_option == "stdout" {
+        writeln!(
+            &mut std::io::stdout(),
+            "TX Instruction {} Program {:?}",
+            instruction_context.get_index_in_trace(),
+            instruction_context.get_program_key(),
+        )
+        .unwrap();
+        analysis
+            .analyze()
+            .disassemble_register_trace(&mut std::io::stdout(), register_trace)
+            .unwrap();
+    } else {
+        let filename = format!(
+            "{}.{}",
+            trace_option,
+            instruction_context.get_index_in_trace()
+        );
+        let mut fd = File::create(filename).unwrap();
+        writeln!(
+            &fd,
+            "TX Instruction {} Program {:?}",
+            instruction_context.get_index_in_trace(),
+            instruction_context.get_program_key(),
+        )
+        .unwrap();
+        analysis
+            .analyze()
+            .disassemble_register_trace(&mut fd, register_trace)
+            .unwrap();
     }
 }
 
@@ -367,6 +410,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         ("run", Some(arg_matches)) => arg_matches,
         _ => unreachable!(),
     };
+    if matches.is_present("trace") && !cfg!(feature = "sbpf-tracer") {
+        eprintln!("--trace requires agave-ledger-tool to be built with the `sbpf-tracer` feature");
+        exit(1);
+    }
     let ledger_path = canonicalize_ledger_path(ledger_path);
     let bank = load_blockstore(&ledger_path, matches);
     let loader_id = bpf_loader_upgradeable::id();
@@ -582,42 +629,28 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         vm.execute_program(&verified_executable, &mut execution_mode, &mut call_frames);
     let duration = Instant::now() - start_time;
     if let Some(trace_option) = matches.value_of("trace") {
+        let register_trace = std::mem::take(&mut vm.register_trace);
+        let instruction_context = vm
+            .context()
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        write_register_trace(
+            trace_option,
+            &instruction_context,
+            &verified_executable,
+            &register_trace,
+        );
         vm.context()
             .iterate_vm_traces(&|instruction_context: InstructionContext,
                                  executable,
                                  register_trace| {
-                let mut analysis = LazyAnalysis::new(executable);
-                if trace_option == "stdout" {
-                    writeln!(
-                        &mut std::io::stdout(),
-                        "TX Instruction {} Program {:?}",
-                        instruction_context.get_index_in_trace(),
-                        instruction_context.get_program_key(),
-                    )
-                    .unwrap();
-                    analysis
-                        .analyze()
-                        .disassemble_register_trace(&mut std::io::stdout(), register_trace)
-                        .unwrap();
-                } else {
-                    let filename = format!(
-                        "{}.{}",
-                        trace_option,
-                        instruction_context.get_index_in_trace()
-                    );
-                    let mut fd = File::create(filename).unwrap();
-                    writeln!(
-                        &fd,
-                        "TX Instruction {} Program {:?}",
-                        instruction_context.get_index_in_trace(),
-                        instruction_context.get_program_key(),
-                    )
-                    .unwrap();
-                    analysis
-                        .analyze()
-                        .disassemble_register_trace(&mut fd, register_trace)
-                        .unwrap();
-                }
+                write_register_trace(
+                    trace_option,
+                    &instruction_context,
+                    executable,
+                    register_trace,
+                );
             });
     }
     drop(vm);
