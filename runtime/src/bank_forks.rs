@@ -790,7 +790,6 @@ mod tests {
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
             wire::{WireBlockCertMessage, WireCertSignature},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{Account, AccountSharedData},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -806,7 +805,7 @@ mod tests {
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
-        std::{fmt::Debug, thread, time::Duration},
+        std::{assert_matches, fmt::Debug, thread, time::Duration},
     };
 
     struct BlockingScheduler {
