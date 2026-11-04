@@ -13,8 +13,8 @@ use {
         stake::check_current_authority,
     },
     agave_feature_set::{
-        alpenglow, bls_pubkey_management_in_vote_account, commission_rate_in_basis_points,
-        custom_commission_collector, delay_commission_updates, vote_account_initialize_v2,
+        alpenglow, bls_pubkey_management_in_vote_account, custom_commission_collector,
+        delay_commission_updates, vote_account_initialize_v2,
     },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
@@ -1770,22 +1770,15 @@ pub async fn process_vote_update_commission_bps(
 ) -> ProcessResult {
     let authorized_withdrawer = config.signers[withdraw_authority];
 
-    if !sign_only {
-        for (feature_id, simd) in [
-            (commission_rate_in_basis_points::id(), "SIMD-0291"),
-            (delay_commission_updates::id(), "SIMD-0249"),
-        ] {
-            if !get_feature_is_active(rpc_client, &feature_id)
-                .await
-                .unwrap_or(false)
-            {
-                return Err(CliError::BadParameter(format!(
-                    "Commission rates in basis points require {simd}, which is not enabled on \
-                     this cluster"
-                ))
-                .into());
-            }
-        }
+    if !sign_only
+        && !get_feature_is_active(rpc_client, &delay_commission_updates::id())
+            .await
+            .unwrap_or(false)
+    {
+        return Err(CliError::BadParameter(
+            "Delayed commission updates (SIMD-0249) are not enabled on this cluster".to_owned(),
+        )
+        .into());
     }
 
     let recent_blockhash = blockhash_query
