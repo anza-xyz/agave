@@ -31,6 +31,7 @@ impl SendTransactionStats {
                         + view.connection_error_cids_exhausted
                         + view.connection_error_timed_out
                         + view.connection_error_application_closed
+                        + view.connection_error_connection_closed
                         + view.connection_error_transport_error
                         + view.connection_error_version_mismatch
                         + view.connection_error_locally_closed;
