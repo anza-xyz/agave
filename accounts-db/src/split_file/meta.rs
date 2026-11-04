@@ -322,26 +322,55 @@ pub fn read_meta_entry<Ret>(
     offset: FileOffset,
     callback: impl for<'local> FnOnce(MetaEntryRef<'local>, DataRef<'local>) -> Ret,
 ) -> Result<Ret, ReadMetaEntryError> {
-    validate_meta_entry_offset(file_len, offset)?;
-
-    let read_size = cmp::min(META_ENTRY_MAX_SIZE, (file_len - offset.0) as usize);
-    let mut buffer = MetaEntryBuffer([MaybeUninit::uninit(); META_ENTRY_MAX_SIZE]);
-    let valid_bytes = {
-        // SAFETY:
-        // * buffer is non-null, thus the ptr used for creating the slice is non-null
-        // * buffer is at least read_size bytes, thus slice is valid for all bytes
-        // * buffer is aligned for a meta entry, thus so is the slice
-        // * buffer is a single allocation, thus so is the slice
-        // * buffer is not referenced while the slice is alive
-        // * buffer is META_ENTRY_MAX_SIZE, which is less than isize::MAX, thus so is the slice
-        let buffer_bytes =
-            unsafe { slice::from_raw_parts_mut(buffer.0.as_mut_ptr().cast::<u8>(), read_size) };
-        let num_bytes_read = file_io::read_into_buffer(file, file_len, offset.0, buffer_bytes)?;
-        &buffer_bytes[..num_bytes_read]
-    };
-    let meta_entry = parse_meta_entry_fixed(valid_bytes)?;
-    let data_ref = parse_meta_entry_data_ref(valid_bytes, &meta_entry)?;
+    let read_size = meta_entry_read_size(file_len, offset)?;
+    let mut buffer = MetaEntryBuffer::new();
+    let bytes = read_meta_entry_bytes(file, file_len, offset, read_size, &mut buffer)?;
+    let (meta_entry, data_ref) = parse_meta_entry(bytes)?;
     Ok(callback(meta_entry, data_ref))
+}
+
+/// Returns how many bytes to read for the meta entry at `offset`: up to `META_ENTRY_MAX_SIZE`,
+/// and not past `file_len`. The entry's size is unknown until its fixed portion is parsed.
+pub fn meta_entry_read_size(
+    file_len: FileSize,
+    offset: FileOffset,
+) -> Result<usize, ReadMetaEntryError> {
+    validate_meta_entry_offset(file_len, offset)?;
+    Ok(cmp::min(
+        META_ENTRY_MAX_SIZE,
+        (file_len - offset.0) as usize,
+    ))
+}
+
+/// Reads `read_size` bytes of the meta entry at `offset` into `buffer`, and returns the bytes read
+pub fn read_meta_entry_bytes<'a>(
+    file: &File,
+    file_len: FileSize,
+    offset: FileOffset,
+    read_size: usize,
+    buffer: &'a mut MetaEntryBuffer,
+) -> Result<&'a [u8], ReadMetaEntryError> {
+    // SAFETY:
+    // * buffer is non-null, thus the ptr used for creating the slice is non-null
+    // * buffer is at least read_size bytes, thus slice is valid for all bytes
+    // * buffer is aligned for a meta entry, thus so is the slice
+    // * buffer is a single allocation, thus so is the slice
+    // * buffer is not referenced while the slice is alive
+    // * buffer is META_ENTRY_MAX_SIZE, which is less than isize::MAX, thus so is the slice
+    let buffer_bytes =
+        unsafe { slice::from_raw_parts_mut(buffer.0.as_mut_ptr().cast::<u8>(), read_size) };
+    let num_bytes_read = file_io::read_into_buffer(file, file_len, offset.0, buffer_bytes)?;
+    Ok(&buffer_bytes[..num_bytes_read])
+}
+
+/// Parses the meta entry in `bytes`, read at its offset: its fixed portion, and its data inline
+/// or a reference to it in the data file
+pub fn parse_meta_entry(
+    bytes: &[u8],
+) -> Result<(MetaEntryRef<'_>, DataRef<'_>), ReadMetaEntryError> {
+    let meta_entry = parse_meta_entry_fixed(bytes)?;
+    let data_ref = parse_meta_entry_data_ref(bytes, &meta_entry)?;
+    Ok((meta_entry, data_ref))
 }
 
 /// Parses the byte-slice, `bytes`, and returns a `MetaEntryRef` if is it valid.
@@ -535,7 +564,13 @@ pub struct MetaEntryRef<'a> {
 /// This buffer is aligned to ensure it is safe to read
 /// the meta entry fields after loading from disk.
 #[repr(align(8))]
-struct MetaEntryBuffer([MaybeUninit<u8>; META_ENTRY_MAX_SIZE]);
+pub struct MetaEntryBuffer([MaybeUninit<u8>; META_ENTRY_MAX_SIZE]);
+
+impl MetaEntryBuffer {
+    pub fn new() -> Self {
+        Self([MaybeUninit::uninit(); META_ENTRY_MAX_SIZE])
+    }
+}
 const _: () = const {
     assert!(align_of::<MetaEntryBuffer>() == align_of::<MetaEntrySerde>());
 };
