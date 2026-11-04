@@ -466,9 +466,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
     ) -> Result<()> {
         let (all_shreds, _) = receiver.recv()?;
         blockstore
-            .insert_cow_shreds(
+            .insert_trusted_shreds(
                 all_shreds.iter().map(Cow::Borrowed),
-                true,
                 pinnable_slice,
                 write_batch,
             )

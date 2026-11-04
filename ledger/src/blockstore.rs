@@ -2736,12 +2736,17 @@ impl Blockstore {
         Ok(())
     }
 
-    // Bypasses erasure recovery becuase it is called from broadcast stage
-    // when inserting own shreds during leader slots. Stores all shreds in the original column.
-    pub fn insert_cow_shreds<'a, 'db>(
+    /// Insert shreds into the original column (BlockLocation::Original`);
+    /// erasure recovery and some validity checks are skipped. Because these
+    /// items are skipped, this method is only suitable for use when the shreds
+    /// are coming from a known good source
+    ///
+    /// `BroadcastStage` is an example of a valid use when inserting our own
+    /// shreds during leader slots. We created the shreds so we can trust them
+    /// and `BroadcastStage` will separately handle sending shreds out
+    pub fn insert_trusted_shreds<'a, 'db>(
         &'db self,
         shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
-        is_trusted: bool,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
     ) -> Result<Vec<CompletedDataSetInfo>> {
@@ -2755,8 +2760,8 @@ impl Blockstore {
         });
         let insert_results = self.do_insert_shreds(
             shreds,
-            is_trusted,
-            None, // Skip recovery for locally produced shreds.
+            /*is_trusted:*/ true,
+            /*shred_recovery_context:*/ None,
             pinnable_slice,
             write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -2772,8 +2777,23 @@ impl Blockstore {
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let mut pinnable_slice = self.new_pinnable_slice();
         let mut write_batch = self.get_write_batch();
-        let shreds = shreds.into_iter().map(Cow::Owned);
-        self.insert_cow_shreds(shreds, is_trusted, &mut pinnable_slice, &mut write_batch)
+        let shreds = shreds.into_iter().map(|shred| {
+            (
+                Cow::Owned(shred),
+                /*is_repaired:*/ false,
+                BlockLocation::Original,
+                /*precomputed_merkle_root:*/ None,
+            )
+        });
+        let insert_results = self.do_insert_shreds(
+            shreds,
+            is_trusted,
+            /*shred_recovery_context:*/ None,
+            &mut pinnable_slice,
+            &mut write_batch,
+            &mut BlockstoreInsertionMetrics::default(),
+        )?;
+        Ok(insert_results.completed_data_set_infos)
     }
 
     /// Create an entry to the specified `write_batch` that performs coding shred
