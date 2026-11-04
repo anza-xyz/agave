@@ -1,7 +1,7 @@
 #[cfg(feature = "metrics")]
 use solana_svm_timings::ExecuteDetailsTimings;
 use {
-    crate::loaded_programs::ForkGraph,
+    crate::program_cache::fork_graph::ForkGraph,
     log::{debug, log_enabled, trace},
     solana_pubkey::Pubkey,
     std::{

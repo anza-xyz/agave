@@ -384,8 +384,10 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
-            loaded_programs::{BlockRelation, ForkGraph},
-            program_cache::env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+            program_cache::{
+                env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+                fork_graph::{BlockRelation, ForkGraph},
+            },
             program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },

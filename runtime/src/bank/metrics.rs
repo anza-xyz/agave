@@ -1,7 +1,7 @@
 use {
     crate::bank::Bank,
     solana_clock::{Epoch, Slot},
-    solana_program_runtime::loaded_programs::{ForkGraph, ProgramCache},
+    solana_program_runtime::{loaded_programs::ProgramCache, program_cache::fork_graph::ForkGraph},
     std::sync::atomic::{
         AtomicU64,
         Ordering::{self, Relaxed},

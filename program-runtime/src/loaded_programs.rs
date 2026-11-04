@@ -1,7 +1,11 @@
 use {
     crate::{
         loading_task::LoadingTaskWaiter,
-        program_cache::{env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner},
+        program_cache::{
+            env::ProgramRuntimeEnvironment,
+            fork_graph::{BlockRelation, ForkGraph},
+            owner::ProgramCacheEntryOwner,
+        },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
@@ -32,27 +36,6 @@ pub type Percent = u8;
 fn percent_of_max_entries(percent: Percent) -> usize {
     debug_assert!(percent <= 100, "percent must be <= 100");
     MAX_LOADED_ENTRY_COUNT.saturating_mul(percent as usize) / 100
-}
-
-/// Relationship between two fork IDs
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum BlockRelation {
-    /// The slot is on the same fork and is an ancestor of the other slot
-    Ancestor,
-    /// The two slots are equal and are on the same fork
-    Equal,
-    /// The slot is on the same fork and is a descendant of the other slot
-    Descendant,
-    /// The slots are on two different forks and may have had a common ancestor at some point
-    Unrelated,
-    /// Either one or both of the slots are either older than the latest root, or are in future
-    Unknown,
-}
-
-/// Maps relationship between two slots.
-pub trait ForkGraph {
-    /// Returns the BlockRelation of A to B
-    fn relationship(&self, a: Slot, b: Slot) -> BlockRelation;
 }
 
 /// Input of ProgramCache::extract()
@@ -773,11 +756,12 @@ pub(crate) mod tests {
     use {
         crate::{
             loaded_programs::{
-                BlockRelation, ForkGraph, IndexImplementation, MAX_TOMBSTONE_AGE_IN_SLOTS, Percent,
-                ProgramCache, ProgramCacheForTxBatch, ProgramToLoad,
+                IndexImplementation, MAX_TOMBSTONE_AGE_IN_SLOTS, Percent, ProgramCache,
+                ProgramCacheForTxBatch, ProgramToLoad,
             },
             program_cache::{
                 env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+                fork_graph::{BlockRelation, ForkGraph},
                 owner::ProgramCacheEntryOwner,
             },
             program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},

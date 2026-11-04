@@ -41,12 +41,11 @@ use {
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{
-            ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch, ProgramToLoad,
-        },
+        loaded_programs::{Percent, ProgramCache, ProgramCacheForTxBatch, ProgramToLoad},
         program_cache::{
             ebpp::EpochBoundaryPreparation,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            fork_graph::ForkGraph,
             owner::ProgramCacheEntryOwner,
         },
         program_cache_entry::ProgramCacheEntry,
@@ -1505,7 +1504,7 @@ mod tests {
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
             invoke_context::BuiltinFunctionRegisterer,
-            loaded_programs::BlockRelation,
+            program_cache::fork_graph::BlockRelation,
             program_cache_entry::ProgramCacheEntryType,
         },
         solana_rent::Rent,
