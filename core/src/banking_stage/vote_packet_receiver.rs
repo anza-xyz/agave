@@ -1,7 +1,8 @@
 use {
     super::{
-        BankingStageStats, latest_validator_vote_packet::VoteSource,
-        leader_slot_metrics::LeaderSlotMetricsTracker, packet_bytes, vote_storage::VoteStorage,
+        BankingStageStats, blocked_programs::SharedFilterKeys,
+        latest_validator_vote_packet::VoteSource, leader_slot_metrics::LeaderSlotMetricsTracker,
+        packet_bytes, vote_storage::VoteStorage,
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
@@ -10,24 +11,22 @@ use {
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
     solana_perf::packet::bytes::Bytes,
-    solana_pubkey::Pubkey,
     std::{
-        collections::HashSet,
         num::Saturating,
-        sync::{Arc, atomic::Ordering},
+        sync::atomic::Ordering,
         time::{Duration, Instant},
     },
 };
 
 pub struct VotePacketReceiver {
     banking_packet_receiver: BankingPacketReceiver,
-    filter_keys: Arc<HashSet<Pubkey>>,
+    filter_keys: SharedFilterKeys,
 }
 
 impl VotePacketReceiver {
     pub fn new(
         banking_packet_receiver: BankingPacketReceiver,
-        filter_keys: Arc<HashSet<Pubkey>>,
+        filter_keys: SharedFilterKeys,
     ) -> Self {
         Self {
             banking_packet_receiver,
@@ -212,11 +211,12 @@ impl VotePacketReceiver {
 
     fn should_filter_packet(&self, packet: &SanitizedTransactionView<Bytes>) -> bool {
         // Vote transactions do not use address lookup tables, so static keys cover this path.
-        !self.filter_keys.is_empty()
+        let filter_keys = self.filter_keys.load();
+        !filter_keys.is_empty()
             && packet
                 .static_account_keys()
                 .iter()
-                .any(|key| self.filter_keys.contains(key))
+                .any(|key| filter_keys.contains(key))
     }
 
     fn get_receive_timeout(vote_storage: &VoteStorage) -> Duration {
@@ -268,13 +268,16 @@ mod tests {
             leader_slot_metrics::LeaderSlotMetricsTracker,
             vote_storage::{VoteStorage, tests::packet_from_slots},
         },
+        arc_swap::ArcSwap,
         crossbeam_channel::bounded,
         solana_perf::packet::PacketBatch,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{self, ValidatorVoteKeypairs},
         },
         solana_signer::Signer,
+        std::{collections::HashSet, sync::Arc},
     };
 
     fn receive_vote_with_filter_keys(
@@ -287,7 +290,7 @@ mod tests {
             .send(Arc::new(PacketBatch::from(vec![vote_packet])))
             .unwrap();
 
-        let mut receiver = VotePacketReceiver::new(receiver, filter_keys);
+        let mut receiver = VotePacketReceiver::new(receiver, Arc::new(ArcSwap::new(filter_keys)));
         let genesis_config =
             genesis_utils::create_genesis_config_with_vote_accounts(100, &[keypairs], vec![200])
                 .genesis_config;
