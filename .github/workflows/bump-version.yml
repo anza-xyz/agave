@@ -32,9 +32,6 @@ jobs:
         run: |
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -63,12 +60,21 @@ jobs:
 
           git checkout -b version-bump-$new_version
           git commit -am "Bump version to $new_version"
-          git push origin version-bump-$new_version
 
           echo "new_version=$new_version" | tee -a $GITHUB_OUTPUT
 
           target_branch="${BASE_REF##*/}"
           echo "target_branch=$target_branch" | tee -a $GITHUB_OUTPUT
+
+      - name: Push
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          NEW_VERSION: ${{ steps.process.outputs.new_version }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+            push origin version-bump-$NEW_VERSION
 
       - name: Create PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
