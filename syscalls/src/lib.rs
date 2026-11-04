@@ -2157,8 +2157,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
 
         invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
-        let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
-        let length = length.min(return_data.len() as u64);
+        let return_data_len = invoke_context.transaction_context.get_return_data().1.len() as u64;
+        let length = length.min(return_data_len);
         if length != 0 {
             let cost = length
                 .saturating_add(size_of::<Pubkey>() as u64)
@@ -2173,6 +2173,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
                 let program_id_result: (&mut MaybeUninit<Pubkey>) = map(program_id_addr)?;
             );
 
+            let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
             let from_slice = return_data
                 .get(..length as usize)
                 .ok_or(SyscallError::InvokeContextBorrowFailed)?;
@@ -2180,11 +2181,11 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
                 return Err(SyscallError::InvalidLength.into());
             }
             to_slice.write_copy_of_slice(from_slice);
-            program_id_result.write(program_id);
+            program_id_result.write(*program_id);
         }
 
         // Return the actual length, rather the length returned
-        Ok(return_data.len() as u64)
+        Ok(return_data_len)
     }
 }
 
@@ -2206,7 +2207,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
 
         let stack_height = invoke_context.get_stack_height();
         let mut reverse_index_at_stack_height = 0;
-        let mut found_instruction_context = None;
+        let mut found_index_in_trace = None;
         let current_ix_caller = invoke_context
             .transaction_context
             .get_current_instruction_context()?
@@ -2241,7 +2242,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
             }
             if instruction_context.get_stack_height() == stack_height {
                 if index.saturating_add(1) == reverse_index_at_stack_height {
-                    found_instruction_context = Some(instruction_context);
+                    found_index_in_trace = Some(index_in_trace);
                     break;
                 }
                 reverse_index_at_stack_height = reverse_index_at_stack_height.saturating_add(1);
@@ -2249,17 +2250,20 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
         }
 
         let check_aligned = invoke_context.get_check_aligned();
-        if let Some(instruction_context) = found_instruction_context {
+        if let Some(index_in_trace) = found_index_in_trace {
             translate_mut!(
                 invoke_context,
                 check_aligned,
                 let result_header: (&mut ProcessedSiblingInstruction) = map(meta_addr)?;
             );
 
-            if result_header.data_len == (instruction_context.get_instruction_data().len() as u64)
-                && result_header.accounts_len
-                    == (instruction_context.get_number_of_instruction_accounts() as u64)
-            {
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_instruction_context_at_index_in_trace(index_in_trace)?;
+            let data_len = instruction_context.get_instruction_data().len() as u64;
+            let accounts_len = instruction_context.get_number_of_instruction_accounts() as u64;
+
+            if result_header.data_len == data_len && result_header.accounts_len == accounts_len {
                 translate_mut!(
                     invoke_context,
                     check_aligned,
@@ -2271,6 +2275,9 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
                 // Marks result_header used. It had to be in translate_mut!() for the overlap checks.
                 let _ = result_header;
 
+                let instruction_context = invoke_context
+                    .transaction_context
+                    .get_instruction_context_at_index_in_trace(index_in_trace)?;
                 program_id.write(*instruction_context.get_program_key()?);
                 data.write_copy_of_slice(instruction_context.get_instruction_data());
                 let account_metas = (0..instruction_context.get_number_of_instruction_accounts())
@@ -2287,9 +2294,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
                     .collect::<Result<Vec<_>, InstructionError>>()?;
                 accounts.write_clone_of_slice(account_metas.as_slice());
             } else {
-                result_header.data_len = instruction_context.get_instruction_data().len() as u64;
-                result_header.accounts_len =
-                    instruction_context.get_number_of_instruction_accounts() as u64;
+                result_header.data_len = data_len;
+                result_header.accounts_len = accounts_len;
             }
             return Ok(true as u64);
         }
