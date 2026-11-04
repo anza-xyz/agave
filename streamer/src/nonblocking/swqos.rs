@@ -386,6 +386,8 @@ impl QosController<SwQosConnectionContext> for SwQos {
                             return Some(cancel_connection);
                         }
                     } else {
+                        // Don't hold the staked table while waiting for the unstaked one.
+                        drop(connection_table_l);
                         // If we couldn't prune a connection in the staked connection table, let's
                         // put this connection in the unstaked connection table. If needed, prune a
                         // connection from the unstaked connection table.
