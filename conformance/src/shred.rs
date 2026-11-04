@@ -23,7 +23,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
-        blockstore_processor::verify_ticks,
+        blockstore_processor::{set_alpenglow_ticks, verify_ticks},
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
             filter::{ShredFilterContext, ShredRecoveryContext},
@@ -121,7 +121,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     // FD: resolver + sched config (shred_version, advance_slot_old(root_slot)).
     let feature_set = FeatureSet::default();
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::default();
+    let migration = MigrationStatus::post_migration_status();
+    set_alpenglow_ticks(&bank, &migration);
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
