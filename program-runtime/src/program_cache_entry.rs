@@ -3,8 +3,7 @@ use crate::program_metrics::LoadProgramMetrics;
 use {
     crate::{
         invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
-        loaded_programs::ProgramRuntimeEnvironment,
-        program_cache::owner::ProgramCacheEntryOwner,
+        program_cache::{env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner},
         program_metrics::ProgramStatistics,
     },
     solana_clock::Slot,

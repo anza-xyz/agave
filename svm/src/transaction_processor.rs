@@ -43,9 +43,12 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, ProgramToLoad,
+            ProgramToLoad,
         },
-        program_cache::owner::ProgramCacheEntryOwner,
+        program_cache::{
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            owner::ProgramCacheEntryOwner,
+        },
         program_cache_entry::ProgramCacheEntry,
         program_metrics::ProgramStatistics,
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},

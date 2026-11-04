@@ -154,10 +154,8 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{
-            EpochBoundaryPreparation, MAX_LOADED_ENTRY_COUNT, ProgramRuntimeEnvironment,
-            ProgramRuntimeEnvironments,
-        },
+        loaded_programs::{EpochBoundaryPreparation, MAX_LOADED_ENTRY_COUNT},
+        program_cache::env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
     solana_pubkey::Pubkey,

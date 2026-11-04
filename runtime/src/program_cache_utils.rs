@@ -3,7 +3,7 @@
 use {
     crate::bank::Bank,
     solana_program_runtime::{
-        loaded_programs::ProgramRuntimeEnvironment,
+        program_cache::env::ProgramRuntimeEnvironment,
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
     },
     solana_pubkey::Pubkey,

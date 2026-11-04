@@ -9,8 +9,8 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
-        program_cache::owner::ProgramCacheEntryOwner,
+        loaded_programs::{ProgramCacheForTxBatch, ProgramToLoad},
+        program_cache::{env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner},
         program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
@@ -384,10 +384,8 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
-            loaded_programs::{
-                BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
-                get_mock_program_runtime_environment,
-            },
+            loaded_programs::{BlockRelation, ForkGraph},
+            program_cache::env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
             program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },

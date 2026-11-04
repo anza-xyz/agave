@@ -12,8 +12,8 @@ use {
     solana_program_runtime::{
         create_vm,
         invoke_context::{BpfAllocator, InvokeContext},
-        loaded_programs::ProgramRuntimeEnvironment,
         memory_context::MemoryContext,
+        program_cache::env::ProgramRuntimeEnvironment,
         program_cache_entry::{
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },

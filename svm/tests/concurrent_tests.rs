@@ -12,9 +12,8 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        program_cache_entry::ProgramCacheEntryType,
-        program_metrics::ProgramStatistics,
+        loaded_programs::ProgramCacheForTxBatch, program_cache::env::ProgramRuntimeEnvironments,
+        program_cache_entry::ProgramCacheEntryType, program_metrics::ProgramStatistics,
     },
     solana_pubkey::Pubkey,
     solana_svm::{

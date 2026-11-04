@@ -19,9 +19,8 @@ use {
     solana_program_runtime::{
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
+        loaded_programs::ProgramCacheForTxBatch,
+        program_cache::env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         program_metrics::LoadProgramMetrics,
         sysvar_cache::SysvarCache,
     },
