@@ -2,6 +2,7 @@ use {
     crate::{
         loading_task::LoadingTaskWaiter,
         program_cache::{
+            MAX_LOADED_ENTRY_COUNT, MAX_TOMBSTONE_AGE_IN_SLOTS,
             env::ProgramRuntimeEnvironment,
             fork_graph::{BlockRelation, ForkGraph},
             owner::ProgramCacheEntryOwner,
@@ -22,9 +23,6 @@ use {
         sync::Weak,
     },
 };
-
-pub const MAX_LOADED_ENTRY_COUNT: usize = 1024;
-pub const MAX_TOMBSTONE_AGE_IN_SLOTS: u64 = 2250; // 15 Minutes at 400ms slot time
 
 /// A percentage, expected to be in the range `0..=100`.
 pub type Percent = u8;
@@ -756,10 +754,10 @@ pub(crate) mod tests {
     use {
         crate::{
             loaded_programs::{
-                IndexImplementation, MAX_TOMBSTONE_AGE_IN_SLOTS, Percent, ProgramCache,
-                ProgramCacheForTxBatch, ProgramToLoad,
+                IndexImplementation, Percent, ProgramCache, ProgramCacheForTxBatch, ProgramToLoad,
             },
             program_cache::{
+                MAX_TOMBSTONE_AGE_IN_SLOTS,
                 env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
                 fork_graph::{BlockRelation, ForkGraph},
                 owner::ProgramCacheEntryOwner,

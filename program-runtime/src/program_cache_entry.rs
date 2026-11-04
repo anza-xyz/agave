@@ -3,7 +3,10 @@ use crate::program_metrics::LoadProgramMetrics;
 use {
     crate::{
         invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
-        program_cache::{env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner},
+        program_cache::{
+            DELAY_VISIBILITY_SLOT_OFFSET, env::ProgramRuntimeEnvironment,
+            owner::ProgramCacheEntryOwner,
+        },
         program_metrics::ProgramStatistics,
     },
     solana_clock::Slot,
@@ -14,8 +17,6 @@ use {
         atomic::{AtomicU64, Ordering},
     },
 };
-
-pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
 
 /*
     The possible ProgramCacheEntryType transitions:
