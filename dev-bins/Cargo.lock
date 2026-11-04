@@ -9181,7 +9181,6 @@ version = "4.5.0-alpha.4"
 dependencies = [
  "agave-votor",
  "agave-votor-messages",
- "agave-wake-channel",
  "agave-worker-pool",
  "bytes",
  "crossbeam-channel",
@@ -9192,7 +9191,6 @@ dependencies = [
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
- "scopeguard",
  "solana-clock",
  "solana-cluster-type",
  "solana-cost-model",
