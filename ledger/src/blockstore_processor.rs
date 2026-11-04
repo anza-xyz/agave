@@ -1666,22 +1666,8 @@ fn confirm_slot_entries(
     }
 
     let last_entry_hash = entries.last().map(|e| e.hash);
-    if !skip_verification {
-        let start_hash = progress.last_entry;
-        let verify_entries = entry::entry_views_to_verification_data(&entries);
-        datapoint_debug!(
-            "verify-batch-size",
-            ("size", verify_entries.len() as i64, i64)
-        );
-        progress
-            .async_verification(replay_verification_worker_pool)
-            .spawn_poh_verification(
-                replay_verification_worker_pool,
-                verify_entries,
-                start_hash,
-                slot,
-            )?;
-    }
+    let verify_entries =
+        (!skip_verification).then(|| entry::entry_views_to_verification_data(&entries));
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
@@ -1742,7 +1728,23 @@ fn confirm_slot_entries(
     replay_timer.stop();
     *replay_elapsed += replay_timer.as_us();
 
-    // Submit signatures before registering the final tick, which can wait for execution to finish.
+    // Submit verification before registering the final tick, which can wait for execution to finish.
+    if let Some(verify_entries) = verify_entries {
+        let start_hash = progress.last_entry;
+        datapoint_debug!(
+            "verify-batch-size",
+            ("size", verify_entries.len() as i64, i64)
+        );
+        progress
+            .async_verification(replay_verification_worker_pool)
+            .spawn_poh_verification(
+                replay_verification_worker_pool,
+                verify_entries,
+                start_hash,
+                slot,
+            )?;
+    }
+
     if skip_verification {
         if let Some(replay_vote_sender) = replay_vote_sender {
             let message_hashes = unverified_signatures.vote_transaction_message_hashes();
