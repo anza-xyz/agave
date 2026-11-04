@@ -49,7 +49,6 @@ pub(crate) fn redeem_rewards<'a>(
             rewarded_epoch,
             stake_history,
             new_rate_activation_epoch,
-            commission_rate_in_basis_points,
             ..
         } = calculation_environment;
         let effective_stake_at_rewarded_epoch =
@@ -62,16 +61,9 @@ pub(crate) fn redeem_rewards<'a>(
         inflation_point_calc_tracer(&InflationPointCalculationEvent::PriorTotalLamports(
             current_lamports,
         ));
-        // Choose which trace to emit based on the `commission_rate_in_basis_points` feature.
-        if commission_rate_in_basis_points {
-            inflation_point_calc_tracer(&InflationPointCalculationEvent::CommissionBps(
-                voter_commission_bps,
-            ));
-        } else {
-            inflation_point_calc_tracer(&InflationPointCalculationEvent::Commission(
-                (voter_commission_bps / 100) as u8,
-            ));
-        }
+        inflation_point_calc_tracer(&InflationPointCalculationEvent::CommissionBps(
+            voter_commission_bps,
+        ));
     }
 
     if let Some((stakers_reward, voters_reward)) = redeem_stake_rewards(
@@ -525,7 +517,6 @@ mod tests {
         );
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let commission_rate_in_basis_points = true;
 
         let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
         // epoch credits work differently in AG, so we need a multiplier to account for that.
@@ -574,7 +565,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -606,7 +596,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -632,7 +621,6 @@ mod tests {
 
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
         let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
@@ -673,7 +661,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -708,7 +695,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -741,7 +727,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -777,7 +762,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -817,7 +801,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -858,7 +841,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -897,7 +879,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -924,7 +905,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -958,7 +938,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -992,7 +971,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -1095,7 +1073,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -1130,7 +1107,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -1151,7 +1127,6 @@ mod tests {
 
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
         calculate_stake_rewards(
@@ -1163,7 +1138,6 @@ mod tests {
                 point_value: &PointValue { rewards, points: 1 },
                 stake_history,
                 new_rate_activation_epoch,
-                commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
             },
             null_tracer(),
@@ -1186,7 +1160,6 @@ mod tests {
         );
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
         let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
@@ -1212,7 +1185,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    commission_rate_in_basis_points,
                     adjust_delegations_for_rent,
                 },
                 null_tracer(),
@@ -1248,7 +1220,6 @@ mod tests {
             point_value: &point_value,
             stake_history: &stake_history,
             new_rate_activation_epoch: None,
-            commission_rate_in_basis_points: true,
             adjust_delegations_for_rent: true,
         };
         let migration_epoch_type = AlpenglowEpochType::MigrationEpoch {
@@ -1335,7 +1306,6 @@ mod tests {
                     point_value: &point_value,
                     stake_history: &stake_history,
                     new_rate_activation_epoch: None,
-                    commission_rate_in_basis_points: true,
                     adjust_delegations_for_rent: true,
                 },
                 null_tracer(),

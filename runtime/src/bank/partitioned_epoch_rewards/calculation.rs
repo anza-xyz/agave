@@ -660,7 +660,6 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
-        commission_rate_in_basis_points: bool,
         adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
@@ -741,24 +740,15 @@ impl Bank {
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
         // full epoch.
-        // When `commission_rate_in_basis_points` is true, use the new field
-        // `inflation_rewards_commission_bps`; otherwise use the legacy
-        // percentage field and convert to basis points by multiplying by 100.
         let commission_bps = if delay_commission_updates {
-            let vote_state_for_commission = snapshot_epoch_vote_accounts
+            snapshot_epoch_vote_accounts
                 .and_then(|eva| eva.get(&vote_pubkey))
                 .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
                 .map(|vote_account| vote_account.vote_state_view())
-                .unwrap_or(vote_state);
-            if commission_rate_in_basis_points {
-                vote_state_for_commission.inflation_rewards_commission()
-            } else {
-                vote_state_for_commission.commission() as u16 * 100
-            }
-        } else if commission_rate_in_basis_points {
-            vote_state.inflation_rewards_commission()
+                .unwrap_or(vote_state)
+                .inflation_rewards_commission()
         } else {
-            vote_state.commission() as u16 * 100
+            vote_state.inflation_rewards_commission()
         };
 
         match redeem_rewards(
@@ -770,7 +760,6 @@ impl Bank {
                 point_value,
                 stake_history,
                 new_rate_activation_epoch,
-                commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
             },
             reward_calc_tracer,
@@ -829,7 +818,6 @@ impl Bank {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
-        let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
         // Name intentionally doesn't match -- "adjust delegations for rent" is
         // part of relaxing post-exec min balance checks.
         let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
@@ -888,7 +876,6 @@ impl Bank {
                         reward_calc_tracer.as_ref(),
                         new_warmup_cooldown_rate_epoch,
                         delay_commission_updates,
-                        commission_rate_in_basis_points,
                         adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
@@ -1514,7 +1501,6 @@ mod tests {
                 null_tracer(),
                 None,  // new_rate_activation_epoch
                 false, // delay_commission_updates
-                true,  // commission_rate_in_basis_points
                 true,  // adjust_delegations_for_rent (SIMD-0392)
                 &AlpenglowEpochType::Tower,
                 false, // custom_commission_collector

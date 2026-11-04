@@ -1310,7 +1310,6 @@ mod tests {
         vote_state.increment_credits(rewarded_epoch, 1);
         let stake_history: &StakeHistory = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let commission_rate_in_basis_points = true;
         let adjust_delegations_for_rent = true;
 
         let maybe_rewards = redeem_rewards(
@@ -1325,7 +1324,6 @@ mod tests {
                 },
                 stake_history,
                 new_rate_activation_epoch,
-                commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
             },
             null_tracer(),
