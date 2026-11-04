@@ -84,6 +84,11 @@ homepage = "https://anza.xyz"
 license = "Apache-2.0"
 edition = "2024"
 
+[workspace.lints.rust]
+# solana-account 5.2 deprecates `AccountSharedData::new` and `Account::new`; allowed until the
+# remaining zero-length call sites move to `empty`.
+deprecated = "allow"
+
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
@@ -187,7 +192,7 @@ agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 borsh = { workspace = true }
-solana-account = { version = "5.1.1", features = ["wincode"] }
+solana-account = { version = "5.2.0", features = ["wincode"] }
 solana-account-info = "3.1.0"
 solana-client-traits = "6.0.0"
 solana-clock = { workspace = true }
