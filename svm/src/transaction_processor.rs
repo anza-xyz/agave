@@ -41,7 +41,7 @@ use {
             SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionCost,
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{Percent, ProgramCache, ProgramCacheForTxBatch, ProgramToLoad},
+        loaded_programs::{Percent, ProgramCache, ProgramToLoad},
         program_cache::{
             ebpp::EpochBoundaryPreparation,
             entry::ProgramCacheEntry,
@@ -49,6 +49,7 @@ use {
             fork_graph::ForkGraph,
             metrics::ProgramStatistics,
             owner::ProgramCacheEntryOwner,
+            tx_batch::ProgramCacheForTxBatch,
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,

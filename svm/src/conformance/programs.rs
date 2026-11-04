@@ -8,8 +8,10 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::ProgramCacheForTxBatch,
-        program_cache::{entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment},
+        program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+            tx_batch::ProgramCacheForTxBatch,
+        },
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,

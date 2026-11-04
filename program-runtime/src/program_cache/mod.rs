@@ -7,6 +7,7 @@ pub mod fork_graph;
 pub(crate) mod loading_task;
 pub mod metrics;
 pub mod owner;
+pub mod tx_batch;
 
 use solana_clock::Slot;
 

@@ -28,8 +28,7 @@ use {
         execution_budget::{
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, SVMTransactionExecutionAndFeeBudgetLimits,
         },
-        loaded_programs::ProgramCacheForTxBatch,
-        program_cache::env::ProgramRuntimeEnvironments,
+        program_cache::{env::ProgramRuntimeEnvironments, tx_batch::ProgramCacheForTxBatch},
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},

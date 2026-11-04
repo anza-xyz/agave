@@ -9,9 +9,10 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
-        loaded_programs::{ProgramCacheForTxBatch, ProgramToLoad},
+        loaded_programs::ProgramToLoad,
         program_cache::{
-            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner,
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+            owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
         },
     },
     solana_pubkey::Pubkey,

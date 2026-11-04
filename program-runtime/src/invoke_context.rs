@@ -13,11 +13,11 @@ use {
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-        loaded_programs::ProgramCacheForTxBatch,
         memory_context::{MemoryContext, MemoryContexts},
         program_cache::{
             entry::ProgramCacheEntryType,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            tx_batch::ProgramCacheForTxBatch,
         },
         stable_log,
         sysvar_cache::SysvarCache,
@@ -878,8 +878,9 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 },
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::ProgramCacheForTxBatch,
-                program_cache::env::ProgramRuntimeEnvironments,
+                program_cache::{
+                    env::ProgramRuntimeEnvironments, tx_batch::ProgramCacheForTxBatch,
+                },
                 sysvar_cache::SysvarCache,
             },
         };

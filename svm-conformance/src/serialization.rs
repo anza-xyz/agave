@@ -8,8 +8,8 @@ use {
         VmSerializedAccountMetadata as ProtoVmSerializedAccountMetadata,
     },
     solana_program_runtime::{
-        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
-        memory_context::SerializedAccountMetadata, solana_sbpf::memory_region::MemoryRegion,
+        invoke_context::InvokeContext, memory_context::SerializedAccountMetadata,
+        program_cache::tx_batch::ProgramCacheForTxBatch, solana_sbpf::memory_region::MemoryRegion,
     },
     solana_svm::conformance::{
         callback::DefaultCallback,

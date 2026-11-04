@@ -5,9 +5,9 @@ use {crate::program_cache::metrics::LoadProgramMetrics, solana_svm_measure::meas
 use {
     crate::{
         invoke_context::InvokeContext,
-        loaded_programs::ProgramCacheForTxBatch,
         program_cache::{
-            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner,
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+            owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
         },
     },
     solana_clock::Slot,
