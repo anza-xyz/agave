@@ -1,6 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 pub use self::{
-    cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust},
+    cpi::{SyscallInvokeSignedC, SyscallInvokeSignedRust, SyscallInvokeSignedV2},
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
@@ -32,6 +32,7 @@ use {
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
+        ebpf,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
@@ -326,6 +327,7 @@ pub fn create_program_runtime_environment(
         feature_set.remaining_compute_units_syscall_enabled;
     let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
     let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let invoke_signed_v2 = feature_set.invoke_signed_v2;
     let min_sbpf_version =
         if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
             SBPFVersion::V0
@@ -338,10 +340,8 @@ pub fn create_program_runtime_environment(
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true,
         enable_stack_frame_gaps: !feature_set.virtual_address_space_adjustments,
         instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
         enable_symbol_and_section_labels: debugging_features,
         reject_broken_elfs: reject_deployment_of_broken_elfs,
         noop_instruction_rate: 256,
@@ -349,6 +349,8 @@ pub fn create_program_runtime_environment(
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.virtual_address_space_adjustments,
+        aligned_region_size: ebpf::MM_REGION_SIZE as usize,
+        reject_unregistered_static_syscalls: false,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
 
@@ -447,6 +449,13 @@ pub fn create_program_runtime_environment(
     // Cross-program invocation
     SyscallInvokeSignedC::register(&mut result, "sol_invoke_signed_c")?;
     SyscallInvokeSignedRust::register(&mut result, "sol_invoke_signed_rust")?;
+
+    register_feature_gated_function!(
+        result,
+        invoke_signed_v2,
+        "sol_invoke_signed_v2",
+        SyscallInvokeSignedV2
+    )?;
 
     // Memory allocator
     register_feature_gated_function!(
@@ -2954,7 +2963,6 @@ mod tests {
     use solana_sysvar::fees::Fees;
     use {
         super::*,
-        assert_matches::assert_matches,
         core::slice,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_account_info::AccountInfo,
@@ -2992,6 +3000,7 @@ mod tests {
         solana_sysvar_id::SysvarId,
         solana_transaction_context::instruction_accounts::InstructionAccount,
         std::{
+            assert_matches,
             hash::{DefaultHasher, Hash, Hasher},
             mem,
             str::FromStr,

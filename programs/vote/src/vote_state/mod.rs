@@ -8,7 +8,7 @@ use {
     crate::vote_state::handler::VoteStateVersionsInline,
     handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_bls_signatures::{VerifiableProofOfPossession, keypair::Keypair as BLSKeypair},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -1368,8 +1368,6 @@ pub fn create_v4_account_with_authorized(
     block_revenue_collector: &Pubkey,
     lamports: u64,
 ) -> AccountSharedData {
-    let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
-
     // PoP is stubbed here, since creation of an account assumes the account
     // was already initialized via `IntializeAccount` or `InitializeAccountV2`.
     let authorized_voter_bls_proof_of_possession = [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE];
@@ -1389,13 +1387,13 @@ pub fn create_v4_account_with_authorized(
         &Clock::default(),
     );
 
-    VoteStateV4::serialize(
+    AccountSharedData::new_data_with_space(
+        lamports,
         &VoteStateVersions::V4(Box::new(vote_state)),
-        vote_account.data_as_mut_slice(),
+        VoteStateV4::size_of(),
+        &id(),
     )
-    .unwrap();
-
-    vote_account
+    .unwrap()
 }
 
 pub fn create_bls_pubkey_and_proof_of_possession(
@@ -5153,7 +5151,8 @@ mod tests {
 
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let make_uninit_vote_account = || AccountSharedData::new(lamports, v4_size, &id());
+        let make_uninit_vote_account =
+            || AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
         let valid_collector_account =
             || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
 
@@ -5384,8 +5383,11 @@ mod tests {
 
         // Should fail - vote account is the wrong size.
         {
-            let oversized_vote_account =
-                AccountSharedData::new(rent.minimum_balance(2 * v4_size), 2 * v4_size, &id());
+            let oversized_vote_account = AccountSharedData::new_with_data(
+                rent.minimum_balance(2 * v4_size),
+                vec![0; 2 * v4_size],
+                &id(),
+            );
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),

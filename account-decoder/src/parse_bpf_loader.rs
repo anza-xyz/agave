@@ -6,7 +6,6 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_pubkey::Pubkey,
 };
 
 pub fn parse_bpf_upgradeable_loader(
@@ -18,18 +17,16 @@ pub fn parse_bpf_upgradeable_loader(
     let parsed_account = match account_state {
         UpgradeableLoaderState::Uninitialized => BpfUpgradeableLoaderAccountType::Uninitialized,
         UpgradeableLoaderState::Buffer { authority_address } => {
-            let offset = if authority_address.is_some() {
-                UpgradeableLoaderState::size_of_buffer_metadata()
-            } else {
-                // This case included for code completeness; in practice, a Buffer account will
-                // always have authority_address.is_some()
-                UpgradeableLoaderState::size_of_buffer_metadata()
-                    - wincode::serialized_size(&Pubkey::default()).unwrap() as usize
-            };
+            let offset = UpgradeableLoaderState::size_of_buffer_metadata();
+            let program = data
+                .get(offset..)
+                .ok_or(ParseAccountError::AccountNotParsable(
+                    ParsableAccount::BpfUpgradeableLoader,
+                ))?;
             BpfUpgradeableLoaderAccountType::Buffer(UiBuffer {
                 authority: authority_address.map(|pubkey| pubkey.to_string()),
                 data: UiAccountData::Binary(
-                    BASE64_STANDARD.encode(&data[offset..]),
+                    BASE64_STANDARD.encode(program),
                     UiAccountEncoding::Base64,
                 ),
             })
@@ -43,17 +40,17 @@ pub fn parse_bpf_upgradeable_loader(
             slot,
             upgrade_authority_address,
         } => {
-            let offset = if upgrade_authority_address.is_some() {
-                UpgradeableLoaderState::size_of_programdata_metadata()
-            } else {
-                UpgradeableLoaderState::size_of_programdata_metadata()
-                    - wincode::serialized_size(&Pubkey::default()).unwrap() as usize
-            };
+            let offset = UpgradeableLoaderState::size_of_programdata_metadata();
+            let program = data
+                .get(offset..)
+                .ok_or(ParseAccountError::AccountNotParsable(
+                    ParsableAccount::BpfUpgradeableLoader,
+                ))?;
             BpfUpgradeableLoaderAccountType::ProgramData(UiProgramData {
                 slot,
                 authority: upgrade_authority_address.map(|pubkey| pubkey.to_string()),
                 data: UiAccountData::Binary(
-                    BASE64_STANDARD.encode(&data[offset..]),
+                    BASE64_STANDARD.encode(program),
                     UiAccountEncoding::Base64,
                 ),
             })
@@ -94,7 +91,14 @@ pub struct UiProgramData {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_pubkey::Pubkey, wincode::serialize};
+    use {
+        super::*,
+        solana_pubkey::Pubkey,
+        wincode::{serialize, serialize_into},
+    };
+
+    const BUFFER_LEN: usize = UpgradeableLoaderState::size_of_buffer_metadata();
+    const PROGRAMDATA_LEN: usize = UpgradeableLoaderState::size_of_programdata_metadata();
 
     #[test]
     fn test_parse_bpf_upgradeable_loader_accounts() {
@@ -111,7 +115,8 @@ mod test {
         let bpf_loader_state = UpgradeableLoaderState::Buffer {
             authority_address: Some(authority),
         };
-        let mut account_data = serialize(&bpf_loader_state).unwrap();
+        let mut account_data = vec![0u8; BUFFER_LEN];
+        serialize_into(&mut account_data[..], &bpf_loader_state).unwrap();
         account_data.extend_from_slice(&program);
         assert_eq!(
             parse_bpf_upgradeable_loader(&account_data).unwrap(),
@@ -129,7 +134,8 @@ mod test {
         let bpf_loader_state = UpgradeableLoaderState::Buffer {
             authority_address: None,
         };
-        let mut account_data = serialize(&bpf_loader_state).unwrap();
+        let mut account_data = vec![0u8; BUFFER_LEN];
+        serialize_into(&mut account_data[..], &bpf_loader_state).unwrap();
         account_data.extend_from_slice(&program);
         assert_eq!(
             parse_bpf_upgradeable_loader(&account_data).unwrap(),
@@ -141,6 +147,9 @@ mod test {
                 ),
             })
         );
+
+        let account_data = serialize(&bpf_loader_state).unwrap();
+        assert!(parse_bpf_upgradeable_loader(&account_data).is_err());
 
         let programdata_address = Pubkey::new_unique();
         let bpf_loader_state = UpgradeableLoaderState::Program {
@@ -160,7 +169,8 @@ mod test {
             slot,
             upgrade_authority_address: Some(authority),
         };
-        let mut account_data = serialize(&bpf_loader_state).unwrap();
+        let mut account_data = vec![0u8; PROGRAMDATA_LEN];
+        serialize_into(&mut account_data[..], &bpf_loader_state).unwrap();
         account_data.extend_from_slice(&program);
         assert_eq!(
             parse_bpf_upgradeable_loader(&account_data).unwrap(),
@@ -178,7 +188,37 @@ mod test {
             slot,
             upgrade_authority_address: None,
         };
-        let mut account_data = serialize(&bpf_loader_state).unwrap();
+        let mut account_data = vec![0u8; PROGRAMDATA_LEN];
+        serialize_into(&mut account_data[..], &bpf_loader_state).unwrap();
+        account_data.extend_from_slice(&program);
+        assert_eq!(
+            parse_bpf_upgradeable_loader(&account_data).unwrap(),
+            BpfUpgradeableLoaderAccountType::ProgramData(UiProgramData {
+                slot,
+                authority: None,
+                data: UiAccountData::Binary(
+                    BASE64_STANDARD.encode(&program),
+                    UiAccountEncoding::Base64
+                ),
+            })
+        );
+
+        let account_data = serialize(&bpf_loader_state).unwrap();
+        assert!(parse_bpf_upgradeable_loader(&account_data).is_err());
+
+        let old_state = UpgradeableLoaderState::ProgramData {
+            slot,
+            upgrade_authority_address: Some(authority),
+        };
+        let new_state = UpgradeableLoaderState::ProgramData {
+            slot,
+            upgrade_authority_address: None,
+        };
+        let mut account_data = vec![0u8; PROGRAMDATA_LEN];
+        serialize_into(&mut account_data[..], &old_state).unwrap();
+        // Overwrites the `Option` discriminator to 0 but doesn't clean up
+        // the old authority.
+        serialize_into(&mut account_data[..], &new_state).unwrap();
         account_data.extend_from_slice(&program);
         assert_eq!(
             parse_bpf_upgradeable_loader(&account_data).unwrap(),

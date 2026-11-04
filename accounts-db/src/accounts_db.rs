@@ -82,7 +82,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::{
         batch,
-        lt_hash::{LtHash, SingleLtHashUpdater},
+        lt_hash::{self, BufferingHasher, LtHash, SingleLtHashUpdater},
     },
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
@@ -810,10 +810,6 @@ pub struct AccountsDb {
     /// Populated when flushing the accounts write cache
     uncleaned_pubkeys: DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>>,
 
-    /// Pubkeys of the slots purged from the write cache, one entry per purged slot, waiting to be
-    /// cleaned
-    pubkeys_removed_from_cache: Mutex<Vec<Vec<Pubkey>>>,
-
     /// true if drop_callback is attached to the bank.
     is_bank_drop_callback_enabled: AtomicBool,
 
@@ -970,7 +966,6 @@ impl AccountsDb {
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
             uncleaned_pubkeys: DashMap::default(),
-            pubkeys_removed_from_cache: Mutex::default(),
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
@@ -1135,35 +1130,23 @@ impl AccountsDb {
     /// from the primary index can still be alive in the write cache and must keep its secondary
     /// entries.
     ///
-    /// Clean calls this for the keys whose last primary index entry it removed, and for the keys
-    /// that `purge_slots_from_cache` removed from the cache and deferred to
-    /// `handle_pubkeys_removed_from_cache`. Flush calls it for a zero-lamport account that leaves
-    /// the cache without a primary index entry, either skipped or stored as a tombstone and deleted
-    /// from the index. Callers never run concurrently with each other: clean and flush both run on
-    /// the ABS thread and the snapshot minimizer runs standalone, so the only concurrent writer is
-    /// replay. This is tricky due to the races that need to be considered:
+    /// Clean calls this for the keys whose last primary index entry it removed. Purge calls this
+    /// for the keys it removed from the cache. Flush calls it for a zero-lamport account that
+    /// leaves the cache without a primary index entry, either skipped or stored as a tombstone and
+    /// deleted from the index. Callers never run concurrently with each other: clean, flush and
+    /// purge all run on the ABS thread and the snapshot minimizer runs standalone, so the only
+    /// concurrent writer is replay. This following cases need to be considered:
     /// 1) Removed from the cache then re-added to the cache by replay
     /// - This is protected by re-checking the cache in the closure passed to purge. Since purge
     ///   holds the secondary index's reverse-index lock when it re-checks cache presence, and a
     ///   cache store writes the cache before inserting into the secondary index under that same
     ///   lock, either the re-check sees the cache write and the entry is not removed, or the
     ///   removal wins and the store's later insert re-adds it.
-    /// 2) The same key is handled twice, e.g. flush purges a tombstoned key that clean then purges
-    ///    again from the deferred list
-    /// - Since the cache removal and the index removal are both done before the removal from the
-    ///   secondary index, the worst case is a double removal (both paths remove the same secondary
-    ///   index entry). This is safe since the secondary index removal is idempotent.
-    /// 3) Removed from the primary index, but still present in the cache
+    /// 2) Removed from the primary index, but still present in the cache
     /// - This is protected by checking the cache presence in the closure. If the pubkey is still
     ///   present in the cache, the secondary index entry is not removed. It is purged when the key
-    ///   later leaves the cache: by flush if the key is skipped or tombstoned, otherwise by the
-    ///   deferred handling in clean.
-    /// 4) A deferred key is re-added to the cache, rooted, and flushed to storage before clean
-    ///    handles it
-    /// - The deferred keys are passed through `handle_dead_keys` first, which yields a key only
-    ///   when its slot list is absent or empty, checked under the key's index entry lock. A key
-    ///   that regained a primary index entry in the deferral window is not yielded, and flush
-    ///   cannot add one while clean is running since both run on the ABS thread.
+    ///   later leaves the cache: by flush if the key is skipped or tombstoned, or by
+    ///   `purge_slots_from_cache` if its bank drops unrooted.
     fn purge_secondary_indexes_for_dead_keys<'a>(
         &self,
         removed_keys: impl IntoIterator<Item = &'a Pubkey>,
@@ -1510,11 +1493,6 @@ impl AccountsDb {
             .max_clean_root(Some(max_clean_root_inclusive))
             .expect("max_clean_root_inclusive must be Some");
 
-        // purge_slots_from_cache delays handling of the pubkeys it removes from the cache
-        // so that the purge path never modifies the accounts index. Handle them here
-        let (_, handle_pubkeys_removed_from_cache_us) =
-            measure_us!(self.handle_pubkeys_removed_from_cache());
-
         let active_guard = self
             .active_stats
             .activate(ActiveStatItem::CleanConstructCandidates);
@@ -1663,11 +1641,6 @@ impl AccountsDb {
             (
                 "construct_candidates_us",
                 measure_construct_candidates.as_us(),
-                i64
-            ),
-            (
-                "handle_pubkeys_removed_from_cache_us",
-                handle_pubkeys_removed_from_cache_us,
                 i64
             ),
             ("accounts_scan", accounts_scan.as_us(), i64),
@@ -2876,24 +2849,18 @@ impl AccountsDb {
         // we know that there are no longer any ongoing scans on this bank, because scans require
         // and hold a reference to the bank at the tip of the fork they're scanning. Hence it's
         // safe to remove this bank_id from the `removed_bank_ids` list at this point.
-        if self
-            .scan_tracker
+        self.scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
-            .remove(&bank_id)
-        {
-            // If this slot was already cleaned up, no need to do any further cleans
-            return;
-        }
+            .remove(&bank_id);
 
         self.purge_slots(std::iter::once(bank_id));
     }
 
-    /// Purges each bank in `bank_ids` from the write cache, and defers any pubkeys that
-    /// were fully removed from the write cache to clean to handle removal from the secondary
-    /// index. Banks no longer present in the cache are skipped. This never touches backing
-    /// storage, so it cannot delete a flushed slot's data.
+    /// Purges each bank in `bank_ids` from the write cache, then handles the pubkeys that were
+    /// fully removed from the write cache. Banks no longer present in the cache are skipped. This
+    /// never touches backing storage, so it cannot delete a flushed slot's data.
     fn purge_slots_from_cache(
         &self,
         bank_ids: impl Iterator<Item = BankId>,
@@ -2903,9 +2870,6 @@ impl AccountsDb {
         let mut num_cached_slots_removed = 0;
         let mut total_removed_cached_bytes = 0;
         for bank_id in bank_ids {
-            // This function runs in parallel with the ABS operations (flush, shrink, clean) and
-            // must be safe with respect to them. ABS operations will not operate on this slot as
-            // it is unrooted.
             let mut remove_cache_elapsed = Measure::start("remove_cache_elapsed");
             if let Some(slot_cache) = self.accounts_cache.bank_cache(bank_id) {
                 num_cached_slots_removed += 1;
@@ -2917,7 +2881,7 @@ impl AccountsDb {
                     .accounts_cache
                     .remove_bank(bank_id)
                     .expect("slot cache entry must still be present");
-                self.add_pubkeys_removed_from_cache(pubkeys_removed);
+                self.handle_pubkeys_removed_from_cache(pubkeys_removed);
             }
         }
 
@@ -2932,35 +2896,24 @@ impl AccountsDb {
             .fetch_add(total_removed_cached_bytes, Ordering::Relaxed);
     }
 
-    /// Add any keys that were removed from the cache and need follow-up work by clean
-    /// Only required if secondary indexes are enabled, or write-through is enabled
-    fn add_pubkeys_removed_from_cache(&self, pubkeys: Vec<Pubkey>) {
-        if self.account_indexes.is_empty() && !self.accounts_index.should_write_through() {
-            return;
-        }
-        self.pubkeys_removed_from_cache
-            .lock()
-            .unwrap()
-            .push(pubkeys);
-    }
-
     /// For each pubkey in the list:
     /// 1. remove the pubkey from the secondary index if it is not present in either the cache
     ///    or the index
     /// 2. write-through to disk if the pubkey is dirty and not present in the cache
-    fn handle_pubkeys_removed_from_cache(&self) {
-        let pubkeys_removed_from_cache =
-            mem::take(&mut *self.pubkeys_removed_from_cache.lock().unwrap());
-        for mut pubkeys in pubkeys_removed_from_cache {
-            if !self.account_indexes.is_empty() {
-                let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys);
-                self.purge_secondary_indexes_for_dead_keys(&removed_keys);
-            }
-
-            // Write through any pubkey that hasn't been re-added to the cache in the meantime
-            pubkeys.retain(|pubkey| !self.accounts_cache.contains_pubkey(pubkey));
-            self.accounts_index.write_through_pubkeys(pubkeys);
+    ///
+    /// Only required if secondary indexes are enabled, or write-through is enabled
+    fn handle_pubkeys_removed_from_cache(&self, mut pubkeys: Vec<Pubkey>) {
+        if self.account_indexes.is_empty() && !self.accounts_index.should_write_through() {
+            return;
         }
+        if !self.account_indexes.is_empty() {
+            let removed_keys = self.accounts_index.handle_dead_keys(&pubkeys);
+            self.purge_secondary_indexes_for_dead_keys(&removed_keys);
+        }
+
+        // Write through any pubkey that hasn't been re-added to the cache in the meantime
+        pubkeys.retain(|pubkey| !self.accounts_cache.contains_pubkey(pubkey));
+        self.accounts_index.write_through_pubkeys(pubkeys);
     }
 
     /// Purge the backing storage entries for the given slot, does not purge from
@@ -3092,10 +3045,9 @@ impl AccountsDb {
             // root slot `S`, then try to dump some other version of slot `S`, the
             // dumping has to finish first
             //
-            // Also note roots are never removed via `remove_unrooted_slot()`, so
+            // Also note roots are never removed via `mark_banks_removed()`, so
             // it's safe to filter them out here as they won't need deletion from
-            // self.scan_tracker.removed_bank_ids in
-            // `purge_slots_from_cache()`.
+            // self.scan_tracker.removed_bank_ids in `purge_slot()`.
             .filter(|bank_id| {
                 self.accounts_cache.contains(*bank_id)
                     && !self.accounts_cache.contains_unflushed_bank(*bank_id)
@@ -3109,7 +3061,7 @@ impl AccountsDb {
             .report("external_purge_slots_stats", Some(1000));
     }
 
-    pub fn remove_unrooted_slots(&self, remove_slots: &[(Slot, BankId)]) {
+    pub fn mark_banks_removed(&self, remove_slots: &[(Slot, BankId)]) {
         assert!(
             remove_slots.iter().all(|(_, bank_id)| {
                 debug_assert!(
@@ -3121,31 +3073,37 @@ impl AccountsDb {
             "Trying to remove accounts for rooted slots {remove_slots:?}"
         );
 
-        // Mark down these slots are about to be purged so that new attempts to scan these
-        // banks fail, and any ongoing scans over these slots abort promptly, releasing the
-        // bank references their callers hold
+        // Mark down these banks are about to be purged so that new attempts to scan these
+        // banks fail, and any ongoing scans over these banks abort promptly, releasing the
+        // bank references their callers hold. Their write cache is purged when they drop.
         self.scan_tracker.mark_banks_removed(
             remove_slots
                 .iter()
                 .map(|(_slot, remove_bank_id)| *remove_bank_id),
         );
-
-        let remove_unrooted_purge_stats = PurgeStats::default();
-        self.purge_slots_from_cache(
-            remove_slots.iter().map(|(_, bank_id)| *bank_id),
-            &remove_unrooted_purge_stats,
-        );
-        remove_unrooted_purge_stats.report("remove_unrooted_slots_purge_slots_stats", None);
     }
 
     /// Calculates the `AccountLtHash` of `account`
     pub fn lt_hash_account(account: &impl ReadableAccount, pubkey: &Pubkey) -> AccountLtHash {
+        lt_hash::with_thread_hasher(|hasher| {
+            Self::lt_hash_account_with_hasher(account, pubkey, hasher)
+        })
+    }
+
+    /// Calculates the `AccountLtHash` of `account` like `lt_hash_account()`, with `hasher`
+    /// held by the caller instead of the thread.
+    pub fn lt_hash_account_with_hasher(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        hasher: &mut BufferingHasher,
+    ) -> AccountLtHash {
         if account.lamports() == 0 {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::write_account_hash_input(account, pubkey, blake3::Hasher::new());
-        AccountLtHash(LtHash::with(&hasher))
+        hasher.reset();
+        Self::write_account_hash_input(account, pubkey, &mut *hasher);
+        AccountLtHash(hasher.finish())
     }
 
     /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the
@@ -5477,15 +5435,22 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new((t + 1) as u64, space, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(
+                (t + 1) as u64,
+                vec![0; space],
+                &Pubkey::default(),
+            );
             pubkeys.push(pubkey);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
         for t in 0..num_vote {
             let pubkey = solana_pubkey::new_rand();
-            let account =
-                AccountSharedData::new((num + t + 1) as u64, space, &solana_vote_program::id());
+            let account = AccountSharedData::new_with_data(
+                (num + t + 1) as u64,
+                vec![0; space],
+                &solana_vote_program::id(),
+            );
             pubkeys.push(pubkey);
             let ancestors = Ancestors::from(vec![slot]);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());

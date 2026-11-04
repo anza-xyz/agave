@@ -25,17 +25,20 @@ Release channels have their own copy of this changelog:
   `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
   below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
   `getBlocks` behavior.
-* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
-  for the epoch containing a requested slot, with an optional identity filter. Always queries
-  finalized state; there is no commitment parameter.
-* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `getVatActiveSetRankMap` to return validator ranks, vote accounts, identities, BLS keys,
+  and stakes for the epoch containing a requested slot, with an optional identity filter.
+  Always queries finalized state; there is no commitment parameter.
+* Added `RpcClient::get_vat_active_set_rank_map`, which accepts an optional identity filter
+  and minimum context slot through its config argument.
 * Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
   instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
   preserves the existing parsed output.
 * `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
   `--full-rpc-api`.
-* `getFeeForMessage` no longer returns `null` when the message's recent blockhash has expired or
-  its durable nonce is invalid. The fee does not depend on either, so it is now returned.
+* `getFeeForMessage` now computes the fee from the message alone. It no longer returns `null` when
+  the message's recent blockhash has expired or its durable nonce is invalid, and no longer returns
+  an `invalid transaction message` error when it references missing or invalid address lookup
+  tables.
 * `getInflationReward` provides the block rewards for stake accounts as a separate
   `blockRewardAmount` field in the response, if block revenue sharing is enabled in the epoch.
   Otherwise, the field is present with a value of `null`. The `amount` field always contains
@@ -44,6 +47,14 @@ Release channels have their own copy of this changelog:
   means a single stake account has two separate reward entries in a block if it received
   block rewards and inflation rewards. The new entries can only appear when block revenue
   sharing is enabled.
+* Some error messages from `sendTransaction`, `simulateTransaction` and `getFeeForMessage` changed,
+  error codes are unchanged. Size errors say `data` instead of a type name
+  (`base64 encoded data too large: …`), malformed transactions return
+  `failed to deserialize transaction` (including some previously reported as
+  `Transaction failed to sanitize accounts offsets correctly`), and malformed messages return
+  `invalid transaction message` without further detail.
+* `jsonParsed` ProgramData accounts of programs without an upgrade authority no longer return the
+  removed authority's 32 bytes in front of the program data.
 
 ### Validator
 
@@ -77,6 +88,7 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Prebuilt MacOS x86-64 releases are no longer provided.
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
 * **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave

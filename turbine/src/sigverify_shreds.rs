@@ -1,7 +1,7 @@
 use {
-    agave_wake_channel::{Receiver as WakeReceiver, Sender as WakeSender, bounded as wake_bounded},
+    agave_worker_pool::{ResultRecvError, ResultWorkerPool, TrySendError, WorkerPoolConfig},
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
-    scopeguard::defer,
+    itertools::Itertools,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -9,6 +9,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
             self,
+            filter::{RETRANSMIT_SHRED_BATCH_SIZE, RetransmitSender},
             layout::{is_retransmitter_signed_variant, set_retransmitter_signature},
         },
         sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
@@ -27,7 +28,7 @@ use {
     std::{
         num::NonZeroUsize,
         sync::{Arc, RwLock},
-        thread::{self, Builder, JoinHandle},
+        thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -44,7 +45,7 @@ const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
 /// In case of legitimate sigverify traffic sigverify stage keeps up with fetch stage and processes
 /// one packet batch per iteration. If a backlog accumulates, this limits each iteration to
 /// `SIGVERIFY_SHRED_BATCH_SIZE` batches, each up to `PACKETS_PER_BATCH` shreds.
-const SIGVERIFY_SHRED_BATCH_SIZE: usize = 128;
+const SIGVERIFY_SHRED_BATCH_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 
 #[allow(clippy::enum_variant_names)]
 enum ShredSigverifyError {
@@ -159,42 +160,13 @@ struct BatchJob {
     self_pubkey: Pubkey,
 }
 
-#[derive(Debug)]
-struct WorkerPanicked;
-
 struct BatchResult {
     batch: PacketBatch,
     counters: WorkerCounters,
 }
 
-type WorkerResult = Result<BatchResult, WorkerPanicked>;
-
-struct WorkerHandles(Vec<JoinHandle<()>>);
-
-impl Drop for WorkerHandles {
-    fn drop(&mut self) {
-        let mut worker_panicked = false;
-
-        for handle in self.0.drain(..) {
-            worker_panicked |= handle.join().is_err();
-        }
-
-        // process_batches already propagates worker panics; avoid a second
-        // panic if the owner is already unwinding.
-        if worker_panicked && !thread::panicking() {
-            panic!("shred sigverify worker panicked");
-        }
-    }
-}
-
 struct ShredSigverifyWorkers {
-    // Drop order is significant:
-    // 1. Disconnect the job channel so workers stop receiving new work.
-    // 2. Disconnect the result channel so workers cannot block sending results.
-    // 3. Drop WorkerHandles, whose Drop impl joins all worker threads.
-    job_sender: WakeSender<BatchJob>,
-    result_receiver: WakeReceiver<WorkerResult>,
-    _worker_handles: WorkerHandles,
+    pool: ResultWorkerPool<BatchJob, BatchResult>,
 }
 
 impl ShredSigverifyWorkers {
@@ -205,12 +177,6 @@ impl ShredSigverifyWorkers {
         bank_forks: Arc<RwLock<BankForks>>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
     ) -> Self {
-        let num_workers = num_workers.get();
-
-        let (job_sender, job_receiver) = wake_bounded::<BatchJob>(SIGVERIFY_SHRED_BATCH_SIZE);
-        let (result_sender, result_receiver) =
-            wake_bounded::<WorkerResult>(SIGVERIFY_SHRED_BATCH_SIZE);
-
         // Keep a cheap lock-free handle to the current working bank.
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
 
@@ -221,49 +187,24 @@ impl ShredSigverifyWorkers {
             deduper,
         };
 
-        let worker_handles = WorkerHandles(
-            (0..num_workers)
-                .map(|index| {
-                    let job_receiver = job_receiver.clone();
-                    let result_sender = result_sender.clone();
-                    let ctx = worker_context.clone();
+        let config = WorkerPoolConfig {
+            job_queue_capacity: SIGVERIFY_SHRED_BATCH_SIZE,
+            ..WorkerPoolConfig::new("solSvrfyShred", num_workers)
+        };
+        let pool = ResultWorkerPool::spawn(config, SIGVERIFY_SHRED_BATCH_SIZE, |_worker_id| {
+            let ctx = worker_context.clone();
+            move |job: BatchJob| {
+                let BatchJob {
+                    mut batch,
+                    self_pubkey,
+                } = job;
+                let counters = verify_batch(&mut batch, &ctx, &self_pubkey);
+                BatchResult { batch, counters }
+            }
+        })
+        .expect("failed to spawn shred sigverify workers");
 
-                    Builder::new()
-                        .name(format!("solSvrfyShred{index:02}"))
-                        .spawn(move || {
-                            defer! {
-                                if thread::panicking() {
-                                    result_sender
-                                        .send(Err(WorkerPanicked))
-                                        .expect("shred sigverify result receiver must remain alive while workers are running");
-                                }
-                            }
-
-                            while let Ok(BatchJob {
-                                mut batch,
-                                self_pubkey,
-                            }) = job_receiver.recv()
-                            {
-                                let counters = verify_batch(&mut batch, &ctx, &self_pubkey);
-
-                                if result_sender
-                                    .send(Ok(BatchResult { batch, counters }))
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                        })
-                        .expect("shred sigverify worker thread must spawn during pool construction")
-                })
-                .collect(),
-        );
-
-        Self {
-            job_sender,
-            result_receiver,
-            _worker_handles: worker_handles,
-        }
+        Self { pool }
     }
 
     fn process_batches(&self, packets: &mut Vec<PacketBatch>, self_pubkey: &Pubkey) -> WorkerStats {
@@ -272,7 +213,7 @@ impl ShredSigverifyWorkers {
         }
 
         debug_assert!(
-            packets.len() <= SIGVERIFY_SHRED_BATCH_SIZE,
+            packets.len() <= SIGVERIFY_SHRED_BATCH_SIZE.get(),
             "run_shred_sigverify collects one batch plus at most SIGVERIFY_SHRED_BATCH_SIZE - 1 \
              additional batches"
         );
@@ -280,26 +221,24 @@ impl ShredSigverifyWorkers {
         let num_batches = packets.len();
 
         for batch in packets.drain(..) {
-            self.job_sender
-                .send(BatchJob {
-                    batch,
-                    self_pubkey: *self_pubkey,
-                })
-                .expect("shred sigverify workers must be alive");
+            self.pool.send(BatchJob {
+                batch,
+                self_pubkey: *self_pubkey,
+            });
         }
 
         let mut worker_stats = WorkerStats::default();
 
         for _ in 0..num_batches {
-            match self.result_receiver.recv() {
-                Ok(Ok(BatchResult { batch, counters })) => {
+            match self.pool.recv() {
+                Ok(BatchResult { batch, counters }) => {
                     worker_stats.add_batch(counters);
                     packets.push(batch);
                 }
-                Ok(Err(WorkerPanicked)) => {
+                Err(ResultRecvError::WorkerPanicked) => {
                     panic!("shred sigverify worker panicked");
                 }
-                Err(_) => {
+                Err(ResultRecvError::Disconnected) => {
                     panic!("all shred sigverify workers died");
                 }
             }
@@ -314,7 +253,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: Sender<Vec<shred::Payload>>,
+    retransmit_sender: RetransmitSender,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: Arc<RepairNonceLocationLookup>,
     num_sigverify_threads: NonZeroUsize,
@@ -338,7 +277,7 @@ pub fn spawn_shred_sigverify(
 
     let run_shred_sigverify = move || {
         let mut rng = rand::rng();
-        let mut shred_buffer = Vec::with_capacity(SIGVERIFY_SHRED_BATCH_SIZE);
+        let mut shred_buffer = Vec::with_capacity(SIGVERIFY_SHRED_BATCH_SIZE.get());
 
         loop {
             if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, DEDUPER_RESET_CYCLE) {
@@ -378,7 +317,7 @@ fn run_shred_sigverify(
     workers: &ShredSigverifyWorkers,
     self_pubkey: &Pubkey,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &Sender<Vec<shred::Payload>>,
+    retransmit_sender: &RetransmitSender,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
     repair_nonce_location_lookup: &RepairNonceLocationLookup,
     stats: &mut ShredSigVerifyStats,
@@ -392,7 +331,7 @@ fn run_shred_sigverify(
 
     for packets in shred_fetch_receiver
         .try_iter()
-        .take(SIGVERIFY_SHRED_BATCH_SIZE - 1)
+        .take(SIGVERIFY_SHRED_BATCH_SIZE.get() - 1)
     {
         stats.num_packets += packets.len();
         shred_buffer.push(packets);
@@ -438,15 +377,23 @@ fn run_shred_sigverify(
 
     stats.num_retransmit_shreds += retransmit_shreds.len();
 
-    if let Err(send_err) = retransmit_sender.try_send(retransmit_shreds) {
-        match send_err {
-            crossbeam_channel::TrySendError::Full(shreds) => {
-                stats.num_retransmit_stage_overflow_shreds += shreds.len();
-            }
-            crossbeam_channel::TrySendError::Disconnected(_) => {
-                return Err(ShredSigverifyError::SendError);
+    for shreds in &retransmit_shreds
+        .into_iter()
+        .chunks(RETRANSMIT_SHRED_BATCH_SIZE)
+    {
+        if let Err(send_err) = retransmit_sender.try_send(shreds.collect()) {
+            match send_err {
+                TrySendError::Full(shreds) => {
+                    stats.num_retransmit_stage_overflow_shreds += shreds.len();
+                }
+                TrySendError::Disconnected(_) => {
+                    return Err(ShredSigverifyError::SendError);
+                }
             }
         }
+        stats.max_retransmit_queue_len = stats
+            .max_retransmit_queue_len
+            .max(retransmit_sender.queue_len());
     }
 
     verified_sender.send(verified_shreds)?;
@@ -558,6 +505,8 @@ struct ShredSigVerifyStats {
     worker_stats: WorkerStats,
     num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
+    /// Maximum observed number of queued retransmit batches since the previous report.
+    max_retransmit_queue_len: usize,
     /// This means the OutstandingRequests cache is saturated and we
     /// threw away a verified shred due to being unable to fetch the storage location
     num_unknown_block_location: usize,
@@ -579,6 +528,7 @@ impl ShredSigVerifyStats {
             worker_stats: WorkerStats::default(),
             num_retransmit_stage_overflow_shreds: 0,
             num_retransmit_shreds: 0,
+            max_retransmit_queue_len: 0,
             num_unknown_block_location: 0,
             elapsed_micros: 0,
             verify_micros: 0,
@@ -609,6 +559,7 @@ impl ShredSigVerifyStats {
                 i64
             ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
+            ("retransmit_queue_len", self.max_retransmit_queue_len, i64),
             (
                 "num_unknown_block_location",
                 self.num_unknown_block_location,

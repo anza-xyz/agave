@@ -27,7 +27,8 @@ use {
     scopeguard::defer,
     smallvec::SmallVec,
     solana_accounts_db::{
-        account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
+        account_locks::{TransactionAccountLockLimits, validate_account_locks},
+        accounts_db::AccountsDbConfig,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
     solana_clock::Slot,
@@ -237,7 +238,7 @@ fn process_entries(
                 );
                 validate_entry_transactions(
                     &transactions,
-                    bank.get_transaction_account_lock_limit(),
+                    bank.get_transaction_account_lock_limits(),
                 )?;
 
                 let indexes = starting_index..starting_index + transactions.len();
@@ -258,10 +259,13 @@ fn process_entries(
 /// locks (count and duplicates). Does not take account locks - the unified scheduler orders conflicts.
 fn validate_entry_transactions(
     transactions: &[ReplayTransaction],
-    tx_account_lock_limit: usize,
+    tx_account_lock_limits: TransactionAccountLockLimits,
 ) -> Result<()> {
     for transaction in transactions {
-        validate_account_locks(transaction.account_keys(), tx_account_lock_limit)?;
+        validate_account_locks(
+            transaction.account_keys(),
+            tx_account_lock_limits.for_version(transaction.version().into())?,
+        )?;
     }
 
     Ok(())
@@ -1828,7 +1832,7 @@ fn cleanup_outdated_tower_bft_startup_banks(
     blockstore: &Blockstore,
     slots_to_cleanup: &[(Slot, BankId)],
 ) {
-    root_bank.remove_unrooted_slots(slots_to_cleanup);
+    root_bank.mark_banks_removed(slots_to_cleanup);
 
     for &(slot, _) in slots_to_cleanup {
         root_bank.clear_slot_signatures(slot);
@@ -2581,7 +2585,6 @@ pub mod tests {
             certificate::{CertSignature, GenesisCert},
             consensus_message::{Block, BlockId},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::bounded,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, WritableAccount},
@@ -2629,6 +2632,7 @@ pub mod tests {
             vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
         },
         std::{
+            assert_matches,
             collections::BTreeSet,
             sync::{Arc, Barrier, Mutex, RwLock, atomic::Ordering},
             thread,
@@ -6220,11 +6224,6 @@ pub mod tests {
 
         assert!(!blockstore.is_dead(1));
         assert!(!blockstore.is_dead(2));
-        assert!(
-            first_alpenglow_bank
-                .get_account(&first_alpenglow_key)
-                .is_none()
-        );
 
         let queued_slots: BTreeSet<_> = pending_slots
             .iter()
@@ -6514,7 +6513,17 @@ pub mod tests {
                 hash,
             )),
         ];
-        assert_eq!(validate_entry_transactions(&txs, 10), Ok(()));
+        assert_eq!(
+            validate_entry_transactions(
+                &txs,
+                TransactionAccountLockLimits {
+                    legacy: 10,
+                    v0: 10,
+                    v1: 10
+                }
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -6527,7 +6536,14 @@ pub mod tests {
         ))];
         // transfer touches >1 account; limit of 1 must reject
         assert_eq!(
-            validate_entry_transactions(&txs, 1),
+            validate_entry_transactions(
+                &txs,
+                TransactionAccountLockLimits {
+                    legacy: 1,
+                    v0: 1,
+                    v1: 1
+                }
+            ),
             Err(TransactionError::TooManyAccountLocks)
         );
     }

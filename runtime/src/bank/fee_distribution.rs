@@ -478,7 +478,8 @@ pub mod tests {
             match test_case.scenario {
                 Scenario::RentPayingAccount => {
                     // ensure that the account is rent-paying
-                    let account = AccountSharedData::new(1, 1_000, &Pubkey::new_unique());
+                    let account =
+                        AccountSharedData::new_with_data(1, vec![0; 1_000], &Pubkey::new_unique());
                     bank.store_account(&collector_id, &account);
                 }
                 Scenario::InvalidOwner => {
@@ -810,9 +811,9 @@ pub mod tests {
                 bank.feature_set = Arc::new(feature_set);
 
                 let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
-                let account = AccountSharedData::new(
+                let account = AccountSharedData::new_with_data(
                     pre_balance,
-                    initialized_data_len,
+                    vec![0; initialized_data_len],
                     &system_program::id(),
                 );
                 bank.store_account(&collector_id, &account);
@@ -958,12 +959,13 @@ pub mod tests {
         let versioned = VoteStateVersions::V4(Box::new(vote_state));
 
         let pre_balance = 1_000_000_000;
-        let mut pre_account = AccountSharedData::new(
+        let pre_account = AccountSharedData::new_data_with_space(
             pre_balance,
+            &versioned,
             VoteStateV4::size_of(),
             &solana_sdk_ids::vote::id(),
-        );
-        pre_account.set_state(&versioned).unwrap();
+        )
+        .unwrap();
 
         let bank = Bank::new_for_tests(&genesis.genesis_config);
         bank.store_account(&vote_address, &pre_account);
@@ -991,12 +993,13 @@ pub mod tests {
         let versioned = VoteStateVersions::V4(Box::new(vote_state));
 
         let pre_balance = 1_000_000_000;
-        let mut pre_account = AccountSharedData::new(
+        let mut pre_account = AccountSharedData::new_data_with_space(
             pre_balance,
+            &versioned,
             VoteStateV4::size_of(),
             &solana_sdk_ids::vote::id(),
-        );
-        pre_account.set_state(&versioned).unwrap();
+        )
+        .unwrap();
 
         let bank = Bank::new_for_tests(&genesis.genesis_config);
 
@@ -1028,12 +1031,13 @@ pub mod tests {
         let versioned = VoteStateVersions::V3(Box::new(vote_state));
 
         let pre_balance = 1_000_000_000;
-        let mut pre_account = AccountSharedData::new(
+        let pre_account = AccountSharedData::new_data_with_space(
             pre_balance,
+            &versioned,
             VoteStateV3::size_of(),
             &solana_sdk_ids::vote::id(),
-        );
-        pre_account.set_state(&versioned).unwrap();
+        )
+        .unwrap();
         bank.store_account(&vote_address, &pre_account);
 
         assert_eq!(

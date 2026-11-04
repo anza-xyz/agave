@@ -25,6 +25,8 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2022-0093
   # URL:       https://rustsec.org/advisories/RUSTSEC-2022-0093
   # Solution:  Upgrade to >=2
+  # Note:      dev-dependency of agave-precompiles only; the ed25519 precompile
+  #            test compares against the exact dalek version it used to call.
   --ignore RUSTSEC-2022-0093
 
   # Crate:     idna
@@ -45,6 +47,7 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2024-0344
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0344
   # Solution:  Upgrade to >=4.1.3
+  # Note:      pulled in by the ed25519-dalek 1.0.1 dev-dependency above.
   --ignore RUSTSEC-2024-0344
 
   # Crate:     crypto-bigint

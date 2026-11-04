@@ -24,7 +24,6 @@ pub struct SVMFeatureSet {
     pub deprecate_legacy_vote_ixs: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
@@ -52,6 +51,7 @@ pub struct SVMFeatureSet {
     pub secp256r1_syscall_enabled: bool,
     pub loader_v3_allow_prefunded_programdata: bool,
     pub loader_v3_remove_extend_program: bool,
+    pub invoke_signed_v2: bool,
 }
 
 impl SVMFeatureSet {
@@ -80,7 +80,6 @@ impl SVMFeatureSet {
             deprecate_legacy_vote_ixs: true,
             simplify_alt_bn128_syscall_error_codes: true,
             fix_alt_bn128_multiplication_input_length: true,
-            increase_tx_account_lock_limit: true,
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
@@ -108,6 +107,7 @@ impl SVMFeatureSet {
             secp256r1_syscall_enabled: true,
             loader_v3_allow_prefunded_programdata: true,
             loader_v3_remove_extend_program: true,
+            invoke_signed_v2: true,
         }
     }
 }

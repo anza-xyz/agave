@@ -68,7 +68,7 @@ test-stable-sbf)
   test -d target/release/sbf && find target/release/sbf -name '*.d' -delete
 
   # rustfilt required for dumping SBF assembly listings
-  "$cargo" install rustfilt
+  "$cargo" install rustfilt@0.2.2 --locked
 
   # solana-keygen required when building C programs
   _ "$cargo" build --manifest-path=keygen/Cargo.toml

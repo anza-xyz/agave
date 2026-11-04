@@ -65,7 +65,6 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 solana-epoch-rewards = { workspace = true, features = ["wincode"] }
 solana-epoch-schedule = { workspace = true, features = ["wincode"] }
 solana-fee-calculator = { workspace = true }

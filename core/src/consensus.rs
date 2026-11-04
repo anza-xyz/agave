@@ -1873,6 +1873,7 @@ pub mod test {
             process_slot_vote_unchecked,
         },
         std::{
+            assert_matches,
             collections::{HashMap, VecDeque},
             fs::{OpenOptions, remove_file},
             io::{Read, Seek, SeekFrom, Write},

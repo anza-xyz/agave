@@ -163,6 +163,11 @@ impl<J> WorkerPool<J> {
         self.workers.0.len()
     }
 
+    /// Returns the current number of queued jobs.
+    pub fn queue_len(&self) -> usize {
+        self.job_sender.len()
+    }
+
     /// Closes the queue and waits for the workers to finish the queued jobs.
     ///
     /// Returns the panic payload of the first worker that panicked.

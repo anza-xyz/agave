@@ -39,8 +39,10 @@ pub struct BlockstoreInsertionMetrics {
     pub num_recovered_failed_invalid: usize,
     pub num_recovered_exists: usize,
     pub num_fec_set_checks_passed: usize,
+    /// FEC sets failing SIMD-0504 checks, including rebuild failures.
     pub num_fec_set_checks_failed: usize,
-    /// Number of FEC sets that could not be rebuilt despite available shreds.
+    /// Subset of `num_fec_set_checks_failed`: FEC sets that could not be
+    /// rebuilt despite enough shreds being available.
     pub num_fec_set_checks_rebuild_failed: usize,
     pub num_repaired_data_shreds_exists: usize,
     pub num_turbine_data_shreds_exists: usize,

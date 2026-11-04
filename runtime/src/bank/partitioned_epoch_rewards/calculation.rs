@@ -1472,18 +1472,13 @@ mod tests {
             },
             credits_observed: vote_credits,
         };
-        let mut account = AccountSharedData::new(
+        let account = AccountSharedData::new_data_with_space(
             rent_exempt_reserve + non_rent_lamports,
+            &StakeStateV2::Stake(Meta::default(), stake, StakeFlags::default()),
             StakeStateV2::size_of(),
             &solana_stake_interface::program::id(),
-        );
-        account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        )
+        .unwrap();
         let stake_account = StakeAccount::try_from(account).unwrap();
         let stake_pubkey = Pubkey::new_unique();
         let point_value = PointValue {
@@ -1945,11 +1940,6 @@ mod tests {
         vote_address: &Pubkey,
         activation_epoch: Epoch,
     ) -> AccountSharedData {
-        let mut stake_account = AccountSharedData::new(
-            lamports,
-            StakeStateV2::size_of(),
-            &solana_sdk_ids::stake::id(),
-        );
         let rent_exempt_reserve = lamports.saturating_sub(delegation);
 
         let meta = Meta {
@@ -1964,10 +1954,13 @@ mod tests {
             credits_observed: 0,
         };
 
-        stake_account
-            .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-            .expect("set_state");
-        stake_account
+        AccountSharedData::new_data_with_space(
+            lamports,
+            &StakeStateV2::Stake(meta, stake, StakeFlags::empty()),
+            StakeStateV2::size_of(),
+            &solana_sdk_ids::stake::id(),
+        )
+        .expect("set_state")
     }
 
     fn apply_epoch_operations(
@@ -3877,7 +3870,7 @@ mod tests {
         let (expected_stake_rewards, expected_rewards) = if is_alpenglow {
             (0, 0)
         } else {
-            (374600, 374656)
+            (394300, 394375)
         };
         assert_cached_rewards(
             &bank1,
@@ -3912,9 +3905,9 @@ mod tests {
             expected_rewards,
             expected_points,
         ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 374656, 0)
+            (&no_reward_accounts, &no_reward_accounts, 0, 0, 394375, 0)
         } else {
-            (&voters, &stakers, 4165, 371020, 375234, 9_450_000_000_000)
+            (&voters, &stakers, 4385, 390495, 394984, 9_450_000_000_000)
         };
         let capitalization_after_vat_burn = if is_alpenglow {
             let num_vat_burns = RewardEpochDelegatedStakes::get(&bank2)
@@ -3954,9 +3947,9 @@ mod tests {
             expected_rewards,
             expected_points,
         ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 371535, 0)
+            (&no_reward_accounts, &no_reward_accounts, 0, 0, 391090, 0)
         } else {
-            (&voters, &stakers, 12980, 364020, 377084, 12_810_000_000_000)
+            (&voters, &stakers, 13660, 383170, 396930, 12_810_000_000_000)
         };
         let capitalization_after_vat_burn = if is_alpenglow {
             let num_vat_burns = RewardEpochDelegatedStakes::get(&bank3)

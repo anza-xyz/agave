@@ -27,16 +27,6 @@ if [[ -n $BUILDKITE ]]; then
       else
         echo "~~~ Ignore uploading to Buildkite Analytics"
       fi
-
-      if [[ -n "$DATADOG_API_KEY" ]]; then
-        echo "~~~ Uploading test results to Datadog"
-        cargo2junit >results.xml <sanitized-results.json || true
-        if [[ -f "results.xml" ]]; then
-          datadog-ci junit upload --service solana results.xml
-        fi
-      else
-        echo "~~~ Ignore Uploading to Datadog"
-      fi
     fi
 
     if [[ -f "target/nextest/ci/junit.xml" ]]; then
@@ -59,13 +49,6 @@ if [[ -n $BUILDKITE ]]; then
         echo # add a break line for previous command
       else
         echo "~~~ Ignore uploading to Buildkite Analytics"
-      fi
-
-      if [[ -n "$DATADOG_API_KEY" ]]; then
-        echo "~~~ Uploading test results to Datadog"
-        datadog-ci junit upload --service solana target/nextest/ci/junit.xml
-      else
-        echo "~~~ Ignore Uploading to Datadog"
       fi
     fi
   fi

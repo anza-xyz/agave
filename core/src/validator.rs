@@ -2008,7 +2008,6 @@ impl Validator {
     }
 
     pub fn join(self) {
-        drop(self.bank_forks);
         drop(self.cluster_info);
 
         self.poh_service.join().expect("poh_service");
@@ -2037,12 +2036,6 @@ impl Validator {
             optimistically_confirmed_bank_tracker
                 .join()
                 .expect("optimistically_confirmed_bank_tracker");
-        }
-
-        if let Some(transaction_status_service) = self.transaction_status_service {
-            transaction_status_service
-                .join()
-                .expect("transaction_status_service");
         }
 
         if let Some(system_monitor_service) = self.system_monitor_service {
@@ -2085,6 +2078,12 @@ impl Validator {
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
+        // TSS can drain safely once its producers have stopped.
+        if let Some(transaction_status_service) = self.transaction_status_service {
+            transaction_status_service
+                .join()
+                .expect("transaction_status_service");
+        }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
             completed_data_sets_service
                 .join()
@@ -2542,6 +2541,10 @@ fn load_blockstore(
                 config.rpc_config.enable_extended_tx_metadata_storage,
                 transaction_notifier,
                 dependency_tracker,
+                config
+                    .validator_exit_backpressure
+                    .get(TransactionStatusService::NAME)
+                    .cloned(),
             )
         } else {
             TransactionHistoryServices::default()
@@ -2985,9 +2988,8 @@ fn cleanup_blockstore_incorrect_shred_versions(
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
-                let _ = backup_blockstore.insert_cow_shreds(
+                let _ = backup_blockstore.insert_trusted_shreds(
                     shreds,
-                    true,
                     &mut pinnable_slice,
                     &mut write_batch,
                 );
@@ -3023,6 +3025,7 @@ fn initialize_rpc_transaction_history_services(
     enable_extended_tx_metadata_storage: bool,
     transaction_notifier: Option<TransactionNotifierArc>,
     dependency_tracker: Option<Arc<DependencyTracker>>,
+    exit_backpressure: Option<Arc<AtomicBool>>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (transaction_status_sender, transaction_status_receiver) = unbounded();
@@ -3039,6 +3042,7 @@ fn initialize_rpc_transaction_history_services(
         enable_extended_tx_metadata_storage,
         dependency_tracker,
         exit,
+        exit_backpressure,
     ));
 
     TransactionHistoryServices {
@@ -3286,7 +3290,7 @@ mod tests {
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
         solana_vote_program::vote_state::{LandedVote, Lockout, VoteStateVersions},
-        std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
+        std::{assert_matches, fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
 
     #[test]

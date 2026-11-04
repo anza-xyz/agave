@@ -50,9 +50,9 @@ mod bench {
             let transaction_accounts = vec![
                 (
                     buffer_address,
-                    AccountSharedData::new(
+                    AccountSharedData::new_with_data(
                         ACCOUNT_BALANCE,
-                        UpgradeableLoaderState::size_of_buffer(PROGRAM_BUFFER_SIZE),
+                        vec![0; UpgradeableLoaderState::size_of_buffer(PROGRAM_BUFFER_SIZE)],
                         &loader_address,
                     ),
                 ),

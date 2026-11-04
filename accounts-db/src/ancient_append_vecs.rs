@@ -829,7 +829,11 @@ mod tests {
             let slot = starting_slot + i as Slot;
             let storage = db.create_store(slot, file_size);
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(
+                1,
+                vec![0; account_data_size as usize],
+                &Pubkey::default(),
+            );
             append_single_account_with_default_hash(&storage, &pubkey, &account, alive, None);
             db.storage.insert(Arc::new(storage));
         }

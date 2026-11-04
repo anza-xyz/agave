@@ -404,7 +404,7 @@ impl Bank {
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
     /// (state equal to [`UpgradeableLoaderState::Buffer`]).
-    #[cfg_attr(not(test), expect(dead_code))] // Only used when an upgrade is configured.
+    //#[cfg_attr(not(test), expect(dead_code))] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &self,
         loader_v2_bpf_program_address: &Pubkey,
@@ -2087,9 +2087,8 @@ pub(crate) mod tests {
                 let lamports = bank.get_minimum_balance_for_rent_exemption(space);
                 let owner = &bpf_loader::id();
 
-                let mut account = AccountSharedData::new(lamports, space, owner);
+                let mut account = AccountSharedData::new_with_data(lamports, elf.to_vec(), owner);
                 account.set_executable(true);
-                account.data_as_mut_slice().copy_from_slice(&elf);
                 bank.store_account_and_update_capitalization(
                     &bpf_loader_v2_program_address,
                     &account,
@@ -2170,9 +2169,8 @@ pub(crate) mod tests {
                 let lamports = bank.get_minimum_balance_for_rent_exemption(space);
                 let owner = &bpf_loader::id();
 
-                let mut account = AccountSharedData::new(lamports, space, owner);
+                let mut account = AccountSharedData::new_with_data(lamports, elf.to_vec(), owner);
                 account.set_executable(true);
-                account.data_as_mut_slice().copy_from_slice(&elf);
                 bank.store_account_and_update_capitalization(
                     &bpf_loader_v2_program_address,
                     &account,
@@ -2237,9 +2235,9 @@ pub(crate) mod tests {
             let elf = [4u8; 200]; // Mock ELF to start.
             let space = elf.len();
             let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-            let mut account = AccountSharedData::new(lamports, space, &bpf_loader::id());
+            let mut account =
+                AccountSharedData::new_with_data(lamports, elf.to_vec(), &bpf_loader::id());
             account.set_executable(true);
-            account.data_as_mut_slice().copy_from_slice(&elf);
             bank.store_account_and_update_capitalization(&bpf_loader_v2_program_address, &account);
         }
 

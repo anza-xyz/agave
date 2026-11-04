@@ -36,9 +36,6 @@ jobs:
         run: |
           git config --global user.email "49699333+dependabot[bot]@users.noreply.github.com"
           git config --global user.name "dependabot[bot]"
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -70,6 +67,8 @@ jobs:
           ./scripts/cargo-for-all-lock-files.sh tree
 
       - name: push
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "✅ Nothing to update"
@@ -77,5 +76,8 @@ jobs:
             git add **/Cargo.toml
             git add **/Cargo.lock
             git commit -am "Update all workspaces"
-            git push
+            auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+            echo "::add-mask::$auth"
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+              push
           fi

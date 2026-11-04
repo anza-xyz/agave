@@ -279,7 +279,7 @@ mod serde_snapshot_tests {
         db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
 
         // Purge the slot
-        db.remove_unrooted_slots(&[(unrooted_slot, unrooted_bank_id)]);
+        db.mark_banks_removed(&[(unrooted_slot, unrooted_bank_id)]);
 
         // Add a new root
         let key2 = solana_pubkey::new_rand();

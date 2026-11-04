@@ -59,16 +59,11 @@ impl ScanConfig {
 #[derive(Debug, Default)]
 pub struct ScanTracker {
     ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
-    // Each scan has some latest slot `S` that is the tip of the fork the scan
-    // is iterating over. The unique id of that slot `S` is recorded here (note we don't use
-    // `S` as the id because there can be more than one version of a slot `S`). If a fork
-    // is abandoned, all of the slots on that fork up to `S` will be removed via
-    // `AccountsDb::remove_unrooted_slots()`. When the scan finishes, it'll realize that the
-    // results of the scan may have been corrupted by `remove_unrooted_slots` and abort its results.
-    //
-    // `removed_bank_ids` tracks all the slot ids that were removed via `remove_unrooted_slots()` so any attempted scans
-    // on any of these slots fails. This is safe to purge once the associated Bank is dropped and
-    // scanning the fork with that Bank at the tip is no longer possible.
+    // Each scan records the `BankId` of the bank at the tip of the fork it scans (a `BankId`
+    // rather than a slot, since a slot can have more than one bank). When a fork is abandoned,
+    // its banks are added here via `mark_banks_removed()`: new scans on them fail, and in-flight
+    // scans on them stop and return an error instead of their results. A `BankId` is removed
+    // from here when its bank drops, since no scan can hold that bank anymore.
     pub removed_bank_ids: Mutex<HashSet<BankId>>,
     /// Number of total bank removals. Used by scans to determine if they need to check if the
     /// bank they are scanning on is being removed.

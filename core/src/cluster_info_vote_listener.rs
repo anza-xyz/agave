@@ -940,7 +940,7 @@ mod tests {
         solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, Vote},
-        std::{collections::BTreeSet, sync::Arc},
+        std::{assert_matches, collections::BTreeSet, sync::Arc},
     };
 
     #[test]
@@ -958,8 +958,10 @@ mod tests {
             Some(Hash::default()),
         );
 
-        use bincode::serialized_size;
-        info!("max vote size {}", serialized_size(&vote_tx).unwrap());
+        info!(
+            "max vote size {}",
+            wincode::serialized_size(&vote_tx).unwrap()
+        );
 
         let packet_batches = packet::to_packet_batches(&[vote_tx], 1); // panics if won't fit
 

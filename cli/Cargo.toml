@@ -41,7 +41,6 @@ bip39 = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
-const_format = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 log = { workspace = true }

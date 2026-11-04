@@ -4,13 +4,10 @@ use {
     crate::{
         FileInfo, FileSize, IoSize,
         file_io::FileCreator,
-        io_uring::{
-            IO_PRIO_BE_HIGHEST,
-            memory::{IoBufferChunk, PageAlignedMemory},
-            sqpoll,
-        },
+        io_uring::{IO_PRIO_BE_HIGHEST, memory::IoBufferChunk, sqpoll},
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingAccess, RingOp},
+    agave_memory::AlignedBuffer,
     io_uring::{IoUring, opcode, squeue, types},
     libc::{O_CREAT, O_DIRECT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
     smallvec::SmallVec,
@@ -132,7 +129,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         F: FnMut(FileInfo) -> Option<File> + 'a,
     {
         let buf_capacity = buf_capacity.max(self.write_capacity as usize);
-        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        let buffer = AlignedBuffer::new_page_aligned(buf_capacity)?;
         self.build_with_buffer(buffer, file_complete)
     }
 
@@ -140,7 +137,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     /// to notify caller with already written file.
     fn build_with_buffer<'a, F: FnMut(FileInfo) -> Option<File> + 'a>(
         self,
-        mut buffer: PageAlignedMemory,
+        mut buffer: AlignedBuffer,
         file_complete: F,
     ) -> io::Result<IoUringFileCreator<'a>> {
         // Align buffer capacity to write capacity, so we always write equally sized chunks
@@ -210,7 +207,7 @@ pub struct IoUringFileCreator<'a> {
     write_with_direct_io: bool,
     /// Owned buffer used (chunked into [`IoBufferChunk`] items) across lifespan of `ring`
     /// (should get dropped last)
-    _backing_buffer: PageAlignedMemory,
+    _backing_buffer: AlignedBuffer,
 }
 
 impl FileCreator for IoUringFileCreator<'_> {

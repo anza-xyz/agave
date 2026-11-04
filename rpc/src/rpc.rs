@@ -9,10 +9,14 @@ use {
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::*,
-        rpc_cache::{LargestAccountsCache, RankMapCache, rank_map_response},
+        rpc_cache::{LargestAccountsCache, RankMapCache},
         rpc_health::*,
     },
     agave_snapshots::{paths as snapshot_paths, snapshot_config::SnapshotConfig},
+    agave_transaction_view::{
+        resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
+        transaction_view::SanitizedTransactionView,
+    },
     agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
@@ -48,10 +52,9 @@ use {
         blockstore_meta::PerfSample,
         leader_schedule_cache::LeaderScheduleCache,
     },
-    solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
     solana_net_utils::Protocol,
-    solana_perf::packet::PACKET_DATA_SIZE,
+    solana_perf::{packet::PACKET_DATA_SIZE, sigverify::verify_transaction_view_signatures},
     solana_program_pack::Pack,
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_rpc_client_api::{
@@ -69,9 +72,10 @@ use {
         response::{Response as RpcResponse, *},
     },
     solana_runtime::{
-        bank::{Bank, TransactionSimulationResult},
+        bank::{Bank, MAX_LEADER_SCHEDULE_STAKES, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
+        epoch_stakes::{BLSPubkeyStakeEntry, VersionedEpochStakes},
         non_circulating_supply::{NonCirculatingSupply, calculate_non_circulating_supply},
         prioritization_fee_cache::PrioritizationFeeCache,
         stake_utils,
@@ -82,10 +86,7 @@ use {
     solana_signer::Signer,
     solana_storage_bigtable::Error as StorageError,
     solana_svm_transaction::svm_message::SVMStaticMessage,
-    solana_transaction::{
-        sanitized::{MAX_TX_ACCOUNT_LOCKS, MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::sanitized::MessageHash,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
@@ -108,11 +109,11 @@ use {
         state::{Account as TokenAccount, Mint},
     },
     std::{
-        any::type_name,
         cmp::{Reverse, max, min},
         collections::{BinaryHeap, HashMap, HashSet},
         convert::TryFrom,
         net::SocketAddr,
+        num::NonZeroUsize,
         str::FromStr,
         sync::{
             Arc, RwLock,
@@ -145,12 +146,42 @@ type RpcCustomResult<T> = std::result::Result<T, RpcCustomError>;
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 pub const PERFORMANCE_SAMPLES_LIMIT: usize = 720;
+pub(crate) const RANK_MAP_CACHE_CAPACITY: NonZeroUsize =
+    NonZeroUsize::new(MAX_LEADER_SCHEDULE_STAKES as usize).unwrap();
 
 fn new_response<T>(bank: &Bank, value: T) -> RpcResponse<T> {
     RpcResponse {
         context: RpcResponseContext::new(bank.slot()),
         value,
     }
+}
+
+fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> Arc<RpcVatActiveSetRankMap> {
+    let rank_map = stakes.bls_pubkey_to_rank_map();
+    let validators = rank_map
+        .iter()
+        .map(|(rank, entry)| {
+            // Keep the wire format explicit, and require a decision when the runtime adds fields.
+            let BLSPubkeyStakeEntry {
+                vote_account_pubkey,
+                node_pubkey,
+                bls_pubkey,
+                stake,
+            } = entry;
+            RpcVatActiveSetRankMapEntry {
+                rank,
+                vote_pubkey: vote_account_pubkey.to_string(),
+                node_pubkey: node_pubkey.to_string(),
+                bls_pubkey_compressed: bs58::encode(bls_pubkey.to_bytes_compressed()).into_string(),
+                stake: stake.get(),
+            }
+        })
+        .collect();
+    Arc::new(RpcVatActiveSetRankMap {
+        epoch,
+        total_stake: rank_map.total_stake().get(),
+        validators,
+    })
 }
 
 fn is_finalized(
@@ -257,7 +288,7 @@ pub struct JsonRpcRequestProcessor {
     bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
     optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
-    rank_map_cache: Arc<RwLock<RankMapCache>>,
+    rank_map_cache: Arc<RankMapCache>,
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -422,7 +453,7 @@ impl JsonRpcRequestProcessor {
         bigtable_ledger_storage: Option<solana_storage_bigtable::LedgerStorage>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         largest_accounts_cache: Arc<RwLock<LargestAccountsCache>>,
-        rank_map_cache: Arc<RwLock<RankMapCache>>,
+        rank_map_cache: Arc<RankMapCache>,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -530,7 +561,7 @@ impl JsonRpcRequestProcessor {
             bigtable_ledger_storage: None,
             optimistically_confirmed_bank,
             largest_accounts_cache: Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            rank_map_cache: Arc::new(RwLock::new(RankMapCache::default())),
+            rank_map_cache: Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
@@ -939,6 +970,18 @@ impl JsonRpcRequestProcessor {
     pub fn get_inflation_rate(&self) -> RpcInflationRate {
         let bank = self.bank(None);
         let epoch = bank.epoch();
+        if bank.feature_set.snapshot().remove_runtime_float_ops {
+            let rate = bank
+                .integer_inflation_rate()
+                .expect("inflation rate calculation failed") as f64
+                / agave_math_utils::inflation::RATE_SCALE as f64;
+            return RpcInflationRate {
+                total: rate,
+                validator: rate,
+                foundation: 0.0,
+                epoch,
+            };
+        }
         let inflation = bank.inflation();
         let slot_in_year = bank.slot_in_year_for_inflation();
 
@@ -969,11 +1012,11 @@ impl JsonRpcRequestProcessor {
             })
     }
 
-    pub async fn get_rank_map(
+    pub async fn get_vat_active_set_rank_map(
         &self,
         slot: Slot,
-        config: RpcRankMapConfig,
-    ) -> Result<RpcResponse<Option<Arc<RpcRankMap>>>> {
+        config: RpcVatActiveSetRankMapConfig,
+    ) -> Result<RpcResponse<Option<Arc<RpcVatActiveSetRankMap>>>> {
         let identity = config.identity.as_deref();
         if let Some(identity) = identity {
             verify_pubkey(identity)?;
@@ -986,25 +1029,23 @@ impl JsonRpcRequestProcessor {
         if bank.epoch_stakes_from_slot(slot).is_none() {
             return Ok(new_response(&bank, None));
         }
-        let cell = self.rank_map_cache.write().unwrap().get_or_insert(epoch);
+        let cell = self.rank_map_cache.get_or_insert(epoch);
         let cached = cell
             .get_or_try_init(|| async {
                 let bank = Arc::clone(&bank);
                 self.runtime
                     .spawn_blocking(move || {
-                        rank_map_response(
-                            epoch,
-                            bank.epoch_stakes_from_slot(slot)
-                                .expect("epoch stakes were found in this bank before spawning"),
-                        )
+                        bank.epoch_stakes_from_slot(slot)
+                            .map(|stakes| rank_map_response(epoch, stakes))
+                            .ok_or_else(Error::internal_error)
                     })
                     .await
-                    .map_err(|_| Error::internal_error())
+                    .map_err(|_| Error::internal_error())?
             })
             .await?;
         let value = match identity {
             None => Arc::clone(cached),
-            Some(identity) => Arc::new(RpcRankMap {
+            Some(identity) => Arc::new(RpcVatActiveSetRankMap {
                 epoch: cached.epoch,
                 total_stake: cached.total_stake,
                 validators: cached
@@ -3262,13 +3303,13 @@ pub mod rpc_bank {
         fn get_ag_genesis_cert(&self, meta: Self::Metadata)
         -> Result<Option<WireBlockCertMessage>>;
 
-        #[rpc(meta, name = "getRankMap")]
-        fn get_rank_map(
+        #[rpc(meta, name = "getVatActiveSetRankMap")]
+        fn get_vat_active_set_rank_map(
             &self,
             meta: Self::Metadata,
             slot: Slot,
-            config: Option<RpcRankMapConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcRankMap>>>>>;
+            config: Option<RpcVatActiveSetRankMapConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcVatActiveSetRankMap>>>>>;
 
         #[rpc(meta, name = "getBlockProduction")]
         fn get_block_production(
@@ -3353,14 +3394,18 @@ pub mod rpc_bank {
             Ok(meta.get_ag_genesis_cert())
         }
 
-        fn get_rank_map(
+        fn get_vat_active_set_rank_map(
             &self,
             meta: Self::Metadata,
             slot: Slot,
-            config: Option<RpcRankMapConfig>,
-        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcRankMap>>>>> {
-            debug!("get_rank_map rpc request received: {slot}");
-            async move { meta.get_rank_map(slot, config.unwrap_or_default()).await }.boxed()
+            config: Option<RpcVatActiveSetRankMapConfig>,
+        ) -> BoxFuture<Result<RpcResponse<Option<Arc<RpcVatActiveSetRankMap>>>>> {
+            debug!("get_vat_active_set_rank_map rpc request received: {slot}");
+            async move {
+                meta.get_vat_active_set_rank_map(slot, config.unwrap_or_default())
+                    .await
+            }
+            .boxed()
         }
 
         fn get_block_production(
@@ -3692,7 +3737,9 @@ pub mod rpc_accounts_scan {
 pub mod rpc_full {
     use {
         super::*,
-        solana_message::{SanitizedVersionedMessage, VersionedMessage},
+        agave_transaction_view::message_view::SanitizedMessageView,
+        solana_runtime_transaction::transaction_meta::TransactionMeta,
+        solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMStaticTransaction},
         solana_transaction_status::{
             UiInnerInstructions, UiLoadedAddresses, parse_ui_inner_instructions,
         },
@@ -3886,47 +3933,55 @@ pub mod rpc_full {
             debug!("get_cluster_nodes rpc request received");
             let cluster_info = &meta.cluster_info;
             let socket_addr_space = cluster_info.socket_addr_space();
+            struct Node {
+                pubkey: Pubkey,
+                version: solana_version::Version,
+                shred_version: u16,
+                gossip: SocketAddr,
+                tvu: Option<SocketAddr>,
+                tpu_quic: Option<SocketAddr>,
+                tpu_forwards_quic: Option<SocketAddr>,
+                serve_repair: Option<SocketAddr>,
+                rpc: Option<SocketAddr>,
+                pubsub: Option<SocketAddr>,
+            }
             Ok(cluster_info
-                .all_peers()
-                .iter()
-                .filter_map(|(contact_info, _)| {
-                    if contact_info
-                        .gossip()
-                        .map(|addr| socket_addr_space.check(&addr))
-                        .unwrap_or_default()
-                    {
-                        let version = contact_info.version();
-                        Some(RpcContactInfo {
-                            pubkey: contact_info.pubkey().to_string(),
-                            gossip: contact_info.gossip(),
-                            tvu: contact_info
-                                .tvu(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu: None,
-                            tpu_quic: contact_info
-                                .tpu(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            tpu_forwards: None,
-                            tpu_forwards_quic: contact_info
-                                .tpu_forwards(Protocol::QUIC)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            serve_repair: contact_info
-                                .serve_repair(Protocol::UDP)
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            rpc: contact_info
-                                .rpc()
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            pubsub: contact_info
-                                .rpc_pubsub()
-                                .filter(|addr| socket_addr_space.check(addr)),
-                            version: Some(version.to_string()),
-                            client_id: Some(version.client().to_string()),
-                            feature_set: Some(version.feature_set()),
-                            shred_version: Some(contact_info.shred_version()),
-                        })
-                    } else {
-                        None // Exclude spy nodes
-                    }
+                .contact_infos(|node| {
+                    // Exclude nodes without a valid gossip address
+                    let gossip = node.gossip().filter(|addr| socket_addr_space.check(addr))?;
+                    Some(Node {
+                        pubkey: *node.pubkey(),
+                        version: node.version().clone(),
+                        shred_version: node.shred_version(),
+                        gossip,
+                        tvu: node.tvu(Protocol::UDP),
+                        tpu_quic: node.tpu(Protocol::QUIC),
+                        tpu_forwards_quic: node.tpu_forwards(Protocol::QUIC),
+                        serve_repair: node.serve_repair(Protocol::UDP),
+                        rpc: node.rpc(),
+                        pubsub: node.rpc_pubsub(),
+                    })
+                })
+                .into_iter()
+                .map(|(node, _)| RpcContactInfo {
+                    pubkey: node.pubkey.to_string(),
+                    gossip: Some(node.gossip),
+                    tvu: node.tvu.filter(|addr| socket_addr_space.check(addr)),
+                    tpu: None,
+                    tpu_quic: node.tpu_quic.filter(|addr| socket_addr_space.check(addr)),
+                    tpu_forwards: None,
+                    tpu_forwards_quic: node
+                        .tpu_forwards_quic
+                        .filter(|addr| socket_addr_space.check(addr)),
+                    serve_repair: node
+                        .serve_repair
+                        .filter(|addr| socket_addr_space.check(addr)),
+                    rpc: node.rpc.filter(|addr| socket_addr_space.check(addr)),
+                    pubsub: node.pubsub.filter(|addr| socket_addr_space.check(addr)),
+                    version: Some(node.version.to_string()),
+                    client_id: Some(node.version.client().to_string()),
+                    feature_set: Some(node.version.feature_set()),
+                    shred_version: Some(node.shred_version),
                 })
                 .collect())
         }
@@ -4045,8 +4100,11 @@ pub mod rpc_full {
                     "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
                 ))
             })?;
-            let (wire_transaction, unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+            let wire_transaction = decode_wire(data, binary_encoding)?;
+
+            let sanitized_transaction_view =
+                SanitizedTransactionView::try_new_sanitized(wire_transaction.as_slice())
+                    .map_err(map_transaction_view_error)?;
 
             let preflight_commitment = if skip_preflight {
                 Some(CommitmentConfig::processed())
@@ -4058,12 +4116,8 @@ pub mod rpc_full {
                 min_context_slot,
             })?;
 
-            let transaction = sanitize_transaction(
-                unsanitized_tx,
-                preflight_bank,
-                preflight_bank.get_reserved_account_keys(),
-            )?;
-            let blockhash = *transaction.message().recent_blockhash();
+            let transaction = resolve_transaction_view(sanitized_transaction_view, preflight_bank)?;
+            let blockhash = *transaction.recent_blockhash();
             let message_hash = *transaction.message_hash();
             let signature = *transaction.signature();
 
@@ -4084,7 +4138,8 @@ pub mod rpc_full {
             }
 
             if !skip_preflight {
-                let verification_error = transaction.verify().err();
+                let verification_error = (!verify_transaction_view_signatures(&transaction))
+                    .then_some(TransactionError::SignatureFailure);
 
                 if verification_error.is_none() && !meta.config.skip_preflight_health_check {
                     match meta.health.check() {
@@ -4204,8 +4259,10 @@ pub mod rpc_full {
                     "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
                 ))
             })?;
-            let (_, mut unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+            let wire_transaction = decode_wire(data, binary_encoding)?;
+            let mut sanitized_transaction_view =
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)?;
 
             let bank = &*meta.get_bank_with_config(RpcContextConfig {
                 commitment,
@@ -4219,9 +4276,7 @@ pub mod rpc_full {
                     ));
                 }
                 let recent_blockhash = bank.last_blockhash();
-                unsanitized_tx
-                    .message
-                    .set_recent_blockhash(recent_blockhash);
+                sanitized_transaction_view.set_recent_blockhash(&recent_blockhash);
                 let last_valid_block_height = bank
                     .get_blockhash_last_valid_block_height(&recent_blockhash)
                     .expect("bank blockhash queue should contain blockhash");
@@ -4231,11 +4286,11 @@ pub mod rpc_full {
                 });
             }
 
-            let transaction =
-                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
+            let transaction = resolve_transaction_view(sanitized_transaction_view, bank)?;
 
             let verification_error = if sig_verify {
-                transaction.verify().err()
+                (!verify_transaction_view_signatures(&transaction))
+                    .then_some(TransactionError::SignatureFailure)
             } else {
                 None
             };
@@ -4261,7 +4316,7 @@ pub mod rpc_full {
                 post_token_balances,
             } = simulation_result;
 
-            let account_keys = transaction.message().account_keys();
+            let account_keys = transaction.account_keys();
             let number_of_accounts = account_keys.len();
 
             let accounts = if let Some(config_accounts) = config_accounts {
@@ -4339,7 +4394,7 @@ pub mod rpc_full {
                     post_token_balances: post_token_balances.map(|balances| {
                         balances.into_iter().map(|balance| solana_runtime::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
-                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
+                    loaded_addresses: Some(transaction.loaded_addresses_view().map(UiLoadedAddresses::from).unwrap_or_default()),
                 },
             ))
         }
@@ -4503,22 +4558,12 @@ pub mod rpc_full {
             config: Option<RpcContextConfig>,
         ) -> Result<RpcResponse<Option<u64>>> {
             debug!("get_fee_for_message rpc request received");
-            let (_, message) = decode_and_deserialize::<VersionedMessage>(
-                data,
-                TransactionBinaryEncoding::Base64,
-            )?;
+            let message_wire = decode_wire(data, TransactionBinaryEncoding::Base64)?;
+            let message_view = SanitizedMessageView::try_new_sanitized(message_wire)
+                .map_err(|_| Error::invalid_params("invalid transaction message"))?;
+
             let bank = &*meta.get_bank_with_config(config.unwrap_or_default())?;
-            let sanitized_versioned_message = SanitizedVersionedMessage::try_from(message)
-                .map_err(|err| {
-                    Error::invalid_params(format!("invalid transaction message: {err}"))
-                })?;
-            let sanitized_message = SanitizedMessage::try_new(
-                sanitized_versioned_message,
-                bank,
-                bank.get_reserved_account_keys(),
-            )
-            .map_err(|err| Error::invalid_params(format!("invalid transaction message: {err}")))?;
-            let fee = bank.get_fee_for_message(&sanitized_message);
+            let fee = bank.get_fee_for_message_view(&message_view);
             Ok(new_response(bank, fee))
         }
 
@@ -4541,9 +4586,10 @@ pub mod rpc_full {
                 "get_recent_prioritization_fees rpc request received: {:?} pubkeys",
                 pubkey_strs.len()
             );
-            if pubkey_strs.len() > MAX_TX_ACCOUNT_LOCKS {
+            const MAX_ACCOUNT_FILTERS: usize = 128;
+            if pubkey_strs.len() > MAX_ACCOUNT_FILTERS {
                 return Err(Error::invalid_params(format!(
-                    "Too many inputs provided; max {MAX_TX_ACCOUNT_LOCKS}"
+                    "Too many inputs provided; max {MAX_ACCOUNT_FILTERS}"
                 )));
             }
             let pubkeys = pubkey_strs
@@ -4578,20 +4624,13 @@ const MAX_BASE64_LEGACY_SIZE: usize = 1644; // ceil(1232 / 3) * 4
 // Revisit before V3 which will break this shortcut
 const V1_BASE64_PREFIX_LOWER_BOUND: &[u8] = b"gQ";
 
-fn decode_and_deserialize<T>(
-    encoded: String,
-    encoding: TransactionBinaryEncoding,
-) -> Result<(Vec<u8>, T)>
-where
-    T: for<'a> wincode::SchemaRead<'a, wincode::config::DefaultConfig, Dst = T>,
-{
+fn decode_wire(encoded: String, encoding: TransactionBinaryEncoding) -> Result<Vec<u8>> {
     let (wire_output, max_raw_size) = match encoding {
         TransactionBinaryEncoding::Base58 => {
             inc_new_counter_info!("rpc-base58_encoded_tx", 1);
             if encoded.len() > MAX_BASE58_SIZE {
                 return Err(Error::invalid_params(format!(
-                    "base58 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
-                    type_name::<T>(),
+                    "base58 encoded data too large: {} bytes (max: encoded/raw {}/{})",
                     encoded.len(),
                     MAX_BASE58_SIZE,
                     PACKET_DATA_SIZE,
@@ -4616,8 +4655,7 @@ where
             };
             if encoded.len() > max_encoded_size {
                 return Err(Error::invalid_params(format!(
-                    "base64 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
-                    type_name::<T>(),
+                    "base64 encoded data too large: {} bytes (max: encoded/raw {}/{})",
                     encoded.len(),
                     max_encoded_size,
                     max_raw_size,
@@ -4631,35 +4669,48 @@ where
     };
     if wire_output.len() > max_raw_size {
         return Err(Error::invalid_params(format!(
-            "decoded {} too large: {} bytes (max: {} bytes)",
-            type_name::<T>(),
+            "decoded data too large: {} bytes (max: {} bytes)",
             wire_output.len(),
             max_raw_size
         )));
     }
 
-    wincode::deserialize(&wire_output[..])
-        .map_err(|err| {
-            Error::invalid_params(format!(
-                "failed to deserialize {}: {}",
-                type_name::<T>(),
-                err
-            ))
-        })
-        .map(|output| (wire_output, output))
+    Ok(wire_output)
 }
 
-fn sanitize_transaction(
-    transaction: VersionedTransaction,
-    address_loader: impl AddressLoader,
-    reserved_account_keys: &HashSet<Pubkey>,
-) -> Result<RuntimeTransaction<SanitizedTransaction>> {
-    RuntimeTransaction::try_create(
+fn map_transaction_view_error(err: TransactionViewError) -> Error {
+    let message = match err {
+        TransactionViewError::ParseError => "failed to deserialize transaction".to_string(),
+        TransactionViewError::SanitizeError | TransactionViewError::AddressLookupMismatch => {
+            format!("invalid transaction: {}", TransactionError::SanitizeFailure)
+        }
+    };
+    Error::invalid_params(message)
+}
+
+fn resolve_transaction_view<D: AsRef<[u8]>>(
+    transaction: SanitizedTransactionView<D>,
+    bank: &Bank,
+) -> Result<RuntimeTransaction<ResolvedTransactionView<D>>> {
+    let loaded_addresses = bank
+        .load_addresses_for_view(&transaction)
+        .map(|(loaded_addresses, _deactivation_slot)| loaded_addresses)
+        .map_err(|err| {
+            Error::invalid_params(format!(
+                "invalid transaction: {}",
+                TransactionError::from(err)
+            ))
+        })?;
+    let sanitized_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<D>>::try_new(
         transaction,
         MessageHash::Compute,
         None,
-        address_loader,
-        reserved_account_keys,
+    )
+    .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))?;
+    RuntimeTransaction::<ResolvedTransactionView<D>>::try_new(
+        sanitized_runtime_tx,
+        loaded_addresses,
+        bank.get_reserved_account_keys(),
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -4732,6 +4783,7 @@ pub fn populate_blockstore_for_tests(
             false,
             None,
             tss_exit.clone(),
+            None,
         );
 
     let transaction_status_sender =
@@ -4755,7 +4807,7 @@ pub fn populate_blockstore_for_tests(
     // that they are matched properly by get_rooted_block
     solana_ledger::blockstore_processor::process_entries_for_tests(&bank, entries).unwrap();
 
-    transaction_status_service.quiesce_and_join_for_tests(tss_exit);
+    transaction_status_service.join().unwrap();
 }
 
 #[cfg(test)]
@@ -4771,7 +4823,6 @@ pub mod tests {
             rpc_service::service_runtime,
             rpc_subscriptions::RpcSubscriptions,
         },
-        agave_reserved_account_keys::ReservedAccountKeys,
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
@@ -4795,7 +4846,7 @@ pub mod tests {
             get_tmp_ledger_path,
         },
         solana_message::{
-            Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
+            Message, MessageHeader, VersionedMessage,
             v0::{self, MessageAddressTableLookup},
             v1,
         },
@@ -4832,7 +4883,10 @@ pub mod tests {
         solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
-        solana_transaction::{Transaction, versioned::TransactionVersion},
+        solana_transaction::{
+            Transaction,
+            versioned::{TransactionVersion, VersionedTransaction},
+        },
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
@@ -5110,7 +5164,7 @@ pub mod tests {
                 None,
                 optimistically_confirmed_bank,
                 Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-                Arc::new(RwLock::new(RankMapCache::default())),
+                Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
@@ -5330,9 +5384,13 @@ pub mod tests {
             let versioned = VoteStateVersions::new_v4(vote_state);
             let space = VoteStateV4::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
-            let mut vote_account =
-                AccountSharedData::new(balance, space, &solana_vote_program::id());
-            vote_account.set_state(&versioned).unwrap();
+            let vote_account = AccountSharedData::new_data_with_space(
+                balance,
+                &versioned,
+                space,
+                &solana_vote_program::id(),
+            )
+            .unwrap();
             bank.store_account(vote_pubkey, &vote_account);
         }
 
@@ -5513,10 +5571,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_rank_map() {
+    fn test_rpc_get_vat_active_set_rank_map() {
         let rpc = RpcHandler::start();
-        let request = create_test_request("getRankMap", Some(json!([0])));
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let request = create_test_request("getVatActiveSetRankMap", Some(json!([0])));
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         let rank_map = response.value.unwrap();
 
@@ -5544,14 +5602,18 @@ pub mod tests {
         );
         assert_eq!(rank_map.total_stake, validator.stake);
 
-        let request = create_test_request("getRankMap", Some(json!([TEST_SLOTS_PER_EPOCH])));
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let request = create_test_request(
+            "getVatActiveSetRankMap",
+            Some(json!([TEST_SLOTS_PER_EPOCH])),
+        );
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert_eq!(response.value.unwrap().epoch, 1);
 
         let unavailable_slot = TEST_SLOTS_PER_EPOCH * 2;
-        let request = create_test_request("getRankMap", Some(json!([unavailable_slot])));
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let request =
+            create_test_request("getVatActiveSetRankMap", Some(json!([unavailable_slot])));
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.is_none());
     }
@@ -5594,7 +5656,7 @@ pub mod tests {
 
     #[test]
     fn test_rpc_rank_map_cache_and_filter() {
-        let rpc = RpcHandler::start();
+        let mut rpc = RpcHandler::start();
         let stakes = rank_map_test_stakes(&[100, 300, 200]);
         let mut bank = Bank::new_from_parent(rpc.working_bank(), SlotLeader::default(), 1);
         bank.set_epoch_stakes_for_test(0, stakes);
@@ -5605,14 +5667,14 @@ pub mod tests {
         let runtime_map = Arc::clone(epoch_stakes.bls_pubkey_to_rank_map());
         let account_refs = Arc::strong_count(&accounts);
         let map_refs = Arc::strong_count(&runtime_map);
-        let config = RpcRankMapConfig {
+        let config = RpcVatActiveSetRankMapConfig {
             min_context_slot: Some(1),
-            ..RpcRankMapConfig::default()
+            ..RpcVatActiveSetRankMapConfig::default()
         };
         let first = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(0, config.clone()))
+            .block_on(rpc.meta.get_vat_active_set_rank_map(0, config.clone()))
             .unwrap();
         assert_eq!(first.context.slot, 1);
         let first = first.value.unwrap();
@@ -5640,7 +5702,7 @@ pub mod tests {
         let rooted = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(0, config.clone()))
+            .block_on(rpc.meta.get_vat_active_set_rank_map(0, config.clone()))
             .unwrap();
         assert_eq!(rooted.context.slot, 1);
         assert!(Arc::ptr_eq(&first, &rooted.value.unwrap()));
@@ -5650,49 +5712,74 @@ pub mod tests {
         let second = rpc
             .meta
             .runtime
-            .block_on(rpc.meta.get_rank_map(1, config))
+            .block_on(rpc.meta.get_vat_active_set_rank_map(1, config))
             .unwrap();
         assert_eq!(second.context.slot, 3);
         assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
         for validator in &first.validators {
             let request = create_test_request(
-                "getRankMap",
+                "getVatActiveSetRankMap",
                 Some(json!([0, {
                     "identity": validator.node_pubkey, "minContextSlot": 1
                 }])),
             );
-            let response: RpcResponse<Option<RpcRankMap>> =
+            let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
                 parse_success_result(rpc.handle_request_sync(request));
             let filtered = response.value.unwrap();
             assert_eq!(filtered.validators, std::slice::from_ref(validator));
             assert_eq!(filtered.total_stake, first.total_stake);
         }
         let request = create_test_request(
-            "getRankMap",
+            "getVatActiveSetRankMap",
             Some(json!([0, {"identity": Pubkey::new_unique().to_string()}])),
         );
-        let response: RpcResponse<Option<RpcRankMap>> =
+        let response: RpcResponse<Option<RpcVatActiveSetRankMap>> =
             parse_success_result(rpc.handle_request_sync(request));
         assert!(response.value.unwrap().validators.is_empty());
+
+        // Retained epochs remain available after the RPC response cache is discarded.
+        rpc.meta.rank_map_cache = Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY));
+        let rebuilt = rpc
+            .meta
+            .runtime
+            .block_on(
+                rpc.meta
+                    .get_vat_active_set_rank_map(0, RpcVatActiveSetRankMapConfig::default()),
+            )
+            .unwrap();
+        assert_eq!(rebuilt.context.slot, 3);
+        let rebuilt = rebuilt.value.unwrap();
+        assert!(!Arc::ptr_eq(&first, &rebuilt));
+        assert_eq!(first, rebuilt);
     }
 
     #[test]
     fn test_rpc_rank_map_errors() {
         let rpc = RpcHandler::start();
+        let request = create_test_request("getRankMap", Some(json!([0])));
+        let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, -32601);
         for slot in [0, TEST_SLOTS_PER_EPOCH * 2] {
-            let request =
-                create_test_request("getRankMap", Some(json!([slot, {"minContextSlot": 1}])));
+            let request = create_test_request(
+                "getVatActiveSetRankMap",
+                Some(json!([slot, {"minContextSlot": 1}])),
+            );
             let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED);
         }
         for commitment in ["processed", "confirmed", "finalized"] {
-            let request =
-                create_test_request("getRankMap", Some(json!([0, {"commitment": commitment}])));
+            let request = create_test_request(
+                "getVatActiveSetRankMap",
+                Some(json!([0, {"commitment": commitment}])),
+            );
             let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
             assert_eq!(code, -32602);
             assert!(message.contains("unknown field `commitment`"));
         }
-        let request = create_test_request("getRankMap", Some(json!([0, {"identity": "invalid"}])));
+        let request = create_test_request(
+            "getVatActiveSetRankMap",
+            Some(json!([0, {"identity": "invalid"}])),
+        );
         let (code, _) = parse_failure_response(rpc.handle_request_sync(request));
         assert_eq!(code, -32602);
     }
@@ -5969,9 +6056,20 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_get_inflation() {
-        let rpc = RpcHandler::start();
+    #[test_case(false; "remove_runtime_float_ops_inactive")]
+    #[test_case(true; "remove_runtime_float_ops_active")]
+    fn test_rpc_get_inflation(remove_runtime_float_ops: bool) {
+        let mut genesis = create_genesis_config(TEST_MINT_LAMPORTS);
+        genesis.genesis_config.inflation.initial = 0.15;
+        genesis.genesis_config.inflation.foundation = 0.05;
+        genesis.genesis_config.inflation.foundation_term = 7.0;
+        if !remove_runtime_float_ops {
+            genesis
+                .genesis_config
+                .accounts
+                .remove(&agave_feature_set::remove_runtime_float_ops::id());
+        }
+        let rpc = RpcHandler::start_with_config_and_genesis(JsonRpcConfig::default(), genesis);
         let bank = rpc.working_bank();
         let request = create_test_request("getInflationGovernor", None);
         let result: RpcInflationGovernor = parse_success_result(rpc.handle_request_sync(request));
@@ -5984,13 +6082,89 @@ pub mod tests {
         let inflation = bank.inflation();
         let epoch = bank.epoch();
         let slot_in_year = bank.slot_in_year_for_inflation();
-        let expected = RpcInflationRate {
-            total: inflation.total(slot_in_year),
-            validator: inflation.validator(slot_in_year),
-            foundation: inflation.foundation(slot_in_year),
-            epoch,
+        let expected = if remove_runtime_float_ops {
+            RpcInflationRate {
+                total: 0.08,
+                validator: 0.08,
+                foundation: 0.0,
+                epoch,
+            }
+        } else {
+            RpcInflationRate {
+                total: inflation.total(slot_in_year),
+                validator: inflation.validator(slot_in_year),
+                foundation: inflation.foundation(slot_in_year),
+                epoch,
+            }
         };
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_inflation_rate_double_disinflation_anchor() {
+        use {
+            agave_math_utils::inflation::{RATE_SCALE, decayed_rate},
+            solana_feature_gate_interface::{self as feature, Feature},
+            solana_runtime::genesis_utils::deactivate_features,
+        };
+
+        let mut genesis = create_genesis_config(TEST_MINT_LAMPORTS);
+        let slots_per_epoch = TEST_SLOTS_PER_EPOCH;
+        genesis.genesis_config.epoch_schedule =
+            EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
+        let double_disinflation = agave_feature_set::double_disinflation_rate::id();
+        let mut inactive_features = solana_runtime::slot_params::slot_time_feature_ids().to_vec();
+        inactive_features.push(double_disinflation);
+        deactivate_features(&mut genesis.genesis_config, &inactive_features);
+        let meta = JsonRpcRequestProcessor::new_from_bank(
+            Bank::new_for_tests(&genesis.genesis_config),
+            SocketAddrSpace::Unspecified,
+        );
+        let mut bank = meta.bank(None);
+        let ns_per_slot = bank.ns_per_slot_at_slot(0);
+        let initial_rate = 80_000_000_000_000;
+        let anchor = decayed_rate(initial_rate, 15, 100, ns_per_slot, 2 * slots_per_epoch)
+            .unwrap()
+            .max(15_000_000_000_000);
+
+        for epoch in 1..=3 {
+            let slot = epoch * slots_per_epoch;
+            let next = Bank::new_from_parent(bank, SlotLeader::default(), slot);
+            if epoch == 1 {
+                next.store_account(
+                    &double_disinflation,
+                    &feature::create_account(
+                        &Feature { activated_at: None },
+                        next.get_minimum_balance_for_rent_exemption(Feature::size_of()),
+                    ),
+                );
+            }
+            let expected_rate = match epoch {
+                1 => decayed_rate(initial_rate, 15, 100, ns_per_slot, slots_per_epoch).unwrap(),
+                2 => anchor,
+                3 => decayed_rate(anchor, 30, 100, ns_per_slot, slots_per_epoch).unwrap(),
+                _ => unreachable!(),
+            } as f64
+                / RATE_SCALE as f64;
+            {
+                let mut forks = meta.bank_forks.write().unwrap();
+                bank = forks.insert(next).clone_without_scheduler();
+                forks.set_root(slot, None, None);
+            }
+            meta.block_commitment_cache
+                .write()
+                .unwrap()
+                .set_highest_super_majority_root(slot);
+            assert_eq!(
+                meta.get_inflation_rate(),
+                RpcInflationRate {
+                    total: expected_rate,
+                    validator: expected_rate,
+                    foundation: 0.0,
+                    epoch,
+                },
+            );
+        }
     }
 
     #[test]
@@ -7805,7 +7979,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank,
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
@@ -7937,7 +8111,7 @@ pub mod tests {
             )
         );
 
-        // sendTransaction will fail due to sanitization failure
+        // sendTransaction will fail due to parse failure (no signatures)
         bad_transaction.signatures.clear();
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
@@ -7947,7 +8121,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid transaction: Transaction failed to sanitize accounts offsets correctly"},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"failed to deserialize transaction"},"id":1}"#.to_string(),
             )
         );
     }
@@ -8128,7 +8302,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank,
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
@@ -9987,7 +10161,7 @@ pub mod tests {
             None,
             optimistically_confirmed_bank.clone(),
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
-            Arc::new(RwLock::new(RankMapCache::default())),
+            Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             max_complete_transaction_status_slot,
@@ -10131,11 +10305,10 @@ pub mod tests {
         let tx58 = bs58::encode(&tx_ser).into_string();
         let tx58_len = tx58.len();
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
+            decode_wire(tx58, TransactionBinaryEncoding::Base58).unwrap_err(),
             Error::invalid_params(format!(
-                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: \
-                 encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
+                "base58 encoded data too large: {tx58_len} bytes (max: encoded/raw \
+                 {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
             ))
         );
     }
@@ -10150,11 +10323,10 @@ pub mod tests {
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         let tx64_len = tx64.len();
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_SIZE}/{})",
+                "base64 encoded data too large: {tx64_len} bytes (max: encoded/raw \
+                 {MAX_BASE64_SIZE}/{})",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
@@ -10171,11 +10343,10 @@ pub mod tests {
         let tx64_len = tx64.len();
         assert!(tx64_len > MAX_BASE64_LEGACY_SIZE && tx64_len < MAX_BASE64_SIZE);
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_LEGACY_SIZE}/{PACKET_DATA_SIZE})",
+                "base64 encoded data too large: {tx64_len} bytes (max: encoded/raw \
+                 {MAX_BASE64_LEGACY_SIZE}/{PACKET_DATA_SIZE})",
             ))
         );
     }
@@ -10186,55 +10357,49 @@ pub mod tests {
         let tx_ser = vec![0x00u8; too_big];
         let tx58 = bs58::encode(&tx_ser).into_string();
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
+            decode_wire(tx58, TransactionBinaryEncoding::Base58).unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
-                 {PACKET_DATA_SIZE} bytes)"
+                "decoded data too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
             ))
         );
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
-                 {PACKET_DATA_SIZE} bytes)"
+                "decoded data too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
             ))
         );
 
         let tx_ser = vec![0xffu8; PACKET_DATA_SIZE - 2];
         let mut tx64 = BASE64_STANDARD.encode(&tx_ser);
-        let err =
-            decode_and_deserialize::<Transaction>(tx64.clone(), TransactionBinaryEncoding::Base64)
-                .unwrap_err();
+        let err = decode_wire(tx64.clone(), TransactionBinaryEncoding::Base64)
+            .and_then(|wire_transaction| {
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)
+            })
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams,);
-        assert!(
-            err.message
-                .starts_with("failed to deserialize solana_transaction::Transaction")
-        );
+        assert!(err.message.starts_with("failed to deserialize transaction"));
 
         tx64.push('!');
-        let err = decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-            .unwrap_err();
+        let err = decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(err.message.starts_with("invalid base64 encoding:"));
 
         let mut tx58 = bs58::encode(&tx_ser).into_string();
-        let err =
-            decode_and_deserialize::<Transaction>(tx58.clone(), TransactionBinaryEncoding::Base58)
-                .unwrap_err();
+        let err = decode_wire(tx58.clone(), TransactionBinaryEncoding::Base58)
+            .and_then(|wire_transaction| {
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)
+            })
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams,);
-        assert!(
-            err.message
-                .starts_with("failed to deserialize solana_transaction::Transaction")
-        );
+        assert!(err.message.starts_with("failed to deserialize transaction"));
 
         tx58.push('!');
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
+            decode_wire(tx58, TransactionBinaryEncoding::Base58).unwrap_err(),
             Error::invalid_params(
                 "invalid base58 encoding: InvalidCharacter { character: '!', index: 1680 }"
                     .to_string(),
@@ -10250,14 +10415,15 @@ pub mod tests {
         tx_ser[0] = solana_message::v1::V1_PREFIX;
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
-        let err =
-            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err();
+        let err = decode_wire(tx64, TransactionBinaryEncoding::Base64)
+            .and_then(|wire_transaction| {
+                SanitizedTransactionView::try_new_sanitized(wire_transaction)
+                    .map_err(map_transaction_view_error)
+            })
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(
-            err.message.starts_with(
-                "failed to deserialize solana_transaction::versioned::VersionedTransaction"
-            ),
+            err.message.starts_with("failed to deserialize transaction"),
             "unexpected error: {}",
             err.message
         );
@@ -10272,11 +10438,9 @@ pub mod tests {
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         assert_eq!(
-            decode_and_deserialize::<VersionedTransaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
+            decode_wire(tx64, TransactionBinaryEncoding::Base64).unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::versioned::VersionedTransaction too large: {too_big} \
-                 bytes (max: {} bytes)",
+                "decoded data too large: {too_big} bytes (max: {} bytes)",
                 solana_message::v1::MAX_TRANSACTION_SIZE,
             ))
         );
@@ -10290,52 +10454,113 @@ pub mod tests {
              hD6onjM2M3qZW5C8J6d1pj41MxKmZgPBSha3MyKkNLkAGFASK"
             .to_string();
 
-        let unsanitary_versioned_tx = decode_and_deserialize::<VersionedTransaction>(
-            unsanitary_tx58,
-            TransactionBinaryEncoding::Base58,
-        )
-        .unwrap()
-        .1;
+        let unsanitary_wire_tx =
+            decode_wire(unsanitary_tx58, TransactionBinaryEncoding::Base58).unwrap();
         let expect58 = Error::invalid_params(
             "invalid transaction: Transaction failed to sanitize accounts offsets correctly"
                 .to_string(),
         );
         assert_eq!(
-            sanitize_transaction(
-                unsanitary_versioned_tx,
-                SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set(),
-            )
-            .unwrap_err(),
+            SanitizedTransactionView::try_new_sanitized(unsanitary_wire_tx)
+                .map_err(map_transaction_view_error)
+                .unwrap_err(),
             expect58
         );
     }
 
     #[test]
-    fn test_sanitize_unsupported_transaction_version() {
-        let versioned_tx = VersionedTransaction {
-            signatures: vec![Signature::default()],
-            message: VersionedMessage::V0(v0::Message {
+    fn test_rpc_simulate_transaction_missing_lookup_table() {
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        // Slot hashes is necessary for processing versioned txs.
+        bank.set_sysvar_for_tests(&SlotHashes::default());
+        let versioned_tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(v0::Message {
                 header: MessageHeader {
                     num_required_signatures: 1,
                     ..MessageHeader::default()
                 },
-                account_keys: vec![Pubkey::new_unique()],
+                account_keys: vec![rpc.mint_keypair.pubkey()],
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![],
+                }],
                 ..v0::Message::default()
             }),
-        };
+            &[&rpc.mint_keypair],
+        )
+        .unwrap();
 
-        assert_eq!(
-            sanitize_transaction(
-                versioned_tx,
-                SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set(),
-            )
-            .unwrap_err(),
-            Error::invalid_params(
-                "invalid transaction: Transaction version is unsupported".to_string(),
-            )
+        let request = create_test_request(
+            "simulateTransaction",
+            Some(json!([
+                BASE64_STANDARD.encode(wincode::serialize(&versioned_tx).unwrap()),
+                { "encoding": "base64" },
+            ])),
         );
+        let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, ErrorCode::InvalidParams.code());
+        assert_eq!(
+            message,
+            "invalid transaction: Transaction loads an address table account that doesn't exist"
+        );
+    }
+
+    #[test]
+    fn test_rpc_send_and_simulate_unsupported_encoding() {
+        let rpc = RpcHandler::start();
+        for method in ["sendTransaction", "simulateTransaction"] {
+            let request = create_test_request(method, Some(json!(["", { "encoding": "json" }])));
+            let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+            assert_eq!(code, ErrorCode::InvalidParams.code());
+            assert_eq!(
+                message,
+                "unsupported encoding: json. Supported encodings: base58, base64"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rpc_send_and_simulate_invalid_runtime_transaction() {
+        let rpc = RpcHandler::start();
+        let bank = rpc.working_bank();
+        let transaction = Transaction::new_signed_with_payer(
+            &[
+                ComputeBudgetInstruction::set_compute_unit_price(1),
+                ComputeBudgetInstruction::set_compute_unit_price(2),
+            ],
+            Some(&rpc.mint_keypair.pubkey()),
+            &[&rpc.mint_keypair],
+            bank.last_blockhash(),
+        );
+        let wire_transaction = BASE64_STANDARD.encode(wincode::serialize(&transaction).unwrap());
+
+        for method in ["sendTransaction", "simulateTransaction"] {
+            let request = create_test_request(
+                method,
+                Some(json!([wire_transaction, { "encoding": "base64" }])),
+            );
+            let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+            assert_eq!(code, ErrorCode::InvalidParams.code());
+            assert_eq!(
+                message,
+                "invalid transaction: Transaction contains a duplicate instruction (1) that is \
+                 not allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_fee_for_message_invalid_message() {
+        let rpc = RpcHandler::start();
+        let request = create_test_request(
+            "getFeeForMessage",
+            Some(json!([BASE64_STANDARD.encode([0xffu8; 16])])),
+        );
+        let (code, message) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, ErrorCode::InvalidParams.code());
+        assert_eq!(message, "invalid transaction message");
     }
 
     #[test]
@@ -10405,6 +10630,34 @@ pub mod tests {
         }
 
         {
+            // Address lookup tables are not resolved, so a missing table does
+            // not affect the fee.
+            let v0_msg = VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    ..MessageHeader::default()
+                },
+                recent_blockhash,
+                account_keys: vec![Pubkey::new_unique()],
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![0],
+                    readonly_indexes: vec![],
+                }],
+                ..v0::Message::default()
+            });
+
+            let request = create_test_request(
+                "getFeeForMessage",
+                Some(json!([
+                    BASE64_STANDARD.encode(wincode::serialize(&v0_msg).unwrap())
+                ])),
+            );
+            let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
+            assert_eq!(response.value, TEST_SIGNATURE_FEE);
+        }
+
+        {
             const PRIORITY_FEE: u64 = 42;
             let v1_msg = VersionedMessage::V1(v1::Message::new(
                 MessageHeader {
@@ -10429,6 +10682,26 @@ pub mod tests {
             let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));
             assert_eq!(response.value, TEST_SIGNATURE_FEE + PRIORITY_FEE);
         }
+    }
+
+    #[test]
+    fn test_rpc_get_recent_prioritization_fees_account_limit() {
+        let rpc = RpcHandler::start();
+        let mut addresses: Vec<_> = (0..128).map(|_| Pubkey::new_unique().to_string()).collect();
+        let request = create_test_request("getRecentPrioritizationFees", Some(json!([addresses])));
+        let response: Vec<RpcPrioritizationFee> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert!(response.is_empty());
+
+        addresses.push(Pubkey::new_unique().to_string());
+        let request = create_test_request("getRecentPrioritizationFees", Some(json!([addresses])));
+        assert_eq!(
+            parse_failure_response(rpc.handle_request_sync(request)),
+            (
+                ErrorCode::InvalidParams.code(),
+                "Too many inputs provided; max 128".to_string(),
+            ),
+        );
     }
 
     #[test]

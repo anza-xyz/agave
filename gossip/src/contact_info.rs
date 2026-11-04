@@ -9,15 +9,16 @@ use {
         define_tlv_enum,
         tlv::{self, TlvDecodeError, TlvRecord},
     },
-    assert_matches::{assert_matches, debug_assert_matches},
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_short_vec as short_vec,
     static_assertions::const_assert_eq,
     std::{
+        assert_matches,
         cmp::Ordering,
         collections::HashSet,
+        debug_assert_matches,
         mem::MaybeUninit,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::{SystemTime, UNIX_EPOCH},
@@ -51,8 +52,9 @@ const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
 
-// An alias for a function that reads data from a ContactInfo entry stored in
-// the gossip CRDS table.
+/// An alias for a function that reads data from a ContactInfo entry stored in
+/// the gossip CRDS table.
+/// Runs under the CRDS read lock, so it must not call back into `ClusterInfo`.
 pub trait ContactInfoQuery<R>: Fn(&ContactInfo) -> R {}
 impl<R, F: Fn(&ContactInfo) -> R> ContactInfoQuery<R> for F {}
 

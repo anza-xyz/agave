@@ -265,6 +265,14 @@ fn process_loader_upgradeable_instruction(
             // Verify Program account
 
             let program = instruction_context.try_borrow_instruction_account(2)?;
+            if !program.is_writable() {
+                ic_logger_msg!(log_collector, "Program account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
+            if program.get_owner() != program_id {
+                ic_logger_msg!(log_collector, "Program account not owned by loader");
+                return Err(InstructionError::IncorrectProgramId);
+            }
             if UpgradeableLoaderState::Uninitialized != program.get_state()? {
                 ic_logger_msg!(log_collector, "Program account already initialized");
                 return Err(InstructionError::AccountAlreadyInitialized);
@@ -512,6 +520,10 @@ fn process_loader_upgradeable_instruction(
             // Verify ProgramData account
 
             let programdata = instruction_context.try_borrow_instruction_account(0)?;
+            if !programdata.is_writable() {
+                ic_logger_msg!(log_collector, "ProgramData account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
             let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
             let (programdata_len, programdata_balance_required) = if set_programdata_to_elf_len {
                 // SIMD-0433: we'll resize the programdata account to the new ELF.
@@ -570,6 +582,13 @@ fn process_loader_upgradeable_instruction(
                 return Err(InstructionError::InvalidAccountData);
             };
             drop(programdata);
+
+            // Verify Spill account
+
+            if !instruction_context.is_instruction_account_writable(3)? {
+                ic_logger_msg!(log_collector, "Spill account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
 
             // Load and verify the program bits
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
@@ -1188,7 +1207,6 @@ mod test_utils {
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
@@ -1201,7 +1219,7 @@ mod tests {
         solana_sdk_ids::sysvar,
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
         solana_sysvar_id::SysvarId,
-        std::{fs::File, io::Read},
+        std::{assert_matches, fs::File, io::Read},
         test_case::test_case,
     };
 

@@ -212,7 +212,6 @@ impl Memcmp {
 mod tests {
     use {
         super::*,
-        const_format::formatcp,
         serde_json::{Value, json},
     };
 
@@ -328,21 +327,16 @@ mod tests {
     const BYTES: [u8; 4] = [0, 1, 2, 3];
     const OFFSET: usize = 42;
     const DEFAULT_ENCODING_FILTER: &str =
-        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET}}}"#);
-    const BINARY_FILTER: &str =
-        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET},"encoding":"binary"}}"#);
-    const BASE58_FILTER: &str =
-        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET},"encoding":"base58"}}"#);
-    const BASE64_FILTER: &str =
-        formatcp!(r#"{{"bytes":"{BASE64_STR}","offset":{OFFSET},"encoding":"base64"}}"#);
+        r#"{"bytes":"Bpf4ERpEvSFmCSTNh1PzTWTkALrKXvMXEdthxHuwCQcf","offset":42}"#;
+    const BINARY_FILTER: &str = r#"{"bytes":"Bpf4ERpEvSFmCSTNh1PzTWTkALrKXvMXEdthxHuwCQcf","offset":42,"encoding":"binary"}"#;
+    const BASE58_FILTER: &str = r#"{"bytes":"Bpf4ERpEvSFmCSTNh1PzTWTkALrKXvMXEdthxHuwCQcf","offset":42,"encoding":"base58"}"#;
+    const BASE64_FILTER: &str = r#"{"bytes":"oMoycDvJzrjQpCfukbO4VW/FLGLfnbqBEc9KUEVgj2g=","offset":42,"encoding":"base64"}"#;
     const MISMATCHED_BASE64_FILTER: &str =
-        formatcp!(r#"{{"bytes":[0, 1, 2, 3],"offset":{OFFSET},"encoding":"base64"}}"#);
-    const BYTES_FILTER: &str =
-        formatcp!(r#"{{"bytes":[0, 1, 2, 3],"offset":{OFFSET},"encoding":null}}"#);
+        r#"{"bytes":[0, 1, 2, 3],"offset":42,"encoding":"base64"}"#;
+    const BYTES_FILTER: &str = r#"{"bytes":[0, 1, 2, 3],"offset":42,"encoding":null}"#;
     const BYTES_FILTER_WITH_ENCODING: &str =
-        formatcp!(r#"{{"bytes":[0, 1, 2, 3],"offset":{OFFSET},"encoding":"bytes"}}"#);
-    const MISMATCHED_BYTES_FILTER_WITH_ENCODING: &str =
-        formatcp!(r#"{{"bytes":"{BASE58_STR}","offset":{OFFSET},"encoding":"bytes"}}"#);
+        r#"{"bytes":[0, 1, 2, 3],"offset":42,"encoding":"bytes"}"#;
+    const MISMATCHED_BYTES_FILTER_WITH_ENCODING: &str = r#"{"bytes":"Bpf4ERpEvSFmCSTNh1PzTWTkALrKXvMXEdthxHuwCQcf","offset":42,"encoding":"bytes"}"#;
 
     #[test]
     fn test_filter_deserialize() {

@@ -625,6 +625,7 @@ mod tests {
             Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
         },
         std::{
+            assert_matches,
             borrow::Cow,
             slice,
             sync::{Arc, RwLock},

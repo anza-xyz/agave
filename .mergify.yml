@@ -114,8 +114,34 @@ pull_request_rules:
           keep refactors to a minimum.
 
 commands_restrictions:
-  # The author of copied PRs is the Mergify user.
-  # Restrict `copy` access to Core Contributors
+  # Only users with write access to the repository may run Mergify commands.
   copy:
     conditions:
-    - author=@anza
+      # The author of copied PRs is the Mergify user.
+      # Restrict `copy` to Core Contributor PRs.
+      - author=@anza
+      - sender-permission>=write
+  backport:
+    conditions:
+      - sender-permission>=write
+  dequeue:
+    conditions:
+      - sender-permission>=write
+  queue:
+    conditions:
+      - sender-permission>=write
+  rebase:
+    conditions:
+      - sender-permission>=write
+  refresh:
+    conditions:
+      - sender-permission>=write
+  requeue:
+    conditions:
+      - sender-permission>=write
+  squash:
+    conditions:
+      - sender-permission>=write
+  update:
+    conditions:
+      - sender-permission>=write

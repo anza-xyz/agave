@@ -16,7 +16,7 @@ use {
     solana_message::{
         MessageHeader,
         compiled_instruction::CompiledInstruction,
-        v0::{LoadedAddresses, MessageAddressTableLookup},
+        v0::{LoadedAddresses, LoadedAddressesView, MessageAddressTableLookup},
     },
     solana_reward_info::RewardType,
     solana_signature::Signature,
@@ -481,8 +481,8 @@ pub struct UiLoadedAddresses {
     pub readonly: Vec<String>,
 }
 
-impl From<&LoadedAddresses> for UiLoadedAddresses {
-    fn from(loaded_addresses: &LoadedAddresses) -> Self {
+impl From<LoadedAddressesView<'_>> for UiLoadedAddresses {
+    fn from(loaded_addresses: LoadedAddressesView<'_>) -> Self {
         Self {
             writable: loaded_addresses
                 .writable
@@ -495,6 +495,12 @@ impl From<&LoadedAddresses> for UiLoadedAddresses {
                 .map(ToString::to_string)
                 .collect(),
         }
+    }
+}
+
+impl From<&LoadedAddresses> for UiLoadedAddresses {
+    fn from(loaded_addresses: &LoadedAddresses) -> Self {
+        Self::from(LoadedAddressesView::from(loaded_addresses))
     }
 }
 

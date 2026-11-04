@@ -21,7 +21,6 @@ pub struct FeatureSnapshot {
     pub disable_fees_sysvar: bool,
     pub stake_raise_minimum_delegation_to_1_sol: bool,
     pub disable_deploy_of_alloc_free_syscall: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_alt_bn128_syscall: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
@@ -82,6 +81,10 @@ pub struct FeatureSnapshot {
     pub loader_v3_allow_prefunded_programdata: bool,
     pub core_bpf_hash_validation: bool,
     pub loader_v3_remove_extend_program: bool,
+    pub remove_runtime_float_ops: bool,
+    pub replace_ata_with_p_ata: bool,
+    pub increase_tx_v1_account_lock_limit: bool,
+    pub invoke_signed_v2: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -96,7 +99,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             disable_deploy_of_alloc_free_syscall: is_active(
                 &disable_deploy_of_alloc_free_syscall::ID,
             ),
-            increase_tx_account_lock_limit: is_active(&increase_tx_account_lock_limit::ID),
             enable_bpf_loader_set_authority_checked_ix: is_active(
                 &enable_bpf_loader_set_authority_checked_ix::ID,
             ),
@@ -187,6 +189,10 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             ),
             core_bpf_hash_validation: is_active(&core_bpf_hash_validation::ID),
             loader_v3_remove_extend_program: is_active(&loader_v3_remove_extend_program::ID),
+            remove_runtime_float_ops: is_active(&remove_runtime_float_ops::ID),
+            replace_ata_with_p_ata: is_active(&replace_ata_with_p_ata::ID),
+            increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
+            invoke_signed_v2: is_active(&invoke_signed_v2::ID),
         }
     }
 }
@@ -319,7 +325,6 @@ impl FeatureSet {
             simplify_alt_bn128_syscall_error_codes: snapshot.simplify_alt_bn128_syscall_error_codes,
             fix_alt_bn128_multiplication_input_length: snapshot
                 .fix_alt_bn128_multiplication_input_length,
-            increase_tx_account_lock_limit: snapshot.increase_tx_account_lock_limit,
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
@@ -350,6 +355,7 @@ impl FeatureSet {
             secp256r1_syscall_enabled: snapshot.secp256r1_syscall_enabled,
             loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
             loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
+            invoke_signed_v2: snapshot.invoke_signed_v2,
         }
     }
 }
@@ -852,10 +858,6 @@ pub mod disable_rehash_for_rent_epoch {
     solana_pubkey::declare_id!("DTVTkmw3JSofd8CJVJte8PXEbxNQ2yZijvVr3pe2APPj");
 }
 
-pub mod increase_tx_account_lock_limit {
-    solana_pubkey::declare_id!("9LZdXeKGeBV6hRLdxS1rHbHoEUsKqesCC2ZAPTPKJAbK");
-}
-
 pub mod limit_max_instruction_trace_length {
     solana_pubkey::declare_id!("GQALDaC48fEhZGWRj9iL5Q889emJKcj3aCvHF7VCbbF4");
 }
@@ -909,7 +911,7 @@ pub mod update_hashes_per_tick {
 }
 
 pub mod enable_big_mod_exp_syscall {
-    solana_pubkey::declare_id!("expH2ppKPW2ANEdEmAjfhSEcnBQJfmoX4FjuNpe9ttg");
+    solana_pubkey::declare_id!("expHkkpN92z71GU7EwB7AXCy8Mz4kzDJFpGY1dZV9A7");
 }
 
 pub mod disable_builtin_loader_ownership_chains {
@@ -1324,6 +1326,10 @@ pub mod enforce_correct_proof_size {
     solana_pubkey::declare_id!("turbzzBJLGMJJikLvgCCJu9e1hTmfxwarrbLndYAsK5");
 }
 
+pub mod stricter_shred_validation {
+    solana_pubkey::declare_id!("s5o4YoA9zUrw9j4v335ncdG5PpznDBsrgM6CvUGrasA");
+}
+
 pub mod provide_instruction_data_offset_in_vm_r2 {
     solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
 }
@@ -1573,6 +1579,37 @@ pub mod core_bpf_hash_validation {
 
 pub mod loader_v3_remove_extend_program {
     solana_pubkey::declare_id!("5Ach9H8V5NCNDQg7Md6HnJmVttF3tzHwiWWucnnFd4jz");
+}
+
+pub mod remove_runtime_float_ops {
+    solana_pubkey::declare_id!("7AzqUCKQjoCKhWDDHgEYkTY8iRwWtuuxHogcmx1UJzR8");
+}
+
+pub mod replace_ata_with_p_ata {
+    use {solana_hash::Hash, solana_pubkey::Pubkey};
+
+    solana_pubkey::declare_id!("pata6uFabFDejC1U7rpmFj9s1FhmiPyWk6D51U1ksx3");
+
+    pub const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID: Pubkey =
+        Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+    pub const PROGRAM_BUFFER: Pubkey =
+        Pubkey::from_str_const("pataAAkF439TTjwRqmxRkTTEfZemRdoriXusez4PQ6S");
+
+    // Bytes of the SHA256 hash for the p-ata program data.
+    //   - hash: 4e008052b0a7ac695482474946700abe70e9cfd03d178aa8887b02674e7f7d9e
+    pub const BUILD_HASH: Hash = Hash::new_from_array([
+        78, 0, 128, 82, 176, 167, 172, 105, 84, 130, 71, 73, 70, 112, 10, 190, 112, 233, 207, 208,
+        61, 23, 138, 168, 136, 123, 2, 103, 78, 127, 125, 158,
+    ]);
+}
+
+pub mod increase_tx_v1_account_lock_limit {
+    solana_pubkey::declare_id!("8ZVMrzG6pPBREHMbHNyrErKJsXA7b1vg9e1iycSooCeY");
+}
+
+pub mod invoke_signed_v2 {
+    solana_pubkey::declare_id!("inv2LMjJ1j8e5DB36ETnszFcmtYfRZGgk6oJzYr9zK8");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2012,10 +2049,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             remove_deprecated_request_unit_ix::id(),
             "remove support for RequestUnitsDeprecated instruction #27500",
-        ),
-        (
-            increase_tx_account_lock_limit::id(),
-            "increase tx account lock limit to 128 #27241",
         ),
         (
             limit_max_instruction_trace_length::id(),
@@ -2498,6 +2531,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "SIMD-0317: Enforce the Merkle proof size of a fixed 32:32 FEC set",
         ),
         (
+            stricter_shred_validation::id(),
+            "SIMD-0504: Stricter shred validation",
+        ),
+        (
             provide_instruction_data_offset_in_vm_r2::id(),
             "SIMD-0321: Provide instruction data offset in VM r2",
         ),
@@ -2593,7 +2630,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             remove_simple_vote_from_cost_model::id(),
-            "stop use static SimpleVote transaction cost, issue #10227",
+            "SIMD-0458: Stop using static SimpleVote transaction cost",
         ),
         (
             limit_instruction_accounts::id(),
@@ -2643,7 +2680,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             validate_chained_block_id_2::id(),
-            "SIMD-340: Encompassing check for validate chained block ID",
+            "SIMD-0340: Encompassing check for validate chained block ID",
         ),
         (
             upgrade_bpf_stake_program_to_v5_1::id(),
@@ -2700,6 +2737,22 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_remove_extend_program::id(),
             "SIMD-0685: Loader V3 Remove ExtendProgram",
+        ),
+        (
+            remove_runtime_float_ops::id(),
+            "SIMD-0607: Remove floating point from runtime inflation",
+        ),
+        (
+            replace_ata_with_p_ata::id(),
+            "SIMD-0567: CU-optimized ATA program",
+        ),
+        (
+            increase_tx_v1_account_lock_limit::id(),
+            "SIMD-0596: Increase transaction v1 account lock limit to 96",
+        ),
+        (
+            invoke_signed_v2::id(),
+            "SIMD-0670: ABIv1 invoke signed v2 syscall",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
