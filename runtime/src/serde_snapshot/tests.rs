@@ -67,7 +67,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> agave_snapshots::Result<AccountsDb>
+    ) -> agave_snapshots::Result<Arc<AccountsDb>>
     where
         R: Read,
     {
@@ -95,7 +95,7 @@ mod serde_snapshot_tests {
         account_paths: &[PathBuf],
         storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
         accounts_db_config: AccountsDbConfig,
-    ) -> agave_snapshots::Result<AccountsDb>
+    ) -> agave_snapshots::Result<Arc<AccountsDb>>
     where
         R: Read,
     {
@@ -168,7 +168,7 @@ mod serde_snapshot_tests {
         accounts: &AccountsDb,
         slot: Slot,
         accounts_db_config: AccountsDbConfig,
-    ) -> AccountsDb {
+    ) -> (Arc<AccountsDb>, TempDir) {
         let mut writer = Cursor::new(vec![]);
         accounts_db_fields_to_stream(&mut writer, slot).unwrap();
 
@@ -179,7 +179,7 @@ mod serde_snapshot_tests {
         // Simulate obtaining a copy of the AppendVecs from a tarball
         let storage_and_next_append_vec_id =
             copy_append_vecs(accounts, copied_accounts.path()).unwrap();
-        let mut accounts_db = accountsdb_from_stream(
+        let accounts_db = accountsdb_from_stream(
             &mut reader,
             &[],
             storage_and_next_append_vec_id,
@@ -189,13 +189,7 @@ mod serde_snapshot_tests {
 
         // The append vecs will be used from `copied_accounts` directly by the new AccountsDb so keep
         // its TempDir alive
-        accounts_db
-            .temp_paths
-            .as_mut()
-            .unwrap()
-            .push(copied_accounts);
-
-        accounts_db
+        (accounts_db, copied_accounts)
     }
 
     fn check_accounts_local(accounts: &Accounts, pubkeys: &[Pubkey], num: usize) {
@@ -217,7 +211,7 @@ mod serde_snapshot_tests {
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
         let accounts_db =
             AccountsDb::new_for_tests_with_config(paths, ACCOUNTS_DB_CONFIG_FOR_TESTING);
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let slot = 0;
         let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
@@ -252,7 +246,7 @@ mod serde_snapshot_tests {
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
         let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
-        let daccounts = Accounts::new(Arc::new(
+        let daccounts = Accounts::new(
             accountsdb_from_stream(
                 &mut reader,
                 &daccounts_paths,
@@ -260,7 +254,7 @@ mod serde_snapshot_tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             )
             .unwrap(),
-        ));
+        );
         check_accounts_local(&daccounts, &pubkeys, 100);
         let daccounts_hash = accounts
             .accounts_db
@@ -288,7 +282,7 @@ mod serde_snapshot_tests {
         db.add_root_and_flush_write_cache(new_root);
 
         // Simulate reconstruction from snapshot
-        let db = reconstruct_accounts_db_via_serialization(
+        let (db, _copied_accounts) = reconstruct_accounts_db_via_serialization(
             &db,
             new_root,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -375,7 +369,7 @@ mod serde_snapshot_tests {
             accounts.check_storage(1, 11, 21);
             accounts.check_storage(2, 31, 31);
 
-            let daccounts = reconstruct_accounts_db_via_serialization(
+            let (daccounts, _copied_accounts) = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 latest_slot,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -440,7 +434,7 @@ mod serde_snapshot_tests {
 
         accounts.print_accounts_stats("accounts_post_purge");
 
-        let accounts = reconstruct_accounts_db_via_serialization(
+        let (accounts, _copied_accounts) = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -453,7 +447,7 @@ mod serde_snapshot_tests {
 
     fn with_chained_zero_lamport_accounts<F>(f: F)
     where
-        F: Fn(AccountsDb, Slot) -> AccountsDb,
+        F: Fn(Arc<AccountsDb>, Slot) -> (Arc<AccountsDb>, TempDir),
     {
         let some_lamport = 223;
         let zero_lamport = 0;
@@ -501,7 +495,7 @@ mod serde_snapshot_tests {
 
         accounts.print_accounts_stats("pre_f");
 
-        let accounts = f(accounts, current_slot);
+        let (accounts, _copied_accounts) = f(accounts, current_slot);
 
         accounts.print_accounts_stats("post_f");
 
@@ -540,7 +534,7 @@ mod serde_snapshot_tests {
     fn test_accounts_purge_chained_purge_after_snapshot_restore() {
         agave_logger::setup();
         with_chained_zero_lamport_accounts(|accounts, current_slot| {
-            let accounts = reconstruct_accounts_db_via_serialization(
+            let (accounts, _copied_accounts) = reconstruct_accounts_db_via_serialization(
                 &accounts,
                 current_slot,
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -613,7 +607,7 @@ mod serde_snapshot_tests {
         accounts.add_root_and_flush_write_cache(current_slot);
 
         accounts.print_count_and_status("before reconstruct");
-        let accounts = reconstruct_accounts_db_via_serialization(
+        let (accounts, _copied_accounts) = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -707,7 +701,7 @@ mod serde_snapshot_tests {
         accounts.clean_accounts_for_tests();
 
         // Reconstruct the database from the snapshot to simulate a restore
-        let accounts = reconstruct_accounts_db_via_serialization(
+        let (accounts, _copied_accounts) = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -784,7 +778,7 @@ mod serde_snapshot_tests {
 
         let accounts_lt_hash_pre =
             accounts.calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors);
-        let accounts = reconstruct_accounts_db_via_serialization(
+        let (accounts, _copied_accounts) = reconstruct_accounts_db_via_serialization(
             &accounts,
             current_slot,
             ACCOUNTS_DB_CONFIG_FOR_TESTING,

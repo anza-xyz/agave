@@ -898,7 +898,7 @@ impl AccountsDb {
         accounts_db_config: AccountsDbConfig,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
         exit: Arc<AtomicBool>,
-    ) -> Self {
+    ) -> Arc<Self> {
         let accounts_index_config = accounts_db_config.index.unwrap_or_default();
         let accounts_index = AccountsIndex::new(&accounts_index_config, exit);
 
@@ -932,7 +932,7 @@ impl AccountsDb {
             .build()
             .expect("new rayon threadpool");
 
-        let new = Self {
+        let new = Arc::new(Self {
             accounts_index,
             paths,
             bank_hash_details_dir: accounts_db_config.bank_hash_details_dir,
@@ -985,7 +985,7 @@ impl AccountsDb {
             max_cleaned_root: AtomicU64::new(0),
             best_ancient_slots_to_shrink: RwLock::default(),
             max_root: AtomicU64::new(0),
-        };
+        });
 
         {
             for path in new.paths.iter() {
@@ -5272,14 +5272,14 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
-    pub fn default_for_tests() -> Self {
+    pub fn default_for_tests() -> Arc<Self> {
         Self::new_for_tests_with_config(Vec::new(), ACCOUNTS_DB_CONFIG_FOR_TESTING)
     }
 
     pub fn new_for_tests_with_config(
         paths: Vec<PathBuf>,
         accounts_db_config: AccountsDbConfig,
-    ) -> Self {
+    ) -> Arc<Self> {
         Self::new_with_config(paths, accounts_db_config, None, Arc::default())
     }
 
