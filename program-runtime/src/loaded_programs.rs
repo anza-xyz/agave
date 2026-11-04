@@ -6,7 +6,7 @@ use {
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_svm_type_overrides::{
         rand::{Rng, rng},
@@ -53,54 +53,6 @@ pub enum BlockRelation {
 pub trait ForkGraph {
     /// Returns the BlockRelation of A to B
     fn relationship(&self, a: Slot, b: Slot) -> BlockRelation;
-}
-
-/// Globally manages the transition between environments at the epoch boundary
-#[derive(Debug, Default)]
-pub struct EpochBoundaryPreparation {
-    /// The epoch of the upcoming_environment
-    pub upcoming_epoch: Epoch,
-    /// Anticipated replacement for `environments` at the next epoch
-    ///
-    /// This is only `Some` around the boundaries when a changed environment is
-    /// actually coming. It starts with the cache preparation phase a few
-    /// hundred slots before the epoch boundary, and it ends with the first
-    /// rerooting after the epoch boundary.
-    pub upcoming_environment: Option<ProgramRuntimeEnvironment>,
-    /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
-    pub programs_to_recompile: Vec<(Pubkey, Arc<ProgramCacheEntry>)>,
-}
-
-impl EpochBoundaryPreparation {
-    pub fn new(epoch: Epoch) -> Self {
-        Self {
-            upcoming_epoch: epoch,
-            upcoming_environment: None,
-            programs_to_recompile: Vec::default(),
-        }
-    }
-
-    /// Returns the upcoming environments depending on the given epoch
-    pub fn get_upcoming_environment_for_epoch(
-        &self,
-        epoch: Epoch,
-    ) -> Option<ProgramRuntimeEnvironment> {
-        if epoch == self.upcoming_epoch {
-            return self.upcoming_environment.clone();
-        }
-        None
-    }
-
-    /// Before rerooting the blockstore this concludes the epoch boundary
-    /// preparation. Returns whether there was one to conclude.
-    pub fn reroot(&mut self, epoch: Epoch) -> bool {
-        if epoch == self.upcoming_epoch && self.upcoming_environment.take().is_some() {
-            self.programs_to_recompile.clear();
-            return true;
-        }
-
-        false
-    }
 }
 
 /// Input of ProgramCache::extract()

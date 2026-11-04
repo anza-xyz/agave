@@ -42,10 +42,10 @@ use {
         },
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
-            EpochBoundaryPreparation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
-            ProgramToLoad,
+            ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch, ProgramToLoad,
         },
         program_cache::{
+            ebpp::EpochBoundaryPreparation,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
             owner::ProgramCacheEntryOwner,
         },
