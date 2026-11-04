@@ -192,7 +192,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             &handle_duplicate,
             &mut metrics,
         ) {
-            // Finish recovery synchronously before inspecting the blockstore below.
+            // Complete recovery before reading blockstore below.
             let mut recovered_batches: Vec<_> = tasks
                 .into_iter()
                 .filter_map(|task| {

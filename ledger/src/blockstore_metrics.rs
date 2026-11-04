@@ -44,7 +44,7 @@ pub struct BlockstoreInsertionMetrics {
     /// Subset of `num_fec_set_checks_failed`: FEC sets that could not be
     /// rebuilt despite enough shreds being available.
     pub num_fec_set_checks_rebuild_failed: usize,
-    /// Recovered data shreds presented for insertion, including stale batches.
+    /// Recovered data shreds sent to insertion, including results for an old block.
     pub num_recovered: usize,
     pub num_recovered_stale: usize,
     pub num_repaired_data_shreds_exists: usize,

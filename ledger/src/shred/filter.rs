@@ -189,7 +189,7 @@ pub struct ShredFilterContext {
 }
 
 impl ShredFilterContext {
-    /// First slot subject to SIMD-0504 validation, if activated in the root bank.
+    /// First slot that requires SIMD-0504 validation, if the root bank has activated the feature.
     pub fn stricter_shred_validation_from(&self) -> Option<Slot> {
         self.stricter_shred_validation_from
     }
