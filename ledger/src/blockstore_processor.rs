@@ -1896,7 +1896,7 @@ fn process_next_slots(
 
         // Only process full slots in blockstore_processor, replay_stage
         // handles any partials
-        if next_meta.is_full() {
+        if next_meta.is_full_and_validated() {
             if !opts.skip_inter_slot_verification {
                 let parent_block_id = bank.block_id();
                 if migration_status.should_allow_block_markers(*next_slot)
@@ -5765,6 +5765,7 @@ pub mod tests {
             meta.consumed = 1;
             meta.received = 1;
             meta.last_index = Some(0);
+            meta.fec_validation.insert(0); // This fixture represents a replayable slot.
             blockstore.put_meta(slot, &meta).unwrap();
             blockstore.set_dead_slot(slot).unwrap();
         }
@@ -5819,6 +5820,45 @@ pub mod tests {
         for (_, bank, _) in &pending_slots {
             assert!(bank.get_account(&first_alpenglow_key).is_none());
             assert!(bank.get_account(&pending_key).is_none());
+        }
+    }
+
+    // Startup replay has a separate slot-selection path from normal replay range reads.
+    // It must wait for validation of a physically complete slot without marking that slot dead.
+    #[test]
+    fn test_process_next_slots_waits_for_fec_validation() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
+        let mut parent_meta = SlotMeta::new(0, None);
+        parent_meta.next_slots = smallvec::smallvec![1];
+        let mut meta = SlotMeta::new(1, Some(0));
+        meta.consumed = 32;
+        meta.received = 32;
+        meta.last_index = Some(31);
+        assert!(meta.is_full());
+        for validated in [false, true] {
+            if validated {
+                meta.fec_validation.insert(0);
+            }
+            blockstore.put_meta(1, &meta).unwrap();
+            let mut pending = Vec::new();
+            process_next_slots(
+                &bank0,
+                &parent_meta,
+                &blockstore,
+                &leader_schedule_cache,
+                &mut pending,
+                &ProcessOptions::default(),
+                None,
+                &MigrationStatus::default(),
+            )
+            .unwrap();
+            assert_eq!(pending.len(), usize::from(validated));
+            assert!(!blockstore.is_dead(1));
         }
     }
 
@@ -5902,6 +5942,7 @@ pub mod tests {
             meta.consumed = 1;
             meta.received = 1;
             meta.last_index = Some(0);
+            meta.fec_validation.insert(0); // This fixture represents a replayable slot.
             meta.parent_block_id = block_id.to_hash();
             meta.replay_fec_set_index = 32;
             blockstore.put_meta(slot, &meta).unwrap();

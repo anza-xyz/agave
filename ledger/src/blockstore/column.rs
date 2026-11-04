@@ -884,6 +884,7 @@ mod tests {
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
             parent_block_id: Hash::new_unique(),
             replay_fec_set_index: 7,
+            fec_validation: blockstore_meta::FecValidation::default(),
         };
 
         let bytes = <columns::SlotMeta as TypedColumn>::serialize(&meta).unwrap();
@@ -907,7 +908,7 @@ mod tests {
         let v2_bytes = wincode::serialize(&v2).unwrap();
 
         let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v2_bytes).unwrap();
-        let expected = blockstore_meta::SlotMeta {
+        let mut expected = blockstore_meta::SlotMeta {
             slot: 42,
             consumed: 10,
             received: 15,
@@ -919,6 +920,12 @@ mod tests {
             completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
             ..Default::default()
         };
+        // V2 has no validation bitmap. Its complete data must remain replayable.
+        for fec in 0..crate::shred::MAX_FEC_SETS_PER_SLOT {
+            expected
+                .fec_validation
+                .insert(fec * crate::shred::DATA_SHREDS_PER_FEC_BLOCK as u32);
+        }
         assert_eq!(deserialized, expected);
     }
 
@@ -952,6 +959,7 @@ mod tests {
             completed_data_indexes: CompletedDataIndexes::default(),
             parent_block_id: Hash::new_unique(),
             replay_fec_set_index: 7,
+            fec_validation: blockstore_meta::FecValidation::default(),
         };
         let v3_bytes = wincode::serialize(&v3).unwrap();
         let deserialized = wincode::deserialize::<blockstore_meta::SlotMeta>(&v3_bytes).unwrap();
