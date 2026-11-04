@@ -536,7 +536,7 @@ pub struct LoadedAccountAccessor {
 }
 
 impl LoadedAccountAccessor {
-    fn check_and_get_loaded_account_shared_data(
+    fn get_account_shared_data_if(
         &mut self,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<AccountSharedData> {
@@ -545,7 +545,9 @@ impl LoadedAccountAccessor {
         self.storage_entry
             .accounts
             .get_account_shared_data_if(self.offset, |lamports, owner, data_len| {
-                load_filter.as_ref().is_none_or(|load_filter| load_filter(lamports, owner, data_len))
+                load_filter
+                    .as_ref()
+                    .is_none_or(|load_filter| load_filter(lamports, owner, data_len))
             })
             .expect("a held storage is readable")
     }
@@ -2673,8 +2675,7 @@ impl AccountsDb {
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
 
-        let maybe_account =
-            account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
+        let maybe_account = account_accessor.get_account_shared_data_if(load_filter.as_ref());
 
         // Skip zero lamport accounts; a cached one would still be returned after clean removes it
         if let Some(ref account) = maybe_account
