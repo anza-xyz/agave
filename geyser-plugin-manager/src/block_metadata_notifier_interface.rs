@@ -22,6 +22,12 @@ pub trait BlockMetadataNotifier {
         entry_count: u64,
         commission_rate_in_basis_points: bool,
     );
+
+    /// Whether a notification would reach any plugin. Callers may skip
+    /// building the metadata when it would not.
+    fn block_metadata_notifications_enabled(&self) -> bool {
+        true
+    }
 }
 
 pub type BlockMetadataNotifierArc = Arc<dyn BlockMetadataNotifier + Sync + Send>;

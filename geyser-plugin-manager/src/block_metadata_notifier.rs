@@ -83,6 +83,10 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             }
         }
     }
+
+    fn block_metadata_notifications_enabled(&self) -> bool {
+        self.plugin_manager.load().plugins().next().is_some()
+    }
 }
 
 impl BlockMetadataNotifierImpl {
@@ -220,6 +224,7 @@ mod tests {
             })],
         ))));
         let notifier = BlockMetadataNotifierImpl::new(plugin_manager);
+        assert!(notifier.block_metadata_notifications_enabled());
         let rewards = KeyedRewardsAndNumPartitions {
             keyed_rewards: Vec::new(),
             num_partitions: None,
@@ -247,6 +252,7 @@ mod tests {
         // Empty plugin set: dispatch returns before building anything.
         let empty = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::default())));
         let notifier = BlockMetadataNotifierImpl::new(empty);
+        assert!(!notifier.block_metadata_notifications_enabled());
         let no_rewards = KeyedRewardsAndNumPartitions {
             keyed_rewards: vec![],
             num_partitions: None,
