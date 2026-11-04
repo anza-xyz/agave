@@ -13,8 +13,10 @@ use {
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::ProgramCacheForTxBatch,
-        program_cache::{env::ProgramRuntimeEnvironments, metrics::ProgramStatistics},
-        program_cache_entry::ProgramCacheEntryType,
+        program_cache::{
+            entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironments,
+            metrics::ProgramStatistics,
+        },
     },
     solana_pubkey::Pubkey,
     solana_svm::{

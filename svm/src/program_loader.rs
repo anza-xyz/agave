@@ -10,8 +10,9 @@ use {
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
         loaded_programs::{ProgramCacheForTxBatch, ProgramToLoad},
-        program_cache::{env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment, owner::ProgramCacheEntryOwner,
+        },
     },
     solana_pubkey::Pubkey,
     solana_sbpf::elf_parser::consts::ELFMAG,
@@ -385,10 +386,10 @@ mod tests {
         solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
             program_cache::{
+                entry::ProgramCacheEntryType,
                 env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
                 fork_graph::{BlockRelation, ForkGraph},
             },
-            program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},

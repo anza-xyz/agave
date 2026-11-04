@@ -14,9 +14,7 @@
 //! program not recompiled in time is loaded on demand after the boundary.
 
 use {
-    crate::{
-        program_cache::env::ProgramRuntimeEnvironment, program_cache_entry::ProgramCacheEntry,
-    },
+    crate::program_cache::{entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_svm_type_overrides::sync::Arc,

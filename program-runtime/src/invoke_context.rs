@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::program_cache_entry::ProgramCacheEntry,
+    crate::program_cache::entry::ProgramCacheEntry,
     qualifier_attr::qualifiers,
     solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_epoch_schedule::EpochSchedule,
@@ -15,8 +15,10 @@ use {
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         loaded_programs::ProgramCacheForTxBatch,
         memory_context::{MemoryContext, MemoryContexts},
-        program_cache::env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
-        program_cache_entry::ProgramCacheEntryType,
+        program_cache::{
+            entry::ProgramCacheEntryType,
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        },
         stable_log,
         sysvar_cache::SysvarCache,
     },

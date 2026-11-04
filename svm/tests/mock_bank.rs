@@ -15,10 +15,10 @@ use {
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
         program_cache::{
+            entry::ProgramCacheEntry,
             env::ProgramRuntimeEnvironment,
             fork_graph::{BlockRelation, ForkGraph},
         },
-        program_cache_entry::ProgramCacheEntry,
         solana_sbpf::{
             program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
             vm::Config,

@@ -1,14 +1,12 @@
 use {
-    crate::{
-        program_cache::{
-            MAX_LOADED_ENTRY_COUNT, MAX_TOMBSTONE_AGE_IN_SLOTS,
-            env::ProgramRuntimeEnvironment,
-            fork_graph::{BlockRelation, ForkGraph},
-            loading_task::LoadingTaskWaiter,
-            metrics::{EMA_SCALE, ProgramCacheStats},
-            owner::ProgramCacheEntryOwner,
-        },
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
+    crate::program_cache::{
+        MAX_LOADED_ENTRY_COUNT, MAX_TOMBSTONE_AGE_IN_SLOTS,
+        entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
+        env::ProgramRuntimeEnvironment,
+        fork_graph::{BlockRelation, ForkGraph},
+        loading_task::LoadingTaskWaiter,
+        metrics::{EMA_SCALE, ProgramCacheStats},
+        owner::ProgramCacheEntryOwner,
     },
     log::error,
     solana_clock::Slot,
@@ -758,12 +756,12 @@ pub(crate) mod tests {
             },
             program_cache::{
                 MAX_TOMBSTONE_AGE_IN_SLOTS,
+                entry::{ProgramCacheEntry, ProgramCacheEntryType},
                 env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
                 fork_graph::{BlockRelation, ForkGraph},
                 metrics::ProgramStatistics,
                 owner::ProgramCacheEntryOwner,
             },
-            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
         },
         solana_clock::Slot,
         solana_pubkey::Pubkey,

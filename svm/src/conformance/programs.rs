@@ -7,8 +7,9 @@ use {
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionRegisterer, loaded_programs::ProgramCacheForTxBatch,
-        program_cache::env::ProgramRuntimeEnvironment, program_cache_entry::ProgramCacheEntry,
+        invoke_context::BuiltinFunctionRegisterer,
+        loaded_programs::ProgramCacheForTxBatch,
+        program_cache::{entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment},
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,

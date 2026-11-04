@@ -157,9 +157,9 @@ use {
         program_cache::{
             DELAY_VISIBILITY_SLOT_OFFSET, MAX_LOADED_ENTRY_COUNT,
             ebpp::EpochBoundaryPreparation,
+            entry::ProgramCacheEntry,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         },
-        program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,

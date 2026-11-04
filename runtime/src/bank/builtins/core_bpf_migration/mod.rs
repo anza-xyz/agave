@@ -539,8 +539,10 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            program_cache::owner::ProgramCacheEntryOwner,
-            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            program_cache::{
+                entry::{ProgramCacheEntry, ProgramCacheEntryType},
+                owner::ProgramCacheEntryOwner,
+            },
             solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,

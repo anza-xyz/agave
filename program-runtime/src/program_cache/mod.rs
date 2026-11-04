@@ -1,6 +1,7 @@
 //! Loaded program cache.
 
 pub mod ebpp;
+pub mod entry;
 pub mod env;
 pub mod fork_graph;
 pub(crate) mod loading_task;

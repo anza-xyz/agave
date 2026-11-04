@@ -14,10 +14,11 @@ use {
         invoke_context::{BpfAllocator, InvokeContext},
         memory_context::MemoryContext,
         program_cache::{
-            DELAY_VISIBILITY_SLOT_OFFSET, env::ProgramRuntimeEnvironment,
+            DELAY_VISIBILITY_SLOT_OFFSET,
+            entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            env::ProgramRuntimeEnvironment,
             metrics::LoadProgramMetrics,
         },
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
         serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
     },
