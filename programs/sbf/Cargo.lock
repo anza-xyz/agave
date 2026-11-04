@@ -8316,7 +8316,6 @@ dependencies = [
  "ahash 0.8.12",
  "arc-swap",
  "arrayref",
- "assert_matches",
  "base64 0.23.1",
  "bitvec",
  "bytemuck",
