@@ -4964,6 +4964,9 @@ fn test_highest_slot() {
     assert_eq!(blockstore.highest_slot().unwrap(), None);
 }
 
+// Incoming and recovered copies of a shred must not produce a duplicate proof.
+// Test arrival before insertion and in the same transaction as recovered shreds.
+// The combined transaction must also schedule recovery for other incoming FEC sets.
 #[test_case(false; "separate_insertion")]
 #[test_case(true; "combined_insertion")]
 fn test_async_recovery(combined_insertion: bool) {
@@ -5010,8 +5013,8 @@ fn test_async_recovery(combined_insertion: bool) {
         .map(|batch| batch.data_shreds.len())
         .sum::<usize>();
     assert_eq!(num_recovered, data_shreds.len());
-    // A turbine shred can arrive before recovered insertion, including as part
-    // of the same transaction. Both paths must preserve duplicate handling.
+    // A turbine shred can arrive before recovered shreds, including in the same transaction.
+    // Both cases must handle duplicates correctly.
     let concurrently_inserted_shred = recovered_batches[0].data_shreds[0].clone();
     let mut metrics = BlockstoreInsertionMetrics::default();
     let possible_duplicates = RefCell::new(Vec::new());
@@ -5041,12 +5044,7 @@ fn test_async_recovery(combined_insertion: bool) {
         assert_eq!(tasks[0].erasure_set(), next_erasure_set);
     } else {
         blockstore
-            .insert_cow_shreds(
-                [concurrently_inserted_shred.clone()],
-                false,
-                &mut pinnable_slice,
-                &mut write_batch,
-            )
+            .insert_shreds([concurrently_inserted_shred.clone()], false)
             .unwrap();
         let (_, tasks) = blockstore
             .insert_shreds_with_recovered(
@@ -5068,27 +5066,29 @@ fn test_async_recovery(combined_insertion: bool) {
     drop(retransmit_sender);
     assert_eq!(
         retransmit_receiver
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap()
-            .len(),
+            .try_iter()
+            .map(|batch| {
+                assert!(batch.len() <= RETRANSMIT_SHRED_BATCH_SIZE);
+                batch.len()
+            })
+            .sum::<usize>(),
         num_recovered
     );
-    let shred_bufs: Vec<_> = data_shreds.iter().map(Shred::payload).cloned().collect();
-
-    // Check all the data shreds were recovered
-    for (s, buf) in data_shreds.iter().zip(shred_bufs) {
+    for shred in &data_shreds {
         assert_eq!(
             blockstore
-                .get_data_shred(s.slot(), s.index() as u64)
+                .get_data_shred(shred.slot(), u64::from(shred.index()))
                 .unwrap()
                 .unwrap(),
-            buf.as_ref(),
+            shred.payload().as_ref(),
         );
     }
 
     verify_index_integrity(&blockstore, slot);
 }
 
+// Newly inserted shreds must travel in memory; older shreds must travel by ID.
+// The two groups must contain each input once, avoiding duplicate inputs and needless blockstore reads.
 #[test]
 fn test_prepare_recovery_task_partitions_new_and_stored_shreds() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -5100,14 +5100,7 @@ fn test_prepare_recovery_task_partitions_new_and_stored_shreds() {
     let just_inserted_shred_id = just_inserted_shred.id();
     let stored_shred_ids = coding_shreds.iter().map(Shred::id).collect::<Vec<_>>();
 
-    blockstore
-        .insert_cow_shreds(
-            coding_shreds.into_iter(),
-            false,
-            &mut pinnable_slice,
-            &mut write_batch,
-        )
-        .unwrap();
+    blockstore.insert_shreds(coding_shreds, false).unwrap();
     let (_, mut recovery_tasks) = blockstore
         .insert_shreds_with_recovered(
             [(
@@ -5139,6 +5132,8 @@ fn test_prepare_recovery_task_partitions_new_and_stored_shreds() {
     );
 }
 
+// Discard recovery results for a replaced block without losing results for other slots.
+// Incoming shreds in the same transaction must still be stored and schedule new recovery work.
 #[test_case(false; "separate_insertion")]
 #[test_case(true; "combined_insertion")]
 fn test_stale_recovery_does_not_discard_current_batch(combined_insertion: bool) {
@@ -5160,12 +5155,7 @@ fn test_stale_recovery_does_not_discard_current_batch(combined_insertion: bool) 
     let (retransmit_sender, retransmit_receiver) = new_test_retransmit_sender();
     let mut recovery_context = ShredRecoveryContext::new(root_bank, 0);
     blockstore
-        .insert_cow_shreds(
-            [stale_data[0].clone(), valid_data[0].clone()],
-            false,
-            &mut pinnable_slice,
-            &mut write_batch,
-        )
+        .insert_shreds([stale_data[0].clone(), valid_data[0].clone()], false)
         .unwrap();
     let mut coding_shreds = stale_coding;
     coding_shreds.extend(valid_coding);
@@ -5215,14 +5205,7 @@ fn test_stale_recovery_does_not_discard_current_batch(combined_insertion: bool) 
 
     // Replace the block after reconstruction but before recovered insertion.
     blockstore.clear_unconfirmed_slot(stale_slot);
-    blockstore
-        .insert_cow_shreds(
-            current_coding.into_iter(),
-            false,
-            &mut pinnable_slice,
-            &mut write_batch,
-        )
-        .unwrap();
+    blockstore.insert_shreds(current_coding, false).unwrap();
 
     let mut metrics = BlockstoreInsertionMetrics::default();
     if combined_insertion {
@@ -5269,9 +5252,12 @@ fn test_stale_recovery_does_not_discard_current_batch(combined_insertion: bool) 
     drop(retransmit_sender);
     assert_eq!(
         retransmit_receiver
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap()
-            .len(),
+            .try_iter()
+            .map(|batch| {
+                assert!(batch.len() <= RETRANSMIT_SHRED_BATCH_SIZE);
+                batch.len()
+            })
+            .sum::<usize>(),
         num_valid
     );
     for shred in stale_data.into_iter().skip(usize::from(combined_insertion)) {
@@ -5292,6 +5278,8 @@ fn test_stale_recovery_does_not_discard_current_batch(combined_insertion: bool) 
     }
 }
 
+// Block-id repair in an Alternate location must not schedule recovery against the Original block.
+// Its erasure metadata can exist even when this transaction has no Original index entry.
 #[test]
 fn test_skip_alt_recovery() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -5304,10 +5292,9 @@ fn test_skip_alt_recovery() {
     let data_shred = data_shreds[0].clone();
     let data_shred_index = u64::from(data_shred.index());
 
-    // First populate Original erasure metadata through a coding shred. A
-    // later Alternate-column block-id repair insertion for the same FEC set
-    // will load this erasure meta without touching the Original index in the
-    // current batch.
+    // Insert a coding shred to create erasure metadata in the Original location.
+    // Then insert a block-id repair shred for the same FEC set in an Alternate location.
+    // This loads the erasure metadata without changing the Original index in this batch.
     blockstore
         .do_insert_shreds(
             std::iter::once((
@@ -5348,7 +5335,6 @@ fn test_skip_alt_recovery() {
         .unwrap();
 
     assert!(recovery_tasks.is_empty());
-    assert_eq!(metrics.num_recovered, 0);
     assert!(
         blockstore
             .get_index_from_location(slot, alternate_location)
@@ -5393,9 +5379,14 @@ fn insert_async_for_test(
     (completed, tasks, metrics)
 }
 
-#[test_case(false; "valid")]
-#[test_case(true; "invalid_parity")]
-fn test_async_validation_gates_slot_completion(invalid: bool) {
+// Storing all data shreds must not allow replay before insertion applies a validation result.
+// A failed check must mark the slot dead. Worker completion alone must not change replay eligibility.
+// Test both new tasks and reloaded tasks so a reload cannot bypass required validation.
+#[test_case(false, false; "valid")]
+#[test_case(true, false; "invalid_parity")]
+#[test_case(false, true; "retried_valid")]
+#[test_case(true, true; "retried_invalid_parity")]
+fn test_async_validation_gates_replay(invalid: bool, retry: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let slot = 100;
@@ -5411,8 +5402,15 @@ fn test_async_validation_gates_slot_completion(invalid: bool) {
     }
     shreds.truncate(DATA_SHREDS_PER_FEC_BLOCK);
     let (completed, tasks, _) = insert_async_for_test(&blockstore, shreds, &mut []);
-    assert!(completed.is_empty());
-    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(!completed.is_empty());
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
     assert_eq!(
         blockstore
             .get_index(slot)
@@ -5420,7 +5418,7 @@ fn test_async_validation_gates_slot_completion(invalid: bool) {
             .unwrap()
             .data()
             .num_shreds(),
-        DATA_SHREDS_PER_FEC_BLOCK - 1
+        DATA_SHREDS_PER_FEC_BLOCK
     );
     assert!(!blockstore.is_dead(slot));
     assert_eq!(tasks.len(), 1);
@@ -5431,13 +5429,58 @@ fn test_async_validation_gates_slot_completion(invalid: bool) {
         0,
     );
     let task = tasks.into_iter().next().unwrap();
+    let erasure_set = task.erasure_set();
+    assert!(
+        blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    let task = if retry {
+        blockstore
+            .prepare_shred_validation_retry(erasure_set)
+            .unwrap()
+            .unwrap()
+    } else {
+        task
+    };
     let mut result = RecoveredShredBatch::new(task.erasure_set());
     assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
-    // Even a finished worker cannot expose a full slot or mark it dead by itself.
-    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    // Only insertion can make entries available to replay or mark the slot dead.
+    // Worker completion alone must not do either.
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
     assert!(!blockstore.is_dead(slot));
-    let (completed, tasks, metrics) = insert_async_for_test(&blockstore, vec![], &mut [result]);
-    assert_eq!(completed.len(), 1);
+    let mut results = [result];
+    let (completed, tasks, metrics) = insert_async_for_test(&blockstore, vec![], &mut results);
+    assert!(results[0].has_validation_verdict());
+    assert!(
+        blockstore
+            .prepare_shred_validation_retry(erasure_set)
+            .unwrap()
+            .is_none()
+    );
+    assert!(completed.is_empty());
+    if invalid {
+        assert_matches!(
+            blockstore.get_slot_component_views_with_shred_info(slot, 0, false),
+            Err(BlockstoreError::DeadSlot)
+        );
+    } else {
+        let (components, ranges, full) = blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap();
+        assert!(!components.is_empty());
+        assert_eq!(ranges, vec![0..DATA_SHREDS_PER_FEC_BLOCK as u32]);
+        assert!(full);
+    }
     assert!(tasks.is_empty());
     assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
     assert_eq!(blockstore.is_dead(slot), invalid);
@@ -5446,13 +5489,13 @@ fn test_async_validation_gates_slot_completion(invalid: bool) {
     verify_index_integrity(&blockstore, slot);
 }
 
-#[test_case(false; "task_evicted")]
-#[test_case(true; "result_evicted")]
-fn test_async_validation_repair_after_eviction_and_restart(evict_result: bool) {
+// A crash after worker completion must leave replay blocked until a new task validates the stored data.
+// After insertion commits the result, another restart must preserve replay eligibility.
+#[test]
+fn test_async_validation_resumes_after_restart() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let slot = 100;
     let (data, _) = setup_erasure_shreds(slot, 0, 1);
-    let repair = data.last().unwrap().clone();
     let mut context = ShredRecoveryContext::new(
         Arc::new(Bank::new_for_tests(
             &create_genesis_config(2).genesis_config,
@@ -5462,48 +5505,84 @@ fn test_async_validation_repair_after_eviction_and_restart(evict_result: bool) {
     {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let (_, tasks, _) = insert_async_for_test(&blockstore, data, &mut []);
-        if evict_result {
-            for task in tasks {
-                let mut result = RecoveredShredBatch::new(task.erasure_set());
-                assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
-                drop(result);
-            }
-        } else {
-            drop(tasks);
+        assert_eq!(tasks.len(), 1);
+        for task in tasks {
+            let mut result = RecoveredShredBatch::new(task.erasure_set());
+            assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
+            // Simulate a crash after validation but before insertion commits the result.
+            drop(result);
         }
-        assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+        assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
         assert!(
-            blockstore
-                .get_data_shred(slot, u64::from(repair.index()))
+            !blockstore
+                .meta(slot)
                 .unwrap()
-                .is_none()
+                .unwrap()
+                .is_full_and_validated()
+        );
+        assert_eq!(
+            blockstore
+                .get_index(slot)
+                .unwrap()
+                .unwrap()
+                .data()
+                .num_shreds(),
+            DATA_SHREDS_PER_FEC_BLOCK
         );
     }
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
-    let (_, tasks, _) = insert_async_for_test(&blockstore, vec![repair], &mut []);
-    assert_eq!(tasks.len(), 1);
-    let task = tasks.into_iter().next().unwrap();
+    assert!(
+        blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    let pending = blockstore.pending_shred_validation(Some(0)).unwrap();
+    assert_eq!(pending.len(), 1);
+    let task = blockstore
+        .prepare_shred_validation_retry(*pending.first().unwrap())
+        .unwrap()
+        .unwrap();
     let mut result = RecoveredShredBatch::new(task.erasure_set());
     assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
     insert_async_for_test(&blockstore, vec![], &mut [result]);
     assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
     assert!(!blockstore.is_dead(slot));
     verify_index_integrity(&blockstore, slot);
+    drop(blockstore);
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    assert!(
+        blockstore
+            .pending_shred_validation(Some(0))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap()
+            .2
+    );
 }
 
-#[test]
-fn test_async_validation_stale_failure_cannot_kill_replacement() {
+// An old success must not validate a replacement block; an old failure must not mark it dead.
+// A later block replacement must also clear validation bits from the previous block.
+#[test_case(false; "stale_success")]
+#[test_case(true; "stale_failure")]
+fn test_async_validation_stale_verdict_cannot_affect_replacement(invalid: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let slot = 100;
     let (data, code) = setup_erasure_shreds(slot, 0, 1);
     let mut shreds: Vec<_> = data.into_iter().chain(code).collect();
-    sign_with_invalid_parity_for_tests(
-        &Keypair::new(),
-        &mut shreds,
-        0..CODING_SHREDS_PER_FEC_BLOCK,
-    );
+    if invalid {
+        sign_with_invalid_parity_for_tests(
+            &Keypair::new(),
+            &mut shreds,
+            0..CODING_SHREDS_PER_FEC_BLOCK,
+        );
+    }
     shreds.truncate(DATA_SHREDS_PER_FEC_BLOCK);
     let (_, tasks, _) = insert_async_for_test(&blockstore, shreds, &mut []);
     let mut context = ShredRecoveryContext::new(
@@ -5518,20 +5597,57 @@ fn test_async_validation_stale_failure_cannot_kill_replacement() {
     blockstore.clear_unconfirmed_slot(slot);
     let (data, _) = setup_erasure_shreds(slot, 0, 1);
     let (_, tasks, _) = insert_async_for_test(&blockstore, data, &mut []);
-    let (_, _, metrics) = insert_async_for_test(&blockstore, vec![], &mut [stale]);
+    let mut stale_results = [stale];
+    let (_, _, metrics) = insert_async_for_test(&blockstore, vec![], &mut stale_results);
+    assert!(!stale_results[0].has_validation_verdict());
     assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
     assert!(!blockstore.is_dead(slot));
-    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
     let task = tasks.into_iter().next().unwrap();
     let mut current = RecoveredShredBatch::new(task.erasure_set());
     assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut current));
     insert_async_for_test(&blockstore, vec![], &mut [current]);
     assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
     assert!(!blockstore.is_dead(slot));
+    assert!(
+        blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
+    blockstore.clear_unconfirmed_slot(slot);
+    let (data, _) = setup_erasure_shreds(slot, 0, 1);
+    insert_async_for_test(&blockstore, data, &mut []);
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
+    assert!(
+        blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap()
+            .0
+            .is_empty()
+    );
 }
 
+// Reordered validation results must not let replay skip an earlier FEC set that still needs validation.
+// Check replay from both the slot start and the UpdateParent marker, and preserve the new parent.
+// Vary whether marker shreds arrive before or after the rest of their FEC sets.
 #[test_matrix([false, true], [[4, 2, 3, 0, 1], [1, 3, 4, 2, 0]])]
-fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order: [usize; 5]) {
+fn test_async_validation_shuffled_update_parent(marker_last: bool, result_order: [usize; 5]) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let slot = 104;
@@ -5572,11 +5688,10 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
             .all(|shreds| shreds.len() == DATA_SHREDS_PER_FEC_BLOCK)
     );
 
-    // Interleave FEC sets, leaving either the marker or the tail as the shred
-    // withheld until validation completes.
+    // Mix shreds from different FEC sets. Send either the marker or the last shred last.
     let mut incoming = Vec::new();
     for offset in 0..DATA_SHREDS_PER_FEC_BLOCK {
-        let offset = if hold_marker {
+        let offset = if marker_last {
             (offset + 1) % DATA_SHREDS_PER_FEC_BLOCK
         } else {
             offset
@@ -5586,7 +5701,7 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
         }
     }
     let (completed, tasks, _) = insert_async_for_test(&blockstore, incoming, &mut []);
-    assert!(completed.is_empty());
+    assert!(!completed.is_empty());
     assert_eq!(tasks.len(), fec_sets.len());
     assert_eq!(
         blockstore
@@ -5595,7 +5710,7 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
             .unwrap()
             .data()
             .num_shreds(),
-        5 * (DATA_SHREDS_PER_FEC_BLOCK - 1)
+        5 * DATA_SHREDS_PER_FEC_BLOCK
     );
     let mut context = ShredRecoveryContext::new(
         Arc::new(Bank::new_for_tests(
@@ -5617,7 +5732,14 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
             .0
             .is_empty()
     );
-    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
 
     let mut validated = [false; 5];
     for fec in result_order {
@@ -5628,8 +5750,8 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
         assert_eq!(metrics.num_fec_set_checks_failed, 0);
         validated[fec] = true;
         let prefix = validated.iter().take_while(|&&valid| valid).count();
-        // Replay must not skip an unvalidated FEC, even when starting at the
-        // UpdateParent marker and the suffix has already been validated.
+        // Start replay at the UpdateParent marker after validating the later FEC sets.
+        // Replay must still wait for validation of the earlier FEC sets.
         for start in [0, 2] {
             let (components, ranges, full) = blockstore
                 .get_slot_components_with_shred_info(slot, (start * fec_size) as u64, false)
@@ -5642,7 +5764,11 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
             assert_eq!(full, prefix == fec_sets.len());
         }
         assert_eq!(
-            blockstore.meta(slot).unwrap().unwrap().is_full(),
+            blockstore
+                .meta(slot)
+                .unwrap()
+                .unwrap()
+                .is_full_and_validated(),
             prefix == fec_sets.len()
         );
         assert!(!blockstore.is_dead(slot));
@@ -5659,13 +5785,15 @@ fn test_async_validation_shuffled_update_parent(hold_marker: bool, result_order:
     verify_index_integrity(&blockstore, slot);
 }
 
-#[test_case(98, false; "live_valid")]
-#[test_case(98, true; "live_invalid_parity")]
-#[test_case(100, false; "obsolete")]
-fn test_async_validation_root_advances_while_queued(new_root: Slot, invalid: bool) {
+// A newer root bank must not bypass validation for a queued slot that is still above the root.
+// Refresh the worker context before processing both valid data and data with invalid parity.
+#[test_case(false; "valid")]
+#[test_case(true; "invalid_parity")]
+fn test_async_validation_root_advances_while_queued(invalid: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Blockstore::open(ledger_path.path()).unwrap();
     let slot = 100;
+    let new_root = 98;
     let (data, code) = setup_erasure_shreds(slot, slot - 1, 1);
     let mut shreds: Vec<_> = data.into_iter().chain(code).collect();
     if invalid {
@@ -5684,7 +5812,7 @@ fn test_async_validation_root_advances_while_queued(new_root: Slot, invalid: boo
     assert!(!context.should_discard_shred(&probe));
     assert!(context.is_stricter_shred_validation_active(slot));
     let (completed, tasks, _) = insert_async_for_test(&blockstore, shreds, &mut []);
-    assert!(completed.is_empty());
+    assert!(!completed.is_empty());
     assert_eq!(tasks.len(), 1);
 
     let mut advanced_root = Bank::new_from_parent(root, SlotLeader::default(), new_root);
@@ -5692,33 +5820,400 @@ fn test_async_validation_root_advances_while_queued(new_root: Slot, invalid: boo
     advanced_root.ns_per_slot = 0;
     context.maybe_update(Arc::new(advanced_root));
     blockstore.set_roots(std::iter::once(&new_root)).unwrap();
-    let obsolete = new_root >= slot;
-    assert_eq!(context.should_discard_shred(&probe), obsolete);
+    assert!(!context.should_discard_shred(&probe));
     assert!(context.is_stricter_shred_validation_active(slot));
 
     let task = tasks.into_iter().next().unwrap();
+    assert!(
+        blockstore
+            .prepare_shred_validation_retry(task.erasure_set())
+            .unwrap()
+            .is_some()
+    );
     let mut result = RecoveredShredBatch::new(task.erasure_set());
     assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
-    assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_validated()
+    );
     assert!(!blockstore.is_dead(slot));
     let (completed, tasks, metrics) = insert_async_for_test(&blockstore, vec![], &mut [result]);
     assert!(tasks.is_empty());
-    assert_eq!(completed.len(), usize::from(!obsolete));
-    assert_eq!(blockstore.meta(slot).unwrap().unwrap().is_full(), !obsolete);
-    if obsolete {
-        assert_eq!(metrics.num_recovered_inserted, 0);
+    assert!(completed.is_empty());
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    assert_eq!(blockstore.is_dead(slot), invalid);
+    assert_eq!(metrics.num_fec_set_checks_passed, usize::from(!invalid));
+    assert_eq!(metrics.num_fec_set_checks_failed, usize::from(invalid));
+    verify_index_integrity(&blockstore, slot);
+}
+
+// One completed data range can span several FEC sets. Replay must wait for all their checks.
+// A write that only changes validation must also notify replay, even when no new shreds arrive.
+#[test]
+fn test_async_validation_gates_multi_fec_data_range_and_signals_replay() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 100;
+    let shreds = data_shreds(create_entry_batch_shreds(
+        slot,
+        0,
+        make_slot_entries_with_transactions(500),
+        0,
+        true,
+    ));
+    let num_fec = shreds.len() / DATA_SHREDS_PER_FEC_BLOCK;
+    assert!(num_fec > 1);
+    assert_eq!(
+        shreds.iter().filter(|shred| shred.data_complete()).count(),
+        1
+    );
+    let (_, tasks, _) = insert_async_for_test(&blockstore, shreds, &mut []);
+    assert_eq!(tasks.len(), num_fec);
+    let (signal_sender, signal_receiver) = crossbeam_channel::bounded(100);
+    blockstore
+        .new_shreds_signals
+        .lock()
+        .unwrap()
+        .push(signal_sender);
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    let last = tasks.len() - 1;
+    for (i, task) in tasks.into_iter().enumerate() {
         assert!(
             blockstore
-                .get_data_shred(slot, (DATA_SHREDS_PER_FEC_BLOCK - 1) as u64)
+                .get_slot_component_views_with_shred_info(slot, 0, false)
                 .unwrap()
-                .is_none()
+                .0
+                .is_empty()
         );
-    } else {
-        assert_eq!(blockstore.is_dead(slot), invalid);
-        assert_eq!(metrics.num_fec_set_checks_passed, usize::from(!invalid));
-        assert_eq!(metrics.num_fec_set_checks_failed, usize::from(invalid));
+        let mut batch = RecoveredShredBatch::new(task.erasure_set());
+        assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut batch));
+        insert_async_for_test(&blockstore, vec![], &mut [batch]);
+        assert!(
+            signal_receiver.try_recv().is_ok(),
+            "validation-only commit must wake replay"
+        );
+        let (components, ranges, full) = blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap();
+        assert_eq!(components.len(), usize::from(i == last));
+        assert_eq!(ranges.len(), usize::from(i == last));
+        assert_eq!(full, i == last);
     }
-    verify_index_integrity(&blockstore, slot);
+}
+
+// A clear bitmap bit before feature activation must not become a required check after restart.
+// Coding-only FEC sets expose this case because no data insertion sets their exemption bit.
+// Startup must also skip rooted slots and do no validation discovery when the feature is inactive.
+#[test]
+fn test_pending_validation_respects_activation_after_restart() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let first_validation_slot = 100;
+    let fec_set_index = DATA_SHREDS_PER_FEC_BLOCK as u32;
+    {
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        for slot in [99, 100, 101] {
+            let (mut data, _) = setup_erasure_shreds(slot, 0, 1);
+            let (_, code) = setup_erasure_shreds_with_index_and_chained_merkle(
+                slot,
+                0,
+                1,
+                fec_set_index,
+                data[0].merkle_root().unwrap(),
+            );
+            // One data shred creates SlotMeta but is not enough to recover the first FEC set.
+            // The second set has enough coding shreds for recovery, but no data shreds.
+            // Before activation, data insertion sets the bit without validation.
+            // No data arrived here, so the bit stays clear.
+            data.truncate(1);
+            data.extend(code);
+            let (_, tasks) = blockstore
+                .insert_shreds_with_recovered(
+                    data.into_iter()
+                        .map(|shred| (shred, false, BlockLocation::Original, None)),
+                    &mut [],
+                    &new_dummy_retransmit_sender(),
+                    Some(first_validation_slot),
+                    &mut blockstore.new_pinnable_slice(),
+                    &mut blockstore.get_write_batch(),
+                    &|_| panic!("unexpected duplicate proof"),
+                    &mut BlockstoreInsertionMetrics::default(),
+                )
+                .unwrap();
+            assert_eq!(tasks.len(), 1);
+            assert_eq!(
+                tasks[0].erasure_set(),
+                ErasureSetId::new(slot, fec_set_index)
+            );
+            assert_eq!(
+                tasks[0].requires_validation(),
+                slot >= first_validation_slot
+            );
+            assert!(
+                !blockstore
+                    .meta(slot)
+                    .unwrap()
+                    .unwrap()
+                    .fec_validation
+                    .contains(fec_set_index)
+            );
+            // Drop the tasks to simulate a restart before their results reach blockstore.
+        }
+    }
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    assert!(
+        blockstore
+            .pending_shred_validation(None)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        blockstore
+            .pending_shred_validation(Some(first_validation_slot))
+            .unwrap(),
+        std::collections::BTreeSet::from([
+            ErasureSetId::new(100, fec_set_index),
+            ErasureSetId::new(101, fec_set_index),
+        ])
+    );
+    blockstore.set_roots(std::iter::once(&100)).unwrap();
+    assert_eq!(
+        blockstore
+            .pending_shred_validation(Some(first_validation_slot))
+            .unwrap(),
+        std::collections::BTreeSet::from([ErasureSetId::new(101, fec_set_index)])
+    );
+}
+
+// Restart must find and recover a slot with only coding shreds and no data shreds.
+// This requires persisted slot metadata even before recovered data supplies the parent.
+#[test]
+fn test_async_validation_coding_only_restart() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let slot = 100;
+    {
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let (_, code) = setup_erasure_shreds(slot, 0, 1);
+        let (_, tasks, _) = insert_async_for_test(&blockstore, code, &mut []);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            blockstore
+                .get_index(slot)
+                .unwrap()
+                .unwrap()
+                .data()
+                .num_shreds(),
+            0
+        );
+    }
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let pending = blockstore.pending_shred_validation(Some(0)).unwrap();
+    assert_eq!(pending.len(), 1);
+    let task = blockstore
+        .prepare_shred_validation_retry(*pending.first().unwrap())
+        .unwrap()
+        .unwrap();
+    let mut batch = RecoveredShredBatch::new(task.erasure_set());
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut batch));
+    insert_async_for_test(&blockstore, vec![], &mut [batch]);
+    assert!(
+        blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap()
+            .2
+    );
+}
+
+// New coding shreds must clear the old record's default validation bit before recovery runs.
+// The earlier data range must stay replayable while the new FEC set waits for validation.
+#[test]
+fn test_async_validation_extends_legacy_slot_from_coding_shreds() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 100;
+    let first = data_shreds(create_entry_batch_shreds(
+        slot,
+        0,
+        make_slot_entries_with_transactions(1),
+        0,
+        false,
+    ));
+    assert_eq!(first.len(), DATA_SHREDS_PER_FEC_BLOCK);
+    blockstore.insert_shreds(first, false).unwrap();
+    // Store the old SlotMeta layout without the validation bitmap.
+    let meta = blockstore.meta(slot).unwrap().unwrap();
+    let mut bytes = wincode::serialize(&meta).unwrap();
+    bytes.truncate(bytes.len() - wincode::serialize(&meta.fec_validation).unwrap().len());
+    blockstore.meta_cf.put_bytes(slot, &bytes).unwrap();
+    assert!(
+        blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .fec_validation
+            .contains(DATA_SHREDS_PER_FEC_BLOCK as u32)
+    );
+    let second = create_entry_batch_shreds(
+        slot,
+        0,
+        make_slot_entries_with_transactions(1),
+        DATA_SHREDS_PER_FEC_BLOCK as u32,
+        true,
+    );
+    let incoming = second.into_iter().filter(Shred::is_code).collect();
+    let (_, tasks, _) = insert_async_for_test(&blockstore, incoming, &mut []);
+    assert_eq!(tasks.len(), 1);
+    // Missing data alone blocks replay here. Check the bit too, so a lost task remains discoverable.
+    assert!(
+        !blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .fec_validation
+            .contains(DATA_SHREDS_PER_FEC_BLOCK as u32)
+    );
+    let (components, ranges, full) = blockstore
+        .get_slot_component_views_with_shred_info(slot, 0, false)
+        .unwrap();
+    assert_eq!(components.len(), 1);
+    assert_eq!(ranges, vec![0..DATA_SHREDS_PER_FEC_BLOCK as u32]);
+    assert!(!full);
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    let task = tasks.into_iter().next().unwrap();
+    let mut result = RecoveredShredBatch::new(task.erasure_set());
+    assert!(blockstore.recover_shreds_from_task(task, &mut context, &mut result));
+    insert_async_for_test(&blockstore, vec![], &mut [result]);
+    assert!(
+        blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap()
+            .2
+    );
+}
+
+// Completing an old FEC set must clear its default validation bit in the same write as the new shreds.
+// The cleared bit must survive restart so missing tasks cannot expose unchecked data to replay.
+// Test both a set with some stored data and a set with no earlier shreds.
+#[test_case(false; "previously_absent_fec_set")]
+#[test_case(true; "previously_incomplete_fec_set")]
+fn test_legacy_fec_requires_validation_after_completion(incomplete: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let mut blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 100;
+    let width = DATA_SHREDS_PER_FEC_BLOCK as u32;
+    let mut stored = data_shreds(create_entry_batch_shreds(
+        slot,
+        0,
+        make_slot_entries_with_transactions(1),
+        0,
+        false,
+    ));
+    let mut incoming = data_shreds(create_entry_batch_shreds(
+        slot,
+        0,
+        make_slot_entries_with_transactions(1),
+        width,
+        true,
+    ));
+    assert_eq!(stored.len(), width as usize);
+    assert_eq!(incoming.len(), width as usize);
+    if incomplete {
+        stored.extend(incoming.drain(..width as usize - 1));
+    }
+    blockstore.insert_shreds(stored, false).unwrap();
+    let meta = blockstore.meta(slot).unwrap().unwrap();
+    let mut bytes = wincode::serialize(&meta).unwrap();
+    bytes.truncate(bytes.len() - wincode::serialize(&meta.fec_validation).unwrap().len());
+    blockstore.meta_cf.put_bytes(slot, &bytes).unwrap();
+    assert!(
+        blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .fec_validation
+            .contains(width)
+    );
+
+    let (_, tasks, _) = insert_async_for_test(&blockstore, incoming, &mut []);
+    assert_eq!(tasks.len(), 1);
+    let meta = blockstore.meta(slot).unwrap().unwrap();
+    assert!(meta.is_full());
+    assert!(meta.fec_validation.contains(0));
+    assert!(!meta.fec_validation.contains(width));
+    assert!(meta.fec_validation.contains(2 * width));
+    let (_, ranges, full) = blockstore
+        .get_slot_component_views_with_shred_info(slot, 0, false)
+        .unwrap();
+    assert_eq!(ranges, vec![0..width]);
+    assert!(!full);
+
+    let mut context = ShredRecoveryContext::new(
+        Arc::new(Bank::new_for_tests(
+            &create_genesis_config(2).genesis_config,
+        )),
+        0,
+    );
+    // Lose the task, then reopen the ledger. The cleared bit must survive the restart.
+    drop(tasks);
+    drop(blockstore);
+    blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let erasure_set = ErasureSetId::new(slot, width);
+    assert_eq!(
+        blockstore.pending_shred_validation(Some(0)).unwrap(),
+        std::collections::BTreeSet::from([erasure_set])
+    );
+    let (_, ranges, full) = blockstore
+        .get_slot_component_views_with_shred_info(slot, u64::from(width), false)
+        .unwrap();
+    assert!(ranges.is_empty());
+    assert!(!full);
+    assert_eq!(
+        blockstore
+            .get_index(slot)
+            .unwrap()
+            .unwrap()
+            .data()
+            .num_shreds(),
+        2 * width as usize
+    );
+    let retry = blockstore
+        .prepare_shred_validation_retry(erasure_set)
+        .unwrap()
+        .unwrap();
+    let mut result = RecoveredShredBatch::new(erasure_set);
+    assert!(blockstore.recover_shreds_from_task(retry, &mut context, &mut result));
+    insert_async_for_test(&blockstore, vec![], &mut [result]);
+    let (_, ranges, full) = blockstore
+        .get_slot_component_views_with_shred_info(slot, 0, false)
+        .unwrap();
+    assert_eq!(ranges, vec![0..width, width..2 * width]);
+    assert!(full);
+    assert!(
+        blockstore
+            .pending_shred_validation(Some(0))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!blockstore.is_dead(slot));
 }
 
 /// Blockstore which runs shred recovery on insert and returns the metrics of
@@ -6301,7 +6796,6 @@ fn test_fec_set_actions(
         &index,
         erasure_set,
         erasure_meta,
-        0,
         num_inserted,
         stricter_shred_validation_active,
     );

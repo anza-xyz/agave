@@ -145,6 +145,8 @@ impl PartialOrd for OutgoingMessage {
 }
 
 /// Decision for what to do for a pending repair event
+// Keep repair decisions inline to avoid heap allocations for SlotMeta's bitmap.
+#[allow(clippy::large_enum_variant)]
 enum PendingRepairDecision {
     KeepPending,
     Drop,
@@ -152,6 +154,7 @@ enum PendingRepairDecision {
 }
 
 /// Action to perform as a result of a repair event
+#[allow(clippy::large_enum_variant)]
 enum RepairAction {
     StartRepair { block: Block },
     QueueParent { slot_meta: SlotMeta },
