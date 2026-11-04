@@ -464,12 +464,7 @@ impl StandardBroadcastRun {
             && shred.index() == 0
         {
             blockstore
-                .insert_cow_shreds(
-                    [Cow::Borrowed(shred)],
-                    true, // is_trusted
-                    pinnable_slice,
-                    write_batch,
-                )
+                .insert_trusted_shreds([Cow::Borrowed(shred)], pinnable_slice, write_batch)
                 .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
@@ -559,12 +554,7 @@ impl StandardBroadcastRun {
         let num_shreds = shreds.len();
         let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
         blockstore
-            .insert_cow_shreds(
-                shreds,
-                /*is_trusted:*/ true,
-                pinnable_slice,
-                write_batch,
-            )
+            .insert_trusted_shreds(shreds, pinnable_slice, write_batch)
             .expect("Failed to insert shreds in blockstore");
         let insert_shreds_elapsed = insert_shreds_start.elapsed();
         let new_insert_shreds_stats = InsertShredsStats {
