@@ -18,7 +18,6 @@ use {
         },
     },
     agave_votor_messages::consensus_message::BlockId,
-    assert_matches::assert_matches,
     rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
     solana_entry::entry::{
@@ -38,6 +37,7 @@ use {
     solana_transaction_error::TransactionError,
     solana_transaction_status::{InnerInstruction, InnerInstructions},
     std::{
+        assert_matches,
         borrow::Cow,
         cmp::Ordering,
         ops::{Deref, Range},

@@ -729,7 +729,6 @@ mod tests {
             genesis_utils::create_genesis_config,
             shred::{MAX_CODE_SHREDS_PER_SLOT, tests::*},
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_keypair::Keypair,
@@ -741,6 +740,7 @@ mod tests {
         },
         solana_signer::Signer,
         std::{
+            assert_matches,
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
             time::Duration,
