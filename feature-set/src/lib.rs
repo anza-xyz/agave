@@ -2630,7 +2630,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         ),
         (
             remove_simple_vote_from_cost_model::id(),
-            "stop use static SimpleVote transaction cost, issue #10227",
+            "SIMD-0458: Stop using static SimpleVote transaction cost",
         ),
         (
             limit_instruction_accounts::id(),
