@@ -6,16 +6,14 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         blockstore_meta::ErasureConfig,
-        shred::{
-            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_NONCE, ShredFlags, ShredId,
-            ShredType, ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT,
-        },
+        shred::{self, Error, ShredFlags, ShredId, ShredType, ShredVariant},
     },
     agave_shred_wire_format::{
         constants::{
-            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION, SIZE_OF_SIGNATURE, Section,
-            Sections, sections_with_proof_entries,
+            Nonce, OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+            OFFSET_OF_KIND_HEADER, OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION,
+            SIZE_OF_MERKLE_ROOT, SIZE_OF_NONCE, SIZE_OF_SIGNATURE, Section, Sections,
+            sections_with_proof_entries,
         },
         headers::{peek_header, peek_variant_byte},
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
@@ -92,7 +90,7 @@ pub fn get_shred_and_repair_nonce(packet: &BytesPacket) -> Option<(&[u8], Option
 
 #[inline]
 pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
-    shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
+    shred.get(..OFFSET_OF_KIND_HEADER)
 }
 
 #[inline]

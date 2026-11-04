@@ -1,7 +1,8 @@
 use {
     super::{repair_handler::RepairHandler, repair_response},
+    agave_shred_wire_format::constants::Nonce,
     solana_clock::Slot,
-    solana_ledger::{blockstore::Blockstore, shred::Nonce},
+    solana_ledger::blockstore::Blockstore,
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch},
     std::{net::SocketAddr, sync::Arc},
 };
