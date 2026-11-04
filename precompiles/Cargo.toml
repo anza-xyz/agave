@@ -40,7 +40,7 @@ bytemuck = { workspace = true }
 criterion = { workspace = true }
 # Pinned to the exact version the precompile verified with before switching
 # to `solana-ed25519`, so the consistency test compares against it.
-ed25519-dalek = "=1.0.1"
+ed25519-dalek = "=3.0.0"
 hex = { workspace = true }
 rand = { workspace = true }
 solana-instruction = { workspace = true }
