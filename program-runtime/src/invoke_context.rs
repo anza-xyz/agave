@@ -807,19 +807,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .is_precompile(pubkey)
     }
 
-    // Should alignment be enforced during user pointer translation
-    pub fn get_check_aligned(&self) -> bool {
-        self.transaction_context
-            .get_current_instruction_context()
-            .and_then(|instruction_context| {
-                let owner_id = instruction_context.get_program_owner();
-                debug_assert!(owner_id.is_ok());
-                owner_id
-            })
-            .map(|owner_key| owner_key != bpf_loader_deprecated::id())
-            .unwrap_or(true)
-    }
-
     /// Get the current instruction's [`ABI`].
     pub fn abi(&self) -> ABI {
         self.transaction_context
