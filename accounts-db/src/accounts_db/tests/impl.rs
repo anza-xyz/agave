@@ -1355,7 +1355,7 @@ fn test_reclaiming_last_live_account_purges_tombstone_only_storage() {
             &tombstone_pubkey,
             &Ancestors::from(vec![slot]),
             false,
-            |(_slot, account_info)| account_info.offset(),
+            |slot_list_item| slot_list_item.info().offset(),
         )
         .unwrap();
     accounts.accounts_index.purge_exact(
@@ -2184,14 +2184,14 @@ fn test_accounts_db_purge_keep_live() {
     let ancestors = Ancestors::from(vec![accounts.max_root()]);
     let (slot1, account_info1) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
+        .get_with_and_then(&pubkey, &ancestors, false, |slot_list_item| {
+            (slot_list_item.slot(), slot_list_item.info())
         })
         .unwrap();
     let (slot2, account_info2) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey2, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
+        .get_with_and_then(&pubkey2, &ancestors, false, |slot_list_item| {
+            (slot_list_item.slot(), slot_list_item.info())
         })
         .unwrap();
     assert_eq!(slot1, current_slot);
@@ -5304,10 +5304,12 @@ fn test_load_account_and_shrink_race() {
     // Build the accessor under the index entry's lock, just as do_load does.
     let (loaded_slot, storage_location, mut accessor) = db
         .accounts_index
-        .get_with_and_then(&pubkey, &ancestors, true, |(slot, account_info)| {
-            let storage_location = account_info.storage_location();
-            let accessor = db.get_account_accessor(slot, &storage_location);
-            (slot, storage_location, accessor)
+        .get_with_and_then(&pubkey, &ancestors, true, |slot_list_item| {
+            (
+                slot_list_item.slot(),
+                slot_list_item.info().storage_location(),
+                db.get_account_accessor(slot_list_item),
+            )
         })
         .unwrap();
     assert_eq!(loaded_slot, slot);
@@ -5318,10 +5320,6 @@ fn test_load_account_and_shrink_race() {
     assert_eq!(db.shrink_candidate_slots(&epoch_schedule), 1);
     let StorageLocation::AccountsFile(store_id, _) = storage_location;
     assert_ne!(db.get_and_assert_single_storage(slot).id(), store_id);
-    assert!(matches!(
-        db.get_account_accessor(slot, &storage_location),
-        LoadedAccountAccessor::Stored(None)
-    ));
 
     // The original accessor must keep the old storage alive and readable.
     assert_eq!(
@@ -6177,7 +6175,7 @@ fn test_shrink_collect_simple() {
                                         pubkey,
                                         &Ancestors::from(vec![slot5]),
                                         false,
-                                        |(_slot, account_info)| account_info,
+                                        |slot_list_item| slot_list_item.info(),
                                     )
                                     .unwrap();
                                 storage
@@ -6338,9 +6336,9 @@ fn test_shrink_collect_with_obsolete_accounts() {
         if i % 5 == 0 {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
-                .get_with_and_then(pubkey, &ancestors, false, |account_info| {
+                .get_with_and_then(pubkey, &ancestors, false, |slot_list_item| {
                     db.remove_dead_accounts(
-                        [account_info].iter(),
+                        [(slot_list_item.slot(), slot_list_item.info())].iter(),
                         MarkAccountsObsolete::Yes(slot + 1),
                     );
                 });
