@@ -198,6 +198,9 @@ impl AggregateCommitmentService {
             AlpenglowCommitmentType::Rooted => {
                 // There is no distinction of OC, root, or finalized in Alpengow commitment.
                 // Once votor selects a finalized bank as root, set all of these values.
+                if slot >= w_block_commitment_cache.slot() {
+                    w_block_commitment_cache.set_slot(slot, bank_id);
+                }
                 w_block_commitment_cache.set_highest_confirmed_slot(slot);
                 w_block_commitment_cache.set_root(slot);
                 w_block_commitment_cache.set_highest_super_majority_root(slot);
@@ -376,19 +379,24 @@ mod tests {
             assert_eq!(cache.bank_id(), processed_bank_id);
         }
 
-        AggregateCommitmentService::alpenglow_update_commitment_cache(
-            &block_commitment_cache,
-            AlpenglowCommitmentType::Rooted,
-            2,
-            BankId::new(43),
-        );
-
-        let cache = block_commitment_cache.read().unwrap();
-        assert_eq!(cache.slot(), 3);
-        assert_eq!(cache.bank_id(), processed_bank_id);
-        assert_eq!(cache.highest_confirmed_slot(), 2);
-        assert_eq!(cache.root(), 2);
-        assert_eq!(cache.highest_super_majority_root(), 2);
+        for (slot, bank_id, expected_slot, expected_bank_id) in [
+            (2, BankId::new(43), 3, processed_bank_id),
+            (3, BankId::new(44), 3, BankId::new(44)),
+            (4, BankId::new(45), 4, BankId::new(45)),
+        ] {
+            AggregateCommitmentService::alpenglow_update_commitment_cache(
+                &block_commitment_cache,
+                AlpenglowCommitmentType::Rooted,
+                slot,
+                bank_id,
+            );
+            let cache = block_commitment_cache.read().unwrap();
+            assert_eq!(cache.slot(), expected_slot);
+            assert_eq!(cache.bank_id(), expected_bank_id);
+            assert_eq!(cache.highest_confirmed_slot(), slot);
+            assert_eq!(cache.root(), slot);
+            assert_eq!(cache.highest_super_majority_root(), slot);
+        }
     }
 
     #[test]

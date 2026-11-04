@@ -129,7 +129,15 @@ impl BanksServer {
     }
 
     fn bank(&self, commitment: CommitmentLevel) -> Arc<Bank> {
-        self.bank_forks.read().unwrap()[self.slot(commitment)].clone()
+        let (slot, bank_id) = {
+            let cache = self.block_commitment_cache.read().unwrap();
+            (cache.slot_with_commitment(commitment), cache.bank_id())
+        };
+        let bank_forks = self.bank_forks.read().unwrap();
+        bank_forks
+            .get(slot)
+            .filter(|bank| commitment != CommitmentLevel::Processed || bank.bank_id() == bank_id)
+            .unwrap_or_else(|| bank_forks.root_bank())
     }
 
     async fn poll_signature_status(
@@ -423,4 +431,44 @@ pub async fn start_local_server(
         });
     tokio::spawn(server);
     client_transport
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, solana_runtime::genesis_utils::create_genesis_config};
+
+    #[test]
+    fn test_processed_bank_replacement() {
+        let genesis = create_genesis_config(100);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
+        let root = bank_forks.read().unwrap().root_bank();
+        let original = bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1))
+            .clone_without_scheduler();
+        let cache = Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests()));
+        cache.write().unwrap().set_slot(1, original.bank_id());
+        let (sender, _receiver) = unbounded();
+        let server = BanksServer::new(bank_forks.clone(), cache.clone(), sender, Duration::ZERO);
+        assert_eq!(
+            server.bank(CommitmentLevel::Processed).bank_id(),
+            original.bank_id()
+        );
+        bank_forks.write().unwrap().clear_bank(1, false);
+        assert_eq!(server.bank(CommitmentLevel::Processed).slot(), 0);
+        let replacement = bank_forks
+            .write()
+            .unwrap()
+            .insert(Bank::new_from_parent(root.clone(), *root.leader(), 1))
+            .clone_without_scheduler();
+        assert_ne!(original.bank_id(), replacement.bank_id());
+        assert_eq!(server.bank(CommitmentLevel::Processed).slot(), 0);
+        cache.write().unwrap().set_slot(1, replacement.bank_id());
+        assert_eq!(
+            server.bank(CommitmentLevel::Processed).bank_id(),
+            replacement.bank_id()
+        );
+        assert_eq!(server.bank(CommitmentLevel::Finalized).slot(), 0);
+    }
 }

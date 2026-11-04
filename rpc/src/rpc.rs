@@ -1185,19 +1185,20 @@ impl JsonRpcRequestProcessor {
     fn get_cached_largest_accounts(
         &self,
         filter: &Option<RpcLargestAccountsFilter>,
+        bank: &Bank,
     ) -> Option<(u64, Vec<RpcAccountBalance>)> {
         let largest_accounts_cache = self.largest_accounts_cache.read().unwrap();
-        largest_accounts_cache.get_largest_accounts(filter)
+        largest_accounts_cache.get_largest_accounts(filter, &bank.ancestors)
     }
 
     fn set_cached_largest_accounts(
         &self,
         filter: &Option<RpcLargestAccountsFilter>,
-        slot: u64,
+        bank: &Bank,
         accounts: &[RpcAccountBalance],
     ) {
         let mut largest_accounts_cache = self.largest_accounts_cache.write().unwrap();
-        largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
+        largest_accounts_cache.set_largest_accounts(filter, bank.slot(), bank.bank_id(), accounts)
     }
 
     #[allow(clippy::result_large_err)]
@@ -1208,7 +1209,7 @@ impl JsonRpcRequestProcessor {
         let config = config.unwrap_or_default();
         let bank = self.bank(config.commitment)?;
 
-        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter) {
+        if let Some((slot, accounts)) = self.get_cached_largest_accounts(&config.filter, &bank) {
             Ok(RpcResponse {
                 context: RpcResponseContext::new(slot),
                 value: accounts,
@@ -1250,7 +1251,7 @@ impl JsonRpcRequestProcessor {
                 })
                 .collect::<Vec<RpcAccountBalance>>();
 
-            self.set_cached_largest_accounts(&config.filter, bank.slot(), &accounts);
+            self.set_cached_largest_accounts(&config.filter, &bank, &accounts);
             Ok(new_response(&bank, accounts))
         }
     }
@@ -6272,6 +6273,45 @@ pub mod tests {
             }
         };
         assert_eq!(result.value, expected);
+    }
+
+    #[test]
+    fn test_get_largest_accounts_after_bank_replacement() {
+        let rpc = RpcHandler::start();
+        let root = rpc.working_bank();
+        let address = Pubkey::new_unique();
+        let request = || {
+            create_test_request(
+                "getLargestAccounts",
+                Some(json!([{"commitment": "processed"}])),
+            )
+        };
+        let mut ids = Vec::new();
+        for lamports in [1_000_000, 2_000_000] {
+            let bank = Bank::new_from_parent(root.clone(), *root.leader(), 1);
+            bank.store_account(
+                &address,
+                &AccountSharedData::new(lamports, 0, &system_program::id()),
+            );
+            bank.freeze();
+            ids.push(bank.bank_id());
+            rpc.block_commitment_cache
+                .write()
+                .unwrap()
+                .set_slot(1, bank.bank_id());
+            rpc.bank_forks.write().unwrap().insert(bank);
+            for _ in 0..2 {
+                let result: RpcResponse<Vec<RpcAccountBalance>> =
+                    parse_success_result(rpc.handle_request_sync(request()));
+                assert_eq!(result.context.slot, 1);
+                assert!(result.value.contains(&RpcAccountBalance {
+                    address: address.to_string(),
+                    lamports
+                }));
+            }
+            rpc.bank_forks.write().unwrap().clear_bank(1, false);
+        }
+        assert_ne!(ids[0], ids[1]);
     }
 
     #[test]
