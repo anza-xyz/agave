@@ -90,8 +90,14 @@ impl Context {
             // bias messages to build certificates as that is on the critical path
             select_biased! {
                 recv(self.req_receiver) -> msg => {
-                    if let Err(()) = self.builder.build_request(msg) {
-                        break;
+                    match msg {
+                        Ok(reward_request) => {
+                            self.builder.build_request(reward_request);
+                        }
+                        Err(_) => {
+                            info!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
+                            break;
+                        }
                     }
                 }
                 recv(self.aggregates_receiver) -> msg => {
@@ -101,7 +107,7 @@ impl Context {
                             self.builder.handle_input(&bank, reward_input);
                         }
                         Err(_) => {
-                            error!("{my_pubkey}: aggregates receiver channel is disconnected; exiting.");
+                            info!("{my_pubkey}: aggregates receiver channel is disconnected; exiting.");
                             break;
                         }
                     }
@@ -111,5 +117,6 @@ impl Context {
                 }
             }
         }
+        self.exit.store(true, Ordering::Relaxed);
     }
 }

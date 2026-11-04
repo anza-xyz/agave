@@ -5,7 +5,6 @@ use {
     agave_bls_sigverify::rewards::RewardInput,
     agave_math_utils::welford_stats::WelfordStats,
     agave_votor_messages::reward_certificate::{BuildRewardCertsRespError, NUM_SLOTS_FOR_REWARD},
-    crossbeam_channel::RecvError,
     entry::Entry,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
@@ -104,39 +103,27 @@ impl CertsBuilder {
         }
     }
 
-    pub(super) fn build_request(
-        &mut self,
-        request: Result<RewardRequest, RecvError>,
-    ) -> Result<(), ()> {
+    pub(super) fn build_request(&mut self, request: RewardRequest) {
+        let RewardRequest {
+            bank_slot,
+            reply_sender,
+            request_sent,
+        } = request;
+
         let my_pubkey = self.cluster_info.id();
-        match request {
-            Ok(RewardRequest {
-                bank_slot,
-                reply_sender,
-                request_sent,
-            }) => {
-                let queue_waited_us = request_sent
-                    .elapsed()
-                    .as_micros()
-                    .try_into()
-                    .unwrap_or(u64::MAX);
-                let (result, build_us) = measure_us!(self.build_certs(bank_slot));
-                let resp = RewardResponse { result };
-                let _ = reply_sender.send(resp).inspect_err(|_| {
-                    info!(
-                        "{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected"
-                    );
-                });
-                self.metrics.build_us.add_sample(build_us);
-                self.metrics.queue_waited_us.add_sample(queue_waited_us);
-                self.metrics.maybe_report();
-                Ok(())
-            }
-            Err(_) => {
-                error!("{my_pubkey}: build reward certs channel is disconnected; exiting.");
-                Err(())
-            }
-        }
+        let queue_waited_us = request_sent
+            .elapsed()
+            .as_micros()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let (result, build_us) = measure_us!(self.build_certs(bank_slot));
+        let resp = RewardResponse { result };
+        let _ = reply_sender.send(resp).inspect_err(|_| {
+            info!("{my_pubkey}: channel to send reply for bank_slot={bank_slot} disconnected");
+        });
+        self.metrics.build_us.add_sample(build_us);
+        self.metrics.queue_waited_us.add_sample(queue_waited_us);
+        self.metrics.maybe_report();
     }
 
     pub(super) fn handle_input(&mut self, root_bank: &Bank, input: RewardInput) {
