@@ -25,6 +25,10 @@ struct PushActiveSetEntry(IndexMap</*node:*/ Pubkey, /*origins:*/ ConcurrentBloo
 impl PushActiveSet {
     const MIN_NUM_BLOOM_ITEMS: usize = crate::cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY;
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.iter().all(|entry| entry.0.is_empty())
+    }
+
     pub(crate) fn get_nodes<'a>(
         &'a self,
         pubkey: &'a Pubkey, // This node.
