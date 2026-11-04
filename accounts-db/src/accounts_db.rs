@@ -540,30 +540,14 @@ impl LoadedAccountAccessor {
         &mut self,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<AccountSharedData> {
-        // all of these following .expect() and .unwrap() are like serious logic errors,
-        // ideal for representing this as rust type system....
-
         // The storage was taken from the storage map under the index entry's lock, and holding it
         // keeps it readable even after it is removed from the map.
-
-        // If there's a load filter, read only the account metadata first.
-        // This way we don't read the whole account (including its data)
-        // from disk, only to discard it later.
-        let should_load_account = load_filter.is_none_or(|load_filter| {
-            self.storage_entry
-                .accounts
-                .get_stored_account_without_data_callback(self.offset, |account| {
-                    load_filter(account.lamports, account.owner, account.data_len)
-                })
-                .expect("a held storage is readable")
-        });
-
-        should_load_account.then(|| {
-            self.storage_entry
-                .accounts
-                .get_account_shared_data(self.offset)
-                .expect("a held storage is readable")
-        })
+        self.storage_entry
+            .accounts
+            .get_account_shared_data_if(self.offset, |lamports, owner, data_len| {
+                load_filter.as_ref().is_none_or(|load_filter| load_filter(lamports, owner, data_len))
+            })
+            .expect("a held storage is readable")
     }
 
     fn get_loaded_account<T>(
