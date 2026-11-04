@@ -15,7 +15,8 @@ use {
     solana_program_runtime::{
         deploy_program,
         invoke_context::InvokeContext,
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache::owner::ProgramCacheEntryOwner,
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
     },

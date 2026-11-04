@@ -6,7 +6,8 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+        program_cache::owner::ProgramCacheEntryOwner,
+        program_cache_entry::ProgramCacheEntry,
     },
     solana_clock::Slot,
     solana_instruction_error::InstructionError,

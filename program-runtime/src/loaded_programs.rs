@@ -2,9 +2,8 @@ use {
     crate::{
         invoke_context::InvokeContext,
         loading_task::LoadingTaskWaiter,
-        program_cache_entry::{
-            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType, retention_score,
-        },
+        program_cache::owner::ProgramCacheEntryOwner,
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
@@ -919,9 +918,8 @@ pub(crate) mod tests {
                 ProgramCache, ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad,
                 get_mock_program_runtime_environment,
             },
-            program_cache_entry::{
-                ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            },
+            program_cache::owner::ProgramCacheEntryOwner,
+            program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
             program_metrics::ProgramStatistics,
         },
         solana_clock::Slot,

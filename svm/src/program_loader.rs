@@ -10,7 +10,8 @@ use {
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
     solana_program_runtime::{
         loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+        program_cache::owner::ProgramCacheEntryOwner,
+        program_cache_entry::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
     solana_sbpf::elf_parser::consts::ELFMAG,
