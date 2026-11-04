@@ -3,16 +3,12 @@
 unameOut="$(uname -s)"
 case "${unameOut}" in
   Linux*)
-    criterion_suffix=
     machine=linux;;
   Darwin*)
-    criterion_suffix=
     machine=osx;;
   MINGW*)
-    criterion_suffix=-mingw
     machine=windows;;
   *)
-    criterion_suffix=
     machine=linux
 esac
 unameOut="$(uname -m)"
@@ -78,29 +74,6 @@ get() {
   popd
   return 1
 }
-
-# Install Criterion
-if [[ $machine == "linux" ]]; then
-  version=v2.3.3
-else
-  version=v2.3.2
-fi
-if [[ ! -e criterion-$version.md || ! -e criterion ]]; then
-  (
-    set -e
-    rm -rf criterion*
-    job="download \
-           https://github.com/Snaipe/Criterion/releases/download \
-           $version \
-           criterion-$version-$machine$criterion_suffix-x86_64.tar.bz2 \
-           criterion"
-    get $version criterion "$job"
-  )
-  exitcode=$?
-  if [[ $exitcode -ne 0 ]]; then
-    exit 1
-  fi
-fi
 
 # Install platform tools
 tools_version=v1.57
