@@ -152,7 +152,17 @@ impl ConsensusPool {
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger(block, events);
             }
-            CertificateType::Skip(slot) => self.parent_ready_tracker.add_new_skip(slot, events),
+            CertificateType::Skip(slot) => {
+                self.parent_ready_tracker.add_new_skip(slot, events);
+                // A block in a skip-certified slot can still be finalized as the ancestor of a
+                // finalized block, but only if it has a NotarizeFallback-or-stronger certificate.
+                // So if we don't see one, notify replay stage to stop replaying any block in slot,
+                // avoiding potentially expensive work. Though note that we'll keep the shreds in
+                // the blockstore in case the slot later gets finalized and we then have to replay it.
+                if !self.slot_has_notar_fallback_or_stronger(slot) {
+                    events.push(VotorEvent::SkipCertifiedWithoutNotar(slot));
+                }
+            }
             CertificateType::Notarize(block) => {
                 events.push(VotorEvent::BlockNotarized(block));
                 self.parent_ready_tracker
@@ -447,14 +457,18 @@ impl ConsensusPool {
             })
     }
 
-    #[cfg(test)]
-    fn slot_has_notar_fallback_or_notar(&self, slot: Slot) -> bool {
+    /// Checks if any block in `slot` received a NotarizeFallback, Notarize or FinalizeFast
+    /// certificate.
+    fn slot_has_notar_fallback_or_stronger(&self, slot: Slot) -> bool {
         self.completed_certificates
-            .iter()
-            .any(|(cert_type, _)| match cert_type {
-                CertificateType::Notarize(block) => block.slot == slot,
-                CertificateType::NotarizeFallback(block) => block.slot == slot,
-                _ => false,
+            .keys()
+            .any(|cert_type| match cert_type {
+                CertificateType::Notarize(block)
+                | CertificateType::NotarizeFallback(block)
+                | CertificateType::FinalizeFast(block) => block.slot == slot,
+                CertificateType::Finalize(_)
+                | CertificateType::Skip(_)
+                | CertificateType::Genesis(_) => false,
             })
     }
 
@@ -494,7 +508,7 @@ impl ConsensusPool {
         let needs_notar_cert = parent_slot >= first_alpenglow_slot && parent_slot > 1;
 
         if needs_notar_cert
-            && !self.slot_has_notar_fallback_or_notar(parent_slot)
+            && !self.slot_has_notar_fallback_or_stronger(parent_slot)
             && !self.slot_has_finalize_or_finalizefast(parent_slot)
         {
             error!("Missing notarization certificate {parent_slot}");
@@ -1282,6 +1296,92 @@ mod tests {
                     .any(|cert| { cert.cert_type == cert_type })
             );
         }
+    }
+
+    fn dummy_certificate(cert_type: CertificateType) -> Certificate {
+        Certificate {
+            cert_type,
+            signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: dummy_bitmap(),
+        }
+    }
+
+    fn has_skip_certified_without_notar(events: &[VotorEvent], slot: Slot) -> bool {
+        events
+            .iter()
+            .any(|event| matches!(event, VotorEvent::SkipCertifiedWithoutNotar(s) if *s == slot))
+    }
+
+    #[test]
+    fn test_skip_cert_from_votes_without_notar_fallback_emits_skip_certified_without_notar() {
+        let mut ctx = TestContext::new();
+        let slot = 8;
+        let root_bank = ctx.bank_forks.read().unwrap().root_bank();
+
+        // Skip votes from 70% of the stake create the Skip certificate.
+        let mut events = vec![];
+        for rank in 0..=6 {
+            let (_, _, mut new_events) = ctx.add_batch(new_vote_aggregate_batch(
+                &root_bank,
+                &ctx.validators,
+                ctx.pool.cluster_info.my_shred_version(),
+                &Vote::new_skip_vote(slot),
+                rank,
+            ));
+            events.append(&mut new_events);
+        }
+        assert!(ctx.pool.skip_certified(slot));
+        assert!(has_skip_certified_without_notar(&events, slot));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, VotorEvent::SkipCertifiedWithoutNotar(_)))
+                .count(),
+            1
+        );
+
+        // A NotarizeFallback certificate arriving afterwards doesn't re-emit the event.
+        let (_, _, events) =
+            ctx.add_batch(SigVerifiedBatch::Certificates(vec![dummy_certificate(
+                CertificateType::NotarizeFallback(Block::new_unique(slot)),
+            )]));
+        assert!(!has_skip_certified_without_notar(&events, slot));
+    }
+
+    #[test]
+    fn test_skip_cert_without_notar_fallback_emits_skip_certified_without_notar() {
+        let mut ctx = TestContext::new();
+        let slot = 8;
+
+        // A NotarizeFallback certificate in another slot doesn't count.
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![dummy_certificate(
+            CertificateType::NotarizeFallback(Block::new_unique(slot + 1)),
+        )]));
+        let (_, _, events) =
+            ctx.add_batch(SigVerifiedBatch::Certificates(vec![dummy_certificate(
+                CertificateType::Skip(slot),
+            )]));
+        assert!(has_skip_certified_without_notar(&events, slot));
+    }
+
+    #[test_case(CertificateType::NotarizeFallback; "notarize_fallback")]
+    #[test_case(CertificateType::Notarize; "notarize")]
+    #[test_case(CertificateType::FinalizeFast; "finalize_fast")]
+    fn test_skip_cert_after_notar_fallback_or_stronger_does_not_emit_skip_certified_without_notar(
+        notar_cert_type: fn(Block) -> CertificateType,
+    ) {
+        let mut ctx = TestContext::new();
+        let slot = 8;
+
+        ctx.add_batch(SigVerifiedBatch::Certificates(vec![dummy_certificate(
+            notar_cert_type(Block::new_unique(slot)),
+        )]));
+        let (_, _, events) =
+            ctx.add_batch(SigVerifiedBatch::Certificates(vec![dummy_certificate(
+                CertificateType::Skip(slot),
+            )]));
+        assert!(ctx.pool.skip_certified(slot));
+        assert!(!has_skip_certified_without_notar(&events, slot));
     }
 
     fn assert_single_certificate_range(

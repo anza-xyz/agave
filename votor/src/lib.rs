@@ -12,6 +12,7 @@ mod consensus_pool_service;
 pub mod event;
 mod event_handler;
 pub mod peer_list_updater;
+pub mod replay_signals;
 pub mod root_utils;
 pub mod slot_clock;
 mod timer_manager;

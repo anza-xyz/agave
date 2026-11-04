@@ -13043,3 +13043,74 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
         bank.calculate_capitalization_for_tests()
     );
 }
+
+#[test]
+fn test_request_replay_cancel_rejects_execution_without_blocking() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(!bank.is_replay_cancel_requested());
+
+    // Hold an execution guard, like an in-flight transaction would. Unlike
+    // `quiesce_transaction_execution`, requesting a replay cancel must not wait for it.
+    let in_flight_guard = bank.try_enter_transaction_execution().unwrap();
+    std::thread::scope(|scope| {
+        let (done_sender, done_receiver) = bounded(1);
+        let bank = &bank;
+        scope.spawn(move || {
+            bank.request_replay_cancel();
+            done_sender.send(()).unwrap();
+        });
+        done_receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("request_replay_cancel must not wait for in-flight execution");
+    });
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_none());
+
+    drop(in_flight_guard);
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_none());
+}
+
+#[test]
+fn test_request_replay_cancel_has_no_effect_once_freezing_started() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let parent = Arc::new(Bank::new_for_tests(&genesis_config));
+
+    // Replay of the bank is cancelled after it started every batch: replay freezes the bank, which
+    // then admits execution again.
+    let bank = Bank::new_from_parent(parent.clone(), SlotLeader::default(), 1);
+    bank.request_replay_cancel();
+    assert!(bank.try_enter_transaction_execution().is_none());
+    bank.freeze();
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_some());
+
+    // Replay of the bank is cancelled after it froze.
+    let bank = Bank::new_from_parent(parent, SlotLeader::default(), 2);
+    bank.freeze();
+    bank.request_replay_cancel();
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_some());
+}
+
+#[test]
+fn test_quiesce_and_request_replay_cancel_are_independent() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
+    let parent = Arc::new(Bank::new_for_tests(&genesis_config));
+
+    // Quiescing a bank whose replay was cancelled keeps both requests, and keeps rejecting
+    // execution once the bank is frozen.
+    let bank = Bank::new_from_parent(parent.clone(), SlotLeader::default(), 1);
+    bank.request_replay_cancel();
+    bank.quiesce_transaction_execution();
+    bank.freeze();
+    assert!(bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_none());
+
+    // Quiescing doesn't request a replay cancel.
+    let bank = Bank::new_from_parent(parent, SlotLeader::default(), 2);
+    bank.quiesce_transaction_execution();
+    assert!(!bank.is_replay_cancel_requested());
+    assert!(bank.try_enter_transaction_execution().is_none());
+}

@@ -455,6 +455,9 @@ impl Tvu {
 
         // Shared latest switch-bank request from Votor to ReplayStage.
         let latest_switch_request = LatestSwitchRequest::default();
+        // Commands from Votor to ReplayStage to cancel or resume replay of skip-certified slots.
+        // Unbounded, since dropping a command would break cancellation.
+        let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
 
         let window_service = {
             let epoch_schedule = bank_forks
@@ -549,6 +552,7 @@ impl Tvu {
             highest_parent_ready: highest_parent_ready.clone(),
             event_sender: votor_event_sender.clone(),
             latest_switch_request: latest_switch_request.clone(),
+            replay_cancel_sender,
             own_vote_sender: own_votes_sender.clone(),
             own_reward_aggregates_sender: reward_aggregates_sender.clone(),
             repair_event_sender,
@@ -595,6 +599,7 @@ impl Tvu {
             popular_pruned_forks_receiver,
             bank_forks_controller_receiver,
             latest_switch_request,
+            replay_cancel_receiver,
         };
 
         let replay_stage_config = ReplayStageConfig {

@@ -10,6 +10,7 @@ use {
             VotorEvent, VotorEventReceiver,
         },
         event_handler::stats::EventHandlerStats,
+        replay_signals::ReplayCancelCommand,
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
@@ -353,6 +354,7 @@ impl EventHandler {
             // Block has received a notarization certificate
             VotorEvent::BlockNotarized(block) => {
                 info!("{}: Block Notarized {block:?}", local_context.my_pubkey);
+                Self::resume_replay(&local_context.my_pubkey, block, ctx)?;
                 vctx.vote_history.add_block_notarized(block);
                 Self::try_final(&local_context.my_pubkey, block, vctx, &mut votes)?;
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
@@ -363,6 +365,7 @@ impl EventHandler {
                     "{}: Block notar-fallback {block:?}",
                     local_context.my_pubkey
                 );
+                Self::resume_replay(&local_context.my_pubkey, block, ctx)?;
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
             }
 
@@ -466,6 +469,16 @@ impl EventHandler {
                 }
             }
 
+            // The slot is skip-certified and no block in it is notarized-fallback or stronger,
+            // stop replaying it
+            VotorEvent::SkipCertifiedWithoutNotar(slot) => {
+                info!(
+                    "{}: Skip certified without notarize-fallback {slot}",
+                    local_context.my_pubkey
+                );
+                Self::cancel_replay(&local_context.my_pubkey, slot, ctx)?;
+            }
+
             // It is time to produce our leader window
             VotorEvent::ProduceWindow(window_info) => {
                 info!("{}: ProduceWindow {window_info:?}", local_context.my_pubkey);
@@ -484,6 +497,7 @@ impl EventHandler {
                     "{}: Finalized {block:?} fast: {is_fast_finalization}",
                     local_context.my_pubkey
                 );
+                Self::resume_replay(&local_context.my_pubkey, block, ctx)?;
                 local_context.finalized_blocks.insert(block);
                 request_repair(&ctx.repair_event_sender, &local_context.my_pubkey, block)?;
 
@@ -914,6 +928,46 @@ impl EventHandler {
         Ok(())
     }
 
+    /// Cancels replay of the skip-certified `slot`.
+    ///
+    /// Flags the slot's bank, if any, so that execution stops even while replay is blocked on it,
+    /// then sends replay a `Cancel` command, so that it discards the slot's bank and doesn't
+    /// recreate it.
+    ///
+    /// Banks that the block creation loop produced (`!should_replay_from_blockstore()`) are never
+    /// flagged.
+    fn cancel_replay(
+        my_pubkey: &Pubkey,
+        slot: Slot,
+        ctx: &SharedContext,
+    ) -> Result<(), EventLoopError> {
+        let cancelled_at = Instant::now();
+        let bank = ctx.bank_forks.read().unwrap().get(slot);
+        if let Some(bank) = bank
+            && bank.should_replay_from_blockstore()
+        {
+            info!("{my_pubkey}: Cancelling replay of slot {slot}");
+            bank.request_replay_cancel();
+        }
+        send_replay_cancel_command(
+            my_pubkey,
+            ctx,
+            ReplayCancelCommand::Cancel { slot, cancelled_at },
+        )
+    }
+
+    /// Resumes replay of `block`'s slot and of the cancelled slots on its parent chain, because
+    /// `block` has a NotarizeFallback-or-stronger certificate and may therefore end up finalized.
+    ///
+    /// Replay then recreates the banks of these slots and replays them from the start.
+    fn resume_replay(
+        my_pubkey: &Pubkey,
+        block: Block,
+        ctx: &SharedContext,
+    ) -> Result<(), EventLoopError> {
+        send_replay_cancel_command(my_pubkey, ctx, ReplayCancelCommand::Resume(block))
+    }
+
     /// Refresh all votes cast for slots > highest_finalized_slot
     fn refresh_votes(
         my_pubkey: &Pubkey,
@@ -1032,6 +1086,21 @@ fn request_repair(
         .map_err(EventLoopError::ChannelDisconnected)
 }
 
+/// Sends `command` to replay. The channel is unbounded, so this never blocks.
+fn send_replay_cancel_command(
+    my_pubkey: &Pubkey,
+    ctx: &SharedContext,
+    command: ReplayCancelCommand,
+) -> Result<(), EventLoopError> {
+    blocking_send(
+        my_pubkey,
+        &ctx.replay_cancel_sender,
+        command,
+        "replay_cancel_sender",
+    )
+    .map_err(EventLoopError::ChannelDisconnected)
+}
+
 /// Updates the latest switch-bank request for replay to consume.
 fn request_switch(latest: &LatestSwitchRequest, my_pubkey: Pubkey, block: Block) {
     let event = SwitchBankEvent::Switch { block };
@@ -1047,6 +1116,7 @@ mod tests {
         crate::{
             commitment::CommitmentAggregationData,
             event::{LeaderWindowInfo, RepairEventReceiver},
+            replay_signals::ReplayCancelReceiver,
             slot_clock::SharedAlpenglowSlotClock,
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
@@ -1059,7 +1129,7 @@ mod tests {
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
             wire::get_vote_payload_to_sign,
         },
-        crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
+        crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{keypair::Keypair as BLSKeypair, signature::SignatureAffine},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
@@ -1079,6 +1149,7 @@ mod tests {
         },
         solana_streamer::evicting_sender::EvictingSender,
         std::{
+            assert_matches,
             collections::HashMap,
             fs::remove_file,
             path::PathBuf,
@@ -1104,6 +1175,7 @@ mod tests {
         consensus_metrics_receiver: ConsensusMetricsEventReceiver,
         #[allow(dead_code)] // Keep receiver alive to prevent SenderDisconnected errors
         repair_event_receiver: RepairEventReceiver,
+        replay_cancel_receiver: ReplayCancelReceiver,
         shared_context: SharedContext,
         voting_context: VotingContext,
         root_context: RootContext,
@@ -1168,6 +1240,7 @@ mod tests {
         let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (repair_event_sender, repair_event_receiver) = bounded(1024);
         let latest_switch_request = LatestSwitchRequest::default();
+        let (replay_cancel_sender, replay_cancel_receiver) = unbounded();
 
         // Create 10 node validatorvotekeypairs vec
         let validator_keypairs = (0..10)
@@ -1239,6 +1312,7 @@ mod tests {
             highest_parent_ready: highest_parent_ready.clone(),
             repair_event_sender,
             latest_switch_request,
+            replay_cancel_sender,
         };
 
         let mut vote_history = VoteHistory::new(my_node_keypair.pubkey(), 0);
@@ -1289,6 +1363,7 @@ mod tests {
             cluster_info,
             consensus_metrics_receiver,
             repair_event_receiver,
+            replay_cancel_receiver,
             highest_parent_ready,
             shared_context,
             voting_context,
@@ -1353,6 +1428,19 @@ mod tests {
             self.bls_ops.append(&mut new_ops);
         }
 
+        fn send_block_notar_fallback_event(&mut self, block: Block) {
+            let mut new_ops = EventHandler::handle_event(
+                VotorEvent::BlockNotarFallback(block),
+                &self.timer_manager,
+                &self.shared_context,
+                &mut self.voting_context,
+                &self.root_context,
+                &mut self.local_context,
+            )
+            .unwrap();
+            self.bls_ops.append(&mut new_ops);
+        }
+
         fn send_timeout_crashed_leader_event(&mut self, slot: Slot) {
             let mut new_ops = EventHandler::handle_event(
                 VotorEvent::TimeoutCrashedLeader(slot),
@@ -1395,6 +1483,19 @@ mod tests {
         fn send_safe_to_skip_event(&mut self, slot: Slot) {
             let mut new_ops = EventHandler::handle_event(
                 VotorEvent::SafeToSkip(slot),
+                &self.timer_manager,
+                &self.shared_context,
+                &mut self.voting_context,
+                &self.root_context,
+                &mut self.local_context,
+            )
+            .unwrap();
+            self.bls_ops.append(&mut new_ops);
+        }
+
+        fn send_skip_certified_without_notar_event(&mut self, slot: Slot) {
+            let mut new_ops = EventHandler::handle_event(
+                VotorEvent::SkipCertifiedWithoutNotar(slot),
                 &self.timer_manager,
                 &self.shared_context,
                 &mut self.voting_context,
@@ -1474,6 +1575,26 @@ mod tests {
             let mut bank_forks_w = self.bank_forks.write().unwrap();
             bank_forks_w.insert(bank);
             bank_forks_w.get(slot).unwrap()
+        }
+
+        /// Returns the commands sent to replay since the last call.
+        fn replay_cancel_commands(&self) -> Vec<ReplayCancelCommand> {
+            self.replay_cancel_receiver.try_iter().collect()
+        }
+
+        /// Returns the first slot after genesis that is (or isn't, if `mine` is false) led by us.
+        fn first_slot_led_by_me(&self, mine: bool) -> Slot {
+            let root_bank = self.bank_forks.read().unwrap().root_bank();
+            (1..)
+                .find(|slot| {
+                    let leader = self
+                        .voting_context
+                        .leader_schedule
+                        .slot_leader_at(*slot, Some(&root_bank))
+                        .unwrap();
+                    (leader.id == self.local_context.my_pubkey) == mine
+                })
+                .unwrap()
         }
 
         fn create_block_and_send_block_event(
@@ -2003,6 +2124,142 @@ mod tests {
 
         // We can trigger safe_to_skip event again, this should be a no-op
         test_context.send_safe_to_skip_event(1);
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_skip_certified_without_notar_cancels_replay_of_unfrozen_bank() {
+        let mut test_context = setup();
+        let slot = test_context.first_slot_led_by_me(false);
+        let bank = {
+            let root_bank = test_context.bank_forks.read().unwrap().root_bank();
+            let bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), slot);
+            test_context
+                .bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler()
+        };
+        assert!(!bank.is_frozen());
+        assert!(bank.try_enter_transaction_execution().is_some());
+
+        test_context.send_skip_certified_without_notar_event(slot);
+
+        assert_matches!(
+            test_context.replay_cancel_commands()[..],
+            [ReplayCancelCommand::Cancel { slot: cancelled_slot, .. }] if cancelled_slot == slot
+        );
+        assert!(bank.is_replay_cancel_requested());
+        assert!(bank.try_enter_transaction_execution().is_none());
+        // Cancelling replay doesn't vote
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_skip_certified_without_notar_cancels_slot_without_bank() {
+        let mut test_context = setup();
+        let slot = test_context.first_slot_led_by_me(false);
+        assert!(test_context.bank_forks.read().unwrap().get(slot).is_none());
+
+        test_context.send_skip_certified_without_notar_event(slot);
+
+        assert_matches!(
+            test_context.replay_cancel_commands()[..],
+            [ReplayCancelCommand::Cancel { slot: cancelled_slot, .. }] if cancelled_slot == slot
+        );
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_skip_certified_without_notar_doesnt_close_frozen_bank() {
+        let mut test_context = setup();
+        let slot = test_context.first_slot_led_by_me(false);
+        let root_bank = test_context.bank_forks.read().unwrap().root_bank();
+        let bank = test_context.create_block_only(slot, root_bank);
+        assert!(bank.is_frozen());
+
+        test_context.send_skip_certified_without_notar_event(slot);
+
+        // The bank is flagged, but the flag has no effect on a frozen bank, which still admits
+        // execution (e.g. to build our leader block on it).
+        assert_matches!(
+            test_context.replay_cancel_commands()[..],
+            [ReplayCancelCommand::Cancel { slot: cancelled_slot, .. }] if cancelled_slot == slot
+        );
+        assert!(bank.is_replay_cancel_requested());
+        assert!(bank.try_enter_transaction_execution().is_some());
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_skip_certified_without_notar_leaves_leader_bank_alone() {
+        let mut test_context = setup();
+        let slot = test_context.first_slot_led_by_me(true);
+        let bank = {
+            let root_bank = test_context.bank_forks.read().unwrap().root_bank();
+            let bank =
+                Bank::new_from_parent(root_bank, SlotLeader::new_unique(), slot).mark_leader_bank();
+            test_context
+                .bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler()
+        };
+        assert!(!bank.is_frozen());
+
+        test_context.send_skip_certified_without_notar_event(slot);
+
+        // The slot is cancelled, but the block creation loop owns the bank, so it is not flagged.
+        // Replay doesn't discard it either, since it only discards banks it replays.
+        assert_matches!(
+            test_context.replay_cancel_commands()[..],
+            [ReplayCancelCommand::Cancel { slot: cancelled_slot, .. }] if cancelled_slot == slot
+        );
+        assert!(!bank.is_replay_cancel_requested());
+        assert!(bank.try_enter_transaction_execution().is_some());
+        test_context.check_no_vote_or_commitment();
+    }
+
+    #[test]
+    fn test_notar_fallback_or_stronger_resumes_replay() {
+        let mut test_context = setup();
+        let [notar_fallback_slot, notarized_slot, finalized_slot] = {
+            let root_bank = test_context.bank_forks.read().unwrap().root_bank();
+            let leader_schedule = &test_context.voting_context.leader_schedule;
+            let my_pubkey = test_context.local_context.my_pubkey;
+            let slots: Vec<Slot> = (1..)
+                .filter(|slot| {
+                    leader_schedule
+                        .slot_leader_at(*slot, Some(&root_bank))
+                        .unwrap()
+                        .id
+                        != my_pubkey
+                })
+                .take(3)
+                .collect();
+            slots.try_into().unwrap()
+        };
+        let notar_fallback_block = Block::new_unique(notar_fallback_slot);
+        let notarized_block = Block::new_unique(notarized_slot);
+        let finalized_block = Block::new_unique(finalized_slot);
+
+        // Each NotarizeFallback-or-stronger certificate resumes replay of its block's chain
+        test_context.send_block_notar_fallback_event(notar_fallback_block);
+        test_context.send_block_notarized_event(notarized_block);
+        test_context.send_finalized_event(finalized_block, false);
+
+        assert_eq!(
+            test_context.replay_cancel_commands(),
+            vec![
+                ReplayCancelCommand::Resume(notar_fallback_block),
+                ReplayCancelCommand::Resume(notarized_block),
+                ReplayCancelCommand::Resume(finalized_block),
+            ]
+        );
+        // The finalized block has no bank yet, so it isn't rooted
+        assert_eq!(test_context.bank_forks.read().unwrap().root(), 0);
         test_context.check_no_vote_or_commitment();
     }
 
