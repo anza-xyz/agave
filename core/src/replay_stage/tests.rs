@@ -85,6 +85,7 @@ use {
         self, TowerSync, VoteStateV4, VoteStateVersions, handler::VoteStateHandler,
     },
     std::{
+        assert_matches,
         fs::remove_dir_all,
         iter,
         sync::{Arc, Barrier, Mutex, RwLock, atomic::AtomicU64},

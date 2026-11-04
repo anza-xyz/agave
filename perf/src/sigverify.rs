@@ -155,7 +155,6 @@ mod tests {
             test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
         },
         agave_transaction_view::result::TransactionViewError,
-        assert_matches::assert_matches,
         bytes::Bytes,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -168,6 +167,7 @@ mod tests {
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
+        std::assert_matches,
     };
 
     fn new_test_vote_tx_v0() -> VersionedTransaction {

@@ -8,7 +8,3 @@ pub mod transaction_recorder;
 
 #[macro_use]
 extern crate solana_metrics;
-
-#[cfg(test)]
-#[macro_use]
-extern crate assert_matches;

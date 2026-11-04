@@ -309,7 +309,7 @@ mod test {
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::borrow::Borrow,
+        std::{assert_matches, borrow::Borrow},
     };
 
     const TEST_SLOT: Slot = 42;
