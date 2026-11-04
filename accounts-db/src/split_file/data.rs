@@ -72,7 +72,7 @@ use {
     std::{
         convert::TryFrom,
         fs::File,
-        io::Write,
+        io::{IoSliceMut, Write},
         path::{Path, PathBuf},
         ptr, slice,
     },
@@ -229,8 +229,8 @@ fn write_data_entry_bytes(
 ///
 /// - `file_len` is the size of the file, and bounds reading.
 /// - `offset` to read from, must be aligned.
-/// - `expected_address` and `expected_data_len` are checked first
-///   and must match the data entry before the account data itself is read.
+/// - `expected_address` and `expected_data_len` are checked against what is read.
+///   If there is a mismatch, an error is returned.
 ///
 /// Returns the account data.
 pub fn read_data_entry(
@@ -246,19 +246,7 @@ pub fn read_data_entry(
         address: Pubkey::default(),
         data_len: 0,
     };
-    let data_entry_bytes = as_bytes_mut(&mut data_entry);
-    let num_bytes_read = file_io::read_into_buffer(file, file_len, offset.0, data_entry_bytes)
-        .map_err(ReadDataEntryError::Io)?;
-    if num_bytes_read != size_of::<DataEntrySerde>() {
-        return Err(ReadDataEntryError::ShortRead {
-            expected: size_of::<DataEntrySerde>(),
-            actual: num_bytes_read,
-        });
-    }
-
-    validate_data_entry(&data_entry, expected_address, expected_data_len)?;
-
-    let data_len = data_entry.data_len as usize;
+    let data_len = expected_data_len.0 as usize;
     let mut buffer = Vec::<u8>::with_capacity(data_len);
     let num_bytes_read = {
         // SAFETY:
@@ -274,29 +262,34 @@ pub fn read_data_entry(
                 data_len,
             )
         };
-        file_io::read_into_buffer(
+        file_io::read_into_buffers(
             file,
             file_len,
-            offset.0 + DATA_ENTRY_OFFSET_OF_DATA as u64,
-            buffer_bytes,
+            offset.0,
+            &mut [
+                IoSliceMut::new(as_bytes_mut(&mut data_entry)),
+                IoSliceMut::new(buffer_bytes),
+            ],
         )
         .map_err(ReadDataEntryError::Io)?
     };
-    // SAFETY:
-    // * num_bytes_read is <= the buffer's capacity.
-    // * only elements 0..num_bytes_read have been written.
-    unsafe {
-        buffer.set_len(num_bytes_read);
+    let expected_num_bytes_read = calculate_data_entry_stored_size(data_len);
+    if num_bytes_read != expected_num_bytes_read {
+        return Err(ReadDataEntryError::ShortRead {
+            expected: expected_num_bytes_read,
+            actual: num_bytes_read,
+        });
     }
 
-    if num_bytes_read == data_len {
-        Ok(buffer)
-    } else {
-        Err(ReadDataEntryError::ShortRead {
-            expected: data_len,
-            actual: num_bytes_read,
-        })
+    validate_data_entry(&data_entry, expected_address, expected_data_len)?;
+
+    // SAFETY:
+    // * data_len is <= the buffer's capacity.
+    // * only elements 0..data_len have been written.
+    unsafe {
+        buffer.set_len(data_len);
     }
+    Ok(buffer)
 }
 
 pub fn validate_data_entry_offset(
