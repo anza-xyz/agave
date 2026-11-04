@@ -605,7 +605,8 @@ fn translate_slice_mut<T>(
     })
 }
 
-fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result<(), Error> {
+fn touch_type_mut<T>(invoke_context: &mut InvokeContext, vm_addr: u64) -> Result<(), Error> {
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     translate_inner!(
         memory_mapping,
         map_with_access_violation_handler,
@@ -616,13 +617,14 @@ fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result
     .map(|_| ())
 }
 fn touch_slice_mut<T>(
-    memory_mapping: &mut MemoryMapping,
+    invoke_context: &mut InvokeContext,
     vm_addr: u64,
     element_count: u64,
 ) -> Result<(), Error> {
     if element_count == 0 {
         return Ok(());
     }
+    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     translate_inner!(
         memory_mapping,
         map_with_access_violation_handler,
@@ -638,16 +640,16 @@ fn touch_slice_mut<T>(
 // it should only be called once with all translations passed in one call.
 #[macro_export]
 macro_rules! translate_mut {
-    (internal, $memory_mapping:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {
+    (internal, $invoke_context:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {
         touch_slice_mut::<$T>(
-            $memory_mapping,
+            $invoke_context,
             $vm_addr_and_element_count.0,
             $vm_addr_and_element_count.1,
         )?
     };
-    (internal, $memory_mapping:expr, &mut $T:ty, $vm_addr:expr) => {
+    (internal, $invoke_context:expr, &mut $T:ty, $vm_addr:expr) => {
         touch_type_mut::<$T>(
-            $memory_mapping,
+            $invoke_context,
             $vm_addr,
         )?
     };
@@ -670,12 +672,13 @@ macro_rules! translate_mut {
         let host_addr = reference as *const _ as usize;
         (reference, host_addr, std::mem::size_of::<$T>())
     }};
-    ($memory_mapping:expr, $check_aligned:expr, $(let $binding:ident : (&mut $($T:tt)+) = map($vm_addr:expr $(, $element_count:expr)?) $try:tt;)+) => {
+    ($invoke_context:expr, $check_aligned:expr, $(let $binding:ident : (&mut $($T:tt)+) = map($vm_addr:expr $(, $element_count:expr)?) $try:tt;)+) => {
         // This ensures that all the parameters are collected first so that if they depend on previous translations
         $(let $binding = ($vm_addr $(, $element_count)?);)+
         // they are not invalidated by the following translations here:
-        $(translate_mut!(internal, $memory_mapping, &mut $($T)+, $binding);)+
-        $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $($T)+, $binding);)+
+        $(translate_mut!(internal, $invoke_context, &mut $($T)+, $binding);)+
+        let memory_mapping = $invoke_context.memory_contexts.memory_mapping()?;
+        $(let $binding = translate_mut!(internal, memory_mapping, $check_aligned, &mut $($T)+, $binding);)+
         let host_ranges = [
             $(($binding.1, $binding.2),)+
         ];
@@ -832,7 +835,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCreateProgramAd
             return Ok(1);
         };
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let address: (&mut [MaybeUninit<u8>]) = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
         );
@@ -878,7 +881,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallTryFindProgramA
                     Pubkey::create_program_address(&seeds_with_bump, program_id)
                 {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let bump_seed_ref: (&mut MaybeUninit<u8>) = map(bump_seed_addr)?;
                         let address: (&mut [MaybeUninit<u8>]) = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
@@ -914,17 +917,17 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSecp256k1Recove
         invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
 
         {
             // Just a check that this maps correctly for error compatibility with old code.
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let _result: (&mut [MaybeUninit<u8>]) =
                     map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
             );
         }
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let hash = translate_slice::<u8>(
             memory_mapping,
             hash_addr,
@@ -958,7 +961,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallSecp256k1Recove
         };
 
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let result: (&mut [MaybeUninit<u8>]) =
                 map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
@@ -1173,7 +1176,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                     endianness,
                 ) {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_addr)?;
                     );
@@ -1208,7 +1211,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                     endianness,
                 ) {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_addr)?;
                     );
@@ -1238,7 +1241,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveDecompress
                     AffinePoint::from_compressed(compressed_input, endianness)
                 {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_ref_mut: (&mut MaybeUninit<[u8; 64]>) = map(result_addr)?;
                     );
@@ -1313,7 +1316,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 
                     if let Some(result_point) = edwards::add_edwards(left_point, right_point) {
                         translate_mut!(
-                            memory_mapping,
+                            invoke_context,
                             check_aligned,
                             let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                         );
@@ -1343,7 +1346,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 
                     if let Some(result_point) = edwards::subtract_edwards(left_point, right_point) {
                         translate_mut!(
-                            memory_mapping,
+                            invoke_context,
                             check_aligned,
                             let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                         );
@@ -1373,7 +1376,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 
                     if let Some(result_point) = edwards::multiply_edwards(scalar, input_point) {
                         translate_mut!(
-                            memory_mapping,
+                            invoke_context,
                             check_aligned,
                             let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                         );
@@ -1407,7 +1410,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 
                     if let Some(result_point) = ristretto::add_ristretto(left_point, right_point) {
                         translate_mut!(
-                            memory_mapping,
+                            invoke_context,
                             check_aligned,
                             let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                         );
@@ -1439,7 +1442,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                         ristretto::subtract_ristretto(left_point, right_point)
                     {
                         translate_mut!(
-                            memory_mapping,
+                            invoke_context,
                             check_aligned,
                             let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                         );
@@ -1469,7 +1472,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 
                     if let Some(result_point) = ristretto::multiply_ristretto(scalar, input_point) {
                         translate_mut!(
-                            memory_mapping,
+                            invoke_context,
                             check_aligned,
                             let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                         );
@@ -1515,7 +1518,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             )
                         {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_point_addr)?;
                             );
@@ -1552,7 +1555,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             )
                         {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_point_addr)?;
                             );
@@ -1589,7 +1592,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             )
                         {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut: (&mut MaybeUninit<PodBLSG1Point>) = map(result_point_addr)?;
                             );
@@ -1637,7 +1640,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             )
                         {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_point_addr)?;
                             );
@@ -1674,7 +1677,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             )
                         {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_point_addr)?;
                             );
@@ -1711,7 +1714,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             )
                         {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut: (&mut MaybeUninit<PodBLSG2Point>) = map(result_point_addr)?;
                             );
@@ -1764,7 +1767,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
                             let result_point = left.to_projective().add_mixed(right);
 
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut:
                                     (&mut MaybeUninit<[u8; 64]>) = map(result_point_addr)?;
@@ -1803,7 +1806,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveGroupOps {
 
                         if let Some(result_point) = result_point {
                             translate_mut!(
-                                memory_mapping,
+                                invoke_context,
                                 check_aligned,
                                 let result_point_ref_mut:
                                     (&mut MaybeUninit<[u8; 64]>) = map(result_point_addr)?;
@@ -1893,7 +1896,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
 
                 if let Some(result_point) = edwards::multiscalar_multiply_edwards(scalars, points) {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_point_ref_mut: (&mut MaybeUninit<PodEdwardsPoint>) = map(result_point_addr)?;
                     );
@@ -1935,7 +1938,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                     ristretto::multiscalar_multiply_ristretto(scalars, points)
                 {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_point_ref_mut: (&mut MaybeUninit<PodRistrettoPoint>) = map(result_point_addr)?;
                     );
@@ -2003,7 +2006,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurveMultiscala
                     ProjectivePoint::multi_scalar_mul_vartime(&points, &scalars)
                 {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_point_ref_mut: (&mut MaybeUninit<[u8; 64]>) = map(result_point_addr)?;
                     );
@@ -2081,7 +2084,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallCurvePairingMap
                     endianness,
                 ) {
                     translate_mut!(
-                        memory_mapping,
+                        invoke_context,
                         check_aligned,
                         let result_ref_mut: (&mut MaybeUninit<PodBLSGtElement>) = map(result_addr)?;
                     );
@@ -2163,9 +2166,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
                 .unwrap_or(u64::MAX);
             invoke_context.consume_checked(cost)?;
             let check_aligned = invoke_context.get_check_aligned();
-            let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let to_slice: (&mut [MaybeUninit<u8>]) = map(return_data_addr, length)?;
                 let program_id_result: (&mut MaybeUninit<Pubkey>) = map(program_id_addr)?;
@@ -2178,7 +2180,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetReturnData {
                 return Err(SyscallError::InvalidLength.into());
             }
             to_slice.write_copy_of_slice(from_slice);
-            program_id_result.write(*program_id);
+            program_id_result.write(program_id);
         }
 
         // Return the actual length, rather the length returned
@@ -2247,10 +2249,9 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
         }
 
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         if let Some(instruction_context) = found_instruction_context {
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let result_header: (&mut ProcessedSiblingInstruction) = map(meta_addr)?;
             );
@@ -2260,7 +2261,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetProcessedSib
                     == (instruction_context.get_number_of_instruction_accounts() as u64)
             {
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let program_id: (&mut MaybeUninit<Pubkey>) = map(program_id_addr)?;
                     let data: (&mut [MaybeUninit<u8>]) = map(data_addr, result_header.data_len)?;
@@ -2406,15 +2407,15 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
         invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this maps correctly for error compatibility with old code.
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
             );
         }
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let input = translate_slice::<u8>(memory_mapping, input_addr, input_size, check_aligned)?;
 
         let result_point = match group_op {
@@ -2464,7 +2465,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
         match result_point {
             Ok(point) => {
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2541,9 +2542,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallBigModExp {
             return Err(SyscallError::InvalidAttribute.into());
         };
 
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let result_ref_mut: (&mut [MaybeUninit<u8>]) = map(result_addr, params.modulus_len)?;
         );
@@ -2588,16 +2588,16 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPoseidon {
         invoke_context.consume_checked(cost.to_owned())?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this will map later for error compatibility with old code.
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let _result: (&mut [MaybeUninit<u8>]) =
                     map(result_addr, poseidon::HASH_BYTES as u64)?;
             );
         }
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let inputs =
             translate_slice::<VmSlice<u8>>(memory_mapping, vals_addr, vals_len, check_aligned)?;
         let inputs = inputs
@@ -2612,7 +2612,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallPoseidon {
         drop(inputs);
 
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let result: (&mut [MaybeUninit<u8>]) = map(result_addr, poseidon::HASH_BYTES as u64)?;
         );
@@ -2707,15 +2707,15 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
         invoke_context.consume_checked(cost)?;
 
         let check_aligned = invoke_context.get_check_aligned();
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this will map later for error compatibility with old code.
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let _result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
             );
         }
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let input = translate_slice::<u8>(memory_mapping, input_addr, input_size, check_aligned)?;
 
         match op {
@@ -2724,7 +2724,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2735,7 +2735,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2746,7 +2746,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2757,7 +2757,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2768,7 +2768,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2779,7 +2779,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2790,7 +2790,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2801,7 +2801,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128Compres
                     return Ok(1);
                 };
                 translate_mut!(
-                    memory_mapping,
+                    invoke_context,
                     check_aligned,
                     let result: (&mut [MaybeUninit<u8>]) = map(result_addr, output as u64)?;
                 );
@@ -2847,16 +2847,16 @@ impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for Syscall
         invoke_context.consume_checked(hash_base_cost)?;
         let check_aligned = invoke_context.get_check_aligned();
         let mem_op_base_cost = compute_cost.mem_op_base_cost;
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         {
             // Just a check that this maps correctly for error compatibility with old code.
             translate_mut!(
-                memory_mapping,
+                invoke_context,
                 check_aligned,
                 let _result: (&mut [MaybeUninit<u8>]) =
                     map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
             );
         }
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
             let vals =
@@ -2876,7 +2876,7 @@ impl<H: HasherImpl> BuiltinFunctionDefinition<InvokeContext<'_, '_>> for Syscall
             }
         }
         translate_mut!(
-            memory_mapping,
+            invoke_context,
             check_aligned,
             let result: (&mut [MaybeUninit<u8>]) =
                 map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
