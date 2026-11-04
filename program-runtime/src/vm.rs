@@ -4,6 +4,7 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
+        abi::ABI,
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
         invoke_context::{BpfAllocator, InvokeContext},
         mem_pool::VmMemoryPool,
@@ -196,6 +197,7 @@ pub fn execute<'a, 'b: 'a>(
         >(executable)
     };
     let log_collector = invoke_context.get_log_collector();
+    let abi = invoke_context.abi();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let program_id = *instruction_context.get_program_key()?;
@@ -221,6 +223,7 @@ pub fn execute<'a, 'b: 'a>(
         account_pointers_offset,
     } = serialization::serialize_parameters(
         &instruction_context,
+        abi,
         virtual_address_space_adjustments,
         account_data_direct_mapping,
         direct_account_pointers_in_program_input,
@@ -487,6 +490,7 @@ pub fn execute<'a, 'b: 'a>(
 
     fn deserialize_parameters(
         invoke_context: &mut InvokeContext,
+        abi: ABI,
         parameter_bytes: &[u8],
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
@@ -495,6 +499,7 @@ pub fn execute<'a, 'b: 'a>(
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
+            abi,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
@@ -509,6 +514,7 @@ pub fn execute<'a, 'b: 'a>(
     let execute_or_deserialize_result = execution_result.and_then(|_| {
         deserialize_parameters(
             invoke_context,
+            abi,
             parameter_bytes.as_slice(),
             virtual_address_space_adjustments,
             account_data_direct_mapping,
