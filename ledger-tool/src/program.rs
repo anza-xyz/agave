@@ -112,6 +112,7 @@ impl ProgramSubCommand for App<'_, '_> {
             .index(1);
 
         let load_genesis_config_arg = load_genesis_arg();
+        let accounts_db_config_args = accounts_db_args();
         let snapshot_config_args = snapshot_args();
 
         self.subcommand(
@@ -165,6 +166,7 @@ and the following fields are required
                         .default_value("0"),
                 )
                 .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(
                     Arg::with_name("mode")
