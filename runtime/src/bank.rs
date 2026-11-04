@@ -2132,11 +2132,10 @@ impl Bank {
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let bank_id = bank_rc.bank_id_generator.next();
-        bank_rc.accounts.accounts_db.notify_bank_creation(
-            slot,
-            (slot != 0).then_some(fields.parent_slot),
-            bank_id,
-        );
+        bank_rc
+            .accounts
+            .accounts_db
+            .notify_bank_creation(slot, None, bank_id);
         let ancestors = Ancestors::from(vec![(slot, bank_id)]);
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.

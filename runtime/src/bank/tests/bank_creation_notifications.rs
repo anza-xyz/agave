@@ -119,7 +119,7 @@ fn test_bank_creation_from_snapshot() {
         genesis_bank(&genesis_config, Arc::clone(&notifier)).wrap_with_bank_forks_for_tests();
     let child = Bank::new_from_parent(Arc::clone(&genesis), SlotLeader::default(), 1);
 
-    for (bank, parent) in [(&*genesis, None), (&child, Some(0))] {
+    for bank in [&*genesis, &child] {
         bank.set_block_id(Some(BlockId::default()));
         bank.squash();
         bank.force_flush_accounts_cache();
@@ -150,6 +150,6 @@ fn test_bank_creation_from_snapshot() {
         assert_ne!(restored.bank_id(), bank.bank_id());
         let banks = notifier.banks.lock().unwrap();
         let (slot, actual_parent, _) = banks[&restored.bank_id()];
-        assert_eq!((slot, actual_parent), (bank.slot(), parent));
+        assert_eq!((slot, actual_parent), (bank.slot(), None));
     }
 }

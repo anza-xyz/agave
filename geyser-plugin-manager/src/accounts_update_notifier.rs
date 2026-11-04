@@ -33,7 +33,8 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         for plugin in plugin_manager.plugins() {
             if let Err(err) = plugin.notify_bank_creation(slot, parent, bank_id.into()) {
                 error!(
-                    "Failed to notify bank creation at slot {slot}, error: {err} to plugin {}",
+                    "Failed to notify bank creation at slot {slot}, bank {bank_id:?}, error: \
+                     {err} to plugin {}",
                     plugin.name()
                 );
             }
@@ -98,22 +99,14 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 impl AccountsUpdateNotifierImpl {
     pub fn new(
         plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
-        always_enabled: bool,
-    ) -> Option<Self> {
-        let plugins = plugin_manager.load();
-        if plugins.plugins().next().is_none() && !always_enabled {
-            return None;
-        }
-        let account_notifications_enabled =
-            plugins.account_data_notifications_enabled() || always_enabled;
-        let snapshot_notifications_enabled =
-            account_notifications_enabled && plugins.account_data_snapshot_notifications_enabled();
-        drop(plugins);
-        Some(Self {
+        account_notifications_enabled: bool,
+        snapshot_notifications_enabled: bool,
+    ) -> Self {
+        Self {
             plugin_manager,
             account_notifications_enabled,
             snapshot_notifications_enabled,
-        })
+        }
     }
 
     fn accountinfo_from_shared_account_data<'a>(
@@ -324,7 +317,7 @@ mod tests {
                 }),
             ],
         ))));
-        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false).unwrap();
+        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, true, true);
         let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
         let bank_id = BankId::new(9);
@@ -349,7 +342,7 @@ mod tests {
                 account_update_bank_ids: account_update_bank_ids.clone(),
             })],
         ))));
-        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false).unwrap();
+        let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, true, true);
         let pubkey = Pubkey::new_unique();
         let owner = Pubkey::new_unique();
         let data = [1, 2, 3];
@@ -394,8 +387,7 @@ mod tests {
                 .collect(),
         );
         let notifier =
-            AccountsUpdateNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)), false)
-                .unwrap();
+            AccountsUpdateNotifierImpl::new(Arc::new(ArcSwap::from_pointee(manager)), false, false);
         notifier.notify_end_of_restore_from_snapshot();
         for count in counts {
             assert_eq!(count.load(Ordering::Relaxed), 1);
@@ -446,7 +438,6 @@ mod tests {
 
     #[test]
     fn test_bank_creation_without_account_subscriptions() {
-        agave_logger::setup();
         let creations = Arc::new(Mutex::new(Vec::new()));
         let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::from_plugins(
             [true, false]
@@ -460,7 +451,7 @@ mod tests {
                 .collect(),
         )));
         assert!(manager.load().transaction_notifications_enabled());
-        let notifier = AccountsUpdateNotifierImpl::new(manager, false).unwrap();
+        let notifier = AccountsUpdateNotifierImpl::new(manager, false, false);
         assert!(!notifier.account_notifications_enabled());
         assert!(!notifier.snapshot_notifications_enabled());
         let accounts_db = solana_accounts_db::accounts_db::AccountsDb::new_with_config(
@@ -478,8 +469,7 @@ mod tests {
     #[test]
     fn test_bank_creation_after_dynamic_plugin_load() {
         let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::default()));
-        assert!(AccountsUpdateNotifierImpl::new(Arc::clone(&manager), false).is_none());
-        let notifier = AccountsUpdateNotifierImpl::new(Arc::clone(&manager), true).unwrap();
+        let notifier = AccountsUpdateNotifierImpl::new(Arc::clone(&manager), true, false);
         assert!(notifier.account_notifications_enabled());
         notifier.notify_bank_creation(0, None, BankId::new(0));
         let creations = Arc::new(Mutex::new(Vec::new()));

@@ -65,9 +65,14 @@ mod tests {
     struct GeyserTestPlugin {
         pub accounts_notified: DashMap<Pubkey, Vec<(Slot, u64, AccountSharedData)>>,
         pub is_startup_done: AtomicBool,
+        pub banks_notified: DashMap<BankId, (Slot, Option<Slot>)>,
     }
 
     impl AccountsUpdateNotifierInterface for GeyserTestPlugin {
+        fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+            self.banks_notified.insert(bank_id, (slot, parent));
+        }
+
         fn snapshot_notifications_enabled(&self) -> bool {
             true
         }
@@ -183,14 +188,28 @@ mod tests {
     }
 
     #[test]
+    fn test_notify_bank_creation() {
+        let mut accounts_db = AccountsDb::default_for_tests();
+        accounts_db.notify_bank_creation(42, None, BankId::new(100));
+        let notifier = Arc::new(GeyserTestPlugin::default());
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        for (id, parent) in [(100, None), (101, Some(40))] {
+            accounts_db.notify_bank_creation(42, parent, BankId::new(id));
+            assert_eq!(
+                *notifier.banks_notified.get(&BankId::new(id)).unwrap(),
+                (42, parent)
+            );
+        }
+        assert_eq!(notifier.banks_notified.len(), 2);
+        assert!(notifier.accounts_notified.is_empty());
+        assert!(!notifier.is_startup_done.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn test_notify_account_at_accounts_update() {
         let notifier = Arc::new(GeyserTestPlugin::default());
         let mut accounts_db = AccountsDb::default_for_tests();
         accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
-        // Legacy notifiers keep receiving accounts without implementing bank creation.
-        accounts_db.notify_bank_creation(0, None, BankId::new(100));
-        assert!(notifier.accounts_notified.is_empty());
-        assert!(!notifier.is_startup_done.load(Ordering::Relaxed));
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.

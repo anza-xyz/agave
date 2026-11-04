@@ -8,13 +8,15 @@ use {
 };
 
 pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
-    /// Whether runtime account updates are needed. A notifier may only track bank creation.
+    /// Whether any loaded plugin needs runtime account updates.
+    /// If plugins only need transaction or bank notifications, this is false so AccountsDb
+    /// skips collecting account updates while still announcing bank creation.
     fn account_notifications_enabled(&self) -> bool {
         true
     }
 
     /// Called before the bank can produce account updates or other bank-scoped notifications.
-    fn notify_bank_creation(&self, _slot: Slot, _parent: Option<Slot>, _bank_id: BankId) {}
+    fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId);
 
     /// Enable account notifications from snapshot
     fn snapshot_notifications_enabled(&self) -> bool;
