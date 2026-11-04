@@ -7240,6 +7240,7 @@ name = "solana-accounts-db"
 version = "4.5.0-alpha.4"
 dependencies = [
  "agave-fs",
+ "agave-io-uring",
  "agave-logger",
  "agave-memory",
  "agave-reserved-account-keys",
@@ -7249,6 +7250,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "hashbrown 0.17.1",
+ "io-uring",
  "itertools 0.15.0",
  "log",
  "modular-bitfield",
@@ -7259,6 +7261,7 @@ dependencies = [
  "rayon",
  "semver 1.0.28",
  "seqlock",
+ "shaq",
  "smallvec",
  "solana-account",
  "solana-accounts-db",

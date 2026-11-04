@@ -1327,7 +1327,7 @@ impl Bank {
         let _rewards_calculation_thread_pool = rewards_calculation_thread_pool();
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         let mut bank = Self::default_with_bank_rc(BankRc::new(accounts));
         bank.ancestors = Ancestors::from(vec![(bank.slot(), bank.bank_id())]);
         bank.compute_budget = runtime_config.compute_budget;
@@ -5317,6 +5317,12 @@ impl Bank {
         self.rc.accounts.load(ancestors, pubkey)
     }
 
+    /// Loads accounts in the background for the passed in keys if they are not present in the
+    /// read cache or write cache. Inserts them into the read cache
+    pub fn prefetch_accounts(&self, pubkeys: &[Pubkey]) {
+        self.rc.accounts.prefetch_accounts(pubkeys)
+    }
+
     pub fn get_program_accounts(
         &self,
         program_id: &Pubkey,
@@ -7085,7 +7091,7 @@ impl Bank {
 
     pub fn default_for_tests() -> Self {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         Self::default_with_bank_rc(BankRc::new(accounts))
     }
 

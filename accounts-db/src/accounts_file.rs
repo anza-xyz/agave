@@ -3,8 +3,8 @@ use {
         account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
-        append_vec::{AppendVec, AppendVecError, MAXIMUM_APPEND_VEC_FILE_SIZE},
-        split_file::{self, SplitFile, SplitFileError},
+        append_vec::{self, AppendVec, AppendVecError, MAXIMUM_APPEND_VEC_FILE_SIZE},
+        split_file::{self, ReadDataEntryError, SplitFile, SplitFileError},
         storable_accounts::StorableAccounts,
     },
     agave_fs::{
@@ -12,9 +12,9 @@ use {
         buffered_reader::{
             BufReaderWithOverflow, BufferedReader, FileBufRead, RequiredLenBufFileRead,
         },
-        file_io::open_for_reading,
+        file_io::{open_for_reading, read_into_buffer},
     },
-    solana_account::AccountSharedData,
+    solana_account::{Account, AccountSharedData},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -26,6 +26,7 @@ use {
         ops::ControlFlow,
         path::{Path, PathBuf},
         slice,
+        sync::Arc,
     },
     thiserror::Error,
 };
@@ -56,6 +57,159 @@ pub enum AccountsFileError {
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
 }
+
+/// The read of an account's meta entry: `size` bytes at `offset` of the file holding meta
+/// entries, a split file's meta file or the append vec itself. The entry's size is unknown until
+/// it is parsed, so this is the most it can be, and not past the file's end.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MetaEntryRead {
+    pub(crate) offset: u64,
+    pub(crate) size: usize,
+}
+
+impl MetaEntryRead {
+    pub(crate) fn new(offset: u64, size: usize) -> Self {
+        Self { offset, size }
+    }
+}
+
+/// What parsing an account's meta entry yields: the whole account, or the read of its data entry
+pub(crate) enum AccountFromMetaEntry {
+    /// the meta entry held the account and all its data
+    Complete(AccountSharedData),
+    /// the meta entry did not hold all the account's data: some or all of it is past what was
+    /// read, or in a separate data file
+    Partial(AccountDataRead),
+}
+
+/// The read of an account's data entry, for an account whose meta entry did not hold all its
+/// data: one read at `offset` of `AccountsFile::account_data_file()`, of `data_len` bytes of data,
+/// after a split file's data entry header. It reads all the data, including any the meta entry
+/// held.
+pub(crate) struct AccountDataRead {
+    /// the account, without its data
+    account: Account,
+    offset: u64,
+    data_len: usize,
+    /// for a split file: the address its data entry's header must hold
+    data_entry_address: Option<Pubkey>,
+}
+
+impl AccountDataRead {
+    /// A read of `data_len` bytes of data at `offset`
+    pub(crate) fn new(account: Account, offset: u64, data_len: usize) -> Self {
+        Self {
+            account,
+            offset,
+            data_len,
+            data_entry_address: None,
+        }
+    }
+
+    /// A read of `address`'s data entry at `offset`: its header, then `data_len` bytes of data
+    pub(crate) fn new_with_data_entry(
+        account: Account,
+        offset: u64,
+        data_len: usize,
+        address: Pubkey,
+    ) -> Self {
+        Self {
+            account,
+            offset,
+            data_len,
+            data_entry_address: Some(address),
+        }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn data_len(&self) -> usize {
+        self.data_len
+    }
+
+    /// How many bytes the read takes ahead of the data: a split file's data entry header, else
+    /// none
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn data_entry_header_len(&self) -> usize {
+        if self.data_entry_address.is_some() {
+            split_file::DATA_ENTRY_FIXED_SIZE
+        } else {
+            0
+        }
+    }
+
+    /// Finishes the account with `data`, read after `header`, the `data_entry_header_len()`
+    /// bytes before it. An error when the header is not the account's.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn account_from_data_entry(
+        &self,
+        header: &[u8],
+        data: Vec<u8>,
+    ) -> std::result::Result<AccountSharedData, ReadDataEntryError> {
+        if let Some(address) = &self.data_entry_address {
+            let data_len = split_file::DataLen(self.data_len as u32);
+            split_file::parse_data_entry_fixed(header, address, data_len)?;
+        }
+        Ok(self.account_with_data(data))
+    }
+
+    /// Does the read from `file`, whose first `file_len` bytes are valid, on this thread. A split
+    /// file's data entry is read and checked by `split_file::read_data_entry()`.
+    pub(crate) fn read(
+        self,
+        file: &File,
+        file_len: FileSize,
+    ) -> std::result::Result<AccountSharedData, ReadDataEntryError> {
+        let data = match &self.data_entry_address {
+            Some(address) => split_file::read_data_entry(
+                file,
+                file_len,
+                split_file::FileOffset(self.offset),
+                address,
+                split_file::DataLen(self.data_len as u32),
+            )?,
+            None => {
+                let mut data = Vec::with_capacity(self.data_len);
+                // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+                let data_bytes = unsafe {
+                    slice::from_raw_parts_mut(
+                        data.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+                        self.data_len,
+                    )
+                };
+                let bytes_read = read_into_buffer(file, file_len, self.offset, data_bytes)?;
+                if bytes_read != self.data_len {
+                    // eof or otherwise couldn't read all the data
+                    return Err(ReadDataEntryError::ShortRead {
+                        expected: self.data_len,
+                        actual: bytes_read,
+                    });
+                }
+                // SAFETY: we've just checked that the read filled `data_len` bytes.
+                unsafe { data.set_len(self.data_len) };
+                data
+            }
+        };
+        Ok(self.account_with_data(data))
+    }
+
+    fn account_with_data(&self, data: Vec<u8>) -> AccountSharedData {
+        AccountSharedData::create_from_existing_shared_data(
+            self.account.lamports,
+            Arc::new(data),
+            self.account.owner,
+            self.account.executable,
+            self.account.rent_epoch,
+        )
+    }
+}
+
+// a split file's meta entry fits the prefetcher's page-sized buffers
+const _: () = assert!(split_file::META_ENTRY_MAX_SIZE <= append_vec::PAGE_SIZE);
 
 #[derive(Debug)]
 /// An enum for accessing an accounts file which can be implemented
@@ -234,6 +388,41 @@ impl AccountsFile {
         })
     }
 
+    /// The file meta entries are read from: a split file's meta file, or the append vec itself
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn meta_entry_file(&self) -> &File {
+        match self {
+            Self::AppendVec(av) => av.file(),
+            Self::Split(split) => split.meta_file(),
+        }
+    }
+
+    /// The read of the meta entry of the account at `offset`, from `meta_entry_file()`. `None`
+    /// when there is no meta entry to read at `offset`.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn construct_meta_entry_read(&self, offset: Offset) -> Option<MetaEntryRead> {
+        match self {
+            Self::AppendVec(av) => av.construct_meta_entry_read(offset),
+            Self::Split(split) => split
+                .construct_meta_entry_read(split_file::LogicalOffset(offset))
+                .ok(),
+        }
+    }
+
+    /// Parses the account at file `offset` from `bytes`, read as `construct_meta_entry_read`
+    /// named: the account, or the read of its data entry
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn account_from_meta_entry(
+        &self,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Option<AccountFromMetaEntry> {
+        match self {
+            Self::AppendVec(av) => av.account_from_meta_entry(offset, bytes),
+            Self::Split(split) => split.account_from_meta_entry(bytes).ok(),
+        }
+    }
+
     /// Return the path of the underlying account file.
     pub fn path(&self) -> &Path {
         match self {
@@ -386,7 +575,7 @@ impl AccountsFile {
     }
 
     /// Returns the file holding the account data and its length.
-    fn account_data_file(&self) -> Option<(&File, FileSize)> {
+    pub(crate) fn account_data_file(&self) -> Option<(&File, FileSize)> {
         match self {
             Self::AppendVec(av) => Some((av.file(), av.len() as FileSize)),
             Self::Split(split) => split
