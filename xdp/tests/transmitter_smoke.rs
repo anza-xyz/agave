@@ -14,6 +14,7 @@ use {
         },
     },
     bytes::Bytes,
+    common::NudState,
     nix::{
         errno::Errno,
         poll::{PollFd, PollFlags, PollTimeout, poll},
@@ -350,7 +351,12 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair_with_tx_queue_count(1);
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
     let dst_port = 45_678;
@@ -557,7 +563,12 @@ fn transmitter_sends_udp_payload_over_two_queues_in_copy_mode() {
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair_with_tx_queue_count(2);
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
 
     let receiver = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
     let src_port = 12_347;
@@ -636,7 +647,12 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair_with_tx_queue_count(1);
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
     common::add_route_to_dev_with_src("192.0.2.0/24", common::GRE_IFACE, gre.overlay_ip);
