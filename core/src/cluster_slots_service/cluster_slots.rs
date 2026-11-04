@@ -326,7 +326,7 @@ impl ClusterSlots {
                     slot,
                     supporters: Arc::new(SlotSupporters::new_blank()),
                 });
-                break;
+                continue;
             };
 
             let new_supporters = match Arc::try_unwrap(supporters) {
@@ -600,6 +600,42 @@ mod tests {
         cs.fake_epoch_info_for_tests(validator_stakes);
         cs.roll_cluster_slots(10);
         cs.roll_cluster_slots(5);
+    }
+
+    #[test]
+    fn test_roll_cluster_slots_recycles_blank_for_missing_stake_epoch() {
+        // A root advance of two or more slots makes the recycle loop discard more
+        // rows than one iteration covers. When the recycled slot's epoch has no
+        // stake info the loop broke mid-discard, leaving a stale front while
+        // current_slot advanced, which later panicked get_row_for_slot for the
+        // slots past the buffer's end. The twin startup-init loop pushes a blank
+        // row and continues.
+        let cs = ClusterSlots::default();
+        let (_, _, validator_stakes) = fake_stakes();
+        cs.fake_epoch_info_for_tests(validator_stakes);
+
+        // Initialize the buffer so its last row is in epoch 1, which has no stake
+        // info.
+        let epoch_boundary = EpochSchedule::without_warmup().get_first_slot_in_epoch(1);
+        let init_root = epoch_boundary - CLUSTER_SLOTS_TRIM_SIZE as u64;
+        cs.roll_cluster_slots(init_root);
+        assert_eq!(
+            cs.cluster_slots.read().unwrap().back().unwrap().slot,
+            epoch_boundary
+        );
+
+        // Advance the root by two, so the recycle loop must discard two rows and
+        // the recycled slot lands in the epoch with no stake info.
+        cs.roll_cluster_slots(init_root + 2);
+
+        // The front must be aligned to the new window start, and the slot at the
+        // end of the window must exist in the buffer.
+        let rg = cs.cluster_slots.read().unwrap();
+        assert_eq!(rg.front().unwrap().slot, init_root + 3);
+        assert_eq!(
+            rg.back().unwrap().slot,
+            init_root + 2 + CLUSTER_SLOTS_TRIM_SIZE as u64
+        );
     }
 
     #[test]
