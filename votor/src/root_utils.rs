@@ -16,6 +16,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
         installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
     },
     solana_time_utils::timestamp,
     std::{
@@ -104,6 +105,7 @@ pub fn check_and_handle_new_root<CB>(
     snapshot_controller: Option<&SnapshotController>,
     highest_super_majority_root: Option<Slot>,
     bank_notification_sender: &Option<BankNotificationSenderConfig>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
     blockstore: &Blockstore,
     leader_schedule_cache: &Arc<LeaderScheduleCache>,
@@ -152,6 +154,9 @@ pub fn check_and_handle_new_root<CB>(
         drop_bank_sender,
         callback,
     );
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_transaction_status_rooted_message(&root_bank);
+    }
     blockstore.slots_stats.mark_rooted(new_root);
     if let Some(rpc_subscriptions) = rpc_subscriptions {
         rpc_subscriptions.notify_roots(rooted_slots);
