@@ -4,6 +4,7 @@ use {
     solana_accounts_db::{accounts::Accounts, accounts_db::AccountsDb},
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::system_program,
     solana_transaction::{
         Transaction,
@@ -25,7 +26,10 @@ const LOCK_COUNTS: [usize; 2] = [2, 64];
 // total transactions per run
 const TOTAL_TRANSACTIONS: usize = 1024;
 
-fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<SanitizedTransaction> {
+fn create_test_transactions(
+    lock_count: usize,
+    read_conflicts: bool,
+) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
     // keys available to be shared between transactions, depending on mode
     // currently, we test batches with no conflicts and batches with reader/reader conflicts
     // in the future with SIMD83, we will also test reader/writer and writer/writer conflicts
@@ -55,9 +59,7 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
         let instruction = Instruction::new_with_bincode(system_program::id(), &(), account_metas);
         let transaction = Transaction::new_with_payer(&[instruction], None);
 
-        transactions.push(SanitizedTransaction::from_transaction_for_tests(
-            transaction,
-        ));
+        transactions.push(RuntimeTransaction::from_transaction_for_tests(transaction));
     }
 
     transactions

@@ -69,11 +69,16 @@ pub(crate) fn precheck_transaction(
 ) -> PrecheckResult {
     let sanitize_config = sanitize_config();
     let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+    // Buffered transactions may outlive the working bank; only drop locks after activation is rooted.
     let (view, deactivation_slot) = translate_to_runtime_view(
         bytes,
         root_bank,
         transaction_account_lock_limit,
         &sanitize_config,
+        !root_bank
+            .feature_set
+            .snapshot()
+            .loaderv3_programdata_size_floor,
     )
     .map_err(IngressCheckError::PacketHandling)?;
 
@@ -122,6 +127,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
     bank: &Bank,
     transaction_account_lock_limit: usize,
     sanitize_config: &SanitizeConfig,
+    enable_implicit_read_locks: bool,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, u64), PacketHandlingError> {
     let Ok(view) = SanitizedTransactionView::try_new_sanitized(data, sanitize_config) else {
         return Err(PacketHandlingError::Sanitization);
@@ -145,7 +151,7 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 
     let (loaded_addresses, deactivation_slot) = load_addresses_for_view(&view, bank)?;
 
-    let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+    let Ok(mut view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
         view,
         loaded_addresses,
         bank.get_reserved_account_keys(),
@@ -155,6 +161,10 @@ pub(crate) fn translate_to_runtime_view<D: TransactionData>(
 
     if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
         return Err(PacketHandlingError::LockValidation);
+    }
+
+    if enable_implicit_read_locks {
+        view.load_implicit_read_locks();
     }
 
     Ok((view, deactivation_slot))
@@ -530,6 +540,7 @@ mod tests {
         agave_banking_stage_ingress_types::{
             BankingPacketBatch, to_banking_packet_batch, to_single_banking_packet_batch,
         },
+        agave_transaction_view::transaction_view::UnsanitizedTransactionView,
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -550,7 +561,9 @@ mod tests {
         solana_slot_hashes::get_entries,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction::transfer,
-        solana_transaction::{Transaction, versioned::VersionedTransaction},
+        solana_transaction::{
+            Transaction, TransactionVerificationMode, versioned::VersionedTransaction,
+        },
         std::{
             collections::HashSet,
             num::NonZeroUsize,
@@ -631,6 +644,58 @@ mod tests {
         assert_eq!(state.transaction().get_durable_nonce(), None);
         assert_eq!(validated_nonce_address, None);
         assert_eq!(state.nonce_address(), None);
+    }
+
+    #[test_case(false, false; "before activation")]
+    #[test_case(false, true; "activation not rooted")]
+    #[test_case(true, true; "activation rooted")]
+    fn test_implicit_locks_follow_root_for_production_and_bank_for_replay(
+        root_active: bool,
+        working_active: bool,
+    ) {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(u64::MAX);
+        let feature = agave_feature_set::loaderv3_programdata_size_floor::id();
+        let mut root = Bank::new_for_tests(&genesis_config);
+        if !root_active {
+            Arc::make_mut(&mut root.feature_set).deactivate(&feature);
+        }
+        let (root, _bank_forks) = root.wrap_with_bank_forks_for_tests();
+        let mut working = Bank::new_from_parent(
+            root.clone(),
+            solana_leader_schedule::SlotLeader::new_unique(),
+            1,
+        );
+        if working_active {
+            Arc::make_mut(&mut working.feature_set).activate(&feature, 1);
+        }
+        let transaction = transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            working.last_blockhash(),
+        );
+        let bytes = BytesPacket::from_data(transaction)
+            .unwrap()
+            .buffer()
+            .clone();
+        let checked =
+            precheck_transaction(bytes.clone(), &root, &working, &HashSet::new()).unwrap();
+        assert_eq!(
+            checked.state.transaction().implicit_read_locks().is_empty(),
+            root_active
+        );
+
+        let replay = working
+            .verify_transaction(
+                UnsanitizedTransactionView::try_new_unsanitized(bytes).unwrap(),
+                TransactionVerificationMode::FullVerification,
+            )
+            .unwrap();
+        assert_eq!(replay.implicit_read_locks().is_empty(), working_active);
     }
 
     const TEST_CONTAINER_CAPACITY: usize = 100;

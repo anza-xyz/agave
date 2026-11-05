@@ -1360,7 +1360,7 @@ impl SchedulingStateMachine {
         // `Bank::prepare_unlocked_batch_from_single_tx()` as well.
         // This redundancy is known. It was just left as-is out of abundance
         // of caution.
-        let lock_contexts = transaction
+        let mut lock_contexts: Vec<_> = transaction
             .account_keys()
             .iter()
             .enumerate()
@@ -1375,6 +1375,9 @@ impl SchedulingStateMachine {
                 )
             })
             .collect();
+        lock_contexts.extend(transaction.implicit_read_locks().iter().map(|address| {
+            LockContext::new(usage_queue_loader(*address), RequestedUsage::Readonly)
+        }));
 
         Task::new(TaskInner {
             transaction,
@@ -1636,8 +1639,112 @@ mod tests {
                 readonly: vec![loaded_address],
             },
         };
-        ReplayTransaction::try_new(static_runtime_tx, Some(loaded_addresses), &HashSet::new())
-            .unwrap()
+        let mut tx =
+            ReplayTransaction::try_new(static_runtime_tx, Some(loaded_addresses), &HashSet::new())
+                .unwrap();
+        tx.load_implicit_read_locks();
+        tx
+    }
+
+    #[test_matrix([None, Some(false), Some(true)])]
+    fn test_implicit_read_locks_and_explicit_overlaps(explicit_writable_programdata: Option<bool>) {
+        let capability = Capability::FifoQueueing;
+        let program = Pubkey::new_unique();
+        let programdata = solana_loader_v3_interface::get_program_data_address(&program);
+        let payer = Pubkey::new_unique();
+        let keys = match explicit_writable_programdata {
+            None => vec![payer, program],
+            Some(_) => vec![payer, programdata, program],
+        };
+        let transaction = ReplayTransaction::from(Transaction::new_unsigned(Message {
+            header: solana_message::MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_unsigned_accounts: if explicit_writable_programdata == Some(false) {
+                    2
+                } else {
+                    1
+                },
+                ..solana_message::MessageHeader::default()
+            },
+            account_keys: keys,
+            ..Message::default()
+        }));
+        let loader = &mut create_address_loader(None, &capability);
+        let first = SchedulingStateMachine::create_task(transaction, 1, loader);
+        let reader = SchedulingStateMachine::create_task(
+            transaction_with_readonly_address(program),
+            2,
+            loader,
+        );
+        let writer = SchedulingStateMachine::create_task(
+            transaction_with_writable_address(programdata),
+            3,
+            loader,
+        );
+        let mut state = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+
+        // A duplicate request must neither block on itself nor panic in priority mode.
+        assert!(state.schedule_task(first.clone()).is_some());
+        let reader_blocked = explicit_writable_programdata == Some(true);
+        assert_eq!(
+            state.schedule_task(reader.clone()).is_none(),
+            reader_blocked
+        );
+        assert!(state.schedule_task(writer.clone()).is_none());
+        state.deschedule_task(&first);
+        if reader_blocked {
+            assert_eq!(state.schedule_next_unblocked_task().unwrap().task_id(), 2);
+        }
+        // The remaining reader still protects ProgramData after the first task completes.
+        assert!(state.schedule_next_unblocked_task().is_none());
+        state.deschedule_task(&reader);
+        assert_eq!(state.schedule_next_unblocked_task().unwrap().task_id(), 3);
+        state.deschedule_task(&writer);
+        assert!(state.has_no_active_task());
+
+        // All acquisitions were released; no leaked read or write lock remains.
+        let next = SchedulingStateMachine::create_task(
+            transaction_with_writable_address(programdata),
+            4,
+            loader,
+        );
+        assert!(state.schedule_task(next.clone()).is_some());
+        state.deschedule_task(&next);
+        assert!(state.has_no_active_task());
+    }
+
+    #[test]
+    fn test_programdata_writer_waits_for_implicit_reader() {
+        let capability = Capability::FifoQueueing;
+        let program = Pubkey::new_unique();
+        let programdata = solana_loader_v3_interface::get_program_data_address(&program);
+        let transaction = transaction_with_readonly_address(program);
+        assert!(
+            !transaction
+                .account_keys()
+                .iter()
+                .any(|key| *key == programdata)
+        );
+        let loader = &mut create_address_loader(None, &capability);
+        let reader = SchedulingStateMachine::create_task(transaction, 1, loader);
+        let writer = SchedulingStateMachine::create_task(
+            transaction_with_writable_address(programdata),
+            2,
+            loader,
+        );
+        let mut state = unsafe {
+            SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
+        };
+        // Distinct payers and no explicit ProgramData in the reader: the implicit lock
+        // is the only reason these transactions cannot run concurrently.
+        assert!(state.schedule_task(reader.clone()).is_some());
+        assert!(state.schedule_task(writer.clone()).is_none());
+        state.deschedule_task(&reader);
+        assert_eq!(state.schedule_next_unblocked_task().unwrap().task_id(), 2);
+        state.deschedule_task(&writer);
+        assert!(state.has_no_active_task());
     }
 
     fn create_address_loader(

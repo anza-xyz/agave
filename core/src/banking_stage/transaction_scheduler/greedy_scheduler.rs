@@ -264,7 +264,8 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     let read_account_locks = account_keys
         .iter()
         .enumerate()
-        .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
+        .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key))
+        .chain(transaction.implicit_read_locks());
 
     let thread_id = match account_locks.try_lock_accounts(
         write_account_locks,
@@ -312,9 +313,11 @@ mod test {
             transaction_with_meta::StaticTransactionWithMeta,
         },
         solana_signer::Signer,
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::borrow::Borrow,
+        test_case::test_matrix,
     };
 
     const TEST_SLOT: Slot = 42;
@@ -388,6 +391,80 @@ mod test {
         }
 
         container
+    }
+
+    #[test_matrix([None, Some(false), Some(true)])]
+    fn test_programdata_writer_waits_on_other_thread(explicit_writable_programdata: Option<bool>) {
+        let program = Pubkey::new_unique();
+        let programdata = solana_loader_v3_interface::get_program_data_address(&program);
+        // Each transaction costs 5000 CU. Filling worker 0 forces the second transaction
+        // to try worker 1. With no explicit ProgramData, only the implicit read blocks it.
+        let config = GreedySchedulerConfig {
+            target_scheduled_cus: 10_000,
+            ..GreedySchedulerConfig::default()
+        };
+        let (mut scheduler, receivers, finished) = create_test_frame(2, config);
+        let payer = Pubkey::new_unique();
+        let keys = match explicit_writable_programdata {
+            None => vec![payer, program],
+            Some(_) => vec![payer, programdata, program],
+        };
+        let transaction =
+            RuntimeTransaction::from_transaction_for_tests(Transaction::new_unsigned(Message {
+                header: solana_message::MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_unsigned_accounts: if explicit_writable_programdata == Some(false)
+                    {
+                        2
+                    } else {
+                        1
+                    },
+                    ..solana_message::MessageHeader::default()
+                },
+                account_keys: keys,
+                ..Message::default()
+            }));
+        let mut container = create_container([(&Keypair::new(), &[programdata], 1, 1)]);
+        container.insert_new_transaction(transaction, MaxAge::MAX, 2, 5000);
+        let summary = scheduler
+            .schedule(&mut container, TEST_SLOT, u64::MAX)
+            .unwrap();
+        assert_eq!(summary.num_scheduled, 1);
+        assert_eq!(summary.num_unschedulable_threads, 1);
+        let reader = receivers[0].try_recv().unwrap();
+        assert_eq!(reader.ids, vec![1]);
+        assert_eq!(
+            reader.transactions[0]
+                .account_keys()
+                .iter()
+                .any(|key| *key == programdata),
+            explicit_writable_programdata.is_some(),
+        );
+        assert!(receivers[1].try_recv().is_err());
+
+        finished
+            .send(FinishedConsumeWork {
+                work: reader,
+                retryable_indexes: vec![],
+            })
+            .unwrap();
+        assert_eq!(scheduler.receive_completed(&mut container).unwrap(), (1, 0));
+        assert_eq!(
+            scheduler
+                .schedule(&mut container, TEST_SLOT, u64::MAX)
+                .unwrap()
+                .num_scheduled,
+            1
+        );
+        let writer = receivers[0].try_recv().unwrap();
+        assert_eq!(writer.ids, vec![0]);
+        finished
+            .send(FinishedConsumeWork {
+                work: writer,
+                retryable_indexes: vec![],
+            })
+            .unwrap();
+        assert_eq!(scheduler.receive_completed(&mut container).unwrap(), (1, 0));
     }
 
     fn single_transfer_transaction_size() -> u64 {

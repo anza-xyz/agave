@@ -787,6 +787,7 @@ pub(crate) mod external {
                 bank,
                 transaction_account_lock_limit,
                 sanitize_config,
+                !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
             )
             .map(|(view, deactivation_slot)| {
                 (
