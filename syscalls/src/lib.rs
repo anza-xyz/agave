@@ -6344,7 +6344,6 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -6406,7 +6405,6 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
