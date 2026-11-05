@@ -18,13 +18,9 @@ use {
     quinn::{Connection, VarInt},
     solana_net_utils::{banlist::Banlist, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
-    solana_time_utils as timing,
     std::{
         future::Future,
-        sync::{
-            Arc, RwLock,
-            atomic::{AtomicU64, Ordering},
-        },
+        sync::{Arc, RwLock, atomic::Ordering},
         time::Duration,
     },
     tokio::{
@@ -185,7 +181,7 @@ impl SimpleQos {
         connection: &Connection,
         mut connection_table_l: MutexGuard<ConnectionTable<TokenBucket>>,
         conn_context: &SimpleQosConnectionContext,
-    ) -> Result<(Arc<AtomicU64>, CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
+    ) -> Result<(CancellationToken, Arc<TokenBucket>), ConnectionHandlerError> {
         let remote_addr = conn_context.remote_address;
 
         // this will never overflow u32 for reasonable MAX_RTT
@@ -204,27 +200,24 @@ impl SimpleQos {
             remote_addr,
         );
         let key = ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey);
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                key,
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                conn_context.peer_type(),
-                conn_context.last_update.clone(),
-                self.config.max_connections_per_peer,
-                || {
-                    Arc::new(TokenBucket::new(
-                        self.config.max_streams_per_second,
-                        self.config.max_streams_per_second,
-                        self.config.max_streams_per_second as f64,
-                    ))
-                },
-            )
-        {
+        if let Some((cancel_connection, stream_counter)) = connection_table_l.try_add_connection(
+            key,
+            remote_addr.port(),
+            client_connection_tracker,
+            Some(connection.clone()),
+            conn_context.peer_type(),
+            self.config.max_connections_per_peer,
+            || {
+                Arc::new(TokenBucket::new(
+                    self.config.max_streams_per_second,
+                    self.config.max_streams_per_second,
+                    self.config.max_streams_per_second as f64,
+                ))
+            },
+        ) {
             update_open_connections_stat(&self.stats, &connection_table_l);
             drop(connection_table_l);
-            Ok((last_update, cancel_connection, stream_counter))
+            Ok((cancel_connection, stream_counter))
         } else {
             self.stats
                 .connection_add_failed
@@ -239,7 +232,6 @@ pub struct SimpleQosConnectionContext {
     peer_type: ConnectionPeerType,
     remote_pubkey: Option<Pubkey>,
     remote_address: std::net::SocketAddr,
-    last_update: Arc<AtomicU64>,
     stream_counter: Option<Arc<TokenBucket>>,
 }
 
@@ -267,7 +259,6 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
             peer_type,
             remote_pubkey,
             remote_address: connection.remote_address(),
-            last_update: Arc::new(AtomicU64::new(timing::timestamp())),
             stream_counter: None,
         }
     }
@@ -331,18 +322,16 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
                     }
 
                     if connection_table_l.total_size < self.config.max_staked_connections
-                        && let Ok((last_update, cancel_connection, stream_counter)) = self
-                            .cache_new_connection(
-                                client_connection_tracker,
-                                connection,
-                                connection_table_l,
-                                conn_context,
-                            )
+                        && let Ok((cancel_connection, stream_counter)) = self.cache_new_connection(
+                            client_connection_tracker,
+                            connection,
+                            connection_table_l,
+                            conn_context,
+                        )
                     {
                         self.stats
                             .connection_added_from_staked_peer
                             .fetch_add(1, Ordering::Relaxed);
-                        conn_context.last_update = last_update;
                         conn_context.stream_counter = Some(stream_counter);
                         return Some(cancel_connection);
                     }
@@ -380,11 +369,7 @@ impl QosController<SimpleQosConnectionContext> for SimpleQos {
         }
     }
 
-    fn on_stream_finished(&self, context: &SimpleQosConnectionContext) {
-        context
-            .last_update
-            .store(timing::timestamp(), Ordering::Relaxed);
-    }
+    fn on_stream_finished(&self, _context: &SimpleQosConnectionContext) {}
 
     #[allow(clippy::manual_async_fn)]
     fn on_new_stream(
@@ -446,10 +431,7 @@ mod tests {
         solana_net_utils::sockets::bind_to_localhost_unique,
         std::{
             collections::HashMap,
-            sync::{
-                Arc, RwLock,
-                atomic::{AtomicU64, Ordering},
-            },
+            sync::{Arc, RwLock, atomic::Ordering},
         },
         tokio_util::sync::CancellationToken,
     };
@@ -554,7 +536,6 @@ mod tests {
             peer_type: ConnectionPeerType::Staked(1000),
             remote_pubkey: Some(Pubkey::new_unique()),
             remote_address: remote_addr,
-            last_update: Arc::new(AtomicU64::new(0)),
             stream_counter: None,
         };
 
@@ -568,7 +549,7 @@ mod tests {
 
         // Verify success
         assert!(result.is_ok());
-        let (_last_update, cancel_token, _stream_counter) = result.unwrap();
+        let (cancel_token, _stream_counter) = result.unwrap();
         assert!(!cancel_token.is_cancelled());
     }
 
@@ -609,7 +590,6 @@ mod tests {
             client_tracker1,
             Some(connection1),
             ConnectionPeerType::Staked(1000),
-            Arc::new(AtomicU64::new(0)),
             1, // max_connections_per_peer
             || Arc::new(TokenBucket::new(1, 1, 1.0)),
         );
@@ -628,7 +608,6 @@ mod tests {
             peer_type: ConnectionPeerType::Staked(1000),
             remote_pubkey: None,
             remote_address: remote_addr,
-            last_update: Arc::new(AtomicU64::new(0)),
             stream_counter: None,
         };
 
@@ -678,7 +657,6 @@ mod tests {
             peer_type: ConnectionPeerType::Staked(1000),
             remote_pubkey: Some(Pubkey::new_unique()),
             remote_address: remote_addr,
-            last_update: Arc::new(AtomicU64::new(0)),
             stream_counter: None,
         };
 
@@ -726,7 +704,6 @@ mod tests {
         assert!(matches!(context.peer_type(), ConnectionPeerType::Unstaked));
         assert_eq!(context.remote_pubkey(), None);
         assert_eq!(context.remote_address, server_connection.remote_address());
-        assert!(context.last_update.load(Ordering::Relaxed) > 0); // Should have timestamp
         assert!(context.stream_counter.is_none()); // Should be None initially
     }
 
@@ -766,7 +743,6 @@ mod tests {
         }
         assert_eq!(context.remote_pubkey(), Some(client_keypair.pubkey()));
         assert_eq!(context.remote_address, server_connection.remote_address());
-        assert!(context.last_update.load(Ordering::Relaxed) > 0); // Should have timestamp
         assert!(context.stream_counter.is_none()); // Should be None initially
     }
 
@@ -1078,7 +1054,6 @@ mod tests {
         let mut conn_context = simple_qos.build_connection_context(&server_connection);
 
         // Record initial context state
-        let initial_last_update = conn_context.last_update.load(Ordering::Relaxed);
         assert!(conn_context.stream_counter.is_none());
 
         // Test - try to add connection
@@ -1091,10 +1066,6 @@ mod tests {
 
         // Verify context was properly updated
         assert!(conn_context.stream_counter.is_some());
-
-        // Verify last_update was updated (should be same or newer)
-        let updated_last_update = conn_context.last_update.load(Ordering::Relaxed);
-        assert!(updated_last_update >= initial_last_update);
     }
 
     #[tokio::test]
