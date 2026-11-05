@@ -104,7 +104,12 @@ impl PohController {
         message: PohServiceMessage,
     ) -> Result<(), SendError<PohServiceMessage>> {
         self.pending_message.fetch_add(1, Ordering::AcqRel);
-        self.sender.send(message)?;
+        if let Err(err) = self.sender.send(message) {
+            // The receiver is gone, the message will never be processed. Roll the
+            // pending count back so waiters on has_pending_message() are not wedged.
+            self.pending_message.fetch_sub(1, Ordering::AcqRel);
+            return Err(err);
+        }
 
         Ok(())
     }
@@ -138,6 +143,13 @@ pub(crate) struct PohServiceMessageGuard<'a> {
 impl PohServiceMessageGuard<'_> {
     pub(crate) fn take(&mut self) -> PohServiceMessage {
         self.message.take().unwrap()
+    }
+
+    /// Discard the message without processing it because the service is
+    /// shutting down. Marking the message as taken releases the pending count
+    /// through Drop, so waiters on has_pending_message() are not wedged.
+    pub(crate) fn shutdown_discard(mut self) {
+        self.message = None;
     }
 }
 
