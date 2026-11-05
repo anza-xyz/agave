@@ -42,7 +42,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
     solana_runtime::{
-        bank::{Bank, NewBankOptions},
+        bank::Bank,
         bank_forks::{BankForks, SharableBanks},
         bank_forks_controller::{BankForksController, BankForksControllerError},
         block_component_processor::BlockComponentProcessor,
@@ -1434,7 +1434,6 @@ fn create_and_insert_leader_bank(
         leader,
         ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
-        NewBankOptions::default(),
     )
     .mark_leader_bank();
 

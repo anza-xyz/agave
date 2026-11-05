@@ -2,17 +2,14 @@
 
 use {
     super::{
-        ProcessActiveBanksContext, ReplayStage, ReplayStageError, TowerBFTStructures,
+        ProcessActiveBanksContext, ReplayStage, ReplayStageError,
         dead_slots::{
             DeadSlotLogLevel, DeadSlotNotifications, mark_hard_dead_slot,
-            mark_hard_dead_slot_notifications, send_invalid_bank,
+            mark_hard_dead_slot_notifications,
         },
     },
-    crate::{
-        consensus::progress_map::{DeadSlotReason, ProgressMap},
-        repair::cluster_slot_state_verifier::{DuplicateSlotsToRepair, PurgeRepairSlotCounter},
-    },
-    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
+    crate::consensus::progress_map::{DeadSlotReason, ProgressMap},
+    agave_votor_messages::consensus_message::BlockId,
     solana_clock::Slot,
     solana_entry::block_component::VersionedUpdateParent,
     solana_ledger::{
@@ -30,7 +27,6 @@ use {
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
         },
-        vote_sender_types::ReplayVoteSender,
     },
     std::sync::{Arc, RwLock},
 };
@@ -63,12 +59,7 @@ pub(super) fn child_bank_replay_start(
     parent_bank: &Bank,
     parent_slot: Slot,
     child_slot: Slot,
-    migration_status: &MigrationStatus,
 ) -> ChildBankReplayStart {
-    if !migration_status.should_allow_block_markers(child_slot) {
-        return ChildBankReplayStart::FromStart;
-    }
-
     let Some(slot_meta) = blockstore
         .meta(child_slot)
         .expect("Blockstore should not fail")
@@ -126,15 +117,10 @@ fn try_restart_slot_from_update_parent(
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     slot: Slot,
-    replay_vote_sender: &ReplayVoteSender,
-    migration_status: &MigrationStatus,
     source: TransactionHistoryPurgeSource,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
 ) -> Result<bool, ReplayStageError> {
-    if !migration_status.should_allow_block_markers(slot) {
-        return Ok(false);
-    }
     if blockstore.is_dead(slot) {
         return Ok(false);
     }
@@ -196,10 +182,7 @@ fn try_restart_slot_from_update_parent(
          {} (was at {current_num_shreds} shreds)",
         source.as_str(),
     );
-    let cleared_bank_id = bank.map(|bank| {
-        send_invalid_bank(&bank, replay_vote_sender);
-        bank.bank_id()
-    });
+    let cleared_bank_id = bank.map(|bank| bank.bank_id());
     ReplayStage::clear_slots(
         [slot],
         bank_forks,
@@ -243,8 +226,6 @@ pub(super) fn process_soft_dead_slots(
     slot_status_notifier: &Option<solana_rpc::slot_status_notifier::SlotStatusNotifier>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    replay_vote_sender: &ReplayVoteSender,
-    migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
 ) -> Result<(), ReplayStageError> {
@@ -284,8 +265,6 @@ pub(super) fn process_soft_dead_slots(
                 progress,
                 async_verification_freelist,
                 slot,
-                replay_vote_sender,
-                migration_status,
                 TransactionHistoryPurgeSource::SoftDeadSlot,
                 entry_notification_sender,
                 transaction_status_sender,
@@ -315,7 +294,6 @@ pub(super) fn process_soft_dead_slots(
                     blockstore: blockstore.clone(),
                     rpc_subscriptions: rpc_subscriptions.clone(),
                     slot_status_notifier: slot_status_notifier.clone(),
-                    replay_vote_sender: replay_vote_sender.clone(),
                 };
                 mark_hard_dead_slot_notifications(&bank, err, log_level, progress, &notifications);
             }
@@ -335,8 +313,6 @@ pub(super) fn handle_update_parent_interrupts(
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
     update_parent_receiver: &UpdateParentReceiver,
-    replay_vote_sender: &ReplayVoteSender,
-    migration_status: &MigrationStatus,
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
 ) -> Result<(), ReplayStageError> {
@@ -348,8 +324,6 @@ pub(super) fn handle_update_parent_interrupts(
             progress,
             async_verification_freelist,
             signal.slot,
-            replay_vote_sender,
-            migration_status,
             TransactionHistoryPurgeSource::UpdateParentSignal,
             entry_notification_sender,
             transaction_status_sender,
@@ -369,9 +343,6 @@ pub(super) fn handle_abandoned_bank(
     bank_forks: &RwLock<BankForks>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
-    duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
-    purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
-    tbft_structs: Option<&mut TowerBFTStructures>,
 ) -> Result<(), ReplayStageError> {
     bank.clear_accounts_lt_hash_async_progress_is_at_end();
     // Handle UpdateParent marker during fast leader handover. The leader
@@ -414,22 +385,16 @@ pub(super) fn handle_abandoned_bank(
                 .is_some()
             });
     if !update_parent_ready {
-        let mut dead_slot_context = process_active_banks_context.dead_slot_context(
-            duplicate_slots_to_repair,
-            purge_repair_slot_counter,
-            tbft_structs,
-        );
+        let dead_slot_context = process_active_banks_context.dead_slot_context();
         mark_hard_dead_slot(
             bank,
             "error: replay abandoned bank for an unusable UpdateParent".to_string(),
             DeadSlotLogLevel::Error,
             progress,
-            &mut dead_slot_context,
+            &dead_slot_context,
         );
         return Ok(());
     }
-
-    send_invalid_bank(bank, &process_active_banks_context.replay_vote_sender);
 
     // Clear the bank from bank_forks. It will be recreated with the correct
     // parent by generate_new_bank_forks on the next iteration.
