@@ -1182,9 +1182,8 @@ impl ProgramTest {
             .await
             .unwrap_or_else(|err| panic!("Failed to start banks client: {err}"));
 
-        // Run a simulated PohService to provide the client with new blockhashes.  New blockhashes
-        // are required when sending multiple otherwise identical transactions in series from a
-        // test
+        // Periodically provide the client with new blockhashes. New blockhashes are required when
+        // sending multiple otherwise identical transactions in series from a test.
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(target_slot_duration).await;
@@ -1291,9 +1290,8 @@ impl ProgramTestContext {
         last_blockhash: Hash,
         genesis_config_info: GenesisConfigInfo,
     ) -> Self {
-        // Run a simulated PohService to provide the client with new blockhashes.  New blockhashes
-        // are required when sending multiple otherwise identical transactions in series from a
-        // test
+        // Periodically provide the client with new blockhashes. New blockhashes are required when
+        // sending multiple otherwise identical transactions in series from a test.
         let running_bank_forks = bank_forks.clone();
         let target_tick_duration = genesis_config_info
             .genesis_config

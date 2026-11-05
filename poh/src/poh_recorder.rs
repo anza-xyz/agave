@@ -13,13 +13,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    crate::{
-        poh_controller::PohController, poh_service::PohService, record_channels::record_channels,
-        transaction_recorder::TransactionRecorder,
-    },
-    agave_votor_messages::{
-        migration::MigrationStatus, reward_certificate::BuildRewardCertsRespError,
-    },
+    agave_votor_messages::reward_certificate::BuildRewardCertsRespError,
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, SendError, Sender, TrySendError, bounded},
     log::*,
@@ -47,7 +41,7 @@ use {
     std::{
         cmp,
         sync::{
-            Arc, Mutex, RwLock,
+            Arc, Mutex,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::{Duration, Instant},
@@ -227,7 +221,6 @@ pub struct PohRecorder {
     // it never keeps a bank alive after `BankForks` prunes it.
     start_slot: Slot,
     start_bank_id: BankId,
-    start_bank_ns_per_slot: u128,
     start_bank_leader_id: Pubkey,
     start_bank_active_descendants: Vec<Slot>,
     start_tick_height: u64, // first tick_height this recorder will observe
@@ -318,7 +311,6 @@ impl PohRecorder {
                 clear_bank_signal,
                 start_slot: start_bank.slot(),
                 start_bank_id: start_bank.bank_id(),
-                start_bank_ns_per_slot: start_bank.ns_per_slot,
                 start_bank_leader_id: *start_bank.leader_id(),
                 start_bank_active_descendants: vec![],
                 start_tick_height: tick_height + 1,
@@ -620,7 +612,6 @@ impl PohRecorder {
     fn set_start_bank(&mut self, bank: &Bank) {
         self.start_slot = bank.slot();
         self.start_bank_id = bank.bank_id();
-        self.start_bank_ns_per_slot = bank.ns_per_slot;
         self.start_bank_leader_id = *bank.leader_id();
     }
 
@@ -833,19 +824,6 @@ impl PohRecorder {
 
     pub fn ticks_per_slot(&self) -> u64 {
         self.ticks_per_slot
-    }
-
-    // Derives the target tick duration in nanoseconds based on the Bank's
-    // `ns_per_slot` and `ticks_per_slot`
-    pub fn target_tick_ns(&self) -> u64 {
-        let ns_per_slot = self
-            .working_bank
-            .as_ref()
-            .map(|working_bank| working_bank.bank.ns_per_slot)
-            .unwrap_or(self.start_bank_ns_per_slot);
-        let ticks_per_slot = u128::from(self.ticks_per_slot.max(1));
-        let target_tick_ns = ns_per_slot.saturating_div(ticks_per_slot);
-        u64::try_from(target_tick_ns).unwrap_or(u64::MAX)
     }
 
     pub fn start_slot(&self) -> Slot {
@@ -1124,89 +1102,6 @@ impl PohRecorder {
             poh.reset(current_hash, hashes_per_tick);
         }
     }
-}
-
-#[allow(clippy::type_complexity)]
-fn do_create_test_recorder(
-    bank: Arc<Bank>,
-    blockstore: Arc<Blockstore>,
-    poh_config: Option<PohConfig>,
-    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
-    track_transaction_indexes: bool,
-) -> (
-    Arc<AtomicBool>,
-    Arc<RwLock<PohRecorder>>,
-    PohController,
-    TransactionRecorder,
-    PohService,
-    Receiver<WorkingBankMessage>,
-) {
-    let leader_schedule_cache = match leader_schedule_cache {
-        Some(provided_cache) => provided_cache,
-        None => Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-    };
-    let exit = Arc::new(AtomicBool::new(false));
-    let poh_config = poh_config.unwrap_or_default();
-    let (poh_recorder, entry_receiver) = PohRecorder::new(
-        bank.tick_height(),
-        bank.last_blockhash(),
-        bank.clone(),
-        Some((4, 4)),
-        bank.ticks_per_slot(),
-        blockstore,
-        &leader_schedule_cache,
-        &poh_config,
-        exit.clone(),
-    );
-    let ticks_per_slot = bank.ticks_per_slot();
-
-    let (record_sender, record_receiver) = record_channels(track_transaction_indexes);
-    let transaction_recorder = TransactionRecorder::new(record_sender);
-    let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-    let (mut poh_controller, poh_service_message_receiver) = PohController::new();
-    let (record_receiver_sender, _record_receiver_receiver) = bounded(1);
-    let poh_service = PohService::new(
-        poh_recorder.clone(),
-        &poh_config,
-        exit.clone(),
-        ticks_per_slot,
-        crate::poh_service::DEFAULT_PINNED_CPU_CORE,
-        crate::poh_service::DEFAULT_HASHES_PER_BATCH,
-        record_receiver,
-        poh_service_message_receiver,
-        Arc::new(MigrationStatus::default()),
-        record_receiver_sender,
-    );
-
-    poh_controller
-        .set_bank_sync(BankWithScheduler::new_without_scheduler(bank))
-        .unwrap();
-
-    (
-        exit,
-        poh_recorder,
-        poh_controller,
-        transaction_recorder,
-        poh_service,
-        entry_receiver,
-    )
-}
-
-#[allow(clippy::type_complexity)]
-pub fn create_test_recorder(
-    bank: Arc<Bank>,
-    blockstore: Arc<Blockstore>,
-    poh_config: Option<PohConfig>,
-    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
-) -> (
-    Arc<AtomicBool>,
-    Arc<RwLock<PohRecorder>>,
-    PohController,
-    TransactionRecorder,
-    PohService,
-    Receiver<WorkingBankMessage>,
-) {
-    do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
 }
 
 /// A shareable leader status that can be used to
