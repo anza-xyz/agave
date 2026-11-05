@@ -416,7 +416,7 @@ solana-core = { path = "core", version = "=5.0.0-alpha.0", features = ["agave-un
 solana-cost-model = { path = "cost-model", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cpi = "3.1.0"
 solana-curve25519 = "4.0.1"
-solana-define-syscall = "5.3.0"
+solana-define-syscall = "5.4.0"
 solana-derivation-path = "3.0.0"
 solana-download-utils = { path = "download-utils", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ed25519 = "0.2.4"
