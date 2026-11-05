@@ -203,7 +203,7 @@ pub(crate) mod external {
         arrayvec::ArrayVec,
         solana_accounts_db::account_locks::TransactionAccountLockLimits,
         solana_cost_model::cost_model::CostModel,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, bank_forks::SharableBanks},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         std::num::NonZeroUsize,
     };
@@ -222,6 +222,7 @@ pub(crate) mod external {
         allocator: rts_alloc::Allocator,
 
         shared_leader_state: SharedLeaderState,
+        sharable_banks: SharableBanks,
         metrics: Arc<ConsumeWorkerMetrics>,
     }
 
@@ -240,12 +241,14 @@ pub(crate) mod external {
             transaction_consumer: Consumer,
             allocator: rts_alloc::Allocator,
             shared_leader_state: SharedLeaderState,
+            sharable_banks: SharableBanks,
         ) -> Self {
             Self {
                 exit,
                 transaction_consumer,
                 allocator,
                 shared_leader_state,
+                sharable_banks,
                 metrics: Arc::new(ConsumeWorkerMetrics::new()),
             }
         }
@@ -389,8 +392,16 @@ pub(crate) mod external {
                     &self.allocator,
                 )
             };
-            let (translation_results, transactions, max_ages) =
-                Self::translate_transaction_batch(&batch, bank);
+            let (translation_results, transactions, max_ages) = Self::translate_transaction_batch(
+                &batch,
+                bank,
+                !self
+                    .sharable_banks
+                    .root()
+                    .feature_set
+                    .snapshot()
+                    .loaderv3_programdata_size_floor,
+            );
 
             // Enforce all or nothing on translation_results.
             let execution_flags = ExecutionFlags {
@@ -568,6 +579,7 @@ pub(crate) mod external {
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
             bank: &Bank,
+            enable_implicit_read_locks: bool,
         ) -> (
             ArrayVec<Result<(), PacketHandlingError>, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
@@ -583,6 +595,7 @@ pub(crate) mod external {
                     transaction_ptr,
                     bank,
                     transaction_account_lock_limits,
+                    enable_implicit_read_locks,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -600,18 +613,23 @@ pub(crate) mod external {
             transaction_ptr: TransactionPtr,
             bank: &Bank,
             transaction_account_lock_limits: TransactionAccountLockLimits,
+            enable_implicit_read_locks: bool,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
-            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limits).map(
-                |(view, deactivation_slot)| {
-                    (
-                        view,
-                        MaxAge {
-                            sanitized_epoch: bank.epoch(),
-                            alt_invalidation_slot: deactivation_slot,
-                        },
-                    )
-                },
+            translate_to_runtime_view(
+                transaction_ptr,
+                bank,
+                transaction_account_lock_limits,
+                enable_implicit_read_locks,
             )
+            .map(|(view, deactivation_slot)| {
+                (
+                    view,
+                    MaxAge {
+                        sanitized_epoch: bank.epoch(),
+                        alt_invalidation_slot: deactivation_slot,
+                    },
+                )
+            })
         }
 
         /// Returns `true` if a message is valid and can be processed.
@@ -766,7 +784,7 @@ pub(crate) mod external {
             mint_keypair: Keypair,
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
-            _bank_forks: Arc<RwLock<BankForks>>,
+            bank_forks: Arc<RwLock<BankForks>>,
             _replay_vote_receiver: ReplayVoteReceiver,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
@@ -956,13 +974,14 @@ pub(crate) mod external {
                 consumer,
                 agave_worker.allocator,
                 shared_leader_state.clone(),
+                bank_forks.read().unwrap().sharable_banks(),
             );
 
             ExternalTestFrame {
                 mint_keypair,
                 genesis_config,
                 bank,
-                _bank_forks: bank_forks,
+                bank_forks,
                 _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 allocator: client_session.allocator,
@@ -1037,6 +1056,7 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limits(),
+                        !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
                     )
                     .ok()
                     .unwrap()
@@ -1143,6 +1163,7 @@ pub(crate) mod external {
                 &simple_tx[..],
                 &bank,
                 bank.get_transaction_account_lock_limits(),
+                !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
             )
             .ok()
             .unwrap()
@@ -1519,6 +1540,7 @@ pub(crate) mod external {
                 ),
                 agave_session.allocator,
                 test_frame.shared_leader_state.clone(),
+                test_frame.bank_forks.read().unwrap().sharable_banks(),
             );
 
             client_session
@@ -1576,6 +1598,7 @@ pub(crate) mod external {
                     ),
                     rts_alloc::Allocator::join_from_existing(&test_frame.allocator).unwrap(),
                     test_frame.shared_leader_state.clone(),
+                    test_frame.bank_forks.read().unwrap().sharable_banks(),
                 )
             };
             let mut first_worker = make_worker();

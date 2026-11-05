@@ -25,7 +25,6 @@ use {
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionResult,
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
@@ -99,7 +98,7 @@ impl TransactionHistoryPurgeSource {
     }
 }
 
-pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
+pub struct TransactionBatchWithIndexes<'a, 'b, Tx: TransactionWithMeta> {
     pub batch: TransactionBatch<'a, 'b, Tx>,
     pub transaction_indexes: Vec<usize>,
 }
@@ -225,7 +224,7 @@ fn get_transaction_costs<Tx: TransactionWithMeta>(
     Ok(tx_costs)
 }
 
-fn get_first_error<T, Tx: SVMTransaction>(
+fn get_first_error<T, Tx: TransactionWithMeta>(
     batch: &TransactionBatch<Tx>,
     commit_results: &[TransactionResult<T>],
 ) -> TransactionResult<()> {
@@ -235,7 +234,7 @@ fn get_first_error<T, Tx: SVMTransaction>(
 }
 
 // Includes transaction signature for unit-testing
-fn do_get_first_error<T, Tx: SVMTransaction>(
+fn do_get_first_error<T, Tx: TransactionWithMeta>(
     batch: &TransactionBatch<Tx>,
     results: &[TransactionResult<T>],
 ) -> Option<(TransactionResult<()>, Signature)> {
