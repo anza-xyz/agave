@@ -647,13 +647,19 @@ fn produce_intra_window_slot(
 /// the footer doesn't wait for the reply, so requesting afterwards can leave the rewards service
 /// no time to answer.
 fn request_reward_certs(
-    ctx: &mut LeaderContext,
+    ctx: &LeaderContext,
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
-) -> Result<Option<RewardRequestToken>, StartLeaderError> {
-    ctx.reward_certs_requestor
+) -> Result<RewardRequestToken, StartLeaderError> {
+    match ctx
+        .reward_certs_requestor
         .request_reward_certs(slot_metrics, ctx.my_pubkey, slot)
-        .map_err(|()| StartLeaderError::PohRecorder(PohRecorderError::ChannelDisconnected))
+    {
+        Ok(r) => Ok(r),
+        Err(()) => Err(StartLeaderError::PohRecorder(
+            PohRecorderError::ChannelDisconnected,
+        )),
+    }
 }
 
 fn produce_slot(
@@ -661,7 +667,7 @@ fn produce_slot(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     optimistic_parent: Option<Block>,
-    reward_cert_request: Option<RewardRequestToken>,
+    reward_cert_request: RewardRequestToken,
     block_timer: &mut Instant,
     working_bank: Arc<Bank>,
 ) -> Result<(), StartLeaderError> {
@@ -750,7 +756,7 @@ fn record_and_complete_block(
     slot_metrics: &mut SlotMetrics,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
-    reward_cert_request: Option<RewardRequestToken>,
+    reward_cert_request: RewardRequestToken,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
@@ -2093,13 +2099,15 @@ mod tests {
             ))
             .unwrap();
 
+        let mut slot_metrics = SlotMetrics::new(1, true);
+        let reward_cert_request = request_reward_certs(&ctx, &mut slot_metrics, 1).unwrap();
         let start = Instant::now();
         let result = record_and_complete_block(
             &mut ctx,
-            &mut SlotMetrics::new(1, true),
+            &mut slot_metrics,
             1,
             None,
-            None,
+            reward_cert_request,
             &mut Instant::now(),
             Duration::ZERO,
         );
