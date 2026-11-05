@@ -196,6 +196,17 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=1.1.31
   # Agave Ok:  optional rocksdb zlib dep; cc < 1.6.0 so no env logging.
   --ignore RUSTSEC-2026-0418
+
+  # Crate:     pulldown-cmark
+  # Version:   0.13.1
+  # Title:     Quadratic parsing of nested image wikilinks with `ENABLE_WIKILINKS`
+  # Date:      2026-10-28
+  # ID:        RUSTSEC-2026-0433
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0433
+  # Solution:  Upgrade to >=0.13.6
+  # Agave Ok:  build-time only, via prost-build, which parses doc comments from Agave's
+  # checked-in .proto files. Never used on untrusted input.
+  --ignore RUSTSEC-2026-0433
 )
 
 xtask_cargo_audit_extra_args=(
