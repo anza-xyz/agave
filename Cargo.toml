@@ -114,7 +114,6 @@ members = [
     "transaction-status",
     "transaction-status-client-types",
     "turbine",
-    "udp-client",
     "unified-scheduler-logic",
     "unified-scheduler-pool",
     "validator",

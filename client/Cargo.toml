@@ -47,7 +47,6 @@ solana-tpu-client = { workspace = true, features = ["default"] }
 solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
-solana-udp-client = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 wincode = { workspace = true }
 

@@ -13,7 +13,6 @@ use {
     solana_streamer::streamer::StakedNodes,
     solana_tls_utils::NotifyKeyUpdate,
     solana_transaction_error::TransportResult,
-    solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
@@ -21,33 +20,31 @@ use {
 };
 
 const DEFAULT_CONNECTION_POOL_SIZE: usize = 4;
-const DEFAULT_CONNECTION_CACHE_USE_QUIC: bool = true;
 
 /// A thin wrapper over connection-cache/ConnectionCache to ease
 /// construction of the ConnectionCache for code dealing both with udp and quic.
 /// For the scenario only using udp or quic, use connection-cache/ConnectionCache directly.
 pub enum ConnectionCache {
     Quic(Arc<BackendConnectionCache<QuicPool, QuicConnectionManager, QuicConfig>>),
-    Udp(Arc<BackendConnectionCache<UdpPool, UdpConnectionManager, UdpConfig>>),
+    Udp,
 }
 
 type QuicBaseClientConnection = <QuicPool as ConnectionPool>::BaseClientConnection;
-type UdpBaseClientConnection = <UdpPool as ConnectionPool>::BaseClientConnection;
 
 pub enum BlockingClientConnection {
     Quic(Arc<<QuicBaseClientConnection as BaseClientConnection>::BlockingClientConnection>),
-    Udp(Arc<<UdpBaseClientConnection as BaseClientConnection>::BlockingClientConnection>),
+    Udp,
 }
 
 pub enum NonblockingClientConnection {
     Quic(Arc<<QuicBaseClientConnection as BaseClientConnection>::NonblockingClientConnection>),
-    Udp(Arc<<UdpBaseClientConnection as BaseClientConnection>::NonblockingClientConnection>),
+    Udp,
 }
 
 impl NotifyKeyUpdate for ConnectionCache {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::Udp(_) => Ok(()),
+            Self::Udp => unreachable!(),
             Self::Quic(backend) => backend.update_key(key),
         }
     }
@@ -55,34 +52,19 @@ impl NotifyKeyUpdate for ConnectionCache {
 
 impl ConnectionCache {
     pub fn new(name: &'static str) -> Self {
-        if DEFAULT_CONNECTION_CACHE_USE_QUIC {
-            let cert_info = (&Keypair::new(), IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
-            ConnectionCache::new_with_client_options(
-                name,
-                DEFAULT_CONNECTION_POOL_SIZE,
-                None, // client_endpoint
-                Some(cert_info),
-                None, // stake_info
-            )
-        } else {
-            ConnectionCache::with_udp(name, DEFAULT_CONNECTION_POOL_SIZE)
-        }
+        let cert_info = (&Keypair::new(), IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        ConnectionCache::new_with_client_options(
+            name,
+            DEFAULT_CONNECTION_POOL_SIZE,
+            None, // client_endpoint
+            Some(cert_info),
+            None, // stake_info
+        )
     }
 
     /// Create a quic connection_cache
     pub fn new_quic(name: &'static str, connection_pool_size: usize) -> Self {
         Self::new_with_client_options(name, connection_pool_size, None, None, None)
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_quic_for_tests(name: &'static str, connection_pool_size: usize) -> Self {
-        Self::new_with_client_options(
-            name,
-            connection_pool_size,
-            Some(solana_net_utils::sockets::bind_to_localhost_unique().unwrap()),
-            None,
-            None,
-        )
     }
 
     /// Create a quic connection_cache with more client options
@@ -139,17 +121,8 @@ impl ConnectionCache {
     pub fn protocol(&self) -> Protocol {
         match self {
             Self::Quic(_) => Protocol::QUIC,
-            Self::Udp(_) => Protocol::UDP,
+            Self::Udp => Protocol::UDP,
         }
-    }
-
-    pub fn with_udp(name: &'static str, connection_pool_size: usize) -> Self {
-        // The minimum pool size is 1.
-        let connection_pool_size = 1.max(connection_pool_size);
-        let connection_manager = UdpConnectionManager::default();
-        let cache =
-            BackendConnectionCache::new(name, connection_manager, connection_pool_size).unwrap();
-        Self::Udp(Arc::new(cache))
     }
 
     pub fn use_quic(&self) -> bool {
@@ -159,19 +132,7 @@ impl ConnectionCache {
     pub fn get_connection(&self, addr: &SocketAddr) -> BlockingClientConnection {
         match self {
             Self::Quic(cache) => BlockingClientConnection::Quic(cache.get_connection(addr)),
-            Self::Udp(cache) => BlockingClientConnection::Udp(cache.get_connection(addr)),
-        }
-    }
-
-    #[deprecated(since = "4.3.0", note = "ConnectionCache is deprecated")]
-    pub fn get_nonblocking_connection(&self, addr: &SocketAddr) -> NonblockingClientConnection {
-        match self {
-            Self::Quic(cache) => {
-                NonblockingClientConnection::Quic(cache.get_nonblocking_connection(addr))
-            }
-            Self::Udp(cache) => {
-                NonblockingClientConnection::Udp(cache.get_nonblocking_connection(addr))
-            }
+            Self::Udp => unreachable!(),
         }
     }
 }
@@ -183,7 +144,7 @@ macro_rules! dispatch {
         $vis fn $name$(<$($t: $cons + ?Sized),*>)?(&self $(, $arg:$ty)*) $(-> $out)? {
             match self {
                 Self::Quic(this) => this.$name($($arg, )*),
-                Self::Udp(this) => this.$name($($arg, )*),
+                Self::Udp => unreachable!(),
             }
         }
     };
@@ -206,14 +167,14 @@ impl solana_connection_cache::nonblocking::client_connection::ClientConnection
     async fn send_data(&self, buffer: &[u8]) -> TransportResult<()> {
         match self {
             Self::Quic(cache) => Ok(cache.send_data(buffer).await?),
-            Self::Udp(cache) => Ok(cache.send_data(buffer).await?),
+            Self::Udp => unreachable!(),
         }
     }
 
     async fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
         match self {
             Self::Quic(cache) => Ok(cache.send_data_batch(buffers).await?),
-            Self::Udp(cache) => Ok(cache.send_data_batch(buffers).await?),
+            Self::Udp => unreachable!(),
         }
     }
 }

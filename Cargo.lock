@@ -7780,7 +7780,6 @@ dependencies = [
  "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
- "solana-udp-client",
  "tokio",
  "wincode",
 ]
@@ -11535,19 +11534,6 @@ dependencies = [
  "test-case",
  "thiserror 2.0.21",
  "wincode",
-]
-
-[[package]]
-name = "solana-udp-client"
-version = "5.0.0-alpha.0"
-dependencies = [
- "async-trait",
- "solana-connection-cache",
- "solana-keypair",
- "solana-net-utils",
- "solana-packet",
- "solana-streamer",
- "solana-transaction-error",
 ]
 
 [[package]]
