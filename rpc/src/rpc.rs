@@ -4929,7 +4929,7 @@ pub mod tests {
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{Account, state_traits::StateMutWincode as _},
+        solana_account::{Account, WritableAccount, state_traits::StateMutWincode as _},
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4982,7 +4982,7 @@ pub mod tests {
         solana_send_transaction_service::test_utils::create_client_for_tests,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
-        solana_slot_hashes::SlotHashes,
+        solana_slot_hashes::{SlotHash, SlotHashes},
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
         solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
@@ -4996,10 +4996,10 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
         },
-        solana_vote_interface::state::VoteStateV4,
-        solana_vote_program::{
-            vote_instruction,
-            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteInit, VoteStateVersions},
+        solana_vote_interface::state::{Vote, VoteStateV4},
+        solana_vote_program::vote_state::{
+            self, MAX_LOCKOUT_HISTORY, VoteInit, VoteStateVersions,
+            handler::{VoteStateHandler, VoteStateVersionsInline},
         },
         spl_token_2022_interface::{
             extension::{
@@ -9227,33 +9227,31 @@ pub mod tests {
         }
 
         let mut advance_bank = || {
+            let vote_slot = bank.slot();
             bank.freeze();
-
-            // Votes
-            let instructions = [
-                vote_instruction::tower_sync(
-                    &leader_vote_keypair.pubkey(),
-                    &leader_vote_keypair.pubkey(),
-                    TowerSync::new_from_slot(bank.slot(), bank.hash()),
-                ),
-                vote_instruction::tower_sync(
-                    &alice_vote_keypair.pubkey(),
-                    &alice_vote_keypair.pubkey(),
-                    TowerSync::new_from_slot(bank.slot(), bank.hash()),
-                ),
-            ];
-
             bank = rpc.advance_bank_to_confirmed_slot(bank.slot() + 1);
-
-            let transaction = Transaction::new_signed_with_payer(
-                &instructions,
-                Some(&rpc.mint_keypair.pubkey()),
-                &[&rpc.mint_keypair, leader_vote_keypair, &alice_vote_keypair],
-                bank.last_blockhash(),
-            );
-
-            bank.process_transaction(&transaction)
-                .expect("process transaction");
+            for vote_pubkey in [leader_vote_keypair.pubkey(), alice_vote_keypair.pubkey()] {
+                let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
+                let vote_state = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey)
+                    .expect("deserialize vote state");
+                let mut vote_state = VoteStateHandler::try_new_from_vote_state_versions(
+                    VoteStateVersionsInline::V4(vote_state),
+                )
+                .expect("create vote state handler");
+                let vote = Vote::new(vec![vote_slot], Hash::default());
+                vote_state::process_vote(
+                    &mut vote_state,
+                    &vote,
+                    &[SlotHash::new(vote_slot, vote.hash)],
+                    bank.epoch(),
+                    bank.slot(),
+                )
+                .expect("record vote");
+                vote_state
+                    .serialize_into(vote_account.data_as_mut_slice())
+                    .expect("serialize vote state");
+                bank.store_account(&vote_pubkey, &vote_account);
+            }
         };
 
         // Advance bank to the next epoch

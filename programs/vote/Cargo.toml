@@ -52,7 +52,6 @@ solana-vote-interface = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-feature-set = { path = "../../feature-set", features = ["agave-unstable-api"] }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
 criterion = { workspace = true }
@@ -79,10 +78,6 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "vote_instructions"
-harness = false
-
-[[bench]]
-name = "process_vote"
 harness = false
 
 [lints]
