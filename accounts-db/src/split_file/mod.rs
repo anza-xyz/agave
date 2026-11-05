@@ -7,21 +7,25 @@ mod utils;
 
 use {
     self::{
-        common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData},
+        common::{DataLen, DataRef, ExternalDataOffset, FileOffset},
         data::{
             calculate_data_entry_stored_size, create_data_file, parse_data_entry, read_data_entry,
             read_data_header, validate_data_entry_offset, write_data_entry,
         },
         meta::{
             META_ENTRY_FIXED_SIZE, META_ENTRY_OFFSET_ALIGNMENT, META_HEADER_SIZE, MetaEntryRef,
-            calculate_meta_entry_stored_size, create_meta_file, parse_meta_entry_data_ref,
-            parse_meta_entry_fixed, read_meta_entry, read_meta_header,
-            should_store_account_data_in_meta_file, write_meta_entry,
+            calculate_meta_entry_stored_size, create_meta_file, parse_meta_entry,
+            parse_meta_entry_data_ref, parse_meta_entry_fixed, read_meta_entry,
+            read_meta_entry_bytes, read_meta_header, should_store_account_data_in_meta_file,
+            write_meta_entry,
         },
         utils::{file_offset_from_logical, logical_offset_from_file},
     },
     crate::{
-        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        account_storage::{
+            meta_entry_read::{AccountDataRead, AccountFromMetaEntry, MetaEntryBuffer},
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        },
         append_vec::AppendVec,
         storable_accounts::StorableAccounts,
     },
@@ -31,7 +35,7 @@ use {
             BufferedReader, FileBufRead as _, RequiredLenBufFileRead, RequiredLenBufRead as _,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     std::{
         convert::TryFrom,
@@ -40,7 +44,7 @@ use {
         ops::ControlFlow,
         path::{Path, PathBuf},
         sync::{
-            Arc, Mutex, MutexGuard, OnceLock,
+            Mutex, MutexGuard, OnceLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -394,19 +398,28 @@ impl SplitFile {
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Result<Ret, SplitFileError> {
-        self._get_account_with_data(
-            offset,
-            |_, _, _| true,
-            |meta_entry, loaded_data| {
-                let data = match &loaded_data {
-                    LoadedData::NoData => &[],
-                    LoadedData::Inline(data) => *data,
-                    LoadedData::External(data) => data.as_slice(),
+        let file_offset = file_offset_from_logical(offset);
+        read_meta_entry(
+            self.meta_file(),
+            self.meta_len(),
+            file_offset,
+            |meta_entry, data_ref| {
+                let external_data;
+                let data = match data_ref {
+                    DataRef::NoData => &[],
+                    DataRef::Inline(data) => data,
+                    DataRef::External(external_data_offset) => {
+                        external_data = self.read_external_data(
+                            external_data_offset.0,
+                            meta_entry.address,
+                            meta_entry.data_len,
+                        )?;
+                        external_data.as_slice()
+                    }
                 };
-                callback(stored_account_from(meta_entry, data))
+                Ok(callback(stored_account_from(meta_entry, data)))
             },
-        )
-        .map(|account| account.expect("account was not filtered"))
+        )?
     }
 
     /// Read account at `offset` and return it as an AccountSharedData.
@@ -423,72 +436,85 @@ impl SplitFile {
         offset: LogicalOffset,
         load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
     ) -> Result<Option<AccountSharedData>, SplitFileError> {
-        self._get_account_with_data(offset, load_filter, |meta_entry, loaded_data| {
-            let data = match loaded_data {
-                LoadedData::NoData => Vec::new(),
-                LoadedData::Inline(data) => data.to_vec(),
-                LoadedData::External(data) => data,
-            };
-            AccountSharedData::create_from_existing_shared_data(
-                meta_entry.lamports,
-                Arc::new(data),
-                *meta_entry.owner,
-                meta_entry.is_executable,
-                meta_entry.rent_epoch,
-            )
+        let mut buffer = MetaEntryBuffer::new();
+        let from_meta_entry = self.read_account_from_meta_entry(offset, &mut buffer)?;
+        if !from_meta_entry.passes_load_filter(load_filter) {
+            return Ok(None);
+        }
+        Ok(Some(match from_meta_entry {
+            AccountFromMetaEntry::Complete { account, data } => Account {
+                data: data.to_vec(),
+                ..account
+            }
+            .into(),
+            AccountFromMetaEntry::Partial(data_read) => self.read_account_data(data_read)?,
+        }))
+    }
+
+    /// Reads and parses the meta entry of the account at `offset`, into `buffer`
+    fn read_account_from_meta_entry<'a>(
+        &self,
+        offset: LogicalOffset,
+        buffer: &'a mut MetaEntryBuffer,
+    ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
+        let file_offset = file_offset_from_logical(offset);
+        let bytes = read_meta_entry_bytes(self.meta_file(), self.meta_len(), file_offset, buffer)?;
+        self.account_from_meta_entry(bytes)
+    }
+
+    /// Parses the account from `bytes`, as read by `read_meta_entry_bytes()`: the account, or the
+    /// read of its data entry from the data file
+    pub(crate) fn account_from_meta_entry<'a>(
+        &self,
+        bytes: &'a [u8],
+    ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
+        let (meta_entry, data_ref) = parse_meta_entry(bytes)?;
+        let account = Account {
+            lamports: meta_entry.lamports,
+            data: Vec::new(),
+            owner: *meta_entry.owner,
+            executable: meta_entry.is_executable,
+            rent_epoch: meta_entry.rent_epoch,
+        };
+        Ok(match data_ref {
+            DataRef::NoData => AccountFromMetaEntry::Complete { account, data: &[] },
+            DataRef::Inline(data) => AccountFromMetaEntry::Complete { account, data },
+            DataRef::External(external_data_offset) => {
+                AccountFromMetaEntry::Partial(AccountDataRead {
+                    address: *meta_entry.address,
+                    account,
+                    offset: external_data_offset.0.0,
+                    data_len: meta_entry.data_len.0 as usize,
+                })
+            }
         })
     }
 
-    /// Helper fn that reads account at `offset` and then calls `callback` with it.
-    ///
-    /// This fn lets the caller decide how to handle account data (if any).
-    /// e.g. if the caller wants an AccountSharedData with owned data (i.e. Vec),
-    /// or if the caller wants a StoredAccountInfo with borrowed data (i.e. &[u8]).
-    ///
-    /// `load_filter` is a predicate that determines if the account should be loaded in full.
-    /// The parameters are lamports, owner, and data length.
-    ///
-    /// Returns None if `load_filter` returns false.
-    /// Otherwise returns Some with the result of `callback`.
-    fn _get_account_with_data<Ret>(
+    /// Reads the data entry that `data_read` names from the data file, checks it is the account's,
+    /// and returns the account with its data
+    fn read_account_data(
         &self,
-        offset: LogicalOffset,
-        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
-        mut callback: impl for<'local> FnMut(MetaEntryRef<'local>, LoadedData<'local>) -> Ret,
-    ) -> Result<Option<Ret>, SplitFileError> {
-        let file_offset = file_offset_from_logical(offset);
-        read_meta_entry(
-            self.meta_file(),
-            self.meta_len(),
-            file_offset,
-            |meta_entry, data_ref| -> Result<_, SplitFileError> {
-                if !load_filter(
-                    meta_entry.lamports,
-                    meta_entry.owner,
-                    meta_entry.data_len.0 as usize,
-                ) {
-                    return Ok(None);
-                }
-                match data_ref {
-                    DataRef::NoData => Ok(Some(callback(meta_entry, LoadedData::NoData))),
-                    DataRef::Inline(data) => {
-                        Ok(Some(callback(meta_entry, LoadedData::Inline(data))))
-                    }
-                    DataRef::External(external_data_offset) => {
-                        let data_file = self.data_file().ok_or(SplitFileError::MissingDataFile)?;
-                        let data_file_len = self.data_len();
-                        let data = read_data_entry(
-                            data_file,
-                            data_file_len,
-                            external_data_offset.0,
-                            meta_entry.address,
-                            meta_entry.data_len,
-                        )?;
-                        Ok(Some(callback(meta_entry, LoadedData::External(data))))
-                    }
-                }
-            },
-        )?
+        data_read: AccountDataRead,
+    ) -> Result<AccountSharedData, SplitFileError> {
+        let data = self.read_external_data(
+            FileOffset(data_read.offset),
+            &data_read.address,
+            // the data length came from the meta entry's DataLen
+            DataLen(data_read.data_len as u32),
+        )?;
+        Ok(data_read.account_with_data(data))
+    }
+
+    /// Reads the data entry at `offset` from the data file, and checks it is `address`'s
+    fn read_external_data(
+        &self,
+        offset: FileOffset,
+        address: &Pubkey,
+        data_len: DataLen,
+    ) -> Result<Vec<u8>, SplitFileError> {
+        let data_file = self.data_file().ok_or(SplitFileError::MissingDataFile)?;
+        let data = read_data_entry(data_file, self.data_len(), offset, address, data_len)?;
+        Ok(data)
     }
 
     /// Iterate over all accounts and call `callback` with each account.
@@ -953,6 +979,91 @@ mod tests {
         // since split2 is already read-only, reopening again will return None
         let split3 = split2.reopen_as_readonly().unwrap();
         assert!(split3.is_none());
+    }
+
+    /// Reads the meta entry at `logical_offset` as `get_account_shared_data_if` does
+    fn read_meta_entry_at(split: &SplitFile, logical_offset: LogicalOffset) -> Vec<u8> {
+        let offset = file_offset_from_logical(logical_offset);
+        let mut buffer = MetaEntryBuffer::new();
+        read_meta_entry_bytes(split.meta_file(), split.meta_len(), offset, &mut buffer)
+            .unwrap()
+            .to_vec()
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_complete() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let owner = Pubkey::new_unique();
+        // no data, and data inline in the meta entry
+        let accounts = [
+            (Pubkey::new_unique(), AccountSharedData::new(101, 0, &owner)),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new_with_data(
+                    102,
+                    (0..META_ENTRY_INLINE_DATA_MAX_SIZE)
+                        .map(|i| i as u8)
+                        .collect(),
+                    &owner,
+                ),
+            ),
+        ];
+        let (logical_offsets, _) = split.write_accounts(&(0, accounts.as_slice())).unwrap();
+        for ((_, account), logical_offset) in accounts.iter().zip(logical_offsets) {
+            let bytes = read_meta_entry_at(&split, logical_offset);
+            let Ok(AccountFromMetaEntry::Complete {
+                account: read,
+                data,
+            }) = split.account_from_meta_entry(&bytes)
+            else {
+                panic!("expected the meta entry to hold the whole account");
+            };
+            let read = AccountSharedData::from(Account {
+                data: data.to_vec(),
+                ..read
+            });
+            assert_eq!(&read, account);
+        }
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_partial() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
+        let account = AccountSharedData::new_with_data(
+            100,
+            (0..data_len).map(|i| i as u8).collect(),
+            &Pubkey::new_unique(),
+        );
+        let (logical_offsets, _) = split
+            .write_accounts(&(0, &[(Pubkey::new_unique(), account.clone())][..]))
+            .unwrap();
+        let bytes = read_meta_entry_at(&split, logical_offsets[0]);
+        let Ok(AccountFromMetaEntry::Partial(data_read)) = split.account_from_meta_entry(&bytes)
+        else {
+            panic!("expected the account's data to be in the data file");
+        };
+        let read = split.read_account_data(data_read).unwrap();
+        assert_eq!(read, account);
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_truncated_header() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let account = AccountSharedData::new(100, 1, &Pubkey::new_unique());
+        let (logical_offsets, _) = split
+            .write_accounts(&(0, &[(Pubkey::new_unique(), account)][..]))
+            .unwrap();
+        let bytes = read_meta_entry_at(&split, logical_offsets[0]);
+        // the bytes end inside the meta entry's fixed portion
+        assert!(
+            split
+                .account_from_meta_entry(&bytes[..META_ENTRY_FIXED_SIZE - 1])
+                .is_err()
+        );
     }
 
     /// Ensure writing and reading accounts works, with a data file.
