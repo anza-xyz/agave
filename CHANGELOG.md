@@ -106,6 +106,11 @@ Release channels have their own copy of this changelog:
 * `withdraw-from-vote-account --sign-only` now requires
   `--allow-vat-withdrawal`, because the vote account balance and VAT reserve cannot be
   checked offline.
+* **`solana program deploy` no longer generates an ephemeral keypair signer as a
+  default fallback**. Users must explicitly call `--generate-ephemeral-program-id`
+  if this behavior is desired. This affects both `solana program deploy` and `solana
+  program deploy --buffer <BUFFER>`. This prevents users from creating keypairs they
+  can no longer recover unless they opt in.
 
 #### Changes
 
