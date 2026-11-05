@@ -77,13 +77,6 @@ pub(crate) fn new_config(
         }
     };
 
-    // Note: need to still handle --enable-accounts-disk-index until it is removed
-    let cli_index_limit = if matches.is_present("enable_accounts_disk_index") {
-        CliIndexLimit::Threshold(MINIMAL_THRESHOLD_NUM_BYTES)
-    } else {
-        cli_index_limit
-    };
-
     let index_limit = match cli_index_limit {
         CliIndexLimit::Unlimited => IndexLimit::InMemOnly,
         CliIndexLimit::Threshold(num_bytes) => IndexLimit::Threshold(IndexLimitThreshold {
@@ -122,8 +115,6 @@ pub(crate) fn new_config(
         accounts_index_config.drives = Some(accounts_index_paths);
     }
 
-    const MB: usize = 1_024 * 1_024;
-
     let read_cache_limit_bytes = if let Some(limits) =
         values_of::<ByteSize>(matches, "accounts_db_read_cache_limit")
     {
@@ -149,12 +140,6 @@ pub(crate) fn new_config(
 
     let write_cache_limit_bytes =
         value_of::<ByteSize>(matches, "accounts_db_write_cache_limit").map(|limit| limit.0);
-    // --accounts-db-cache-limit-mb was deprecated in v4.2.0
-    let write_cache_limit_mb = value_t!(matches, "accounts_db_cache_limit_mb", u64)
-        .ok()
-        .map(|mb| mb * MB as u64);
-    // clap will enforce only one cli arg is provided, so pick whichever is Some
-    let write_cache_limit_bytes = write_cache_limit_bytes.or(write_cache_limit_mb);
 
     let scan_filter_for_shrinking = matches
         .value_of("accounts_db_scan_filter_for_shrinking")
@@ -413,13 +398,6 @@ mod tests {
                 ..
             })
         ));
-        assert!(matches!(
-            index_limit(&["--enable-accounts-disk-index"]),
-            IndexLimit::Threshold(IndexLimitThreshold {
-                num_bytes: MINIMAL_THRESHOLD_NUM_BYTES,
-                ..
-            })
-        ));
     }
 
     #[test]
@@ -438,10 +416,6 @@ mod tests {
         assert_eq!(
             write_cache_limit_bytes(&["--accounts-db-write-cache-limit", "1KiB"]),
             Some(1024)
-        );
-        assert_eq!(
-            write_cache_limit_bytes(&["--accounts-db-cache-limit-mb", "2"]),
-            Some(2 * 1024 * 1024)
         );
     }
 
