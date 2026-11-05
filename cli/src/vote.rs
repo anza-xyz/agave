@@ -17,7 +17,7 @@ use {
     },
     agave_feature_set::{
         alpenglow, bls_pubkey_management_in_vote_account, custom_commission_collector,
-        delay_commission_updates, vote_account_initialize_v2,
+        vote_account_initialize_v2,
     },
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
@@ -1798,17 +1798,6 @@ pub async fn process_vote_update_commission_bps(
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let authorized_withdrawer = config.signers[withdraw_authority];
-
-    if !sign_only
-        && !get_feature_is_active(rpc_client, &delay_commission_updates::id())
-            .await
-            .unwrap_or(false)
-    {
-        return Err(CliError::BadParameter(
-            "Delayed commission updates (SIMD-0249) are not enabled on this cluster".to_owned(),
-        )
-        .into());
-    }
 
     let recent_blockhash = blockhash_query
         .get_blockhash(rpc_client, config.commitment)

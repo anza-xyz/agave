@@ -659,7 +659,6 @@ impl Bank {
         cached_vote_accounts: &CachedVoteAccounts<'_>,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
-        delay_commission_updates: bool,
         adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
@@ -740,16 +739,12 @@ impl Bank {
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
         // full epoch.
-        let commission_bps = if delay_commission_updates {
-            snapshot_epoch_vote_accounts
-                .and_then(|eva| eva.get(&vote_pubkey))
-                .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
-                .map(|vote_account| vote_account.vote_state_view())
-                .unwrap_or(vote_state)
-                .inflation_rewards_commission()
-        } else {
-            vote_state.inflation_rewards_commission()
-        };
+        let commission_bps = snapshot_epoch_vote_accounts
+            .and_then(|eva| eva.get(&vote_pubkey))
+            .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
+            .map(|vote_account| vote_account.vote_state_view())
+            .unwrap_or(vote_state)
+            .inflation_rewards_commission();
 
         match redeem_rewards(
             stake,
@@ -817,7 +812,6 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
-        let delay_commission_updates = feature_snapshot.delay_commission_updates;
         // Name intentionally doesn't match -- "adjust delegations for rent" is
         // part of relaxing post-exec min balance checks.
         let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
@@ -875,7 +869,6 @@ impl Bank {
                         &cached_vote_accounts,
                         reward_calc_tracer.as_ref(),
                         new_warmup_cooldown_rate_epoch,
-                        delay_commission_updates,
                         adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
@@ -1362,7 +1355,7 @@ mod tests {
             stake_utils,
             stakes::{Stakes, tests::create_staked_node_accounts},
         },
-        agave_feature_set::{FeatureSet, delay_commission_updates},
+        agave_feature_set::FeatureSet,
         agave_votor_messages::{
             consensus_message::BLS_KEYPAIR_DERIVE_SEED, migration::AG_MIGRATION_EPOCH_CREDIT,
         },
@@ -1499,9 +1492,8 @@ mod tests {
                 &stake_history,
                 &cached_vote_accounts,
                 null_tracer(),
-                None,  // new_rate_activation_epoch
-                false, // delay_commission_updates
-                true,  // adjust_delegations_for_rent (SIMD-0392)
+                None, // new_rate_activation_epoch
+                true, // adjust_delegations_for_rent (SIMD-0392)
                 &AlpenglowEpochType::Tower,
                 false, // custom_commission_collector
             );
@@ -2151,22 +2143,14 @@ mod tests {
         bank
     }
 
-    #[test_case(true, true; "alpenglow_delay_commission_updates")]
-    #[test_case(false, true; "alpenglow_instant_commission_updates")]
-    #[test_case(true, false; "towerbft_delay_commission_updates")]
-    #[test_case(false, false; "towerbft_instant_commission_updates")]
-    fn test_calculate_stake_vote_rewards_new_vote_account(
-        delay_commission_updates: bool,
-        is_alpenglow: bool,
-    ) {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_calculate_stake_vote_rewards_new_vote_account(is_alpenglow: bool) {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_epoch_operations_genesis(is_alpenglow);
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-        if !delay_commission_updates {
-            deactivate_features(&mut genesis_config, &vec![delay_commission_updates::id()]);
-        }
 
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -2240,7 +2224,6 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let vote_address = Pubkey::new_unique();
         let mut bank = apply_epoch_operations(
@@ -2505,7 +2488,6 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let genesis_vote_address = voting_keypair.pubkey();
 
