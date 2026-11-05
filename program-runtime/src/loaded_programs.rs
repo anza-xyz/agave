@@ -185,16 +185,15 @@ impl EpochBoundaryPreparation {
         None
     }
 
-    /// Before rerooting the blockstore this concludes the epoch boundary preparation
-    pub fn reroot(&mut self, epoch: Epoch) -> Option<ProgramRuntimeEnvironment> {
-        if epoch == self.upcoming_epoch
-            && let Some(upcoming_environment) = self.upcoming_environment.take()
-        {
+    /// Before rerooting the blockstore this concludes the epoch boundary
+    /// preparation. Returns whether there was one to conclude.
+    pub fn reroot(&mut self, epoch: Epoch) -> bool {
+        if epoch == self.upcoming_epoch && self.upcoming_environment.take().is_some() {
             self.programs_to_recompile.clear();
-            return Some(upcoming_environment);
+            return true;
         }
 
-        None
+        false
     }
 }
 

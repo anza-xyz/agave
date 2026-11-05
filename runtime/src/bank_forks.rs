@@ -540,9 +540,9 @@ impl BankForks {
         )
     }
 
-    pub fn prune_program_cache(&self, root: Slot) {
+    pub fn root_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(self);
+            root_bank.root_program_cache(self);
         }
     }
 
