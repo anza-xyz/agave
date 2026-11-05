@@ -198,7 +198,7 @@ impl Tvu {
         cluster_info: &Arc<ClusterInfo>,
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
-        ledger_signal_receiver: Receiver<bool>,
+        replay_wakeup_receiver: Receiver<()>,
         update_parent_receiver: UpdateParentReceiver,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         poh_leader_state: SharedLeaderState,
@@ -504,7 +504,7 @@ impl Tvu {
         };
 
         let replay_receivers = ReplayReceivers {
-            ledger_signal_receiver,
+            replay_wakeup_receiver,
             update_parent_receiver,
             optimistic_parent_receiver,
             bank_forks_controller_receiver,
@@ -650,7 +650,7 @@ pub mod tests {
         let (blockstore_path, _) = create_new_tmp_ledger!(&genesis_config);
         let BlockstoreSignals {
             blockstore,
-            ledger_signal_receiver,
+            replay_wakeup_receiver,
             update_parent_receiver,
             ..
         } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default())
@@ -709,7 +709,7 @@ pub mod tests {
                 block_id_repair: target1.sockets.block_id_repair,
             },
             blockstore,
-            ledger_signal_receiver,
+            replay_wakeup_receiver,
             update_parent_receiver,
             Some(Arc::new(RpcSubscriptions::new_for_tests(
                 exit.clone(),

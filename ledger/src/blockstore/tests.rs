@@ -721,7 +721,7 @@ fn test_new_shreds_signal() {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let BlockstoreSignals {
         blockstore,
-        ledger_signal_receiver: recvr,
+        replay_wakeup_receiver: recvr,
         ..
     } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 
