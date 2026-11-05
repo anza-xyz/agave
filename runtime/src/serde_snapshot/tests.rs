@@ -231,6 +231,7 @@ mod serde_snapshot_tests {
                 (slot, [(pubkey, &account)].as_slice()),
                 BankId::new(0),
                 None,
+                None,
                 &ancestors,
             );
         }
