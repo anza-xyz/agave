@@ -295,15 +295,10 @@ impl Tpu {
                 (entry_receiver, None)
             };
 
-        // Tower replay no longer requests shred retransmission. Use a disconnected receiver so
-        // the legacy broadcast worker exits instead of waiting forever during Tpu::join().
-        let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(0);
-        drop(retransmit_slots_sender);
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
             broadcast_sockets,
             cluster_info.clone(),
             entry_receiver,
-            retransmit_slots_receiver,
             exit,
             blockstore,
             bank_forks,

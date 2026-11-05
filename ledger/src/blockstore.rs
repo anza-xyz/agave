@@ -3835,17 +3835,6 @@ impl Blockstore {
         self.code_shred_cf.get_bytes((slot, index))
     }
 
-    pub fn get_coding_shreds_for_slot(
-        &self,
-        slot: Slot,
-        start_index: u64,
-    ) -> std::result::Result<Vec<Shred>, shred::Error> {
-        self.slot_coding_iterator(slot, start_index)
-            .expect("blockstore couldn't fetch iterator")
-            .map(|(_, bytes)| Shred::new_from_serialized_shred(Vec::from(bytes)))
-            .collect()
-    }
-
     fn get_data_shred_from_location(
         &self,
         slot: Slot,
