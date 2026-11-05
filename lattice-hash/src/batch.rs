@@ -20,7 +20,7 @@
 mod arch;
 
 use {
-    crate::lt_hash::{LtHash, SingleLtHashUpdater},
+    crate::lt_hash::{BufferingHasher, LtHash, SingleLtHashUpdater},
     blake3::{BLOCK_LEN, CHUNK_LEN},
 };
 
@@ -181,8 +181,8 @@ type BatchMixInFn = unsafe fn(batch: Batch<'_>, acc: &mut LtHash);
 /// (LtHash `mix_in`) into the running value. Small messages (`<= CHUNK_LEN`) are
 /// copied into owned, reusable staging and run through the widest SIMD mix-in
 /// function the CPU supports as soon as a full batch (`lanes` of them) accumulates; larger
-/// messages are hashed immediately via the single-hash `blake3` path (they need
-/// the full Merkle tree). Group-add is commutative, so this reordering does not
+/// messages skip the batch and go through a [`BufferingHasher`] (they need the
+/// full Merkle tree). Group-add is commutative, so this reordering does not
 /// change the result.
 ///
 /// Messages are *copied* into the accumulator's owned buffers, so the caller's
@@ -203,11 +203,11 @@ pub struct Accumulator {
     num_available_lanes: usize,
     /// The SIMD backend used for a full batch, or `None` when the CPU has none.
     batch_mix_in_fn: Option<BatchMixInFn>,
-    /// Serial blake3-crate hasher: the fallback for a message that overflows one
-    /// chunk (`> CHUNK_LEN`) and for the non-SIMD / partial-tail path in `flush`.
-    serial_hasher: blake3::Hasher,
+    /// Hashes the messages that skip the SIMD kernel: one that overflows a single chunk
+    /// (`> CHUNK_LEN`), and each message on the non-SIMD / partial-tail path in `flush`.
+    hasher: BufferingHasher,
     /// Set when the in-progress message overflowed one chunk and is being
-    /// streamed into `serial_hasher` rather than staged for the SIMD batch;
+    /// streamed into `hasher` rather than staged for the SIMD batch;
     /// carries that state across the message's remaining parts until it is committed.
     cur_spilled: bool,
 }
@@ -247,7 +247,7 @@ impl Accumulator {
             staging: Staging::new(num_available_lanes),
             num_available_lanes,
             batch_mix_in_fn,
-            serial_hasher: blake3::Hasher::new(),
+            hasher: BufferingHasher::default(),
             cur_spilled: false,
         }
     }
@@ -270,15 +270,15 @@ impl Accumulator {
 
     /// Append `bytes` to the message currently being staged: written straight into
     /// the SIMD lane buffer, or, once the message passes [`CHUNK_LEN`], streamed
-    /// into the `blake3` fallback (`commit_message` folds in the result).
+    /// into `hasher` (`commit_message` folds in the result).
     fn stage_part(&mut self, bytes: &[u8]) {
         if self.cur_spilled {
-            self.serial_hasher.update(bytes);
+            self.hasher.write_part(bytes);
             return;
         }
         if !self.staging.try_append(bytes) {
             self.spill_current();
-            self.serial_hasher.update(bytes);
+            self.hasher.write_part(bytes);
         }
     }
 
@@ -286,7 +286,7 @@ impl Accumulator {
     /// value and start a fresh message, flushing the SIMD batch once it fills.
     fn commit_message(&mut self) {
         if self.cur_spilled {
-            self.acc.mix_in(&LtHash::with(&self.serial_hasher));
+            self.acc.mix_in(&self.hasher.finish());
             self.cur_spilled = false;
             return;
         }
@@ -311,12 +311,12 @@ impl Accumulator {
         self.acc.mix_in(hash);
     }
 
-    /// Move the bytes buffered for the current message into `serial_hasher` and
+    /// Move the bytes buffered for the current message into `hasher` and
     /// mark it spilled — its message exceeds one chunk, so it can't be staged for
     /// the SIMD batch. Called by [`stage_part`](Self::stage_part) on overflow.
     fn spill_current(&mut self) {
-        self.serial_hasher.reset();
-        self.serial_hasher.update(self.staging.staged_bytes());
+        self.hasher.reset();
+        self.hasher.write_part(self.staging.staged_bytes());
         self.staging.discard_current();
         self.cur_spilled = true;
     }
@@ -338,11 +338,9 @@ impl Accumulator {
         } else {
             for (lane, &len) in batch.lanes.iter().zip(batch.lengths) {
                 let bytes: &[u8] = bytemuck::cast_slice(lane.as_slice());
-                // Reset before each message: the shared hasher may be dirty from a
-                // prior message, flush, or `> CHUNK_LEN` add.
-                self.serial_hasher.reset();
-                self.serial_hasher.update(&bytes[..len]);
-                self.acc.mix_in(&LtHash::with(&self.serial_hasher));
+                self.hasher.reset();
+                self.hasher.write_unbuffered(&bytes[..len]);
+                self.acc.mix_in(&self.hasher.finish());
             }
         }
         self.staging.clear();
