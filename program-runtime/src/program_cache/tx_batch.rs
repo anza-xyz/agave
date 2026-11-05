@@ -18,8 +18,6 @@ pub struct ProgramCacheForTxBatch {
     /// Program entries modified during the transaction batch.
     modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     pub(super) slot: Slot,
-    pub hit_max_limit: bool,
-    pub loaded_missing: bool,
     pub merged_modified: bool,
 }
 
@@ -29,8 +27,6 @@ impl ProgramCacheForTxBatch {
             entries: HashMap::new(),
             modified_entries: HashMap::new(),
             slot,
-            hit_max_limit: false,
-            loaded_missing: false,
             merged_modified: false,
         }
     }
