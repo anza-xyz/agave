@@ -7,18 +7,27 @@ use {
 ///
 /// This isolation enables the global [ProgramCache] to continue to evolve (e.g. evictions),
 /// while the TX batch is guaranteed it will continue to find all the programs it requires.
-/// For program management instructions this also buffers them before they are merged back into the global [ProgramCache].
+/// For program management instructions this also buffers them until their transaction succeeds,
+/// at which point they are merged into the batch's own entries.
 ///
 /// [ProgramCache]: crate::program_cache::global::ProgramCache
 #[derive(Clone, Debug, Default)]
 pub struct ProgramCacheForTxBatch {
-    /// Pubkey is the address of a program.
-    /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a transaction is being executed.
-    pub(super) entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    /// K: The program ID
+    /// V: A cached program entry valid only for the batch
+    entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
     /// Program entries modified during the transaction batch.
+    ///
+    /// These are buffered separately in case a transaction fails, but one of
+    /// its earlier instructions has modified a program.
+    ///
+    /// It is folded into the primary index after the transaction is confirmed
+    /// to succeed.
     modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
-    pub(super) slot: Slot,
-    pub merged_modified: bool,
+    /// The slot of this cache's corresponding transaction batch.
+    slot: Slot,
+    /// Whether any programs were merged into the primary index.
+    merged_modified: bool,
 }
 
 impl ProgramCacheForTxBatch {
@@ -31,17 +40,23 @@ impl ProgramCacheForTxBatch {
         }
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn slot(&self) -> Slot {
+        self.slot
+    }
+
+    pub fn merged_modified(&self) -> bool {
+        self.merged_modified
+    }
+
     /// Refill the cache with a single entry. It's typically called during transaction loading, and
     /// transaction processing (for program management instructions).
-    /// It replaces the existing entry (if any) with the provided entry. The return value contains
-    /// `true` if an entry existed.
-    /// The function also returns the newly inserted value.
-    pub fn replenish(
-        &mut self,
-        key: Pubkey,
-        entry: Arc<ProgramCacheEntry>,
-    ) -> (bool, Arc<ProgramCacheEntry>) {
-        (self.entries.insert(key, entry.clone()).is_some(), entry)
+    /// It replaces the existing entry (if any) with the provided entry.
+    pub fn replenish(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
+        self.entries.insert(key, entry);
     }
 
     /// Store an entry in `modified_entries` for a program modified during the
@@ -79,22 +94,9 @@ impl ProgramCacheForTxBatch {
             })
     }
 
-    pub fn slot(&self) -> Slot {
-        self.slot
-    }
-
-    /// Look up `entries` directly, without the delay visibility rewrite
-    /// `find` performs, so a test can see the entry as it was stored.
-    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&Arc<ProgramCacheEntry>> {
-        self.entries.get(key)
-    }
-
-    pub fn set_slot_for_tests(&mut self, slot: Slot) {
-        self.slot = slot;
-    }
-
-    pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
-        modified_entries.iter().for_each(|(key, entry)| {
+    /// Merge the provided entries into the primary index.
+    pub fn merge(&mut self, entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
+        entries.iter().for_each(|(key, entry)| {
             self.merged_modified = true;
             self.replenish(*key, entry.clone());
         })
@@ -105,8 +107,21 @@ impl ProgramCacheForTxBatch {
     pub fn remove_entry(&mut self, key: &Pubkey) {
         self.entries.remove(key);
     }
+}
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl ProgramCacheForTxBatch {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Look up `entries` directly, without the delay visibility rewrite
+    /// `find` performs, so a test can see the entry as it was stored.
+    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&Arc<ProgramCacheEntry>> {
+        self.entries.get(key)
+    }
+
+    pub fn set_slot_for_tests(&mut self, slot: Slot) {
+        self.slot = slot;
     }
 }

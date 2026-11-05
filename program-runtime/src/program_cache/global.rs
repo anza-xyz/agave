@@ -350,8 +350,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         increment_usage_counter: bool,
         count_hits_and_misses: bool,
     ) -> Option<Pubkey> {
-        let entries_in_batch = loaded_programs_for_tx_batch.entries.len();
-        let batch_slot = loaded_programs_for_tx_batch.slot;
+        let entries_in_batch = loaded_programs_for_tx_batch.len();
+        let batch_slot = loaded_programs_for_tx_batch.slot();
         let mut cooperative_loading_task = None;
         match &self.index {
             IndexImplementation::V1 {
@@ -403,8 +403,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                             }
                             loaded_programs_for_tx_batch
-                                .entries
-                                .insert(*program_to_load.program_id, entry_to_return);
+                                .replenish(*program_to_load.program_id, entry_to_return);
                             return false;
                         }
                     }
@@ -423,7 +422,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         if count_hits_and_misses {
             let misses = search_for.len() as u64;
             let hits = loaded_programs_for_tx_batch
-                .entries
                 .len()
                 .saturating_sub(entries_in_batch) as u64;
             self.stats.misses.fetch_add(misses, Ordering::Relaxed);
@@ -2294,7 +2292,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &new_env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &closed
         ));
 
@@ -2310,7 +2308,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &closed
         ));
     }
@@ -2402,10 +2400,9 @@ mod tests {
         deployment_slot: Slot,
         working_slot: Slot,
     ) -> bool {
-        assert_eq!(extracted.slot, working_slot);
+        assert_eq!(extracted.slot(), working_slot);
         extracted
-            .entries
-            .get(program)
+            .get_entry_for_tests(program)
             .map(|entry| entry.deployment_slot == deployment_slot)
             .unwrap_or(false)
     }
@@ -2850,7 +2847,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(100);
         let task = cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
+        assert!(extracted.is_empty());
         assert_eq!(task, Some(program_id));
     }
 
@@ -2876,7 +2873,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
+        assert!(extracted.is_empty());
 
         // A loader migration, where only the newest entry has the new owner. A
         // search for the old one skips it and takes the entry below it.
@@ -2904,7 +2901,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &owned_by_v2
         ));
 
@@ -2919,7 +2916,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &owned_by_v3
         ));
     }
@@ -2949,7 +2946,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
+        assert!(extracted.is_empty());
 
         // The same deployment, compiled for the environment which is asked
         // for. Both are kept, since they differ in env.
@@ -2981,7 +2978,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &on_execution_env
         ));
 
@@ -2996,7 +2993,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &on_other_env
         ));
     }
@@ -3024,7 +3021,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
+        assert!(extracted.is_empty());
 
         // Reloading it is an allowed replacement, so it takes the same place.
         let loaded = new_test_entry_with_owner(
@@ -3047,7 +3044,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &loaded
         ));
     }
@@ -3107,7 +3104,7 @@ mod tests {
             // in for it. It is built at that moment rather than found, so what
             // it carries is copied across from the entry.
             assert!(search_for.is_empty());
-            let tombstone = extracted.entries.get(&program_id).unwrap();
+            let tombstone = extracted.get_entry_for_tests(&program_id).unwrap();
             assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
             assert_eq!(tombstone.account_owner, ProgramCacheEntryOwner::LoaderV3);
             assert_eq!(tombstone.deployment_slot, 100);
@@ -3123,7 +3120,7 @@ mod tests {
             // The entry was effective, but there is no binary behind it, so
             // the search breaks off and the caller is left to reload. Nothing
             // is recorded against the entry.
-            assert!(extracted.entries.is_empty());
+            assert!(extracted.is_empty());
             assert_eq!(search_for.len(), 1);
             assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 0);
             assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), 0);
@@ -3132,7 +3129,7 @@ mod tests {
             // and access slot are recorded on it.
             assert!(search_for.is_empty());
             assert!(Arc::ptr_eq(
-                extracted.entries.get(&program_id).unwrap(),
+                extracted.get_entry_for_tests(&program_id).unwrap(),
                 &entry
             ));
             assert_eq!(entry.stats.uses.load(Ordering::Relaxed), 1);
@@ -3176,7 +3173,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &closed
         ));
         assert!(search_for.is_empty());
@@ -3190,7 +3187,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &closed
         ));
         assert!(search_for.is_empty());
@@ -3256,7 +3253,7 @@ mod tests {
         assert!(search_for.is_empty());
 
         // As expected, we get a `DelayVisibility` tombstone.
-        let tombstone = extracted.entries.get(&program_id).unwrap();
+        let tombstone = extracted.get_entry_for_tests(&program_id).unwrap();
         assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
 
         // TODO: Here's the stats bug, though. The entry the batch is actually
@@ -3281,7 +3278,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &on_execution_env
         ));
 
@@ -3339,7 +3336,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &on_execution_env
         ));
 
@@ -3352,7 +3349,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &other_env, true, true);
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &on_other_env
         ));
     }
@@ -3416,7 +3413,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(100);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
 
-        let tombstone = extracted.entries.get(&program_id).unwrap();
+        let tombstone = extracted.get_entry_for_tests(&program_id).unwrap();
         assert!(matches!(
             tombstone.program,
             ProgramCacheEntryType::DelayVisibility
@@ -3506,7 +3503,7 @@ mod tests {
             deployment_slot: 100,
         }];
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
-        assert_eq!(extracted.entries.len(), 2);
+        assert_eq!(extracted.len(), 2);
         assert_eq!(cache.stats.hits.load(Ordering::Relaxed), 1);
     }
 
@@ -3583,7 +3580,9 @@ mod tests {
         assert!(search_for.is_empty());
         assert_eq!(task, None);
         assert!(Arc::ptr_eq(
-            extracted.entries.get(program_ids.first().unwrap()).unwrap(),
+            extracted
+                .get_entry_for_tests(program_ids.first().unwrap())
+                .unwrap(),
             &loaded
         ));
     }
@@ -3683,7 +3682,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
+        assert!(extracted.is_empty());
 
         // A redeployment at the slot the search asks for.
         let deployed_at_150 = new_test_entry_with_owner(
@@ -3713,7 +3712,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &deployed_at_150
         ));
 
@@ -3728,7 +3727,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &deployed_at_100
         ));
     }
@@ -3766,7 +3765,7 @@ mod tests {
         let mut extracted = ProgramCacheForTxBatch::new(50);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
+        assert!(extracted.is_empty());
     }
 
     #[test]
@@ -3803,7 +3802,7 @@ mod tests {
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
         assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
+            extracted.get_entry_for_tests(&program_id).unwrap(),
             &entry
         ));
     }
