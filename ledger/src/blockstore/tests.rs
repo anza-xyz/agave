@@ -8629,3 +8629,121 @@ fn test_connectivity_does_not_propagate_through_incomplete_slot() {
     assert!(!blockstore.meta(60).unwrap().unwrap().is_connected());
     assert!(!blockstore.meta(70).unwrap().unwrap().is_connected());
 }
+
+fn insert_first_shred_test_batch(
+    blockstore: &Blockstore,
+    shreds: Vec<(Shred, bool, BlockLocation)>,
+) {
+    blockstore
+        .do_insert_shreds(
+            shreds
+                .into_iter()
+                .map(|(shred, repair, location)| (Cow::Owned(shred), repair, location, None)),
+            false, // is_trusted
+            None,  // shred_recovery_context
+            &mut blockstore.new_pinnable_slice(),
+            &mut blockstore.get_write_batch(),
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap();
+}
+
+fn open_with_first_shred_receiver(ledger_path: &Path) -> (Blockstore, FirstShredReceiver) {
+    let blockstore = Blockstore::open(ledger_path).unwrap();
+    let (sender, receiver) = bounded(MAX_FIRST_SHRED_SIGNALS);
+    blockstore.set_first_shred_sender(sender);
+    (blockstore, receiver)
+}
+
+#[test_matrix([false, true], [false, true])]
+fn test_first_shred_signal(coding_first: bool, repaired_first: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let (blockstore, receiver) = open_with_first_shred_receiver(ledger_path.path());
+    let slot = 4;
+    let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+    let first = if coding_first { &coding[0] } else { &data[0] };
+    // The duplicate within the batch is rejected and does not add a notification.
+    let batch = vec![(first.clone(), repaired_first, BlockLocation::Original); 2];
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+
+    // Further shreds in an already populated location do not notify.
+    let batch = data
+        .iter()
+        .chain(&coding)
+        .map(|shred| (shred.clone(), false, BlockLocation::Original))
+        .collect();
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert!(receiver.is_empty());
+}
+
+#[test_matrix([false, true], [false, true])]
+fn test_first_shred_signal_across_locations(alternate_first: bool, same_batch: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let (blockstore, receiver) = open_with_first_shred_receiver(ledger_path.path());
+    let slot = 4;
+    let (data, _) = setup_erasure_shreds(slot, slot - 1, 10);
+    let alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    let mut batch = vec![
+        (data[0].clone(), false, BlockLocation::Original),
+        (data[0].clone(), true, alternate),
+    ];
+    if alternate_first {
+        batch.reverse();
+    }
+    let second = (!same_batch).then(|| batch.pop().unwrap());
+    // Locations populated in the same batch are reported once.
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+    if let Some(second) = second {
+        // A different location populated in a later batch reports the slot again.
+        insert_first_shred_test_batch(&blockstore, vec![second]);
+        assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+    }
+    let another_alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    insert_first_shred_test_batch(
+        &blockstore,
+        vec![(data[0].clone(), true, another_alternate)],
+    );
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+}
+
+#[test]
+fn test_first_shred_signal_rejected_shreds() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let (blockstore, receiver) = open_with_first_shred_receiver(ledger_path.path());
+    let slot = 4;
+    let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+    blockstore.set_roots([slot + 1].iter()).unwrap();
+    let batch = [&data[0], &coding[0]]
+        .into_iter()
+        .map(|shred| (shred.clone(), false, BlockLocation::Original))
+        .collect();
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert!(blockstore.get_index(slot).unwrap().is_none());
+    assert!(receiver.is_empty());
+}
+
+#[test]
+fn test_first_shred_signal_full_channel() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let (sender, receiver) = bounded(1);
+    blockstore.set_first_shred_sender(sender);
+    let batch = (4..7)
+        .map(|slot| {
+            let (data, _) = setup_erasure_shreds(slot, slot - 1, 10);
+            (data[0].clone(), false, BlockLocation::Original)
+        })
+        .collect();
+    // A full channel does not block insertion; notifications that do not fit are dropped.
+    insert_first_shred_test_batch(&blockstore, batch);
+    for slot in 4..7 {
+        assert!(blockstore.get_index(slot).unwrap().is_some());
+    }
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![4]);
+}
