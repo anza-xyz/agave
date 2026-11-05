@@ -4957,7 +4957,7 @@ pub mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_program_option::COption,
         solana_program_runtime::{
-            invoke_context::InvokeContext, program_cache_entry::ProgramCacheEntry,
+            invoke_context::InvokeContext, program_cache::entry::ProgramCacheEntry,
             solana_sbpf::declare_builtin_function,
         },
         solana_rpc_client_api::{

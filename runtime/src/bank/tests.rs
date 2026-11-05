@@ -97,7 +97,7 @@ use {
     solana_program_runtime::{
         declare_process_instruction,
         execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::entry::ProgramCacheEntry,
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,

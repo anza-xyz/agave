@@ -12,12 +12,13 @@ use {
     solana_program_runtime::{
         create_vm,
         invoke_context::{BpfAllocator, InvokeContext},
-        loaded_programs::ProgramRuntimeEnvironment,
         memory_context::MemoryContext,
-        program_cache_entry::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
+        program_cache::{
+            DELAY_VISIBILITY_SLOT_OFFSET,
+            entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            env::ProgramRuntimeEnvironment,
+            metrics::LoadProgramMetrics,
         },
-        program_metrics::LoadProgramMetrics,
         serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
     },

@@ -8,7 +8,7 @@ use {
         invoke_context::{BpfAllocator, InvokeContext},
         mem_pool::VmMemoryPool,
         memory_context::{MemoryContext, SerializedAccountMetadata},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::entry::ProgramCacheEntry,
         serialization::{self, SerializationResult},
         stable_log,
     },

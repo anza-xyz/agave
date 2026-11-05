@@ -1,16 +1,17 @@
 use {
-    crate::{
-        invoke_context::InvokeContext,
+    crate::program_cache::{
+        MAX_LOADED_ENTRY_COUNT, MAX_TOMBSTONE_AGE_IN_SLOTS,
+        entry::{ProgramCacheEntry, ProgramCacheEntryType, retention_score},
+        env::ProgramRuntimeEnvironment,
+        fork_graph::{BlockRelation, ForkGraph},
         loading_task::LoadingTaskWaiter,
-        program_cache_entry::{
-            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType, retention_score,
-        },
-        program_metrics::{EMA_SCALE, ProgramCacheStats},
+        metrics::{EMA_SCALE, ProgramCacheStats},
+        owner::ProgramCacheEntryOwner,
+        tx_batch::ProgramCacheForTxBatch,
     },
     log::error,
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_sbpf::program::BuiltinProgram,
     solana_svm_type_overrides::{
         rand::{Rng, rng},
         sync::{Arc, Mutex, RwLock, atomic::Ordering},
@@ -22,100 +23,6 @@ use {
     },
 };
 
-#[repr(transparent)]
-#[derive(Clone, Debug)]
-pub struct ProgramRuntimeEnvironment(Arc<BuiltinProgram<InvokeContext<'static, 'static>>>);
-impl std::hash::Hash for ProgramRuntimeEnvironment {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Arc::<BuiltinProgram<InvokeContext<'static, 'static>>>::as_ptr(&self.0).hash(state);
-    }
-}
-impl PartialEq for ProgramRuntimeEnvironment {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-impl Eq for ProgramRuntimeEnvironment {}
-impl std::ops::Deref for ProgramRuntimeEnvironment {
-    type Target = Arc<BuiltinProgram<InvokeContext<'static, 'static>>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl ProgramRuntimeEnvironment {
-    pub fn from(inner: BuiltinProgram<InvokeContext<'static, 'static>>) -> Self {
-        Self(Arc::new(inner))
-    }
-
-    pub const fn from_ref<'a>(
-        inner: &'a Arc<BuiltinProgram<InvokeContext<'static, 'static>>>,
-    ) -> &'a Self {
-        // Safety: This wrapper type is transparent and shares the same representation as the underlying type
-        unsafe { std::mem::transmute(inner) }
-    }
-}
-
-/// Paired execution and deployment environments.
-///
-/// Registered functions within each program runtime environment (syscalls)
-/// depend on per-epoch feature gate statuses. In most cases, the list of
-/// registered functions in the two environments will be the same. However,
-/// it's possible that the effective epoch of deployment could be in the
-/// *next epoch*.
-pub struct ProgramRuntimeEnvironments {
-    /// Environment compiled for the current epoch in which programs are
-    /// executing.
-    execution: ProgramRuntimeEnvironment,
-    /// Environment compiled for the epoch of the next slot at which a program
-    /// deployed in the current slot will execute.
-    deployment: ProgramRuntimeEnvironment,
-}
-
-impl ProgramRuntimeEnvironments {
-    /// Create a new ProgramRuntimeEnvironments from an `execution` and
-    /// `deployment` environment.
-    pub fn new(
-        execution: ProgramRuntimeEnvironment,
-        deployment: ProgramRuntimeEnvironment,
-    ) -> Self {
-        Self {
-            execution,
-            deployment,
-        }
-    }
-
-    /// Get the program runtime environment for execution.
-    pub fn get_env_for_execution(&self) -> &ProgramRuntimeEnvironment {
-        &self.execution
-    }
-
-    /// Get the program runtime environment for deployment.
-    pub fn get_env_for_deployment(&self) -> &ProgramRuntimeEnvironment {
-        &self.deployment
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn mock() -> Self {
-        Self {
-            execution: get_mock_program_runtime_environment(),
-            deployment: get_mock_program_runtime_environment(),
-        }
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-pub fn get_mock_program_runtime_environment() -> ProgramRuntimeEnvironment {
-    static MOCK_ENVIRONMENT: std::sync::OnceLock<ProgramRuntimeEnvironment> =
-        std::sync::OnceLock::<ProgramRuntimeEnvironment>::new();
-    MOCK_ENVIRONMENT
-        .get_or_init(|| ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock()))
-        .clone()
-}
-
-pub const MAX_LOADED_ENTRY_COUNT: usize = 1024;
-pub const MAX_TOMBSTONE_AGE_IN_SLOTS: u64 = 2250; // 15 Minutes at 400ms slot time
-
 /// A percentage, expected to be in the range `0..=100`.
 pub type Percent = u8;
 
@@ -126,75 +33,6 @@ pub type Percent = u8;
 fn percent_of_max_entries(percent: Percent) -> usize {
     debug_assert!(percent <= 100, "percent must be <= 100");
     MAX_LOADED_ENTRY_COUNT.saturating_mul(percent as usize) / 100
-}
-
-/// Relationship between two fork IDs
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum BlockRelation {
-    /// The slot is on the same fork and is an ancestor of the other slot
-    Ancestor,
-    /// The two slots are equal and are on the same fork
-    Equal,
-    /// The slot is on the same fork and is a descendant of the other slot
-    Descendant,
-    /// The slots are on two different forks and may have had a common ancestor at some point
-    Unrelated,
-    /// Either one or both of the slots are either older than the latest root, or are in future
-    Unknown,
-}
-
-/// Maps relationship between two slots.
-pub trait ForkGraph {
-    /// Returns the BlockRelation of A to B
-    fn relationship(&self, a: Slot, b: Slot) -> BlockRelation;
-}
-
-/// Globally manages the transition between environments at the epoch boundary
-#[derive(Debug, Default)]
-pub struct EpochBoundaryPreparation {
-    /// The epoch of the upcoming_environment
-    pub upcoming_epoch: Epoch,
-    /// Anticipated replacement for `environments` at the next epoch
-    ///
-    /// This is only `Some` around the boundaries when a changed environment is
-    /// actually coming. It starts with the cache preparation phase a few
-    /// hundred slots before the epoch boundary, and it ends with the first
-    /// rerooting after the epoch boundary.
-    pub upcoming_environment: Option<ProgramRuntimeEnvironment>,
-    /// List of loaded programs which should be recompiled before the next epoch (but don't have to).
-    pub programs_to_recompile: Vec<(Pubkey, Arc<ProgramCacheEntry>)>,
-}
-
-impl EpochBoundaryPreparation {
-    pub fn new(epoch: Epoch) -> Self {
-        Self {
-            upcoming_epoch: epoch,
-            upcoming_environment: None,
-            programs_to_recompile: Vec::default(),
-        }
-    }
-
-    /// Returns the upcoming environments depending on the given epoch
-    pub fn get_upcoming_environment_for_epoch(
-        &self,
-        epoch: Epoch,
-    ) -> Option<ProgramRuntimeEnvironment> {
-        if epoch == self.upcoming_epoch {
-            return self.upcoming_environment.clone();
-        }
-        None
-    }
-
-    /// Before rerooting the blockstore this concludes the epoch boundary
-    /// preparation. Returns whether there was one to conclude.
-    pub fn reroot(&mut self, epoch: Epoch) -> bool {
-        if epoch == self.upcoming_epoch && self.upcoming_environment.take().is_some() {
-            self.programs_to_recompile.clear();
-            return true;
-        }
-
-        false
-    }
 }
 
 /// Input of ProgramCache::extract()
@@ -268,116 +106,6 @@ impl<FG: ForkGraph> std::fmt::Debug for ProgramCache<FG> {
             .field("stats", &self.stats)
             .field("index", &self.index)
             .finish()
-    }
-}
-
-/// Local view into [ProgramCache] which was extracted for a specific TX batch.
-///
-/// This isolation enables the global [ProgramCache] to continue to evolve (e.g. evictions),
-/// while the TX batch is guaranteed it will continue to find all the programs it requires.
-/// For program management instructions this also buffers them before they are merged back into the global [ProgramCache].
-#[derive(Clone, Debug, Default)]
-pub struct ProgramCacheForTxBatch {
-    /// Pubkey is the address of a program.
-    /// ProgramCacheEntry is the corresponding program entry valid for the slot in which a transaction is being executed.
-    entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
-    /// Program entries modified during the transaction batch.
-    modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
-    slot: Slot,
-    pub hit_max_limit: bool,
-    pub loaded_missing: bool,
-    pub merged_modified: bool,
-}
-
-impl ProgramCacheForTxBatch {
-    pub fn new(slot: Slot) -> Self {
-        Self {
-            entries: HashMap::new(),
-            modified_entries: HashMap::new(),
-            slot,
-            hit_max_limit: false,
-            loaded_missing: false,
-            merged_modified: false,
-        }
-    }
-
-    /// Refill the cache with a single entry. It's typically called during transaction loading, and
-    /// transaction processing (for program management instructions).
-    /// It replaces the existing entry (if any) with the provided entry. The return value contains
-    /// `true` if an entry existed.
-    /// The function also returns the newly inserted value.
-    pub fn replenish(
-        &mut self,
-        key: Pubkey,
-        entry: Arc<ProgramCacheEntry>,
-    ) -> (bool, Arc<ProgramCacheEntry>) {
-        (self.entries.insert(key, entry.clone()).is_some(), entry)
-    }
-
-    /// Store an entry in `modified_entries` for a program modified during the
-    /// transaction batch.
-    pub fn store_modified_entry(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
-        self.modified_entries.insert(key, entry);
-    }
-
-    /// Drain the program cache's modified entries, returning the owned
-    /// collection.
-    pub fn drain_modified_entries(&mut self) -> HashMap<Pubkey, Arc<ProgramCacheEntry>> {
-        std::mem::take(&mut self.modified_entries)
-    }
-
-    pub fn find(&self, key: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
-        // First lookup the cache of the programs modified by the current
-        // transaction. If not found, lookup the cache of the cache of the
-        // programs that are loaded for the transaction batch.
-        self.modified_entries
-            .get(key)
-            .or_else(|| self.entries.get(key))
-            .map(|entry| {
-                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
-                    // Found a program entry on the current fork, but it's not effective
-                    // yet. It indicates that the program has delayed visibility. Return
-                    // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
-                        entry.deployment_slot,
-                        entry.account_owner,
-                        Arc::clone(&entry.stats),
-                    ))
-                } else {
-                    entry.clone()
-                }
-            })
-    }
-
-    pub fn slot(&self) -> Slot {
-        self.slot
-    }
-
-    /// Look up `entries` directly, without the delay visibility rewrite
-    /// `find` performs, so a test can see the entry as it was stored.
-    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&Arc<ProgramCacheEntry>> {
-        self.entries.get(key)
-    }
-
-    pub fn set_slot_for_tests(&mut self, slot: Slot) {
-        self.slot = slot;
-    }
-
-    pub fn merge(&mut self, modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
-        modified_entries.iter().for_each(|(key, entry)| {
-            self.merged_modified = true;
-            self.replenish(*key, entry.clone());
-        })
-    }
-
-    /// Remove an entry from the `entries` list.
-    /// Note: DOES NOT remove modified entries!
-    pub fn remove_entry(&mut self, key: &Pubkey) {
-        self.entries.remove(key);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -911,22 +639,26 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use {
-        crate::{
-            loaded_programs::{
-                BlockRelation, ForkGraph, IndexImplementation, MAX_TOMBSTONE_AGE_IN_SLOTS, Percent,
-                ProgramCache, ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad,
-                get_mock_program_runtime_environment,
+        crate::program_cache::{
+            MAX_TOMBSTONE_AGE_IN_SLOTS,
+            entry::{
+                ProgramCacheEntry, ProgramCacheEntryType, new_loaded_entry,
+                new_test_entry_with_usage,
             },
-            program_cache_entry::{
-                ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+            fork_graph::{BlockRelation, ForkGraph},
+            global::{
+                IndexImplementation, Percent, ProgramCache, ProgramToLoad, percent_of_max_entries,
             },
-            program_metrics::ProgramStatistics,
+            metrics::ProgramStatistics,
+            owner::ProgramCacheEntryOwner,
+            tx_batch::ProgramCacheForTxBatch,
         },
         solana_clock::Slot,
         solana_pubkey::Pubkey,
-        solana_sbpf::{elf::Executable, program::BuiltinProgram},
+        solana_sbpf::program::BuiltinProgram,
         solana_svm_type_overrides::{
             sync::{
                 Arc, RwLock,
@@ -934,7 +666,7 @@ pub(crate) mod tests {
             },
             thread,
         },
-        std::{assert_matches, fs::File, io::Read, ops::ControlFlow},
+        std::{assert_matches, ops::ControlFlow},
         test_case::{test_case, test_matrix},
     };
 
@@ -958,16 +690,6 @@ pub(crate) mod tests {
         ProgramCacheEntryType::Unloaded(env)
     }
 
-    fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
-        let mut elf = Vec::new();
-        File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
-            .unwrap()
-            .read_to_end(&mut elf)
-            .unwrap();
-        let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
-        ProgramCacheEntryType::Loaded(executable)
-    }
-
     fn new_test_entry_with_owner(
         deployment_slot: Slot,
         account_owner: ProgramCacheEntryOwner,
@@ -989,19 +711,6 @@ pub(crate) mod tests {
         let fork_graph = Arc::new(RwLock::new(TestForkGraph { relation }));
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
         (cache, fork_graph)
-    }
-
-    pub(crate) fn new_test_entry_with_usage(
-        deployment_slot: Slot,
-        stats: ProgramStatistics,
-    ) -> Arc<ProgramCacheEntry> {
-        Arc::new(ProgramCacheEntry {
-            program: new_loaded_entry(get_mock_program_runtime_environment()),
-            account_owner: ProgramCacheEntryOwner::LoaderV2,
-            deployment_slot,
-            stats: Arc::new(stats),
-            latest_access_slot: AtomicU64::new(deployment_slot),
-        })
     }
 
     fn new_test_builtin_entry(deployment_slot: Slot) -> Arc<ProgramCacheEntry> {
@@ -1168,7 +877,7 @@ pub(crate) mod tests {
         // Evict entries from the cache
         let eviction_pct: Percent = 1;
 
-        let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
+        let num_loaded_expected = percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
         cache.evict_using_random_selection(eviction_pct, 21);
 
@@ -1250,7 +959,7 @@ pub(crate) mod tests {
         // Evict entries from the cache
         let eviction_pct: Percent = 1;
 
-        let num_loaded_expected = crate::loaded_programs::percent_of_max_entries(eviction_pct);
+        let num_loaded_expected = percent_of_max_entries(eviction_pct);
         let num_unloaded_expected = num_unloaded_expected + num_loaded - num_loaded_expected;
 
         cache.sort_and_unload(eviction_pct);
@@ -1306,8 +1015,7 @@ pub(crate) mod tests {
 
         let program = Pubkey::new_unique();
         let evict_to_pct: Percent = 2;
-        let cache_capacity_after_shrink =
-            crate::loaded_programs::percent_of_max_entries(evict_to_pct);
+        let cache_capacity_after_shrink = percent_of_max_entries(evict_to_pct);
         // Add enough programs to the cache to trigger 1 eviction after shrinking.
         let num_total_programs = (cache_capacity_after_shrink + 1) as u64;
         (0..num_total_programs).for_each(|i| {

@@ -15,7 +15,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
-    solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
+    solana_program_runtime::program_cache::fork_graph::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},

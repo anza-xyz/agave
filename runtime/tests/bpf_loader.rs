@@ -16,7 +16,7 @@ use {
     },
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_program_runtime::program_cache_entry::ProgramCacheEntryType,
+    solana_program_runtime::program_cache::entry::ProgramCacheEntryType,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{

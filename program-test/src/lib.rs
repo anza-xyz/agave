@@ -37,7 +37,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::entry::ProgramCacheEntry,
         serialization::{SerializationResult, serialize_parameters},
         stable_log,
         sysvar_cache::SysvarCache,

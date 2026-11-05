@@ -1,16 +1,16 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 #[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
+use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::Slot,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
-    solana_program_runtime::{
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+    solana_program_runtime::program_cache::{
+        entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment, global::ProgramToLoad,
+        owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
     },
     solana_pubkey::Pubkey,
     solana_sbpf::elf_parser::consts::ELFMAG,
@@ -383,11 +383,11 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
-            loaded_programs::{
-                BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
-                get_mock_program_runtime_environment,
+            program_cache::{
+                entry::ProgramCacheEntryType,
+                env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+                fork_graph::{BlockRelation, ForkGraph},
             },
-            program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
