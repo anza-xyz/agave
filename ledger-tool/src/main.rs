@@ -2798,10 +2798,6 @@ fn main() {
                                 ) => {
                                     detail.current_effective_stake = *stake;
                                 }
-                                InflationPointCalculationEvent::Commission(commission) => {
-                                    // Convert percentage to basis points.
-                                    detail.commission_bps = *commission as u16 * 100;
-                                }
                                 InflationPointCalculationEvent::CommissionBps(commission_bps) => {
                                     detail.commission_bps = *commission_bps;
                                 }

@@ -103,6 +103,9 @@ Release channels have their own copy of this changelog:
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 * The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
   support parsing and signing txv1 transactions may no longer work with the CLI.
+* `withdraw-from-vote-account --sign-only` now requires
+  `--allow-vat-withdrawal`, because the vote account balance and VAT reserve cannot be
+  checked offline.
 
 #### Changes
 
@@ -111,6 +114,10 @@ Release channels have their own copy of this changelog:
 * `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
   no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
 * `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `withdraw-from-vote-account` now preserves enough SOL for the next Validator Admission Ticket (VAT)
+  burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.
+  Pass `--allow-vat-withdrawal` to include the VAT reserve in the withdrawable balance; the flag is
+  required with `--sign-only`.
 
 ### Geyser
 

@@ -33,20 +33,15 @@ impl AccountsDb {
         let mut ancestors = Ancestors::default();
         ancestors.insert(slot);
 
-        self.accounts_index.get_with_and_then(
-            pubkey,
-            &ancestors,
-            false,
-            |(slot_found, account_info)| {
+        self.accounts_index
+            .get_with_and_then(pubkey, &ancestors, false, |slot_list_item| {
                 // If a slot was found, ensure it was the requested slot
-                assert_eq!(slot_found, slot);
-                let storage_location = account_info.storage_location();
-                let mut accessor = self.get_account_accessor(slot, &storage_location);
+                assert_eq!(slot_list_item.slot(), slot);
+                let mut accessor = self.get_account_accessor(slot_list_item);
 
                 accessor
                     .check_and_get_loaded_account_shared_data(NO_LOAD_FILTER)
                     .unwrap()
-            },
-        )
+            })
     }
 }

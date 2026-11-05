@@ -435,15 +435,12 @@ pub struct RpcVoteAccountInfo {
     pub activated_stake: u64,
 
     /// An 8-bit unsigned integer used as a fraction (commission/100) for
-    /// rewards payout. Before SIMD-0291 activation, this is the native
-    /// commission value. After activation, this is derived from basis
-    /// points with: `bps.div_ceil(100).min(255)`.
+    /// rewards payout, derived from basis points with:
+    /// `bps.div_ceil(100).min(255)`.
     pub commission: u8,
 
     /// A 16-bit unsigned integer used as the raw basis points for rewards
-    /// payout. Before SIMD-0291 activation, this is derived from the
-    /// percentage commission: `percent * 100`. After activation, this is the
-    /// native basis points value stored in vote state.
+    /// payout, as stored natively in vote state.
     ///
     /// Note: Field is `None` when querying a node that predates this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]

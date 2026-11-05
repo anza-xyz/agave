@@ -187,7 +187,7 @@ impl<'a> EnvironmentConfig<'a> {
     }
 
     /// Get cached sysvars
-    pub fn sysvar_cache(&self) -> &SysvarCache {
+    pub fn sysvar_cache(&self) -> &'a SysvarCache {
         self.sysvar_cache
     }
 }

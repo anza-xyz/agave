@@ -264,10 +264,12 @@ pub(super) fn mark_hard_dead_slot_notifications(
     notifications.blockstore.slots_stats.mark_dead(slot);
 
     if let Some(slot_status_notifier) = notifications.slot_status_notifier.as_ref() {
-        slot_status_notifier
-            .read()
-            .unwrap()
-            .notify_slot_dead(slot, parent_slot, err.clone());
+        slot_status_notifier.read().unwrap().notify_dead_bank(
+            slot,
+            parent_slot,
+            bank.bank_id(),
+            err.clone(),
+        );
     }
 
     if let Some(rpc_subscriptions) = notifications.rpc_subscriptions.as_ref() {

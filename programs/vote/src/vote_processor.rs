@@ -63,7 +63,6 @@ where
 fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
     let feature_set = invoke_context.get_feature_set();
     feature_set.bls_pubkey_management_in_vote_account
-        && feature_set.commission_rate_in_basis_points
         && feature_set.custom_commission_collector
         && feature_set.block_revenue_sharing
         && feature_set.vote_account_initialize_v2
@@ -350,8 +349,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             // Requires SIMD-0185: Vote State V4
             // Requires SIMD-0249: Delay Commission Updates
             let feature_set = invoke_context.get_feature_set();
-            if !feature_set.commission_rate_in_basis_points || !feature_set.delay_commission_updates
-            {
+            if !feature_set.delay_commission_updates {
                 return Err(InstructionError::InvalidInstructionData);
             }
             vote_state::update_commission_bps(
@@ -495,7 +493,6 @@ mod tests {
     #[derive(Clone, Copy, Default)]
     struct VoteProgramFeatures {
         bls_pubkey_management_in_vote_account: bool,
-        commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
@@ -506,7 +503,6 @@ mod tests {
         fn all_enabled() -> Self {
             Self {
                 bls_pubkey_management_in_vote_account: true,
-                commission_rate_in_basis_points: true,
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
@@ -542,7 +538,6 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         let VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
@@ -573,7 +568,6 @@ mod tests {
             },
             &SVMFeatureSet {
                 bls_pubkey_management_in_vote_account,
-                commission_rate_in_basis_points,
                 custom_commission_collector,
                 block_revenue_sharing,
                 vote_account_initialize_v2,
@@ -913,12 +907,10 @@ mod tests {
         [false, true],
         [false, true],
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account(
         bls_pubkey_management_in_vote_account: bool,
-        commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
@@ -960,7 +952,6 @@ mod tests {
 
         let features = VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
@@ -1031,12 +1022,10 @@ mod tests {
         [false, true],
         [false, true],
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account_v2(
         bls_pubkey_management_in_vote_account: bool,
-        commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
@@ -1094,7 +1083,6 @@ mod tests {
 
         let features = VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
@@ -1102,7 +1090,6 @@ mod tests {
         };
 
         let all_v2_features_enabled = bls_pubkey_management_in_vote_account
-            && commission_rate_in_basis_points
             && custom_commission_collector
             && block_revenue_sharing
             && vote_account_initialize_v2;
@@ -4970,24 +4957,9 @@ mod tests {
             ),
         ];
 
-        // Fail - SIMD-0291: commission_rate_in_basis_points disabled.
-        process_instruction(
-            VoteProgramFeatures {
-                commission_rate_in_basis_points: false,
-                custom_commission_collector: true,
-                block_revenue_sharing: true,
-                ..Default::default()
-            },
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Err(InstructionError::InvalidInstructionData),
-        );
-
         // Fail - SIMD-0232: custom_commission_collector disabled.
         process_instruction(
             VoteProgramFeatures {
-                commission_rate_in_basis_points: true,
                 custom_commission_collector: false,
                 block_revenue_sharing: true,
                 ..Default::default()
@@ -5001,7 +4973,6 @@ mod tests {
         // Fail - SIMD-0123: block_revenue_sharing disabled.
         process_instruction(
             VoteProgramFeatures {
-                commission_rate_in_basis_points: true,
                 custom_commission_collector: true,
                 block_revenue_sharing: false,
                 ..Default::default()

@@ -3,8 +3,9 @@ use {
     crate::{
         accounts_file::{self, AccountsFileProvider},
         accounts_index::{
-            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexesIncludeExclude,
-            AccountsIndexConfig, IndexLimit, IndexLimitThreshold, test_utils::*,
+            ACCOUNTS_INDEX_CONFIG_FOR_TESTING, AccountIndex, AccountSecondaryIndexes,
+            AccountSecondaryIndexesIncludeExclude, AccountsIndexConfig, IndexLimit,
+            IndexLimitThreshold, test_utils::*,
         },
         append_vec::MAXIMUM_APPEND_VEC_FILE_SIZE,
     },
@@ -1355,7 +1356,7 @@ fn test_reclaiming_last_live_account_purges_tombstone_only_storage() {
             &tombstone_pubkey,
             &Ancestors::from(vec![slot]),
             false,
-            |(_slot, account_info)| account_info.offset(),
+            |slot_list_item| slot_list_item.info().offset(),
         )
         .unwrap();
     accounts.accounts_index.purge_exact(
@@ -1908,7 +1909,7 @@ fn test_clean_zero_lamport_and_old_roots() {
 
 #[test]
 fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
-    let mut accounts = AccountsDb {
+    let accounts = AccountsDb {
         account_indexes: spl_token_mint_index_enabled(),
         ..AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG)
     };
@@ -1950,7 +1951,7 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     assert_eq!(accounts.alive_account_count_in_slot(1), 1);
     assert_eq!(accounts.alive_account_count_in_slot(2), 1);
 
-    // Secondary index should still find both pubkeys
+    // Secondary index finds pubkey2, but not zero-lamport pubkey1
     let mut found_accounts = HashSet::new();
     let index_key = IndexKey::SplTokenMint(mint_key);
     let bank_id = BankId::new(0);
@@ -1968,52 +1969,6 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
     assert_eq!(found_accounts.len(), 1);
     assert!(!found_accounts.contains(&pubkey1));
     assert!(found_accounts.contains(&pubkey2));
-
-    {
-        accounts.account_indexes.keys = Some(AccountSecondaryIndexesIncludeExclude {
-            exclude: true,
-            keys: [mint_key].iter().cloned().collect::<HashSet<Pubkey>>(),
-        });
-        // Secondary index can't be used - do normal scan: should still find both pubkeys
-        let mut found_accounts = HashSet::new();
-        let used_index = accounts
-            .index_scan_accounts(
-                &Ancestors::default(),
-                bank_id,
-                index_key,
-                |account| {
-                    found_accounts.insert(*account.unwrap().0);
-                },
-                &ScanConfig::default(),
-            )
-            .unwrap();
-        assert!(!used_index);
-        assert_eq!(found_accounts.len(), 1);
-        assert!(!found_accounts.contains(&pubkey1));
-        assert!(found_accounts.contains(&pubkey2));
-
-        accounts.account_indexes.keys = None;
-
-        // Secondary index can now be used since it isn't marked as excluded
-        let mut found_accounts = HashSet::new();
-        let used_index = accounts
-            .index_scan_accounts(
-                &Ancestors::default(),
-                bank_id,
-                index_key,
-                |account| {
-                    found_accounts.insert(*account.unwrap().0);
-                },
-                &ScanConfig::default(),
-            )
-            .unwrap();
-        assert!(used_index);
-        assert_eq!(found_accounts.len(), 1);
-        assert!(!found_accounts.contains(&pubkey1));
-        assert!(found_accounts.contains(&pubkey2));
-
-        accounts.account_indexes.keys = None;
-    }
 
     accounts.clean_accounts_for_tests();
 
@@ -2040,6 +1995,95 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
         )
         .unwrap();
     assert_eq!(found_accounts, vec![pubkey2]);
+}
+
+/// An index scan for a key included in the secondary index uses the index, while a scan for an
+/// excluded key falls back to a full scan
+#[test]
+fn test_index_scan_accounts_excluded_key_does_full_scan() {
+    const SPL_TOKEN_INITIALIZED_OFFSET: usize = 108;
+    // A token account for `excluded_mint`
+    let excluded_mint = Pubkey::new_unique();
+    let mut excluded_mint_data = vec![0; spl_generic_token::token::Account::get_packed_len()];
+    excluded_mint_data[..PUBKEY_BYTES].clone_from_slice(&excluded_mint.to_bytes());
+    excluded_mint_data[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
+    let excluded_mint_account =
+        AccountSharedData::new_with_data(1, excluded_mint_data, &spl_generic_token::token::id());
+
+    // A token account for `included_mint`
+    let included_mint = Pubkey::new_unique();
+    let mut included_mint_data = vec![0; spl_generic_token::token::Account::get_packed_len()];
+    included_mint_data[..PUBKEY_BYTES].clone_from_slice(&included_mint.to_bytes());
+    included_mint_data[SPL_TOKEN_INITIALIZED_OFFSET] = 1;
+    let included_mint_account =
+        AccountSharedData::new_with_data(1, included_mint_data, &spl_generic_token::token::id());
+
+    // An account with no mint, which a lookup in the mint index would never return
+    let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+
+    // Enable the mint index, but exclude `excluded_mint` from it
+    let accounts = AccountsDb::new_for_tests_with_config(
+        Vec::new(),
+        AccountsDbConfig {
+            account_indexes: Some(AccountSecondaryIndexes {
+                keys: Some(AccountSecondaryIndexesIncludeExclude {
+                    exclude: true,
+                    keys: HashSet::from([excluded_mint]),
+                }),
+                ..spl_token_mint_index_enabled()
+            }),
+            ..DEFAULT_ACCOUNTS_DB_CONFIG
+        },
+    );
+    let excluded_mint_pubkey = Pubkey::new_unique();
+    let included_mint_pubkey = Pubkey::new_unique();
+    let other_pubkey = Pubkey::new_unique();
+    // Store all accounts in a rooted slot
+    accounts.store_for_tests((
+        0,
+        [
+            (&excluded_mint_pubkey, &excluded_mint_account),
+            (&included_mint_pubkey, &included_mint_account),
+            (&other_pubkey, &other_account),
+        ]
+        .as_slice(),
+    ));
+    accounts.add_root_and_flush_write_cache(0);
+
+    // `included_mint` is in the index, so the scan returns only its account
+    let mut found_accounts = HashSet::new();
+    let used_index = accounts
+        .index_scan_accounts(
+            &Ancestors::default(),
+            BankId::new(0),
+            IndexKey::SplTokenMint(included_mint),
+            |account| {
+                found_accounts.insert(*account.unwrap().0);
+            },
+            &ScanConfig::default(),
+        )
+        .unwrap();
+    assert!(used_index);
+    assert_eq!(found_accounts, HashSet::from([included_mint_pubkey]));
+
+    // `excluded_mint` is not, so the scan visits every account instead
+    let mut found_accounts = HashSet::new();
+    let used_index = accounts
+        .index_scan_accounts(
+            &Ancestors::default(),
+            BankId::new(0),
+            IndexKey::SplTokenMint(excluded_mint),
+            |account| {
+                found_accounts.insert(*account.unwrap().0);
+            },
+            &ScanConfig::default(),
+        )
+        .unwrap();
+    assert!(!used_index);
+    assert_eq!(
+        found_accounts,
+        HashSet::from([excluded_mint_pubkey, included_mint_pubkey, other_pubkey])
+    );
 }
 
 // Verify that purge_keys_exact does not remove pubkeys from the secondary index if the pubkey
@@ -2184,14 +2228,14 @@ fn test_accounts_db_purge_keep_live() {
     let ancestors = Ancestors::from(vec![accounts.max_root()]);
     let (slot1, account_info1) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
+        .get_with_and_then(&pubkey, &ancestors, false, |slot_list_item| {
+            (slot_list_item.slot(), slot_list_item.info())
         })
         .unwrap();
     let (slot2, account_info2) = accounts
         .accounts_index
-        .get_with_and_then(&pubkey2, &ancestors, false, |(slot, account_info)| {
-            (slot, account_info)
+        .get_with_and_then(&pubkey2, &ancestors, false, |slot_list_item| {
+            (slot_list_item.slot(), slot_list_item.info())
         })
         .unwrap();
     assert_eq!(slot1, current_slot);
@@ -5304,10 +5348,12 @@ fn test_load_account_and_shrink_race() {
     // Build the accessor under the index entry's lock, just as do_load does.
     let (loaded_slot, storage_location, mut accessor) = db
         .accounts_index
-        .get_with_and_then(&pubkey, &ancestors, true, |(slot, account_info)| {
-            let storage_location = account_info.storage_location();
-            let accessor = db.get_account_accessor(slot, &storage_location);
-            (slot, storage_location, accessor)
+        .get_with_and_then(&pubkey, &ancestors, true, |slot_list_item| {
+            (
+                slot_list_item.slot(),
+                slot_list_item.info().storage_location(),
+                db.get_account_accessor(slot_list_item),
+            )
         })
         .unwrap();
     assert_eq!(loaded_slot, slot);
@@ -5318,10 +5364,6 @@ fn test_load_account_and_shrink_race() {
     assert_eq!(db.shrink_candidate_slots(&epoch_schedule), 1);
     let StorageLocation::AccountsFile(store_id, _) = storage_location;
     assert_ne!(db.get_and_assert_single_storage(slot).id(), store_id);
-    assert!(matches!(
-        db.get_account_accessor(slot, &storage_location),
-        LoadedAccountAccessor::Stored(None)
-    ));
 
     // The original accessor must keep the old storage alive and readable.
     assert_eq!(
@@ -6177,7 +6219,7 @@ fn test_shrink_collect_simple() {
                                         pubkey,
                                         &Ancestors::from(vec![slot5]),
                                         false,
-                                        |(_slot, account_info)| account_info,
+                                        |slot_list_item| slot_list_item.info(),
                                     )
                                     .unwrap();
                                 storage
@@ -6338,9 +6380,9 @@ fn test_shrink_collect_with_obsolete_accounts() {
         if i % 5 == 0 {
             // Lookup the pubkey in the database and find the AccountInfo
             db.accounts_index
-                .get_with_and_then(pubkey, &ancestors, false, |account_info| {
+                .get_with_and_then(pubkey, &ancestors, false, |slot_list_item| {
                     db.remove_dead_accounts(
-                        [account_info].iter(),
+                        [(slot_list_item.slot(), slot_list_item.info())].iter(),
                         MarkAccountsObsolete::Yes(slot + 1),
                     );
                 });

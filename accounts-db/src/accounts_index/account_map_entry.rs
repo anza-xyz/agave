@@ -117,12 +117,38 @@ impl<T> Deref for SlotListReadGuard<'_, T> {
 }
 
 impl<T> SlotListReadGuard<'_, T> {
+    /// Returns the item at `index`, borrowed from this lock
+    pub fn locked_item(&self, index: usize) -> LockedSlotListItem<'_, T> {
+        LockedSlotListItem(&self.0[index])
+    }
+
+    /// Returns the items, borrowed from this lock
+    pub fn locked_items(&self) -> impl Iterator<Item = LockedSlotListItem<'_, T>> {
+        self.0.iter().map(LockedSlotListItem)
+    }
+
     #[cfg(test)]
     pub fn clone_list(&self) -> SlotList<T>
     where
         T: Copy,
     {
         self.0.iter().copied().collect()
+    }
+}
+
+/// A slot list item borrowed from its entry's slot list read lock
+///
+/// Only a `SlotListReadGuard` makes one, so holding one proves the lock is held.
+#[derive(Debug, Clone, Copy)]
+pub struct LockedSlotListItem<'a, T>(&'a SlotListItem<T>);
+
+impl<T: Copy> LockedSlotListItem<'_, T> {
+    pub fn slot(&self) -> Slot {
+        self.0.0
+    }
+
+    pub fn info(&self) -> T {
+        self.0.1
     }
 }
 
