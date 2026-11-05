@@ -45,8 +45,13 @@ impl<D: AsRef<[u8]>> RuntimeTransaction<SanitizedTransactionView<D>> {
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
-        from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx)
-            .map(|meta| RuntimeTransaction { transaction, meta })
+        from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx).map(|meta| {
+            RuntimeTransaction {
+                implicit_read_locks: Vec::new(),
+                transaction,
+                meta,
+            }
+        })
     }
 }
 
@@ -56,8 +61,13 @@ impl<'a, D: AsRef<[u8]>> RuntimeTransaction<&'a SanitizedTransactionView<D>> {
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
-        from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx)
-            .map(|meta| RuntimeTransaction { transaction, meta })
+        from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx).map(|meta| {
+            RuntimeTransaction {
+                implicit_read_locks: Vec::new(),
+                transaction,
+                meta,
+            }
+        })
     }
 }
 
@@ -118,7 +128,11 @@ impl<D: AsRef<[u8]>> RuntimeTransaction<ResolvedTransactionView<D>> {
         loaded_addresses: Option<LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
-        let RuntimeTransaction { transaction, meta } = statically_loaded_runtime_tx;
+        let RuntimeTransaction {
+            transaction,
+            meta,
+            implicit_read_locks,
+        } = statically_loaded_runtime_tx;
         // transaction-view does not distinguish between different types of errors here.
         // return generic sanitize failure error here.
         // these transactions should be immediately dropped, and we generally
@@ -127,8 +141,11 @@ impl<D: AsRef<[u8]>> RuntimeTransaction<ResolvedTransactionView<D>> {
             ResolvedTransactionView::try_new(transaction, loaded_addresses, reserved_account_keys)
                 .map_err(|_| TransactionError::SanitizeFailure)?;
         crate::transaction_limits::validate_unique_account_keys(transaction.account_keys())?;
-        let tx = Self { transaction, meta };
-        Ok(tx)
+        Ok(Self {
+            implicit_read_locks,
+            transaction,
+            meta,
+        })
     }
 }
 
@@ -232,12 +249,14 @@ where
             None,
         )
         .expect("failed to create RuntimeTransaction from Transaction");
-        RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
+        let mut tx = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
             static_runtime_tx,
             None,
             &HashSet::new(),
         )
-        .expect("failed to create RuntimeTransaction from Transaction")
+        .expect("failed to create RuntimeTransaction from Transaction");
+        tx.load_implicit_read_locks();
+        tx
     }
 }
 

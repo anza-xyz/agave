@@ -3911,13 +3911,17 @@ impl Bank {
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
-                RuntimeTransaction::try_create(
+                let mut tx = RuntimeTransaction::try_create(
                     tx,
                     MessageHash::Compute,
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                )
+                )?;
+                if !self.feature_set.snapshot().loaderv3_programdata_size_floor {
+                    tx.load_implicit_read_locks();
+                }
+                Ok(tx)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(TransactionBatch::new(
@@ -3986,7 +3990,7 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
-    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: SVMMessage>(
+    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: TransactionWithMeta>(
         &'a self,
         transaction: &'a Tx,
     ) -> TransactionBatch<'a, 'a, Tx> {
@@ -4223,7 +4227,7 @@ impl Bank {
         account_overrides
     }
 
-    pub fn unlock_accounts<'a, Tx: SVMMessage + 'a>(
+    pub fn unlock_accounts<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         txs_and_results: impl Iterator<Item = (&'a Tx, &'a Result<()>)> + Clone,
     ) {
@@ -4247,7 +4251,7 @@ impl Bank {
 
     pub fn collect_balances(
         &self,
-        batch: &TransactionBatch<impl SVMMessage>,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
     ) -> TransactionBalances {
         let mut balances: TransactionBalances = vec![];
         for transaction in batch.sanitized_transactions() {
@@ -5734,7 +5738,7 @@ impl Bank {
 
         // WARNING: Any pending features added here most likely must also be checked in
         //          `Bank::resanitize_transaction_minimally`.
-        let sanitized_tx = {
+        let mut sanitized_tx = {
             let size = tx.data().len();
             if size > max_transaction_size {
                 return Err(TransactionError::SanitizeFailure);
@@ -5765,6 +5769,9 @@ impl Bank {
             )
         }?;
 
+        if !self.feature_set.snapshot().loaderv3_programdata_size_floor {
+            sanitized_tx.load_implicit_read_locks();
+        }
         Ok(sanitized_tx)
     }
 
