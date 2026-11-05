@@ -2076,7 +2076,14 @@ impl JsonRpcRequestProcessor {
                 .load(Ordering::SeqCst),
         );
         let confirmed_bank = if commitment.is_confirmed() {
-            Some(self.get_bank_with_config(config)?)
+            let bank = self.get_bank_with_config(config)?;
+            // Avoid an unbounded history scan before the first supermajority root.
+            if highest_super_majority_root == 0 {
+                return Err(
+                    RpcCustomError::BlockStatusNotAvailableYet { slot: bank.slot() }.into(),
+                );
+            }
+            Some(bank)
         } else {
             let min_context_slot = config.min_context_slot.unwrap_or_default();
             if highest_complete_transaction_history_root < min_context_slot {
@@ -8561,6 +8568,33 @@ pub mod tests {
             let result: Value = parse_success_result(rpc.handle_request_sync(request));
             assert!(!result.is_null());
         }
+    }
+
+    #[test]
+    fn test_confirmed_get_signatures_for_address_waits_for_first_root() {
+        let rpc = RpcHandler::start();
+        let bank = rpc.advance_bank_to_confirmed_slot(1);
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank;
+        let request = || {
+            create_test_request(
+                "getSignaturesForAddress",
+                Some(json!([
+                    rpc.mint_keypair.pubkey().to_string(),
+                    {"commitment": "confirmed"},
+                ])),
+            )
+        };
+
+        assert_eq!(
+            parse_failure_response(rpc.handle_request_sync(request())).0,
+            JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
+        );
+
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_highest_super_majority_root(1);
+        assert!(parse_success_result::<Vec<Value>>(rpc.handle_request_sync(request())).is_empty());
     }
 
     #[test]
