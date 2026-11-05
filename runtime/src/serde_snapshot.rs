@@ -953,11 +953,17 @@ fn reconstruct_accountsdb_from_fields(
         calculated_accounts_lt_hash,
         calculated_capitalization,
         pubkeys_by_owner,
-    } = accounts_db.generate_index(
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
-    );
+    } = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayonGenIndex{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+        .install(|| {
+            accounts_db.generate_index(
+                limit_load_slot_count_from_snapshot,
+                verify_index,
+                &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
+            )
+        });
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     Ok((
