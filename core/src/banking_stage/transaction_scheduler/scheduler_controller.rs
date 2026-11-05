@@ -22,7 +22,6 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
     solana_runtime::{bank::BankId, bank_forks::SharableBanks},
@@ -74,7 +73,11 @@ fn update_scheduling_bank(
 
 #[derive(Clone)]
 pub struct SchedulerConfig {
+    /// Pacing window ending one batch interval after the final budget release.
     pub scheduler_pacing: SchedulerPacing,
+    /// Time between budget releases. Must be non-zero when pacing is enabled;
+    /// validated when the scheduler controller is constructed.
+    pub scheduler_pacing_batch_interval: Duration,
 }
 
 impl Default for SchedulerConfig {
@@ -83,13 +86,15 @@ impl Default for SchedulerConfig {
             scheduler_pacing: SchedulerPacing::FillTimeMillis(
                 DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS,
             ),
+            scheduler_pacing_batch_interval: DEFAULT_SCHEDULER_PACING_BATCH_INTERVAL,
         }
     }
 }
 
-const DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS: u64 = 50;
+const DEFAULT_SCHEDULER_PACING_BATCH_INTERVAL: Duration = Duration::from_millis(25);
+/// Default pacing window duration, based on a 200 ms slot.
 pub(crate) const DEFAULT_SCHEDULER_PACING_FILL_TIME_MILLIS: NonZeroU64 =
-    NonZeroU64::new(DEFAULT_MS_PER_SLOT - DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS).unwrap();
+    NonZeroU64::new(200).unwrap();
 
 /// Detects saturation and publishes the priority floor for dropping low-priority transactions upstream.
 struct SaturationState {
@@ -192,6 +197,11 @@ where
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         priority_floor: Arc<SchedulerPriorityFloor>,
     ) -> Self {
+        assert!(
+            config.scheduler_pacing.fill_time().is_none()
+                || !config.scheduler_pacing_batch_interval.is_zero(),
+            "scheduler pacing batch interval must be non-zero"
+        );
         priority_floor.clear();
         let container_capacity = TOTAL_BUFFERED_PACKETS;
         let saturation_state = SaturationState::new(priority_floor, container_capacity);
@@ -287,11 +297,8 @@ where
                             pacing_fill_time, b.ns_per_slot,
                         );
                         self.config.scheduler_pacing = SchedulerPacing::FillTimeMillis(
-                            NonZeroU64::new(
-                                (b.ns_per_slot as u64 / 1_000_000)
-                                    .saturating_sub(DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS),
-                            )
-                            .unwrap_or(NonZeroU64::new(1).unwrap()),
+                            NonZeroU64::new(b.ns_per_slot as u64 / 1_000_000)
+                                .unwrap_or(NonZeroU64::new(1).unwrap()),
                         );
                     }
 
@@ -300,6 +307,7 @@ where
                         shared_block_cost,
                         detection_time: now,
                         fill_time: self.config.scheduler_pacing.fill_time(),
+                        batch_interval: self.config.scheduler_pacing_batch_interval,
                     }
                 });
             }
@@ -582,19 +590,22 @@ struct CostPacer {
     shared_block_cost: SharedBlockCost,
     detection_time: Instant,
     fill_time: Option<Duration>,
+    batch_interval: Duration,
 }
 
 impl CostPacer {
     fn scheduling_budget(&self, current_time: &Instant) -> u64 {
         let target = if let Some(fill_time) = &self.fill_time {
             let time_since = current_time.saturating_duration_since(self.detection_time);
-            if time_since >= *fill_time {
+            // Leave one batch interval to process the final release.
+            let last_release_time = fill_time.saturating_sub(self.batch_interval);
+            if time_since >= last_release_time {
                 self.block_limit
             } else {
-                // on millisecond granularity, pace the cost linearly.
-                let allocation_per_milli = self.block_limit / fill_time.as_millis() as u64;
-                let millis_since_detection = time_since.as_millis() as u64;
-                allocation_per_milli * millis_since_detection
+                let batch_interval = self.batch_interval.as_nanos();
+                // Make the next interval's budget available at its start.
+                let released_nanos = (time_since.as_nanos() / batch_interval + 1) * batch_interval;
+                (u128::from(self.block_limit) * released_nanos / fill_time.as_nanos()) as u64
             }
         } else {
             self.block_limit
@@ -648,6 +659,107 @@ mod tests {
             sync::{Arc, RwLock},
         },
     };
+
+    #[test]
+    fn test_cost_pacer_releases_budget_in_batches() {
+        let config = SchedulerConfig::default();
+        assert_eq!(
+            config.scheduler_pacing.fill_time(),
+            Some(Duration::from_millis(200))
+        );
+        assert_eq!(
+            config.scheduler_pacing_batch_interval,
+            Duration::from_millis(25)
+        );
+
+        let detection_time = Instant::now();
+        let pacer = CostPacer {
+            block_limit: 800,
+            shared_block_cost: SharedBlockCost::new(0),
+            detection_time,
+            fill_time: config.scheduler_pacing.fill_time(),
+            batch_interval: config.scheduler_pacing_batch_interval,
+        };
+
+        for (elapsed_millis, expected_budget) in [
+            (0, 100),
+            (24, 100),
+            (25, 200),
+            (49, 200),
+            (50, 300),
+            (174, 700),
+            (175, 800),
+            (200, 800),
+        ] {
+            assert_eq!(
+                pacer.scheduling_budget(&(detection_time + Duration::from_millis(elapsed_millis))),
+                expected_budget,
+                "elapsed {elapsed_millis} ms"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cost_pacer_custom_batch_interval_and_consumed_cost() {
+        let detection_time = Instant::now();
+        let pacer = CostPacer {
+            block_limit: 360,
+            shared_block_cost: SharedBlockCost::new(30),
+            detection_time,
+            fill_time: Some(Duration::from_millis(360)),
+            batch_interval: Duration::from_millis(20),
+        };
+
+        for (elapsed_millis, expected_budget) in [
+            (0, 0),
+            (19, 0),
+            (20, 10),
+            (39, 10),
+            (40, 30),
+            (339, 310),
+            (340, 330),
+        ] {
+            assert_eq!(
+                pacer.scheduling_budget(&(detection_time + Duration::from_millis(elapsed_millis))),
+                expected_budget,
+                "elapsed {elapsed_millis} ms"
+            );
+        }
+
+        let disabled_pacer = CostPacer {
+            fill_time: None,
+            ..pacer
+        };
+        assert_eq!(disabled_pacer.scheduling_budget(&detection_time), 330);
+    }
+
+    #[test]
+    fn test_cost_pacer_submillisecond_batch_interval() {
+        let detection_time = Instant::now();
+        let pacer = CostPacer {
+            block_limit: 8,
+            shared_block_cost: SharedBlockCost::new(0),
+            detection_time,
+            fill_time: Some(Duration::from_millis(2)),
+            batch_interval: Duration::from_micros(500),
+        };
+
+        for (elapsed_micros, expected_budget) in [
+            (0, 2),
+            (499, 2),
+            (500, 4),
+            (999, 4),
+            (1_000, 6),
+            (1_499, 6),
+            (1_500, 8),
+        ] {
+            assert_eq!(
+                pacer.scheduling_budget(&(detection_time + Duration::from_micros(elapsed_micros))),
+                expected_budget,
+                "elapsed {elapsed_micros} us"
+            );
+        }
+    }
 
     #[test]
     fn test_scheduling_bank_waits_for_in_flight_and_adopts_latest_bank() {
@@ -979,9 +1091,8 @@ mod tests {
                         block_limit: u64::MAX,
                         shared_block_cost: SharedBlockCost::new(0),
                         detection_time: now.checked_sub(slot_time).unwrap(),
-                        fill_time: Some(slot_time.saturating_sub(Duration::from_millis(
-                            DEFAULT_SCHEDULER_PACING_NON_FILL_TIME_MILLIS
-                        ))),
+                        fill_time: Some(slot_time),
+                        batch_interval: DEFAULT_SCHEDULER_PACING_BATCH_INTERVAL,
                     }),
                     &now
                 )
