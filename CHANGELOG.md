@@ -50,6 +50,10 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* `getBlockTime` now requires `--enable-rpc-transaction-history` to serve results. Previously, RPC
+  nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
+  block.
+
 #### Changes
 
 * `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
