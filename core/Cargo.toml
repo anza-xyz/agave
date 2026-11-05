@@ -40,7 +40,6 @@ stable-abi = [
     "solana-pubkey/stable-abi",
     "solana-runtime/stable-abi",
     "solana-signature/stable-abi",
-    "solana-vote/stable-abi",
     "solana-vote-program/stable-abi",
 ]
 
@@ -76,7 +75,6 @@ chrono = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 futures = { workspace = true }
-histogram = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
 libc = { workspace = true }
@@ -168,7 +166,6 @@ solana-unified-scheduler-logic = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
-solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
@@ -213,7 +210,6 @@ solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-o
 solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }

@@ -2770,12 +2770,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "histogram"
-version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cb882ccb290b8646e554b157ab0b71e64e8d5bef775cd66b6531e52d302669"
-
-[[package]]
 name = "hkdf"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6440,7 +6434,6 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "futures 0.3.34",
- "histogram",
  "itertools 0.15.0",
  "lazy-lru",
  "libc",
@@ -6530,7 +6523,6 @@ dependencies = [
  "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",
- "solana-vote",
  "solana-vote-program",
  "static_assertions",
  "strum",
