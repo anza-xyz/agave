@@ -12,6 +12,7 @@ use {
 };
 use {
     crate::{
+        abi::ABI,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         memory_context::{MemoryContext, MemoryContexts},
         program_cache::{
@@ -806,8 +807,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .is_precompile(pubkey)
     }
 
-    // Should alignment be enforced during user pointer translation
-    pub fn get_check_aligned(&self) -> bool {
+    /// Get the current instruction's [`ABI`].
+    pub fn abi(&self) -> ABI {
         self.transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
@@ -815,8 +816,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 debug_assert!(owner_id.is_ok());
                 owner_id
             })
-            .map(|owner_key| owner_key != bpf_loader_deprecated::id())
-            .unwrap_or(true)
+            .map(|owner_id| ABI::resolve(&owner_id))
+            .unwrap_or(ABI::V1)
     }
 
     /// Insert a VM register trace
@@ -2718,5 +2719,43 @@ mod tests {
             transaction_context.number_of_called_instructions_in_trace(),
             4
         );
+    }
+
+    #[test]
+    fn test_abi_follows_instruction_stack() {
+        let transaction_accounts = vec![
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(0, 0, &bpf_loader_deprecated::id()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(0, 0, &bpf_loader_upgradeable::id()),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+
+        // No instruction.
+        assert_eq!(invoke_context.abi(), ABI::V1);
+
+        // ABIv0 program.
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V0);
+
+        // It invokes an ABIv1 program.
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(1, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V1);
+
+        // The callee returns.
+        invoke_context.pop().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V0);
     }
 }

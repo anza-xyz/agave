@@ -10,6 +10,7 @@ use {
     solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        abi::ABI,
         create_vm,
         invoke_context::{BpfAllocator, InvokeContext},
         memory_context::MemoryContext,
@@ -512,6 +513,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
+        ABI::V1,
         false, // virtual_address_space_adjustments
         false, // account_data_direct_mapping
         false, // direct_account_pointers_in_program_input

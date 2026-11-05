@@ -120,6 +120,7 @@ pub fn invoke_builtin_function(
 ) -> Result<u64, Box<dyn std::error::Error>> {
     set_invoke_context(invoke_context);
 
+    let abi = invoke_context.abi();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_account_indices = 0..instruction_context.get_number_of_instruction_accounts();
@@ -148,6 +149,7 @@ pub fn invoke_builtin_function(
         ..
     } = serialize_parameters(
         &instruction_context,
+        abi,
         false, // There is no VM so virtual_address_space_adjustments can not be implemented here
         false, // There is no VM so account_data_direct_mapping can not be implemented here
         direct_account_pointers_in_program_input,
