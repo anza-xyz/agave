@@ -300,13 +300,6 @@ impl Node {
             )
             .collect();
 
-        let (_, quic_vote_client) = bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_write_quic,
-        )
-        .unwrap();
-
         let (_, quic_votor_client) = bind_in_range_with_config(
             bind_ip_addr,
             port_range,
@@ -383,7 +376,6 @@ impl Node {
             tpu_quic,
             tpu_forwards_quic,
             tpu_vote_forwarding_client,
-            quic_vote_client,
             quic_votor_client,
             tpu_transaction_forwarding_clients,
             rpc_sts_client,
