@@ -351,26 +351,30 @@ impl Stakes<StakeAccount> {
     where
         F: Fn(&Pubkey) -> Option<AccountSharedData> + Sync,
     {
+        let thread_pool = rewards_calculation_thread_pool();
         let stake_pubkeys = pubkeys_by_owner
             .remove(&stake_program::id())
             .unwrap_or_default();
         let vote_pubkeys = pubkeys_by_owner
             .remove(&solana_vote_program::id())
             .unwrap_or_default();
-        let stake_delegations = stake_pubkeys
-            .into_par_iter()
-            // We use fold/reduce to aggregate the results, which does a bit more work than calling
-            // collect()/collect_vec_list() and then imbl::HashMap::from_iter(collected.into_iter()),
-            // but it does it in background threads, so effectively it's faster.
-            .fold(ImblHashMap::new, |mut map, pubkey| {
-                if let Some(stake_account) =
-                    get_account(&pubkey).and_then(|account| StakeAccount::try_from(account).ok())
-                {
-                    map.insert(pubkey, stake_account);
-                }
-                map
-            })
-            .reduce(ImblHashMap::new, |a, b| a.union(b));
+        let stake_delegations = thread_pool.install(|| {
+            stake_pubkeys
+                .into_par_iter()
+                // We use fold/reduce to aggregate the results, which does a bit more work than calling
+                // collect()/collect_vec_list() and then imbl::HashMap::from_iter(collected.into_iter()),
+                // but it does it in background threads, so effectively it's faster.
+                .fold(ImblHashMap::new, |mut map, pubkey| {
+                    if let Some(stake_account) = get_account(&pubkey)
+                        .and_then(|account| StakeAccount::try_from(account).ok())
+                    {
+                        map.insert(pubkey, stake_account);
+                    }
+                    map
+                })
+                .reduce(ImblHashMap::new, |a, b| a.union(b))
+        });
+
         let vote_accounts = vote_pubkeys
             .into_iter()
             .filter_map(|pubkey| {
@@ -383,7 +387,7 @@ impl Stakes<StakeAccount> {
             })
             .collect();
         let (vote_accounts, delegated_stakes) = refresh_vote_accounts(
-            rewards_calculation_thread_pool(),
+            thread_pool,
             epoch,
             &vote_accounts,
             &stake_delegations.iter().collect::<Vec<_>>(),
