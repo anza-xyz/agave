@@ -12,7 +12,10 @@ pub use meta::StoredAccountMeta;
 use meta::StoredAccountMeta;
 use {
     crate::{
-        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        account_storage::{
+            meta_entry_read::{META_ENTRY_BUFFER_SIZE, MetaEntryBuffer},
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        },
         accounts_file::StoredAccountsInfo,
         storable_accounts::StorableAccounts,
         u64_align,
@@ -186,6 +189,12 @@ pub struct AppendVec {
 }
 
 const PAGE_SIZE: usize = 4 * 1024;
+
+const _: () = const {
+    assert!(align_of::<MetaEntryBuffer>() >= align_of::<StoredMeta>());
+    assert!(align_of::<MetaEntryBuffer>() >= align_of::<AccountMeta>());
+    assert!(META_ENTRY_BUFFER_SIZE >= PAGE_SIZE);
+};
 
 pub struct AppendVecStat {
     pub files_open: AtomicU64,
@@ -569,14 +578,10 @@ impl AppendVec {
         load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
     ) -> Option<Option<AccountSharedData>> {
         let offset = file_offset_from_logical(logical_offset);
-        let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
-        let bytes_read = read_into_buffer(&self.file, self.len() as FileSize, offset, unsafe {
-            &mut *buf.as_mut_ptr()
-        })
-        .ok()?;
-        // SAFETY: we only read the initialized portion.
-        let valid_bytes =
-            ValidSlice(unsafe { slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read) });
+        let mut buffer = MetaEntryBuffer::new();
+        let bytes = self.read_meta_entry_bytes(offset, &mut buffer)?;
+        let bytes_read = bytes.len();
+        let valid_bytes = ValidSlice(bytes);
         let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
         let (account_meta, next) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
         let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(valid_bytes, next)?;
@@ -632,6 +637,20 @@ impl AppendVec {
                 rent_epoch: account_meta.rent_epoch,
             })
         }))
+    }
+
+    /// Reads the meta entry at file `offset` into `buffer`, and returns the bytes read: up to a
+    /// page, and not past `len()`
+    fn read_meta_entry_bytes<'a>(
+        &self,
+        offset: FileOffset,
+        buffer: &'a mut MetaEntryBuffer,
+    ) -> Option<&'a [u8]> {
+        let buffer_bytes = buffer.bytes_mut(PAGE_SIZE);
+        let bytes_read =
+            read_into_buffer(&self.file, self.len() as FileSize, offset, buffer_bytes).ok()?;
+        // we only return the initialized portion.
+        Some(&buffer_bytes[..bytes_read])
     }
 
     /// Returns the path to the file where the data is stored
