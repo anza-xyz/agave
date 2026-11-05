@@ -743,6 +743,7 @@ mod external {
                     ),
                     allocator,
                     self.poh_recorder.read().unwrap().shared_leader_state(),
+                    self.bank_forks.read().unwrap().sharable_banks(),
                 );
 
                 worker_metrics.push(consume_worker.metrics_handle());
@@ -781,6 +782,7 @@ mod external {
                     ),
                     allocator,
                     self.poh_recorder.read().unwrap().shared_leader_state(),
+                    self.bank_forks.read().unwrap().sharable_banks(),
                 );
 
                 worker_metrics.push(consume_worker.metrics_handle());
