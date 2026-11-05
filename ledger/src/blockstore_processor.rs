@@ -1976,7 +1976,7 @@ fn process_next_slots(
 
         // Only process full slots in blockstore_processor, replay_stage
         // handles any partials
-        if next_meta.is_full_and_validated() {
+        if next_meta.is_full_and_checked() {
             if !opts.skip_inter_slot_verification {
                 let parent_block_id = bank.block_id();
                 if migration_status.should_allow_block_markers(*next_slot)

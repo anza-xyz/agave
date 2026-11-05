@@ -1948,7 +1948,7 @@ impl Blockstore {
         }
     }
 
-    /// Marks the slot dead, unless it was full and validated before this batch.
+    /// Mark the slot dead unless all data and FEC checks were complete before this batch.
     ///
     /// A failed FEC check must still mark a complete slot dead if validation was pending.
     /// Unlike [`Self::mark_slot_dead_if_not_full`], a slot which became full
@@ -1967,12 +1967,12 @@ impl Blockstore {
             Some(entry) => entry
                 .old_slot_meta
                 .as_ref()
-                .is_some_and(SlotMeta::is_full_and_validated),
+                .is_some_and(SlotMeta::is_full_and_checked),
             None => self
                 .meta_from_location(slot, location)
                 .ok()
                 .flatten()
-                .is_some_and(|meta| meta.is_full_and_validated()),
+                .is_some_and(|meta| meta.is_full_and_checked()),
         };
         if !was_full {
             self.dead_slots_cf.put_bytes_in_batch(
@@ -2665,13 +2665,13 @@ impl Blockstore {
         for task in &recovery_tasks {
             if task.requires_validation() {
                 // The SlotMeta reader sets every bit in memory when an older record has no bitmap.
-                // Validation used to finish during insertion, so complete data was safe to replay.
+                // Validation used to finish during insertion. The dead flag blocked failed slots.
                 // This default also sets bits for incomplete sets and sets with no shreds yet.
                 // Clear this set's bit when scheduling required SIMD-0504 validation.
                 // Write the cleared bit and incoming shreds in the same batch.
                 // Replay must wait for validation before reading the newly completed data.
                 // Keep this step while stored SlotMeta records can contain bits from that default.
-                // Writing an old record with a bitmap can store default bits for sets not yet validated.
+                // Writing an old record with a bitmap can store default bits for sets not yet checked.
                 // See the notes on FecValidation's SchemaRead implementation.
                 self.validation_slot_meta_entry(
                     &mut shred_insertion_tracker,
@@ -2711,9 +2711,12 @@ impl Blockstore {
                 is_trusted,
                 metrics,
             );
-            if batch.validation_mode != FecValidationMode::Enforce
-                || matches!(batch.fec_set_check, Some(FecSetCheckResult::Passed))
+            if batch.validation_mode != FecValidationMode::Enforce || batch.fec_set_check.is_some()
             {
+                // Any verdict completes the check. A failed required check marks the slot dead
+                // above. Commit that dead flag and this bit in the same write batch.
+                // As with synchronous validation, clearing the dead flag later allows replay
+                // without repeating completed checks.
                 // Insert recovered data first so it can set an orphan slot's parent.
                 // Then load SlotMeta to update validation.
                 let entry = self.validation_slot_meta_entry(
@@ -5395,7 +5398,7 @@ impl Blockstore {
         };
 
         let entries = self.get_slot_entries_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-        Ok((entries, num_shreds, slot_meta.is_full_and_validated()))
+        Ok((entries, num_shreds, slot_meta.is_full_and_checked()))
     }
 
     /// Returns the entry-view vector for the slot starting with `shred_start_index`, the number
@@ -5415,7 +5418,7 @@ impl Blockstore {
 
         let entries =
             self.get_slot_entry_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-        Ok((entries, num_shreds, slot_meta.is_full_and_validated()))
+        Ok((entries, num_shreds, slot_meta.is_full_and_checked()))
     }
 
     /// Returns the components vector for the slot starting with `shred_start_index`, the number of
@@ -5439,7 +5442,7 @@ impl Blockstore {
         Ok((
             components,
             completed_ranges,
-            slot_meta.is_full_and_validated(),
+            slot_meta.is_full_and_checked(),
         ))
     }
 
@@ -5461,7 +5464,7 @@ impl Blockstore {
         Ok((
             components,
             completed_ranges,
-            slot_meta.is_full_and_validated(),
+            slot_meta.is_full_and_checked(),
         ))
     }
 
@@ -5549,7 +5552,7 @@ impl Blockstore {
             &slot_meta.completed_data_indexes,
             slot_meta
                 .fec_validation
-                .validated_end(slot_meta.consumed as u32),
+                .checked_end(slot_meta.consumed as u32),
         );
 
         Ok((completed_ranges, Some(slot_meta)))
