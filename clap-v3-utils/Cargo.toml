@@ -51,7 +51,6 @@ uriparse = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 solana-clap-v3-utils = { path = ".", features = ["agave-unstable-api"] }
 solana-hash = { workspace = true, features = ["atomic"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
