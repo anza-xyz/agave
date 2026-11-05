@@ -2514,8 +2514,6 @@ pub struct Sockets {
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// UDP sockets for the alpenglow votor QUIC server endpoints.
     pub votor_server: Vec<UdpSocket>, // quic read only
-    /// Connection cache endpoint for QUIC-based Vote
-    pub quic_vote_client: UdpSocket, // quic write only
     /// Client-side socket for the alpenglow votor QUIC endpoint.
     pub quic_votor_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.

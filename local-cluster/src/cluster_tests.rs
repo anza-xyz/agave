@@ -16,16 +16,13 @@ use {
     },
     crossbeam_channel::{Receiver, bounded},
     rand::{Rng, rng},
-    rayon::{ThreadPool, prelude::*},
+    rayon::prelude::*,
     solana_bls_signatures::signature::SignatureAffine,
-    solana_clock::{self as clock, Slot},
+    solana_clock as clock,
     solana_commitment_config::CommitmentConfig,
-    solana_entry::entry::{self, Entry, EntrySlice},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{contact_info::ContactInfo, gossip_service::discover_validators},
-    solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::blockstore::Blockstore,
     solana_net_utils::{
         SocketAddrSpace, quic_socket::QuicSocket, sockets::bind_to_localhost_unique,
     },
@@ -46,7 +43,6 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
-        path::Path,
         sync::{Arc, RwLock},
         thread::sleep,
         time::{Duration, Instant},
@@ -343,40 +339,6 @@ pub fn send_many_transactions(
     })
 }
 
-pub fn verify_ledger_ticks(ledger_path: &Path, ticks_per_slot: usize) {
-    let ledger = Blockstore::open(ledger_path).unwrap();
-    let thread_pool = entry::thread_pool_for_tests();
-
-    let zeroth_slot = ledger.get_slot_entries(0, 0).unwrap();
-    let last_id = zeroth_slot.last().unwrap().hash;
-    let next_slots = ledger.get_slots_since(&[0]).unwrap().remove(&0).unwrap();
-    let mut pending_slots: Vec<_> = next_slots
-        .into_iter()
-        .map(|slot| (slot, 0, last_id))
-        .collect();
-    while let Some((slot, parent_slot, last_id)) = pending_slots.pop() {
-        let next_slots = ledger
-            .get_slots_since(&[slot])
-            .unwrap()
-            .remove(&slot)
-            .unwrap();
-
-        // If you're not the last slot, you should have a full set of ticks
-        let should_verify_ticks = if !next_slots.is_empty() {
-            Some((slot - parent_slot) as usize * ticks_per_slot)
-        } else {
-            None
-        };
-
-        let last_id = verify_slot_ticks(&ledger, &thread_pool, slot, &last_id, should_verify_ticks);
-        pending_slots.extend(
-            next_slots
-                .into_iter()
-                .map(|child_slot| (child_slot, slot, last_id)),
-        );
-    }
-}
-
 pub fn sleep_n_epochs(
     num_epochs: f64,
     config: &PohConfig,
@@ -509,35 +471,6 @@ pub fn kill_entry_and_spend_and_verify_rest(
             "kill_entry_and_spend_and_verify_rest: transaction never confirmed on all surviving \
              nodes after {MAX_SEND_ATTEMPTS} attempts"
         );
-    }
-}
-
-pub fn check_min_slot_is_rooted(min_slot: Slot, contact_infos: &[ContactInfo], test_name: &str) {
-    let mut last_print = Instant::now();
-    let loop_start = Instant::now();
-    let loop_timeout = Duration::from_secs(180);
-    for ingress_node in contact_infos.iter() {
-        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
-        loop {
-            let root_slot = rpc_client
-                .get_slot_with_commitment(CommitmentConfig::finalized())
-                .unwrap_or(0);
-            if root_slot >= min_slot || last_print.elapsed().as_secs() > 3 {
-                info!(
-                    "{} waiting for node {} to see root >= {}.. observed latest root: {}",
-                    test_name,
-                    ingress_node.pubkey(),
-                    min_slot,
-                    root_slot
-                );
-                last_print = Instant::now();
-                if root_slot >= min_slot {
-                    break;
-                }
-            }
-            sleep(Duration::from_millis(clock::DEFAULT_MS_PER_SLOT / 2));
-            assert!(loop_start.elapsed() < loop_timeout);
-        }
     }
 }
 
@@ -762,70 +695,6 @@ pub fn check_for_new_notarized_votes(
     });
 }
 
-pub fn check_no_new_roots(
-    num_slots_to_wait: usize,
-    contact_infos: &[&ContactInfo],
-    test_name: &str,
-) {
-    assert!(!contact_infos.is_empty());
-    let mut roots = vec![0; contact_infos.len()];
-    let max_slot = contact_infos
-        .iter()
-        .enumerate()
-        .map(|(i, ingress_node)| {
-            let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
-            let initial_root = rpc_client
-                .get_slot()
-                .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey()));
-            roots[i] = initial_root;
-            rpc_client
-                .get_slot_with_commitment(CommitmentConfig::processed())
-                .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey()))
-        })
-        .max()
-        .unwrap();
-
-    let end_slot = max_slot + num_slots_to_wait as u64;
-    let mut current_slot;
-    let mut last_print = Instant::now();
-    let mut reached_end_slot = false;
-    loop {
-        for contact_info in contact_infos {
-            let rpc_client = RpcClient::new(format!("http://{}", contact_info.rpc().unwrap()));
-            current_slot = rpc_client
-                .get_slot_with_commitment(CommitmentConfig::processed())
-                .unwrap_or_else(|_| panic!("get_slot for {} failed", contact_infos[0].pubkey()));
-            if current_slot > end_slot {
-                reached_end_slot = true;
-                break;
-            }
-            if last_print.elapsed().as_secs() > 3 {
-                info!(
-                    "{} current slot: {} on validator: {}, waiting for any validator with slot: {}",
-                    test_name,
-                    current_slot,
-                    contact_info.pubkey(),
-                    end_slot
-                );
-                last_print = Instant::now();
-            }
-        }
-        if reached_end_slot {
-            break;
-        }
-    }
-
-    for (i, ingress_node) in contact_infos.iter().enumerate() {
-        let rpc_client = RpcClient::new(format!("http://{}", ingress_node.rpc().unwrap()));
-        assert_eq!(
-            rpc_client
-                .get_slot()
-                .unwrap_or_else(|_| panic!("get_slot for {} failed", ingress_node.pubkey())),
-            roots[i]
-        );
-    }
-}
-
 fn poll_all_nodes_for_signature(
     entry_point_info: &ContactInfo,
     cluster_nodes: &[ContactInfo],
@@ -841,30 +710,4 @@ fn poll_all_nodes_for_signature(
     }
 
     Ok(())
-}
-
-fn get_and_verify_slot_entries(
-    blockstore: &Blockstore,
-    thread_pool: &ThreadPool,
-    slot: Slot,
-    last_entry: &Hash,
-) -> Vec<Entry> {
-    let entries = blockstore.get_slot_entries(slot, 0).unwrap();
-    assert!(entries.verify(last_entry, thread_pool).status());
-    entries
-}
-
-fn verify_slot_ticks(
-    blockstore: &Blockstore,
-    thread_pool: &ThreadPool,
-    slot: Slot,
-    last_entry: &Hash,
-    expected_num_ticks: Option<usize>,
-) -> Hash {
-    let entries = get_and_verify_slot_entries(blockstore, thread_pool, slot, last_entry);
-    let num_ticks: usize = entries.iter().map(|entry| entry.is_tick() as usize).sum();
-    if let Some(expected_num_ticks) = expected_num_ticks {
-        assert_eq!(num_ticks, expected_num_ticks);
-    }
-    entries.last().unwrap().hash
 }

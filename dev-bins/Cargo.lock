@@ -1028,17 +1028,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-lock"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290f7f2596bd5b78a9fec8088ccd89180d7f9f55b94b0576823bbbdc72ee8311"
-dependencies = [
- "event-listener",
- "event-listener-strategy",
- "pin-project-lite",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1745,15 +1734,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75984efb6ed102a0d42db99afb6c1948f0380d1d91808d5529916e6c08b49d8d"
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,12 +2083,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "data-encoding"
-version = "2.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
-
-[[package]]
 name = "der"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2420,27 +2394,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "event-listener"
-version = "5.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
-dependencies = [
- "concurrent-queue",
- "parking",
- "pin-project-lite",
-]
-
-[[package]]
-name = "event-listener-strategy"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
-dependencies = [
- "event-listener",
- "pin-project-lite",
 ]
 
 [[package]]
@@ -3149,7 +3102,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.10",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4354,12 +4307,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "parking"
-version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
-
-[[package]]
 name = "parking_lot"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5177,7 +5124,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.10",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -6357,42 +6304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-client"
-version = "5.0.0-alpha.0"
-dependencies = [
- "async-trait",
- "dashmap",
- "futures-util",
- "indicatif",
- "log",
- "solana-commitment-config",
- "solana-connection-cache",
- "solana-hash",
- "solana-keypair",
- "solana-measure",
- "solana-message",
- "solana-net-utils",
- "solana-pubkey 4.4.0",
- "solana-pubsub-client",
- "solana-quic-client",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-rpc-client-nonce-utils",
- "solana-signature",
- "solana-signer",
- "solana-streamer",
- "solana-time-utils",
- "solana-tls-utils",
- "solana-tpu-client",
- "solana-tpu-client-next",
- "solana-transaction",
- "solana-transaction-error",
- "solana-udp-client",
- "tokio",
- "wincode",
-]
-
-[[package]]
 name = "solana-client-traits"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6506,24 +6417,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-connection-cache"
-version = "5.0.0-alpha.0"
-dependencies = [
- "async-trait",
- "crossbeam-channel",
- "indexmap",
- "log",
- "rand 0.9.4",
- "solana-keypair",
- "solana-measure",
- "solana-metrics",
- "solana-net-utils",
- "solana-time-utils",
- "solana-transaction-error",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "solana-core"
 version = "5.0.0-alpha.0"
 dependencies = [
@@ -6581,11 +6474,9 @@ dependencies = [
  "solana-accounts-db",
  "solana-address-lookup-table-interface",
  "solana-bls-signatures",
- "solana-client",
  "solana-clock",
  "solana-cluster-type",
  "solana-compute-budget-interface",
- "solana-connection-cache",
  "solana-cost-model",
  "solana-ed25519-program",
  "solana-entry",
@@ -6640,7 +6531,6 @@ dependencies = [
  "solana-sysvar",
  "solana-time-utils",
  "solana-tls-utils",
- "solana-tpu-client",
  "solana-tpu-client-next",
  "solana-transaction",
  "solana-transaction-error",
@@ -7798,52 +7688,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-pubsub-client"
-version = "5.0.0-alpha.0"
-dependencies = [
- "crossbeam-channel",
- "futures-util",
- "log",
- "serde",
- "serde_json",
- "solana-account-decoder-client-types",
- "solana-clock",
- "solana-pubkey 4.4.0",
- "solana-rpc-client-types",
- "solana-signature",
- "thiserror 2.0.21",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
- "tungstenite",
- "url 2.5.8",
-]
-
-[[package]]
-name = "solana-quic-client"
-version = "5.0.0-alpha.0"
-dependencies = [
- "anza-quinn",
- "async-lock",
- "async-trait",
- "futures 0.3.34",
- "log",
- "solana-connection-cache",
- "solana-keypair",
- "solana-measure",
- "solana-metrics",
- "solana-net-utils",
- "solana-pubkey 4.4.0",
- "solana-rpc-client-api",
- "solana-signer",
- "solana-streamer",
- "solana-tls-utils",
- "solana-transaction-error",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
 name = "solana-rayon-threadlimit"
 version = "5.0.0-alpha.0"
 dependencies = [
@@ -7993,7 +7837,6 @@ dependencies = [
  "base64 0.23.1",
  "bs58",
  "futures 0.3.34",
- "indicatif",
  "log",
  "reqwest 0.12.28",
  "reqwest-middleware",
@@ -8041,22 +7884,6 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "solana-rpc-client-nonce-utils"
-version = "5.0.0-alpha.0"
-dependencies = [
- "solana-account",
- "solana-commitment-config",
- "solana-hash",
- "solana-message",
- "solana-nonce",
- "solana-pubkey 4.4.0",
- "solana-rpc-client",
- "solana-sdk-ids",
- "thiserror 2.0.21",
- "wincode",
 ]
 
 [[package]]
@@ -8964,34 +8791,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-tpu-client"
-version = "5.0.0-alpha.0"
-dependencies = [
- "futures-util",
- "indicatif",
- "log",
- "rayon",
- "solana-client-traits",
- "solana-clock",
- "solana-commitment-config",
- "solana-connection-cache",
- "solana-epoch-schedule",
- "solana-leader-schedule",
- "solana-message",
- "solana-pubkey 4.4.0",
- "solana-pubsub-client",
- "solana-rpc-client",
- "solana-rpc-client-api",
- "solana-signature",
- "solana-signer",
- "solana-transaction",
- "solana-transaction-error",
- "thiserror 2.0.21",
- "tokio",
- "wincode",
-]
-
-[[package]]
 name = "solana-tpu-client-next"
 version = "5.0.0-alpha.0"
 dependencies = [
@@ -9182,18 +8981,6 @@ dependencies = [
  "solana-transaction-error",
  "thiserror 2.0.21",
  "wincode",
-]
-
-[[package]]
-name = "solana-udp-client"
-version = "5.0.0-alpha.0"
-dependencies = [
- "async-trait",
- "solana-connection-cache",
- "solana-keypair",
- "solana-net-utils",
- "solana-streamer",
- "solana-transaction-error",
 ]
 
 [[package]]
@@ -10062,22 +9849,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-tungstenite"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
-dependencies = [
- "futures-util",
- "log",
- "rustls",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls",
- "tungstenite",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
 name = "tokio-util"
 version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10355,26 +10126,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tungstenite"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
-dependencies = [
- "bytes",
- "data-encoding",
- "http 1.5.0",
- "httparse",
- "log",
- "rand 0.9.4",
- "rustls",
- "rustls-pki-types",
- "sha1",
- "thiserror 2.0.21",
- "utf-8",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10506,12 +10257,6 @@ dependencies = [
  "percent-encoding 2.3.2",
  "serde",
 ]
-
-[[package]]
-name = "utf-8"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "utf8_iter"
@@ -10684,15 +10429,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.10",
 ]
 
 [[package]]
