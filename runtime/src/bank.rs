@@ -211,10 +211,7 @@ use {
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{AddressLoaderError, TransactionError, TransactionResult as Result},
-    solana_vote::{
-        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
-        vote_parser,
-    },
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{HashMap, HashSet},
@@ -702,7 +699,6 @@ impl PartialEq for Bank {
             reserved_account_keys: _,
             drop_callback: _,
             freeze_started: _,
-            vote_only_bank: _,
             should_replay_from_blockstore: _,
             cost_tracker: _,
             accounts_data_size_initial: _,
@@ -969,8 +965,6 @@ pub struct Bank {
 
     pub freeze_started: AtomicBool,
 
-    vote_only_bank: bool,
-
     /// Whether ReplayStage should execute this bank from blockstore.
     /// This defaults to true. Banks created for local block production opt out because BankingStage
     /// executes them instead.
@@ -1084,11 +1078,6 @@ impl TxExecutionGuard<'_> {
         self.bank
             .commit_transactions(sanitized_txs, processing_results, processed_counts, timings)
     }
-}
-
-#[derive(Debug, Default)]
-pub struct NewBankOptions {
-    pub vote_only_bank: bool,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -1275,7 +1264,6 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::default(),
-            vote_only_bank: false,
             should_replay_from_blockstore: true,
             cost_tracker: RwLock::<CostTracker>::default(),
             accounts_data_size_initial: 0,
@@ -1381,22 +1369,7 @@ impl Bank {
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
     pub fn new_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
-        Self::_new_from_parent(
-            parent,
-            leader,
-            slot,
-            null_tracer(),
-            NewBankOptions::default(),
-        )
-    }
-
-    pub fn new_from_parent_with_options(
-        parent: Arc<Bank>,
-        leader: SlotLeader,
-        slot: Slot,
-        new_bank_options: NewBankOptions,
-    ) -> Self {
-        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options)
+        Self::_new_from_parent(parent, leader, slot, null_tracer())
     }
 
     pub fn new_from_parent_with_tracer(
@@ -1405,13 +1378,7 @@ impl Bank {
         slot: Slot,
         reward_calc_tracer: impl RewardCalcTracer,
     ) -> Self {
-        Self::_new_from_parent(
-            parent,
-            leader,
-            slot,
-            Some(reward_calc_tracer),
-            NewBankOptions::default(),
-        )
+        Self::_new_from_parent(parent, leader, slot, Some(reward_calc_tracer))
     }
 
     fn get_rent_collector_from(rent_collector: &RentCollector, epoch: Epoch) -> RentCollector {
@@ -1423,10 +1390,8 @@ impl Bank {
         leader: SlotLeader,
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-        new_bank_options: NewBankOptions,
     ) -> Self {
         let mut time = Measure::start("bank::new_from_parent");
-        let NewBankOptions { vote_only_bank } = new_bank_options;
 
         parent.freeze();
         assert_ne!(slot, parent.slot());
@@ -1503,7 +1468,6 @@ impl Bank {
                 .expect("block height addition overflowed"),
             fee_rate_governor,
             capitalization: AtomicU64::new(parent.capitalization()),
-            vote_only_bank,
             should_replay_from_blockstore: true,
             inflation: parent.inflation.clone(),
             transaction_count: AtomicU64::new(parent.transaction_count()),
@@ -2009,10 +1973,6 @@ impl Bank {
         *self.drop_callback.write().unwrap() = OptionalDropCallback(callback);
     }
 
-    pub fn vote_only_bank(&self) -> bool {
-        self.vote_only_bank
-    }
-
     pub fn should_replay_from_blockstore(&self) -> bool {
         self.should_replay_from_blockstore
     }
@@ -2298,7 +2258,6 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::new(fields.hash != Hash::default()),
-            vote_only_bank: false,
             should_replay_from_blockstore: true,
             cost_tracker: RwLock::new(CostTracker::default()),
             accounts_data_size_initial,
@@ -4022,10 +3981,6 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
-        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
-            return Err(TransactionError::SanitizeFailure);
-        }
-
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != sanitized_epoch {

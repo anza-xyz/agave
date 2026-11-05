@@ -4,7 +4,6 @@
 //! where the `alpenglow` feature flag is active.
 //!
 //! Once the migration starts:
-//! - We enter vote only mode, no user txs will be present in blocks
 //! - We stop rooting or reporting OC/Finalizations
 //!
 //! During the migration starting at slot `s`:
@@ -17,7 +16,7 @@
 //!    5a) We clear any TowerBFT blocks past `G`.
 //!    5b) We propagate the Genesis certificate for `G` via all to all
 //! 5) We initialize Votor with `G` as genesis, and disable TowerBFT for any slots past `G`
-//! 6) We exit vote only mode, and reenable rooting and commitment reporting
+//! 6) We reenable rooting and commitment reporting
 //!
 //! If at any point during the migration we see a:
 //! - A genesis certificate
@@ -105,7 +104,8 @@ enum MigrationPhase {
 
     /// The alpenglow feature flag has been activated and we have a `migration_slot`.
     /// All blocks before `migration_slot` are handled as normal.
-    /// Blocks >= `migration slot` are VoM, and are not eligble to be reported as OC/Finalized or rooted.
+    /// During genesis discovery, blocks at or after `migration_slot` are not eligible to be
+    /// reported as optimistic confirmation/finalized or rooted.
     /// During this phase we are process of discovering the alpenglow genesis block / holding the genesis vote
     Migration {
         /// The slot at which the migration starts
@@ -198,19 +198,6 @@ impl MigrationPhase {
             | MigrationPhase::ReadyToEnable { .. }
             | MigrationPhase::AlpenglowEnabled { .. }
             | MigrationPhase::FullAlpenglowEpoch { .. } => false,
-        }
-    }
-
-    /// Should we create / replay this bank in VoM?
-    /// During the migrationary period before genesis has been found, we must validate that banks are VoM
-    fn should_bank_be_vote_only(&self, bank_slot: Slot) -> bool {
-        match self {
-            MigrationPhase::PreFeatureActivation => false,
-            MigrationPhase::Migration { migration_slot, .. } => bank_slot >= *migration_slot,
-            MigrationPhase::ReadyToEnable { .. } => true,
-            MigrationPhase::AlpenglowEnabled { .. } | MigrationPhase::FullAlpenglowEpoch { .. } => {
-                false
-            }
         }
     }
 
@@ -458,7 +445,6 @@ impl MigrationStatus {
     dispatch!(pub fn is_full_alpenglow_epoch(&self) -> bool);
 
     dispatch!(pub fn qualifies_for_genesis_discovery(&self, slot: Slot) -> bool);
-    dispatch!(pub fn should_bank_be_vote_only(&self, bank_slot: Slot) -> bool);
     dispatch!(pub fn should_report_commitment_or_root(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_root_during_startup(&self, slot: Slot) -> bool);
     dispatch!(pub fn should_publish_epoch_slots(&self, slot: Slot) -> bool);
