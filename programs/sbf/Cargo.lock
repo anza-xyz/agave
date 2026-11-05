@@ -184,9 +184,8 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-plugin-interface"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a91c20a2247c7c7597bf38599b3a2d99292218ced923487c390357b37059722f"
+version = "8.0.0"
+source = "git+https://github.com/anza-xyz/agave-sdk?rev=6d365701826323f9063e71bb4c15ee4ce857020e#6d365701826323f9063e71bb4c15ee4ce857020e"
 dependencies = [
  "log",
  "solana-bls-signatures",
