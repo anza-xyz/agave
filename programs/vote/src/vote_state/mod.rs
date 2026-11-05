@@ -1414,7 +1414,6 @@ pub fn create_bls_proof_of_possession(
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
@@ -1422,6 +1421,7 @@ mod tests {
             instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
+        std::assert_matches,
         test_case::test_case,
     };
 

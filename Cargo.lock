@@ -8264,7 +8264,6 @@ dependencies = [
 name = "solana-ed25519-program-tests"
 version = "5.0.0-alpha.0"
 dependencies = [
- "assert_matches",
  "rand 0.9.4",
  "solana-ed25519-program",
  "solana-instruction 4.0.0",
@@ -9729,7 +9728,6 @@ version = "5.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
- "assert_matches",
  "async-trait",
  "base64 0.23.1",
  "chrono-humanize",
@@ -11703,7 +11701,6 @@ dependencies = [
  "agave-feature-set",
  "agave-logger",
  "arbitrary",
- "assert_matches",
  "criterion",
  "log",
  "qualifier_attr",

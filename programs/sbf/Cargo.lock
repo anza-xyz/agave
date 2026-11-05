@@ -7820,7 +7820,6 @@ version = "5.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
- "assert_matches",
  "async-trait",
  "base64 0.23.1",
  "chrono-humanize",
