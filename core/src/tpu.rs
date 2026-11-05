@@ -23,11 +23,12 @@ use {
     agave_jemalloc::group::ArenaGroup,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_xdp::transmitter::XdpSender,
-    crossbeam_channel::{Receiver, bounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_net_utils::quic_socket::into_quic_sockets,
+    solana_perf::packet::PacketBatch,
     solana_poh::{
         poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
@@ -66,9 +67,6 @@ pub struct TpuSockets {
     pub vote_forwarding_client: UdpSocket,
 }
 
-// Conservatively allow 20 TPS per validator.
-pub const MAX_VOTES_PER_SECOND: u64 = 20;
-
 /// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
 /// be conservative max of obsersed on mnb during high-load events.
 const TPU_CHANNEL_SIZE: usize = 50_000;
@@ -92,6 +90,9 @@ pub struct Tpu {
     tpu_forwards_quic_t: thread::JoinHandle<()>,
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
+    /// Keeps the vote channel connected so banking stage does not exit when
+    /// there are no TPU vote ingest sockets. Dropped in `join` to let it exit.
+    vote_packet_sender: Sender<PacketBatch>,
 }
 
 impl Tpu {
@@ -327,10 +328,12 @@ impl Tpu {
             tpu_forwards_quic_t,
             tpu_entry_notifier,
             staked_nodes_updater_service,
+            vote_packet_sender,
         }
     }
 
     pub fn join(self) -> thread::Result<()> {
+        drop(self.vote_packet_sender);
         let results = vec![
             self.fetch_stage.join(),
             self.sigverify_stage.join(),
