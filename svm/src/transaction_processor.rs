@@ -506,19 +506,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the transaction loop below.
         let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
 
-        if program_cache_for_tx_batch.hit_max_limit {
-            return LoadAndExecuteSanitizedTransactionsOutput {
-                error_metrics,
-                execute_timings,
-                processing_results: (0..sanitized_txs.len())
-                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                    .collect(),
-                // If we abort the batch and balance recording is enabled, no balances should be
-                // collected. If this is a leader thread, no batch will be committed.
-                balance_collector: None,
-            };
-        }
-
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
         let sysvar_cache = self.sysvar_cache();
 
