@@ -173,7 +173,9 @@ impl EventHandlerStats {
         match event {
             VotorEvent::FirstShred(slot) => {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
-                entry.first_shred = Some(Instant::now());
+                // Blockstore may report a slot more than once (alternate block
+                // locations, own broadcast, purge and refill); keep the earliest.
+                entry.first_shred.get_or_insert_with(Instant::now);
             }
             VotorEvent::ParentReady { slot, .. } => {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
