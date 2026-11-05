@@ -1696,12 +1696,13 @@ impl Blockstore {
 
     /// Rebuild a validation task from current blockstore data after a restart or a failed attempt.
     /// Normal tasks carry newly inserted shreds directly to the recovery worker.
+    /// Dead slots still need validation: replay can revive them without replacing their shreds.
     pub fn prepare_shred_validation_retry(
         &self,
         erasure_set: ErasureSetId,
     ) -> Result<Option<ShredRecoveryTask>> {
         let slot = erasure_set.slot();
-        if slot <= self.max_root() || self.is_dead(slot) {
+        if slot <= self.max_root() {
             return Ok(None);
         }
         let Some(meta) = self.meta(slot)? else {
@@ -1750,6 +1751,7 @@ impl Blockstore {
     /// Scan only slots that require validation after feature activation.
     /// Earlier slots can have clear bits for sets with only coding shreds, but do not require
     /// validation.
+    /// Include dead slots so their validation can finish before replay revives them.
     /// Later retries read individual FEC sets by ID.
     pub fn pending_shred_validation(
         &self,
@@ -1761,9 +1763,6 @@ impl Blockstore {
         };
         let start = self.max_root().saturating_add(1).max(first_validation_slot);
         for (slot, meta) in self.slot_meta_iterator(start)? {
-            if self.is_dead(slot) {
-                continue;
-            }
             let Some(index) = self.get_index(slot)? else {
                 continue;
             };
@@ -1917,7 +1916,8 @@ impl Blockstore {
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
     }
 
-    /// Mark an original block dead unless it is already full and validated.
+    /// Mark an original block dead unless all its data shreds are present.
+    /// A rejected shred must not kill a complete block while its FEC validation is pending.
     fn mark_slot_dead_if_not_full(
         &self,
         slot: Slot,
@@ -1930,17 +1930,16 @@ impl Blockstore {
         let mark_slot_dead = shred_insertion_tracker
             .slot_meta_working_set
             .get(&(location, slot))
-            .map(|meta| !meta.new_slot_meta.borrow().is_full_and_validated())
+            .map(|meta| !meta.new_slot_meta.borrow().is_full())
             .or_else(|| {
                 self.meta_from_location(slot, location)
                     .ok()
                     .flatten()
-                    .map(|meta| !meta.is_full_and_validated())
+                    .map(|meta| !meta.is_full())
             })
             .unwrap_or(true);
 
         if mark_slot_dead {
-            // Do not mark a slot dead if it is already full and validated.
             self.dead_slots_cf.put_bytes_in_batch(
                 shred_insertion_tracker.write_batch,
                 slot,
@@ -1951,6 +1950,7 @@ impl Blockstore {
 
     /// Marks the slot dead, unless it was full and validated before this batch.
     ///
+    /// A failed FEC check must still mark a complete slot dead if validation was pending.
     /// Unlike [`Self::mark_slot_dead_if_not_full`], a slot which became full
     /// in this batch is marked dead too, since replay can't have seen it full
     /// before this batch is committed.
@@ -2102,6 +2102,7 @@ impl Blockstore {
     /// Copy new shreds into each task. Keep the originals in the tracker for duplicate checks until
     /// commit.
     /// The recovery thread loads shreds from earlier insertions by ID.
+    /// Include dead slots: replay can revive them without another shred arrival to trigger validation.
     fn prepare_shred_recovery_tasks(
         &self,
         tracker: &mut ShredInsertionTracker<'_, '_>,
@@ -2126,9 +2127,6 @@ impl Blockstore {
                 let enforce_fec_checks = tracker
                     .stricter_shred_validation_from
                     .is_some_and(|first_slot| erasure_set.slot() >= first_slot);
-                if enforce_fec_checks && self.is_dead(erasure_set.slot()) {
-                    return None;
-                }
                 // Keep scheduling recovery while data is missing.
                 // An earlier task with enough shreds to recover can still be waiting for
                 // validation.
