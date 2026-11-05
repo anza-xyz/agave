@@ -26,6 +26,9 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* The following TowerBFT/PoH related flags have been removed `--tower`, `--no_poh_speed_test`,
+  `--no-wait-for-vote-to-start-leader`, `--poh_pinned_cpu_core`, and `--poh_hashes_per_batch`
+
 #### Changes
 
 ### CLI

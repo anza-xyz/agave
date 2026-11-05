@@ -10,7 +10,6 @@ use {
         },
         block_creation_loop::{BlockCreationLoop, BlockCreationLoopConfig, ReplayHighestFrozen},
         completed_data_sets_service::CompletedDataSetsService,
-        consensus::tower_storage::{NullTowerStorage, TowerStorage},
         forwarding_stage::ForwardingClientConfig,
         repair::{
             self, repair_handler::RepairHandlerType, serve_repair_service::ServeRepairService,
@@ -100,7 +99,7 @@ use {
         quic_socket::{into_quic_socket, into_quic_sockets},
     },
     solana_poh::{
-        poh_recorder::PohRecorder, poh_service, record_channels::record_channels,
+        poh_recorder::PohRecorder, record_channels::record_channels,
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
@@ -140,13 +139,11 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         evicting_sender::EvictingSender,
-        nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
-        quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
+        nonblocking::swqos::SwQosConfig,
+        quic::{QuicStreamerConfig, SwQosQuicStreamerConfig},
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
-    solana_turbine::broadcast_stage::BroadcastStageType,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::handler::VoteStateHandler,
@@ -335,7 +332,6 @@ pub struct ValidatorConfig {
     pub snapshot_config: SnapshotConfig,
     pub blockstore_cleanup_strategy: BlockstoreCleanupStrategy,
     pub blockstore_options: BlockstoreOptions,
-    pub broadcast_stage_type: BroadcastStageType,
     pub turbine_mode: TurbineMode,
     pub fixed_leader_schedule: Option<FixedSchedule>,
     pub wait_for_supermajority: Option<Slot>,
@@ -355,31 +351,25 @@ pub struct ValidatorConfig {
     /// Run PoH, transaction signature and other transaction verification during blockstore
     /// processing.
     pub run_verification: bool,
-    pub require_tower: bool,
     pub require_vote_history: bool,
-    pub tower_storage: Arc<dyn TowerStorage>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub filter_keys: Arc<HashSet<Pubkey>>,
     pub contact_debug_interval: u64,
     pub contact_save_interval: u64,
     pub send_transaction_service_config: SendTransactionServiceConfig,
-    pub no_poh_speed_test: bool,
     pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
     pub xdp_network_config_report: Option<XdpNetworkConfigReport>,
     pub no_os_cpu_stats_reporting: bool,
     pub no_os_disk_stats_reporting: bool,
     pub enforce_ulimit_nofile: bool,
-    pub poh_pinned_cpu_core: Option<usize>,
-    pub poh_hashes_per_batch: u64,
     pub process_ledger_before_services: bool,
     pub accounts_db_config: AccountsDbConfig,
     pub warp_slot: Option<Slot>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
-    pub no_wait_for_vote_to_start_leader: bool,
     pub wait_to_vote_slot: Option<Slot>,
     pub runtime_config: RuntimeConfig,
     pub block_verification_method: BlockVerificationMethod,
@@ -421,7 +411,6 @@ impl ValidatorConfig {
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default_for_tests(),
             snapshot_config: SnapshotConfig::new_load_only(),
-            broadcast_stage_type: BroadcastStageType::Standard,
             turbine_mode: TurbineMode::default(),
             fixed_leader_schedule: None,
             wait_for_supermajority: None,
@@ -434,16 +423,13 @@ impl ValidatorConfig {
             gossip_validators: None,
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             run_verification: true,
-            require_tower: false,
             require_vote_history: false,
-            tower_storage: Arc::new(NullTowerStorage::default()),
             vote_history_storage: Arc::new(NullVoteHistoryStorage::default()),
             debug_keys: None,
             filter_keys: Arc::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
             send_transaction_service_config: SendTransactionServiceConfig::default(),
-            no_poh_speed_test: true,
             no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
             xdp_network_config_report: None,
@@ -451,14 +437,11 @@ impl ValidatorConfig {
             no_os_disk_stats_reporting: true,
             // No need to enforce nofile limit in tests
             enforce_ulimit_nofile: false,
-            poh_pinned_cpu_core: poh_service::DEFAULT_PINNED_CPU_CORE,
-            poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
             process_ledger_before_services: false,
             warp_slot: None,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             validator_exit_backpressure: HashMap::default(),
-            no_wait_for_vote_to_start_leader: true,
             accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
             wait_to_vote_slot: None,
             runtime_config: RuntimeConfig::default(),
@@ -618,14 +601,10 @@ struct TransactionHistoryServices {
 
 /// A struct easing passing Validator TPU Configurations
 pub struct ValidatorTpuConfig {
-    /// Controls if to use QUIC for sending TPU votes
-    pub vote_use_quic: bool,
     /// QUIC server config for regular TPU
     pub tpu_quic_server_config: SwQosQuicStreamerConfig,
     /// QUIC server config for TPU forward
     pub tpu_fwd_quic_server_config: SwQosQuicStreamerConfig,
-    /// QUIC server config for Vote
-    pub vote_quic_server_config: SimpleQosQuicStreamerConfig,
     /// Number of threads to use for signature verification
     pub sigverify_threads: NonZeroUsize,
 }
@@ -655,28 +634,12 @@ impl ValidatorTpuConfig {
             },
         };
 
-        // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-        let vote_quic_server_config = SimpleQosQuicStreamerConfig {
-            quic_streamer_config: QuicStreamerConfig {
-                max_connections_per_ipaddr_per_min: 32,
-                ..Default::default()
-            },
-            qos_config: SimpleQosConfig {
-                // Way more than the size of our clusters. If some super low staked validators can not
-                // find room, it does not present a liveness issue.
-                max_staked_connections: 4096,
-                ..Default::default()
-            },
-        };
-
         // Two threads is reasonable for tests; benches are free to set more
         let sigverify_threads = NonZeroUsize::new(2).expect("2 is non-zero");
 
         ValidatorTpuConfig {
-            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config,
             sigverify_threads,
         }
     }
@@ -786,10 +749,8 @@ impl Validator {
         info!("debug-assertion status: {DEBUG_ASSERTION_STATUS}");
 
         let ValidatorTpuConfig {
-            vote_use_quic: _,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,
-            vote_quic_server_config: _,
             sigverify_threads: tpu_sigverify_threads,
         } = tpu_config;
 
