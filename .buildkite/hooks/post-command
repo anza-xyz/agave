@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-source ci/upload-ci-artifact.sh
-
 #shellcheck source=ci/common/shared-functions.sh
 source ci/common/shared-functions.sh
-
-# make sure console outputs are uploaded as soon as possible, if any
-(
-  shopt -s nullglob
-  for console_log in ./intercepted-console-*; do
-    gzip -f "$console_log"
-    upload-ci-artifact "$console_log.gz"
-  done
-)
 
 if [[ -n $BUILDKITE ]]; then
   if need_to_upload_test_result; then
