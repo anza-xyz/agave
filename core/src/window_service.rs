@@ -1191,20 +1191,8 @@ mod test {
             // Insertion writes the first validation result to blockstore.
             // If the task channel was full, insertion can now send the second task.
             assert_eq!(insert(vec![]), 0);
-            assert!(
-                blockstore
-                    .meta(100)
-                    .unwrap()
-                    .unwrap()
-                    .is_full_and_validated()
-            );
-            assert!(
-                !blockstore
-                    .meta(101)
-                    .unwrap()
-                    .unwrap()
-                    .is_full_and_validated()
-            );
+            assert!(blockstore.meta(100).unwrap().unwrap().is_full_and_checked());
+            assert!(!blockstore.meta(101).unwrap().unwrap().is_full_and_checked());
             assert!(verified_receiver.is_empty());
             if full_results {
                 // No new input arrives. After the receive timeout, send the stored result again.
@@ -1218,13 +1206,7 @@ mod test {
         assert!(pending_tasks.is_empty());
         assert!(pending_recovery.is_empty());
         assert!(pending_results.is_empty());
-        assert!(
-            blockstore
-                .meta(101)
-                .unwrap()
-                .unwrap()
-                .is_full_and_validated()
-        );
+        assert!(blockstore.meta(101).unwrap().unwrap().is_full_and_checked());
         assert!(!blockstore.is_dead(100));
         assert_eq!(ws_metrics.num_recovery_candidates_dropped, 0);
         assert_eq!(recovery_metrics.num_recovered_batches_dropped, 0);
@@ -1356,7 +1338,7 @@ mod test {
                     .meta(slot)
                     .unwrap()
                     .unwrap()
-                    .is_full_and_validated()
+                    .is_full_and_checked()
             );
             assert!(verified_receiver.is_empty());
             recover();
@@ -1367,7 +1349,7 @@ mod test {
                 .meta(slot)
                 .unwrap()
                 .unwrap()
-                .is_full_and_validated()
+                .is_full_and_checked()
         );
         assert!(!blockstore.is_dead(slot));
         assert_eq!(
@@ -1477,13 +1459,7 @@ mod test {
         .unwrap();
         assert_eq!(recovery_metrics.num_recovery_tasks, 1);
         insert(&mut pending_insert);
-        assert!(
-            blockstore
-                .meta(101)
-                .unwrap()
-                .unwrap()
-                .is_full_and_validated()
-        );
+        assert!(blockstore.meta(101).unwrap().unwrap().is_full_and_checked());
         // Discard work that is no longer needed.
         pending_insert.insert(ErasureSetId::new(101, 0));
         insert(&mut pending_insert);

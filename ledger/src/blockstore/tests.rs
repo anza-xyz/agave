@@ -5382,6 +5382,7 @@ fn insert_async_for_test(
 // Storing all data shreds must not allow replay before insertion applies a validation result.
 // A failed check must mark the slot dead. Worker completion alone must not change replay eligibility.
 // Test both new tasks and reloaded tasks so a reload cannot bypass required validation.
+// Once a verdict is committed, the dead flag blocks a failed set, as with synchronous validation.
 #[test_case(false, false; "valid")]
 #[test_case(true, false; "invalid_parity")]
 #[test_case(false, true; "retried_valid")]
@@ -5409,7 +5410,7 @@ fn test_async_validation_gates_replay(invalid: bool, retry: bool) {
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     assert_eq!(
         blockstore
@@ -5455,20 +5456,31 @@ fn test_async_validation_gates_replay(invalid: bool, retry: bool) {
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     assert!(!blockstore.is_dead(slot));
     let mut results = [result];
     let (completed, tasks, metrics) = insert_async_for_test(&blockstore, vec![], &mut results);
     assert!(results[0].has_validation_verdict());
-    // A passed check prevents another validation attempt. A failed check leaves the bit clear;
-    // an explicit reload can check that set again even while the slot is dead.
-    assert_eq!(
+    // Both verdicts finish validation. Failure blocks replay through the dead flag, not the bitmap.
+    assert!(
+        blockstore
+            .meta(slot)
+            .unwrap()
+            .unwrap()
+            .is_full_and_checked()
+    );
+    assert!(
         blockstore
             .prepare_shred_validation_retry(erasure_set)
             .unwrap()
-            .is_some(),
-        invalid,
+            .is_none(),
+    );
+    assert!(
+        blockstore
+            .pending_shred_validation(Some(0))
+            .unwrap()
+            .is_empty()
     );
     assert!(completed.is_empty());
     if invalid {
@@ -5490,6 +5502,17 @@ fn test_async_validation_gates_replay(invalid: bool, retry: bool) {
     assert_eq!(metrics.num_fec_set_checks_failed, usize::from(invalid));
     assert_eq!(metrics.num_fec_set_checks_passed, usize::from(!invalid));
     verify_index_integrity(&blockstore, slot);
+    if invalid {
+        // Preserve synchronous validation's revival behavior: clearing the dead flag allows replay without
+        // repeating the FEC check. Keeping a failed verdict across revival is a separate change.
+        blockstore.remove_dead_slot(slot).unwrap();
+        let (components, ranges, full) = blockstore
+            .get_slot_component_views_with_shred_info(slot, 0, false)
+            .unwrap();
+        assert!(!components.is_empty());
+        assert_eq!(ranges, vec![0..DATA_SHREDS_PER_FEC_BLOCK as u32]);
+        assert!(full);
+    }
 }
 
 // Rejecting a conflicting shred must not kill a complete, valid slot while validation is pending.
@@ -5578,7 +5601,7 @@ fn test_async_validation_survives_dead_slot(restart: bool) {
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     let (blockstore, task) = if restart {
         drop(tasks);
@@ -5612,7 +5635,7 @@ fn test_async_validation_survives_dead_slot(restart: bool) {
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     assert_matches!(
         blockstore.get_slot_component_views_with_shred_info(slot, 0, false),
@@ -5656,7 +5679,7 @@ fn test_async_validation_resumes_after_restart() {
                 .meta(slot)
                 .unwrap()
                 .unwrap()
-                .is_full_and_validated()
+                .is_full_and_checked()
         );
         assert_eq!(
             blockstore
@@ -5747,7 +5770,7 @@ fn test_async_validation_stale_verdict_cannot_affect_replacement(invalid: bool) 
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     let task = tasks.into_iter().next().unwrap();
     let mut current = RecoveredShredBatch::new(task.erasure_set());
@@ -5760,7 +5783,7 @@ fn test_async_validation_stale_verdict_cannot_affect_replacement(invalid: bool) 
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     blockstore.clear_unconfirmed_slot(slot);
     let (data, _) = setup_erasure_shreds(slot, 0, 1);
@@ -5770,7 +5793,7 @@ fn test_async_validation_stale_verdict_cannot_affect_replacement(invalid: bool) 
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     assert!(
         blockstore
@@ -5876,7 +5899,7 @@ fn test_async_validation_shuffled_update_parent(marker_last: bool, result_order:
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
 
     let mut validated = [false; 5];
@@ -5906,7 +5929,7 @@ fn test_async_validation_shuffled_update_parent(marker_last: bool, result_order:
                 .meta(slot)
                 .unwrap()
                 .unwrap()
-                .is_full_and_validated(),
+                .is_full_and_checked(),
             prefix == fec_sets.len()
         );
         assert!(!blockstore.is_dead(slot));
@@ -5976,7 +5999,7 @@ fn test_async_validation_root_advances_while_queued(invalid: bool) {
             .meta(slot)
             .unwrap()
             .unwrap()
-            .is_full_and_validated()
+            .is_full_and_checked()
     );
     assert!(!blockstore.is_dead(slot));
     let (completed, tasks, metrics) = insert_async_for_test(&blockstore, vec![], &mut [result]);
