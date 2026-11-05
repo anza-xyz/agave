@@ -287,7 +287,7 @@ pub struct ReplaySenders {
 }
 
 pub struct ReplayReceivers {
-    pub ledger_signal_receiver: Receiver<bool>,
+    pub replay_wakeup_receiver: Receiver<()>,
     pub update_parent_receiver: UpdateParentReceiver,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
     pub bank_forks_controller_receiver: BankForksCommandReceiver,
@@ -445,7 +445,7 @@ impl ReplayStage {
         } = senders;
 
         let ReplayReceivers {
-            ledger_signal_receiver,
+            replay_wakeup_receiver,
             update_parent_receiver,
             optimistic_parent_receiver,
             bank_forks_controller_receiver,
@@ -666,9 +666,9 @@ impl ReplayStage {
                     let set_root_signal_receiver =
                         bank_forks_controller_receiver.set_root_signal_receiver();
                     select! {
-                        recv(ledger_signal_receiver) -> result => match result {
+                        recv(replay_wakeup_receiver) -> result => match result {
                             Err(_) => break,
-                            Ok(_) => trace!("blockstore signal"),
+                            Ok(()) => trace!("replay wake-up signal"),
                         },
                         recv(bank_forks_command_receiver) -> result => match result {
                             Err(_) => break,
