@@ -20,8 +20,8 @@ use {
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats, Shred,
             ShredFlags, ShredId, ShredType, Shredder,
-            filter::ShredRecoveryContext,
-            merkle::{ErasureBatch, FecSetViolation},
+            filter::{RETRANSMIT_SHRED_BATCH_SIZE, RetransmitSender, ShredRecoveryContext},
+            merkle::FecSetViolation,
             merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
@@ -323,6 +323,134 @@ impl<T> AsRef<T> for WorkingEntry<T> {
 pub struct InsertResults {
     completed_data_set_infos: Vec<CompletedDataSetInfo>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
+    recovery_tasks: Vec<ShredRecoveryTask>,
+}
+
+/// Controls whether insertion sends recovery tasks and accepts recovery results.
+enum ShredRecoveryMode<'a> {
+    /// Insert incoming shreds without recovery tasks or results.
+    Disabled,
+    /// Insert reconstructed shreds and collect recovery tasks for incoming shreds.
+    Enabled {
+        batches: &'a mut [RecoveredShredBatch],
+        retransmit_sender: &'a RetransmitSender,
+        stricter_shred_validation_from: Option<Slot>,
+    },
+}
+
+/// Modes are ordered by strength. Deduplication keeps the strongest mode.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum FecValidationMode {
+    /// Recover missing shreds without the additional SIMD-0504 FEC checks.
+    Skip,
+    /// Check the FEC set and record the result. Do not use the result to block replay.
+    Observe,
+    /// Require successful validation before replay. Mark the slot dead if validation fails.
+    Enforce,
+}
+
+/// Inputs from the insertion working set for recovery and validation of one FEC set.
+/// Validation also uses this task when all data shreds are present.
+/// The inputs determine which shreds need reconstruction.
+/// The validation mode determines which checks to run and whether they control replay.
+pub struct ShredRecoveryTask {
+    /// FEC set that became recoverable during insertion.
+    erasure_set: ErasureSetId,
+    /// Copies of shreds from the current insertion batch. The batch commits before the task is sent.
+    just_inserted_shreds: Vec<Shred>,
+    /// IDs of shreds already in blockstore for the recovery thread to load.
+    stored_shred_ids: Vec<ShredId>,
+    merkle_root: Hash,
+    validation_mode: FecValidationMode,
+}
+
+impl ShredRecoveryTask {
+    pub fn requires_validation(&self) -> bool {
+        self.validation_mode == FecValidationMode::Enforce
+    }
+
+    pub fn erasure_set(&self) -> ErasureSetId {
+        self.erasure_set
+    }
+
+    /// Validation can still be pending when all data shreds are present.
+    pub fn must_check_completed_set(&self) -> bool {
+        self.validation_mode != FecValidationMode::Skip
+    }
+
+    /// Keep any stronger check that an older task requested for the same Merkle root.
+    pub fn merge_check_requirement(&mut self, other: &Self) {
+        if self.merkle_root == other.merkle_root {
+            self.validation_mode = self.validation_mode.max(other.validation_mode);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FecSetCheckResult {
+    Passed,
+    Failed,
+    RebuildFailed,
+}
+
+/// Recovery and validation results for one FEC set. The buffers can be reused.
+///
+/// The recovery worker adds reconstructed shreds and the validation result.
+/// Insertion checks that the Merkle root still matches blockstore before using the results.
+/// Shreds are retransmitted only after the blockstore write succeeds.
+pub struct RecoveredShredBatch {
+    /// Identifies the FEC set from which these shreds were reconstructed.
+    erasure_set: ErasureSetId,
+    /// Current blockstore metadata read with the insertion lock held during the Merkle root check.
+    validated_merkle_root_meta: Option<MerkleRootMeta>,
+    /// Reconstructed shred payloads to retransmit after successful insertion.
+    retransmit_shreds: Vec<Payload>,
+    /// Reconstructed data shreds to insert into blockstore.
+    data_shreds: Vec<Shred>,
+    merkle_root: Option<Hash>,
+    fec_set_check: Option<FecSetCheckResult>,
+    validation_mode: FecValidationMode,
+}
+
+impl RecoveredShredBatch {
+    pub fn requires_validation(&self) -> bool {
+        self.validation_mode == FecValidationMode::Enforce
+    }
+
+    /// Return whether this batch still has a required SIMD-0504 validation result.
+    /// After successful insertion, a retained result has been applied to blockstore.
+    /// Insertion clears results whose Merkle root no longer matches. Those FEC sets need a new task.
+    pub fn has_validation_verdict(&self) -> bool {
+        self.validation_mode == FecValidationMode::Enforce
+            && self.merkle_root.is_some()
+            && self.fec_set_check.is_some()
+    }
+
+    pub fn erasure_set(&self) -> ErasureSetId {
+        self.erasure_set
+    }
+
+    pub fn new(erasure_set: ErasureSetId) -> Self {
+        Self {
+            erasure_set,
+            validated_merkle_root_meta: None,
+            retransmit_shreds: Vec::with_capacity(DATA_SHREDS_PER_FEC_BLOCK),
+            data_shreds: Vec::with_capacity(DATA_SHREDS_PER_FEC_BLOCK),
+            merkle_root: None,
+            fec_set_check: None,
+            validation_mode: FecValidationMode::Skip,
+        }
+    }
+
+    /// Clear the results but keep the buffers, FEC set ID, and validation mode.
+    /// Insertion uses the ID and mode to retry required validation after discarding a result.
+    pub fn clear(&mut self) {
+        self.validated_merkle_root_meta = None;
+        self.retransmit_shreds.clear();
+        self.data_shreds.clear();
+        self.merkle_root = None;
+        self.fec_set_check = None;
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -341,7 +469,7 @@ pub struct VersionedConfirmedBlockWithComponents {
 ///
 /// Services such as the `WindowService` for a TVU, and `ReplayStage` for a TPU, piece together
 /// these sets by inserting shreds via direct or indirect calls to
-/// [`Blockstore::insert_shreds_handle_duplicate()`].
+/// [`Blockstore::insert_shreds_with_recovered()`].
 ///
 /// `solana_core::completed_data_sets_service::CompletedDataSetsService` is the main receiver of
 /// `CompletedDataSetInfo`.
@@ -504,8 +632,9 @@ impl<'batch> ShredInsertionTracker<'_, 'batch> {
 struct FecSetActions {
     /// Some data shreds are missing but enough shreds are present for recovery.
     recover_missing_data_shreds: bool,
-    /// The erasure set has enough shreds to be rebuilt, but *did not* have
-    /// enough before the last inserted batch, i.e. checks were not run on it.
+    /// This insertion first supplied enough shreds to rebuild the FEC set.
+    /// Schedule its check even if all data shreds are present.
+    /// The check is not complete until the worker returns its result.
     ///
     /// Insertion is serialized by `insert_shreds_lock`, so this holds in at
     /// most one batch for each erasure set (unless its shreds are purged).
@@ -528,6 +657,9 @@ fn fec_set_actions(
             .count_range(erasure_meta.coding_shreds_indices())
     });
     let num_shreds = num_data + num_coding;
+    // Any 32 shreds are enough to rebuild the set.
+    // With 31 data shreds and 1 coding shred, recover the missing data shred.
+    // With 32 data shreds, validate the set without data recovery.
     let can_rebuild = num_shreds >= DATA_SHREDS_PER_FEC_BLOCK;
     // True only in the batch which first brings the set to the rebuild threshold.
     let just_crossed_recovery_threshold =
@@ -1518,85 +1650,237 @@ impl Blockstore {
         false
     }
 
-    /// Return the available data shreds for recovery.
-    /// Note: that we do not do recovery on the Alternate shred columns
-    fn get_recovery_data_shreds<'a>(
-        &'a self,
-        index: &'a Index,
+    /// Check whether blockstore contains all data shreds in a fixed-size FEC set.
+    /// Skip recovery if earlier tasks or incoming shreds have already supplied the data.
+    /// Blockstore can change after this read. Insertion must still check each recovered result.
+    pub fn is_erasure_set_complete<'db>(
+        &'db self,
         erasure_set: ErasureSetId,
-        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-    ) -> impl Iterator<Item = Shred> + 'a {
-        let slot = index.slot;
-        erasure_set.data_shred_indices().filter_map(move |i| {
-            let key = ShredId::new(slot, i, ShredType::Data);
-            if let Some(shred) = prev_inserted_shreds.get(&(BlockLocation::Original, key)) {
-                return Some(shred.as_ref().clone());
-            }
-            let i = u64::from(i);
-            if !index.data().contains(i) {
-                return None;
-            }
-            match self.data_shred_cf.get_bytes((slot, i)).unwrap() {
-                None => {
-                    error!(
-                        "Unable to read the data shred with slot {slot}, index {i} for shred \
-                         recovery. The shred is marked present in the slot's data shred index, \
-                         but the shred could not be found in the data shred column."
-                    );
-                    None
-                }
-                Some(data) => Shred::new_from_serialized_shred(data).ok(),
-            }
-        })
-    }
-
-    /// Return the available coding shreds for recovery.
-    /// Note: that we do not do recovery on the Alternate shred columns
-    fn get_recovery_coding_shreds<'a>(
-        &'a self,
-        index: &'a Index,
-        erasure_meta: &'a ErasureMeta,
-        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-    ) -> impl Iterator<Item = Shred> + 'a {
-        let slot = index.slot;
-        erasure_meta.coding_shreds_indices().filter_map(move |i| {
-            let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Code);
-            if let Some(shred) = prev_inserted_shreds.get(&(BlockLocation::Original, key)) {
-                return Some(shred.as_ref().clone());
-            }
-            if !index.coding().contains(i) {
-                return None;
-            }
-            match self.code_shred_cf.get_bytes((slot, i)).unwrap() {
-                None => {
-                    error!(
-                        "Unable to read the coding shred with slot {slot}, index {i} for shred \
-                         recovery. The shred is marked present in the slot's coding shred index, \
-                         but the shred could not be found in the coding shred column."
-                    );
-                    None
-                }
-                Some(code) => Shred::new_from_serialized_shred(code).ok(),
-            }
-        })
-    }
-
-    /// Rebuilds the whole erasure batch of `erasure_set` from the shreds
-    /// available in blockstore, applying filters to them.
-    /// Note: that we do not do recovery on the Alternate shred columns
-    fn rebuild_erasure_batch(
-        &self,
-        index: &Index,
-        erasure_set: ErasureSetId,
-        erasure_meta: Option<&ErasureMeta>,
-        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-        shred_recovery_ctx: &mut ShredRecoveryContext,
-    ) -> std::result::Result<ErasureBatch, shred::Error> {
-        let data = self.get_recovery_data_shreds(index, erasure_set, prev_inserted_shreds);
-        let code = erasure_meta.into_iter().flat_map(|erasure_meta| {
-            self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds)
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+    ) -> Result<bool> {
+        let (slot, fec_set_index) = erasure_set.store_key();
+        let start = u64::from(fec_set_index);
+        let end = start + DATA_SHREDS_PER_FEC_BLOCK as u64;
+        let result = self.get_index_ref_into(slot, pinnable_slice).map(|index| {
+            index.is_some_and(|index| {
+                index.data().count_range(start..end) == DATA_SHREDS_PER_FEC_BLOCK
+            })
         });
-        shred_recovery_ctx.rebuild_erasure_batch(data.chain(code))
+        pinnable_slice.reset();
+        result
+    }
+
+    fn validation_slot_meta_entry<'a>(
+        &self,
+        tracker: &'a mut ShredInsertionTracker,
+        slot: Slot,
+    ) -> Result<&'a mut SlotMetaWorkingSetEntry> {
+        let entry = match tracker
+            .slot_meta_working_set
+            .entry((BlockLocation::Original, slot))
+        {
+            HashMapEntry::Occupied(entry) => entry.into_mut(),
+            HashMapEntry::Vacant(entry) => {
+                let old = self.meta(slot)?;
+                entry.insert(SlotMetaWorkingSetEntry::new(
+                    Rc::new(RefCell::new(
+                        old.clone().unwrap_or_else(|| SlotMeta::new_orphan(slot)),
+                    )),
+                    old,
+                ))
+            }
+        };
+        entry.did_insert_occur = true;
+        Ok(entry)
+    }
+
+    /// Rebuild a validation task from current blockstore data after a restart or a failed attempt.
+    /// Normal tasks carry newly inserted shreds directly to the recovery worker.
+    /// Dead slots still need validation: replay can revive them without replacing their shreds.
+    pub fn prepare_shred_validation_retry(
+        &self,
+        erasure_set: ErasureSetId,
+    ) -> Result<Option<ShredRecoveryTask>> {
+        let slot = erasure_set.slot();
+        if slot <= self.max_root() {
+            return Ok(None);
+        }
+        let Some(meta) = self.meta(slot)? else {
+            return Ok(None);
+        };
+        if meta.fec_validation.contains(erasure_set.fec_set_index()) {
+            return Ok(None);
+        }
+        let Some(merkle_root) = self
+            .merkle_root_meta_from_location(erasure_set, BlockLocation::Original)?
+            .and_then(|meta| meta.merkle_root())
+        else {
+            return Ok(None);
+        };
+        let Some(index) = self.get_index(slot)? else {
+            return Ok(None);
+        };
+        let range = erasure_set.data_shred_indices();
+        let indices = u64::from(range.start)..u64::from(range.end);
+        let num_shreds =
+            index.data().count_range(indices.clone()) + index.coding().count_range(indices);
+        if num_shreds < DATA_SHREDS_PER_FEC_BLOCK {
+            return Ok(None);
+        }
+        let mut stored_shred_ids = Vec::with_capacity(num_shreds);
+        for (kind, present) in [
+            (ShredType::Data, index.data()),
+            (ShredType::Code, index.coding()),
+        ] {
+            for i in range.clone() {
+                if present.contains(u64::from(i)) {
+                    stored_shred_ids.push(ShredId::new(slot, i, kind));
+                }
+            }
+        }
+        Ok(Some(ShredRecoveryTask {
+            erasure_set,
+            just_inserted_shreds: Vec::new(),
+            stored_shred_ids,
+            merkle_root,
+            validation_mode: FecValidationMode::Enforce,
+        }))
+    }
+
+    /// Find pending SIMD-0504 validation once at startup.
+    /// Scan only slots that require validation after feature activation.
+    /// Earlier slots can have clear bits for sets with only coding shreds, but do not require
+    /// validation.
+    /// Include dead slots so their validation can finish before replay revives them.
+    /// Later retries read individual FEC sets by ID.
+    pub fn pending_shred_validation(
+        &self,
+        stricter_shred_validation_from: Option<Slot>,
+    ) -> Result<std::collections::BTreeSet<ErasureSetId>> {
+        let mut pending = std::collections::BTreeSet::new();
+        let Some(first_validation_slot) = stricter_shred_validation_from else {
+            return Ok(pending);
+        };
+        let start = self.max_root().saturating_add(1).max(first_validation_slot);
+        for (slot, meta) in self.slot_meta_iterator(start)? {
+            let Some(index) = self.get_index(slot)? else {
+                continue;
+            };
+            for fec in 0..shred::MAX_FEC_SETS_PER_SLOT {
+                let fec_set_index = fec * DATA_SHREDS_PER_FEC_BLOCK as u32;
+                if meta.fec_validation.contains(fec_set_index) {
+                    continue;
+                }
+                let erasure_set = ErasureSetId::new(slot, fec_set_index);
+                let range = erasure_set.data_shred_indices();
+                let range = u64::from(range.start)..u64::from(range.end);
+                if index.data().count_range(range.clone()) + index.coding().count_range(range)
+                    >= DATA_SHREDS_PER_FEC_BLOCK
+                {
+                    pending.insert(erasure_set);
+                }
+            }
+        }
+        Ok(pending)
+    }
+
+    /// Recover and validate the FEC set in `task`. Store results in `recovered_batch`.
+    ///
+    /// Return `true` if there is a validation result or recovered payloads to insert.
+    /// A failed validation check also returns a result.
+    /// Return `false` if inputs cannot be loaded or no result is available.
+    /// Cleanup and block switches can invalidate the inputs.
+    pub fn recover_shreds_from_task(
+        &self,
+        task: ShredRecoveryTask,
+        shred_recovery_ctx: &mut ShredRecoveryContext,
+        recovered_batch: &mut RecoveredShredBatch,
+    ) -> bool {
+        let ShredRecoveryTask {
+            erasure_set,
+            just_inserted_shreds,
+            stored_shred_ids,
+            merkle_root,
+            validation_mode,
+        } = task;
+        recovered_batch.clear();
+        recovered_batch.erasure_set = erasure_set;
+        recovered_batch.validation_mode = validation_mode;
+        let mut shreds = just_inserted_shreds;
+        shreds.reserve(stored_shred_ids.len());
+        for shred_id in stored_shred_ids {
+            let bytes = match shred_id.shred_type() {
+                ShredType::Data => self
+                    .data_shred_cf
+                    .get_bytes((shred_id.slot(), u64::from(shred_id.index()))),
+                ShredType::Code => self
+                    .code_shred_cf
+                    .get_bytes((shred_id.slot(), u64::from(shred_id.index()))),
+            };
+            let bytes = match bytes {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!("Unable to read recovery shred {shred_id:?}: {err}");
+                    return false;
+                }
+            };
+            let Some(shred) = bytes.and_then(|bytes| Shred::new_from_serialized_shred(bytes).ok())
+            else {
+                // Cleanup or a block switch can remove these inputs.
+                // Missing inputs do not prove that the FEC set is invalid.
+                return false;
+            };
+            if shred.merkle_root().ok() != Some(merkle_root) {
+                return false;
+            }
+            shreds.push(shred);
+        }
+        shreds.sort_unstable_by_key(|shred| {
+            (matches!(shred.shred_type(), ShredType::Code), shred.index())
+        });
+        recovered_batch.merkle_root = Some(merkle_root);
+        // Recovery and validation use the same rebuild step.
+        // Reconstruct missing data from the supplied shreds.
+        // Even if all data is present, generate missing coding shreds and rebuild and check the
+        // Merkle tree.
+        let batch = match shred_recovery_ctx.rebuild_erasure_batch(shreds) {
+            Ok(batch) => batch,
+            Err(err) => {
+                debug!("Unable to rebuild erasure batch {erasure_set:?}: {err:?}");
+                if validation_mode != FecValidationMode::Skip {
+                    recovered_batch.fec_set_check = Some(FecSetCheckResult::RebuildFailed);
+                    return true;
+                }
+                recovered_batch.clear();
+                return false;
+            }
+        };
+        // The mode controls the additional FEC checks and whether their result controls replay.
+        // The rebuild step always checks the Merkle root.
+        let fec_check = (validation_mode != FecValidationMode::Skip).then(|| batch.check_fec_set());
+        let invalid_shreds_found = ShredRecoveryContext::collect_recovered_shreds(
+            shred_recovery_ctx.check_recovered_shreds(batch),
+            &mut recovered_batch.retransmit_shreds,
+            &mut recovered_batch.data_shreds,
+        );
+        recovered_batch.fec_set_check = fec_check.map(|result| {
+            let result = result.and(if invalid_shreds_found {
+                Err(FecSetViolation::InvalidReconstructedShred)
+            } else {
+                Ok(())
+            });
+            match result {
+                Ok(()) => FecSetCheckResult::Passed,
+                Err(violation) => {
+                    debug!("Erasure batch {erasure_set:?} violates SIMD-0504: {violation}");
+                    FecSetCheckResult::Failed
+                }
+            }
+        });
+        // Send the validation result to insertion even if no data shreds were recovered.
+        // Required SIMD-0504 checks allow replay on success or mark the slot dead on failure.
+        // Return recovered coding payloads for retransmission too.
+        recovered_batch.fec_set_check.is_some() || !recovered_batch.retransmit_shreds.is_empty()
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -1632,7 +1916,8 @@ impl Blockstore {
         self.perf_samples_cf.submit_rocksdb_cf_metrics();
     }
 
-    /// If the original block is not full, mark the slot as dead
+    /// Mark an original block dead unless all its data shreds are present.
+    /// A rejected shred must not kill a complete block while its FEC validation is pending.
     fn mark_slot_dead_if_not_full(
         &self,
         slot: Slot,
@@ -1655,7 +1940,6 @@ impl Blockstore {
             .unwrap_or(true);
 
         if mark_slot_dead {
-            // If the slot is already full there is no reason to mark as dead
             self.dead_slots_cf.put_bytes_in_batch(
                 shred_insertion_tracker.write_batch,
                 slot,
@@ -1664,8 +1948,9 @@ impl Blockstore {
         }
     }
 
-    /// Marks the slot dead, unless it was full before this batch.
+    /// Mark the slot dead unless all data and FEC checks were complete before this batch.
     ///
+    /// A failed FEC check must still mark a complete slot dead if validation was pending.
     /// Unlike [`Self::mark_slot_dead_if_not_full`], a slot which became full
     /// in this batch is marked dead too, since replay can't have seen it full
     /// before this batch is committed.
@@ -1679,12 +1964,15 @@ impl Blockstore {
             .slot_meta_working_set
             .get(&(location, slot))
         {
-            Some(entry) => entry.old_slot_meta.as_ref().is_some_and(SlotMeta::is_full),
+            Some(entry) => entry
+                .old_slot_meta
+                .as_ref()
+                .is_some_and(SlotMeta::is_full_and_checked),
             None => self
                 .meta_from_location(slot, location)
                 .ok()
                 .flatten()
-                .is_some_and(|meta| meta.is_full()),
+                .is_some_and(|meta| meta.is_full_and_checked()),
         };
         if !was_full {
             self.dead_slots_cf.put_bytes_in_batch(
@@ -1809,192 +2097,104 @@ impl Blockstore {
         metrics.insert_shreds_elapsed_us += start.as_us();
     }
 
-    /// Attempt shred recovery for erasure metas
-    /// Recovery rules:
-    /// 1. Only try recovery around indexes for which new data or coding shreds are received
-    /// 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
-    /// 3. Before trying recovery, check if enough number of shreds have been received
-    ///    3a. Enough number of shreds = (#data + #coding shreds) >= erasure.num_data
-    /// 4. Only perform recovery in the Original column
+    /// Build tasks for FEC sets in the Original location that this insertion made recoverable.
     ///
-    /// Additionally, erasure sets which have enough shreds to be rebuilt for
-    /// the first time in this batch are rebuilt and checked against the
-    /// SIMD-0504 per-FEC-set rules. Once SIMD-0504 is active for the slot, a
-    /// failed check or rebuild marks the slot dead.
-    ///
-    /// Returns (recovered_shreds, recovered_data_shreds, slots_failing_checks)
-    fn try_shred_recovery(
+    /// Copy new shreds into each task. Keep the originals in the tracker for duplicate checks until
+    /// commit.
+    /// The recovery thread loads shreds from earlier insertions by ID.
+    /// Include dead slots: replay can revive them without another shred arrival to trigger validation.
+    fn prepare_shred_recovery_tasks(
         &self,
-        erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        index_working_set: &HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
-        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-        shred_recovery_ctx: &mut ShredRecoveryContext,
-        metrics: &mut BlockstoreInsertionMetrics,
-    ) -> (
-        /* recovered_shreds */ Vec<Payload>,
-        /* recovered_data_shreds */ Vec<Shred>,
-        /* slots_failing_checks */ HashSet<Slot>,
-    ) {
-        // Recovered shreds are inserted only after this function returns, so
-        // these are the shreds received in this batch.
-        // The capacity is a guess at the number of erasure sets in a batch. The
-        // batch size depends on how shred sigverify batches its output, so
-        // revisit this when that changes.
-        let mut num_inserted_shreds = HashMap::with_capacity(64);
-        for ((location, _), shred) in prev_inserted_shreds {
+        tracker: &mut ShredInsertionTracker<'_, '_>,
+    ) -> Vec<ShredRecoveryTask> {
+        let mut num_inserted = BTreeMap::<ErasureSetId, usize>::new();
+        for ((location, _), shred) in &tracker.just_inserted_shreds {
             if matches!(location, BlockLocation::Original) {
-                *num_inserted_shreds.entry(shred.erasure_set()).or_default() += 1;
+                *num_inserted.entry(shred.erasure_set()).or_default() += 1;
             }
         }
-        // `erasure_metas` covers every erasure set touched by this batch that
-        // has at least one coding shred, either in this batch or already in
-        // blockstore. Any other erasure set touched by this batch has only
-        // data shreds, so nothing in it can be recovered. Once all its data
-        // shreds are present, it is still rebuilt (re-encoding the coding
-        // shreds) in order to check it.
-        let data_only_sets = num_inserted_shreds
-            .keys()
-            .filter(|erasure_set| !erasure_metas.contains_key(erasure_set))
-            .map(|erasure_set| (*erasure_set, None));
-        let erasure_sets_to_rebuild = erasure_metas
-            .iter()
-            .map(|(erasure_set, erasure_meta)| (*erasure_set, Some(erasure_meta.as_ref())))
-            .chain(data_only_sets)
-            .filter_map(|(erasure_set, erasure_meta)| {
-                let index_meta_entry =
-                    index_working_set.get(&(BlockLocation::Original, erasure_set.slot()))?;
-                let index = &index_meta_entry.index;
-                let num_inserted = num_inserted_shreds.get(&erasure_set).copied().unwrap_or(0);
-                let actions = fec_set_actions(
-                    index,
+        num_inserted
+            .into_iter()
+            .filter_map(|(erasure_set, num_inserted)| {
+                let index = &tracker
+                    .index_working_set
+                    .get(&(BlockLocation::Original, erasure_set.slot()))?
+                    .index;
+                let erasure_meta = tracker
+                    .erasure_metas
+                    .get(&erasure_set)
+                    .map(WorkingEntry::as_ref);
+                let enforce_fec_checks = tracker
+                    .stricter_shred_validation_from
+                    .is_some_and(|first_slot| erasure_set.slot() >= first_slot);
+                // Keep scheduling recovery while data is missing.
+                // An earlier task with enough shreds to recover can still be waiting for
+                // validation.
+                let actions =
+                    fec_set_actions(index, erasure_set, erasure_meta, num_inserted, false);
+                if !actions.recover_missing_data_shreds && !actions.run_fec_checks {
+                    return None;
+                }
+                let merkle_root = tracker
+                    .merkle_root_metas
+                    .get(&(BlockLocation::Original, erasure_set))?
+                    .as_ref()
+                    .merkle_root()?;
+                let mut just_inserted_shreds = Vec::new();
+                let mut stored_shred_ids = Vec::new();
+                for (kind, i) in erasure_set
+                    .data_shred_indices()
+                    .map(|i| (ShredType::Data, u64::from(i)))
+                    .chain(
+                        erasure_meta
+                            .into_iter()
+                            .flat_map(|meta| meta.coding_shreds_indices())
+                            .map(|i| (ShredType::Code, i)),
+                    )
+                {
+                    let present = match kind {
+                        ShredType::Data => index.data().contains(i),
+                        ShredType::Code => index.coding().contains(i),
+                    };
+                    if !present {
+                        continue;
+                    }
+                    let id = ShredId::new(erasure_set.slot(), u32::try_from(i).unwrap(), kind);
+                    match tracker
+                        .just_inserted_shreds
+                        .get(&(BlockLocation::Original, id))
+                    {
+                        Some(shred) => just_inserted_shreds.push(shred.as_ref().clone()),
+                        None => stored_shred_ids.push(id),
+                    }
+                }
+                Some(ShredRecoveryTask {
                     erasure_set,
-                    erasure_meta,
-                    num_inserted,
-                    shred_recovery_ctx.is_stricter_shred_validation_active(erasure_set.slot()),
-                );
-                (actions.recover_missing_data_shreds || actions.run_fec_checks).then_some((
-                    erasure_set,
-                    erasure_meta,
-                    index,
-                    actions,
-                ))
+                    just_inserted_shreds,
+                    stored_shred_ids,
+                    merkle_root,
+                    validation_mode: if enforce_fec_checks {
+                        FecValidationMode::Enforce
+                    } else if actions.run_fec_checks {
+                        FecValidationMode::Observe
+                    } else {
+                        FecValidationMode::Skip
+                    },
+                })
             })
-            .collect_vec();
-
-        let num_to_recover = erasure_sets_to_rebuild
-            .iter()
-            .filter(|(_, _, _, actions)| actions.recover_missing_data_shreds)
-            .count();
-        // At least DATA_SHREDS_PER_FEC_BLOCK shreds are received, so at most as
-        // many are recovered per FEC set.
-        let mut recovered_shreds =
-            Vec::with_capacity(erasure_sets_to_rebuild.len() * DATA_SHREDS_PER_FEC_BLOCK);
-        let mut recovered_data_shreds =
-            Vec::with_capacity(num_to_recover * DATA_SHREDS_PER_FEC_BLOCK);
-        let mut slots_failing_checks = HashSet::new();
-        for (erasure_set, erasure_meta, index, actions) in erasure_sets_to_rebuild {
-            let should_check = actions.run_fec_checks;
-            let batch = match self.rebuild_erasure_batch(
-                index,
-                erasure_set,
-                erasure_meta,
-                prev_inserted_shreds,
-                shred_recovery_ctx,
-            ) {
-                Ok(batch) => batch,
-                Err(err) => {
-                    debug!(
-                        "Unable to rebuild erasure batch for slot {} fec set {}: {err:?}",
-                        erasure_set.slot(),
-                        erasure_set.fec_set_index(),
-                    );
-                    // The check is not retried, so a failed rebuild fails the
-                    // SIMD-0504 family 2 checks for the whole slot.
-                    if should_check {
-                        metrics.num_fec_set_checks_failed += 1;
-                        metrics.num_fec_set_checks_rebuild_failed += 1;
-                        if shred_recovery_ctx
-                            .is_stricter_shred_validation_active(erasure_set.slot())
-                        {
-                            slots_failing_checks.insert(erasure_set.slot());
-                        }
-                    }
-                    continue;
-                }
-            };
-            let fec_set_check = should_check.then(|| batch.check_fec_set());
-            let invalid_shreds_found = ShredRecoveryContext::collect_recovered_shreds(
-                shred_recovery_ctx.check_recovered_shreds(batch),
-                &mut recovered_shreds,
-                &mut recovered_data_shreds,
-            );
-            if let Some(fec_set_check) = fec_set_check {
-                let fec_set_check = fec_set_check.and(if invalid_shreds_found {
-                    Err(FecSetViolation::InvalidReconstructedShred)
-                } else {
-                    Ok(())
-                });
-                match fec_set_check {
-                    Ok(()) => metrics.num_fec_set_checks_passed += 1,
-                    Err(violation) => {
-                        debug!(
-                            "Erasure batch for slot {} fec set {} violates SIMD-0504: {violation}",
-                            erasure_set.slot(),
-                            erasure_set.fec_set_index(),
-                        );
-                        metrics.num_fec_set_checks_failed += 1;
-                        if shred_recovery_ctx
-                            .is_stricter_shred_validation_active(erasure_set.slot())
-                        {
-                            slots_failing_checks.insert(erasure_set.slot());
-                        }
-                    }
-                }
-            }
-        }
-        (
-            recovered_shreds,
-            recovered_data_shreds,
-            slots_failing_checks,
-        )
+            .collect()
     }
 
-    /// Attempts shred recovery and does the following for recovered data
-    /// shreds:
-    /// 1. Verify signatures
-    /// 2. Insert into blockstore
-    /// 3. Send for retransmit.
-    ///
-    /// Note: We only perform recovery for the Original shred column
-    fn handle_shred_recovery<'db>(
+    fn attempt_recovered_shred_insertion<'db>(
         &'db self,
-        shred_recovery_context: &mut ShredRecoveryContext,
+        shreds: impl ExactSizeIterator<Item = Shred>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         shred_insertion_tracker: &mut ShredInsertionTracker,
         is_trusted: bool,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
-        let mut start = Measure::start("Shred recovery");
-        let (recovered_shreds, recovered_data_shreds, slots_failing_checks) = self
-            .try_shred_recovery(
-                &shred_insertion_tracker.erasure_metas,
-                &shred_insertion_tracker.index_working_set,
-                &shred_insertion_tracker.just_inserted_shreds,
-                shred_recovery_context,
-                metrics,
-            );
-        for slot in slots_failing_checks {
-            self.mark_slot_dead_if_not_full_before_batch(slot, shred_insertion_tracker);
-        }
-        if !recovered_shreds.is_empty() {
-            metrics.num_recovered_retransmit_batches += 1;
-        }
-        metrics.num_recovered_data_shreds += recovered_data_shreds.len();
-        metrics.num_recovered_coding_shreds += recovered_shreds.len() - recovered_data_shreds.len();
-
-        shred_recovery_context.try_retransmit_shreds(recovered_shreds);
-
-        for shred in recovered_data_shreds {
+        metrics.num_recovered += shreds.len();
+        for shred in shreds {
             let slot = shred.slot();
             *match self.check_insert_data_shred(
                 Cow::Owned(shred),
@@ -2021,8 +2221,6 @@ impl Blockstore {
                 Ok(()) => &mut metrics.num_recovered_inserted,
             } += 1;
         }
-        start.stop();
-        metrics.shred_recovery_elapsed_us += start.as_us();
     }
 
     /// Computes and adds DoubleMerkleMeta to the write_batch for newly completed
@@ -2308,8 +2506,7 @@ impl Blockstore {
     ///  - `is_trusted`: whether the shreds come from a trusted source. If this
     ///    is set to true, then the function will skip the shred duplication and
     ///    integrity checks.
-    ///  - `shred_recovery_context`: recovery-time dependencies and policy for
-    ///    erasure recovery. `None` disables recovery.
+    ///  - `recovery_mode`: whether to insert recovery results and return new recovery tasks.
     ///  - `pinnable_slice`: reusable RocksDB pinnable slice.
     ///  - `write_batch`: reusable RocksDB write batch.
     ///  - `metrics`: the metric for reporting detailed stats
@@ -2329,12 +2526,7 @@ impl Blockstore {
             IntoIter: ExactSizeIterator,
         >,
         is_trusted: bool,
-        // When inserting own shreds during leader slots, we shouldn't try to
-        // recover shreds. If shreds are not to be recovered we don't need the
-        // retransmit channel either. Otherwise, if we are inserting shreds
-        // from another leader, we need to try erasure recovery and retransmit
-        // recovered shreds.
-        shred_recovery_context: Option<&mut ShredRecoveryContext>,
+        recovery_mode: ShredRecoveryMode<'_>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
         metrics: &mut BlockstoreInsertionMetrics,
@@ -2352,7 +2544,7 @@ impl Blockstore {
             &lock,
             shreds,
             is_trusted,
-            shred_recovery_context,
+            recovery_mode,
             pinnable_slice,
             write_batch,
             metrics,
@@ -2367,6 +2559,7 @@ impl Blockstore {
     }
 
     /// Core shred insertion logic.
+    #[allow(clippy::too_many_arguments)]
     fn do_insert_shreds_locked<'a, 'db>(
         &'db self,
         _insert_shreds_lock: &MutexGuard<'_, ()>,
@@ -2380,16 +2573,78 @@ impl Blockstore {
             IntoIter: ExactSizeIterator,
         >,
         is_trusted: bool,
-        shred_recovery_context: Option<&mut ShredRecoveryContext>,
+        recovery_mode: ShredRecoveryMode<'_>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let shreds = shreds.into_iter();
-        let mut shred_insertion_tracker = ShredInsertionTracker::new(shreds.len(), write_batch);
-        shred_insertion_tracker.stricter_shred_validation_from = shred_recovery_context
-            .as_deref()
-            .and_then(ShredRecoveryContext::stricter_shred_validation_from);
+        let (
+            collect_recovery_tasks,
+            recovered_batches,
+            retransmit_sender,
+            stricter_shred_validation_from,
+        ): (_, &mut [_], _, _) = match recovery_mode {
+            ShredRecoveryMode::Disabled => (false, &mut [], None, None),
+            ShredRecoveryMode::Enabled {
+                batches,
+                retransmit_sender,
+                stricter_shred_validation_from,
+            } => (
+                true,
+                batches,
+                Some(retransmit_sender),
+                stricter_shred_validation_from,
+            ),
+        };
+        // Blockstore can switch blocks while recovery runs.
+        // Hold the insertion lock and check each result against the current Merkle root.
+        // Discard results with a different root before inserting the remaining results and incoming
+        // shreds.
+        for batch in recovered_batches.iter_mut() {
+            batch.validated_merkle_root_meta = None;
+            let current_meta =
+                self.merkle_root_meta_from_location(batch.erasure_set, BlockLocation::Original)?;
+            let recovered_root = batch.merkle_root;
+            let is_current = matches!(
+                (current_meta.and_then(|meta| meta.merkle_root()), recovered_root),
+                (Some(current), Some(recovered)) if current == recovered
+            );
+            if !is_current {
+                metrics.num_recovered += batch.data_shreds.len();
+                metrics.num_recovered_stale += batch.data_shreds.len();
+                batch.clear();
+                continue;
+            }
+            batch.validated_merkle_root_meta = current_meta;
+        }
+        if shreds.len() == 0
+            && recovered_batches
+                .iter()
+                .all(|batch| batch.merkle_root.is_none())
+        {
+            return Ok(InsertResults {
+                completed_data_set_infos: Vec::new(),
+                duplicate_shreds: Vec::new(),
+                recovery_tasks: Vec::new(),
+            });
+        }
+        let num_recovered = recovered_batches
+            .iter()
+            .map(|batch| batch.data_shreds.len())
+            .sum::<usize>();
+        let mut shred_insertion_tracker =
+            ShredInsertionTracker::new(shreds.len() + num_recovered, write_batch);
+        shred_insertion_tracker.stricter_shred_validation_from = stricter_shred_validation_from;
+
+        for batch in recovered_batches.iter() {
+            if let Some(meta) = batch.validated_merkle_root_meta {
+                shred_insertion_tracker.merkle_root_metas.insert(
+                    (BlockLocation::Original, batch.erasure_set),
+                    WorkingEntry::Clean(meta),
+                );
+            }
+        }
 
         self.attempt_shred_insertion(
             shreds,
@@ -2398,15 +2653,100 @@ impl Blockstore {
             &mut shred_insertion_tracker,
             metrics,
         );
-        if let Some(shred_recovery_context) = shred_recovery_context {
-            self.handle_shred_recovery(
-                shred_recovery_context,
+        let mut recovery_tasks = if collect_recovery_tasks {
+            let mut start = Measure::start("Prepare recovery tasks");
+            let recovery_tasks = self.prepare_shred_recovery_tasks(&mut shred_insertion_tracker);
+            start.stop();
+            metrics.prepare_recovery_elapsed_us += start.as_us();
+            recovery_tasks
+        } else {
+            Vec::new()
+        };
+        for task in &recovery_tasks {
+            if task.requires_validation() {
+                // The SlotMeta reader sets every bit in memory when an older record has no bitmap.
+                // Validation used to finish during insertion. The dead flag blocked failed slots.
+                // This default also sets bits for incomplete sets and sets with no shreds yet.
+                // Clear this set's bit when scheduling required SIMD-0504 validation.
+                // Write the cleared bit and incoming shreds in the same batch.
+                // Replay must wait for validation before reading the newly completed data.
+                // Keep this step while stored SlotMeta records can contain bits from that default.
+                // Writing an old record with a bitmap can store default bits for sets not yet checked.
+                // See the notes on FecValidation's SchemaRead implementation.
+                self.validation_slot_meta_entry(
+                    &mut shred_insertion_tracker,
+                    task.erasure_set.slot(),
+                )?
+                .new_slot_meta
+                .borrow_mut()
+                .fec_validation
+                .remove(task.erasure_set.fec_set_index());
+            }
+        }
+        for batch in recovered_batches.iter_mut() {
+            match batch.fec_set_check {
+                Some(FecSetCheckResult::Passed) => metrics.num_fec_set_checks_passed += 1,
+                Some(FecSetCheckResult::Failed | FecSetCheckResult::RebuildFailed) => {
+                    metrics.num_fec_set_checks_failed += 1;
+                    metrics.num_fec_set_checks_rebuild_failed += usize::from(matches!(
+                        batch.fec_set_check,
+                        Some(FecSetCheckResult::RebuildFailed)
+                    ));
+                    if batch.validation_mode == FecValidationMode::Enforce {
+                        self.mark_slot_dead_if_not_full_before_batch(
+                            batch.erasure_set.slot(),
+                            &mut shred_insertion_tracker,
+                        );
+                    }
+                }
+                None => {}
+            }
+            metrics.num_recovered_data_shreds += batch.data_shreds.len();
+            metrics.num_recovered_coding_shreds +=
+                batch.retransmit_shreds.len() - batch.data_shreds.len();
+            self.attempt_recovered_shred_insertion(
+                batch.data_shreds.drain(..),
                 pinnable_slice,
                 &mut shred_insertion_tracker,
                 is_trusted,
                 metrics,
             );
+            if batch.validation_mode != FecValidationMode::Enforce || batch.fec_set_check.is_some()
+            {
+                // Any verdict completes the check. A failed required check marks the slot dead
+                // above. Commit that dead flag and this bit in the same write batch.
+                // As with synchronous validation, clearing the dead flag later allows replay
+                // without repeating completed checks.
+                // Insert recovered data first so it can set an orphan slot's parent.
+                // Then load SlotMeta to update validation.
+                let entry = self.validation_slot_meta_entry(
+                    &mut shred_insertion_tracker,
+                    batch.erasure_set.slot(),
+                )?;
+                let mut meta = entry.new_slot_meta.borrow_mut();
+                meta.fec_validation
+                    .insert(batch.erasure_set.fec_set_index());
+            }
         }
+        recovery_tasks.retain(|task| {
+            let range = task.erasure_set.data_shred_indices();
+            let complete = shred_insertion_tracker
+                .index_working_set
+                .get(&(BlockLocation::Original, task.erasure_set.slot()))
+                .is_some_and(|entry| {
+                    entry
+                        .index
+                        .data()
+                        .count_range(u64::from(range.start)..u64::from(range.end))
+                        == DATA_SHREDS_PER_FEC_BLOCK
+                });
+            let check_applied = recovered_batches.iter().any(|batch| {
+                batch.erasure_set == task.erasure_set
+                    && batch.merkle_root == Some(task.merkle_root)
+                    && batch.fec_set_check.is_some()
+            });
+            !complete || (task.must_check_completed_set() && !check_applied)
+        });
         // Handle chaining for the members of the slot_meta_working_set that
         // were inserted into, drop the others.
         let chaining_effects = self.handle_chaining(
@@ -2449,53 +2789,33 @@ impl Blockstore {
             update_parent_signals,
         );
 
-        metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
+        if let Some(sender) = retransmit_sender {
+            let mut retransmit_shreds = recovered_batches
+                .iter_mut()
+                .flat_map(|batch| batch.retransmit_shreds.drain(..))
+                .peekable();
+            if retransmit_shreds.peek().is_some() {
+                metrics.num_recovered_retransmit_batches += 1;
+                for shreds in &retransmit_shreds.chunks(RETRANSMIT_SHRED_BATCH_SIZE) {
+                    let _ = sender.try_send(shreds.collect());
+                }
+            }
+        }
 
+        metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
         Ok(InsertResults {
             completed_data_set_infos: shred_insertion_tracker.newly_completed_data_sets,
             duplicate_shreds: shred_insertion_tracker.duplicate_shreds,
+            recovery_tasks,
         })
     }
 
-    /// Simlar to `insert_shreds_at_location_handle_duplicate`  but always inserts
-    /// shreds in the original column specified by `BlockLocation::Original`
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn insert_shreds_handle_duplicate<'a, F>(
-        &self,
-        shreds: impl IntoIterator<
-            Item = (Cow<'a, Shred>, /*is_repaired:*/ bool),
-            IntoIter: ExactSizeIterator,
-        >,
-        is_trusted: bool,
-        shred_recovery_context: &mut ShredRecoveryContext,
-        handle_duplicate: &F,
-        metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
-    where
-        F: Fn(PossibleDuplicateShred),
-    {
-        let mut pinnable_slice = self.new_pinnable_slice();
-        let mut write_batch = self.get_write_batch();
-        self.insert_shreds_at_location_handle_duplicate(
-            shreds
-                .into_iter()
-                .map(|(shred, is_repaired)| (shred, is_repaired, BlockLocation::Original, None)),
-            is_trusted,
-            shred_recovery_context,
-            &mut pinnable_slice,
-            &mut write_batch,
-            handle_duplicate,
-            metrics,
-        )
-    }
-
-    /// Inserts `shreds` into the column specified by  the `BlockLocation`.
-    ///
-    /// Additionally attempts to recover and retransmit recovered shreds (also identifying
-    /// and handling duplicate shreds). Broadcast stage should instead call
-    /// Blockstore::insert_shreds when inserting own shreds during leader slots.
-    /// The pinnable slice and write batch can be reused across calls.
-    pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
+    /// Insert incoming and recovered shreds in one transaction.
+    /// Collect recovery tasks for FEC sets that received new shreds.
+    /// Check recovered batches against blockstore with the insertion lock held.
+    /// Retransmit recovered shreds after the blockstore write succeeds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_shreds_with_recovered<'a, 'db, F>(
         &'db self,
         shreds: impl IntoIterator<
             Item = (
@@ -2506,33 +2826,37 @@ impl Blockstore {
             ),
             IntoIter: ExactSizeIterator,
         >,
-        is_trusted: bool,
-        shred_recovery_context: &mut ShredRecoveryContext,
+        recovered_batches: &mut [RecoveredShredBatch],
+        retransmit_sender: &RetransmitSender,
+        stricter_shred_validation_from: Option<Slot>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
         handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
+    ) -> Result<(Vec<CompletedDataSetInfo>, Vec<ShredRecoveryTask>)>
     where
         F: Fn(PossibleDuplicateShred),
     {
         let InsertResults {
             completed_data_set_infos,
             duplicate_shreds,
+            recovery_tasks,
         } = self.do_insert_shreds(
             shreds,
-            is_trusted,
-            Some(shred_recovery_context),
+            false, // is_trusted
+            ShredRecoveryMode::Enabled {
+                batches: recovered_batches,
+                retransmit_sender,
+                stricter_shred_validation_from,
+            },
             pinnable_slice,
             write_batch,
             metrics,
         )?;
-
         for shred in duplicate_shreds {
             handle_duplicate(shred);
         }
-
-        Ok(completed_data_set_infos)
+        Ok((completed_data_set_infos, recovery_tasks))
     }
 
     pub fn add_new_shred_signal(&self, s: Sender<bool>) {
@@ -2576,7 +2900,7 @@ impl Blockstore {
     /// Clear `slot` from the Blockstore
     ///
     /// This function currently requires `insert_shreds_lock`, as both
-    /// `clear_unconfirmed_slot()` and `insert_shreds_handle_duplicate()`
+    /// `clear_unconfirmed_slot()` and shred insertion
     /// try to perform read-modify-write operation on [`cf::SlotMeta`] column
     /// family.
     pub fn clear_unconfirmed_slot(&self, slot: Slot) {
@@ -2633,7 +2957,7 @@ impl Blockstore {
             lock,
             shreds,
             true, // is_trusted
-            None, // should_recover_shreds
+            ShredRecoveryMode::Disabled,
             pinnable_slice,
             &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -2761,7 +3085,7 @@ impl Blockstore {
         let insert_results = self.do_insert_shreds(
             shreds,
             /*is_trusted:*/ true,
-            /*shred_recovery_context:*/ None,
+            ShredRecoveryMode::Disabled,
             pinnable_slice,
             write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -2788,7 +3112,7 @@ impl Blockstore {
         let insert_results = self.do_insert_shreds(
             shreds,
             is_trusted,
-            /*shred_recovery_context:*/ None,
+            ShredRecoveryMode::Disabled,
             &mut pinnable_slice,
             &mut write_batch,
             &mut BlockstoreInsertionMetrics::default(),
@@ -3231,10 +3555,22 @@ impl Blockstore {
             .or_insert_with(|| {
                 WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred, precomputed_merkle_root))
             });
+        // Allow replay without SIMD-0504 validation for trusted shreds, alternate blocks,
+        // and slots before feature activation. For recovered data, use the validation result.
+        if !matches!(shred_source, ShredSource::Recovered)
+            && (is_trusted
+                || !matches!(location, BlockLocation::Original)
+                || !stricter_shred_validation_from.is_some_and(|first| slot >= first))
+        {
+            slot_meta.fec_validation.insert(erasure_set.fec_set_index());
+        }
         just_inserted_shreds.insert((location, shred.id()), shred);
         index_meta_working_set_entry.did_insert_occur = true;
         slot_meta_entry.did_insert_occur = true;
-        if let BTreeMapEntry::Vacant(entry) = erasure_metas.entry(erasure_set)
+        // Recovered shreds do not trigger recovery tasks.
+        // This insertion does not need their erasure metadata.
+        if !matches!(shred_source, ShredSource::Recovered)
+            && let BTreeMapEntry::Vacant(entry) = erasure_metas.entry(erasure_set)
             && let Some(meta) = {
                 let (slot, fec_set_index) = erasure_set.store_key();
                 self.erasure_meta_cf
@@ -4063,6 +4399,20 @@ impl Blockstore {
         slot: Slot,
     ) -> Result<Option<DBPinnedT<'_, DefaultConfig, IndexRef<'_>>>> {
         self.index_cf.get_pinned_t(slot)
+    }
+
+    /// Return an [`IndexRef`] that borrows the caller's reusable pinnable slice.
+    /// After releasing this reference, the caller can reset or reuse the slice.
+    fn get_index_ref_into<'a, 'db>(
+        &'db self,
+        slot: Slot,
+        pinnable_slice: &'a mut DBPinnableSlice<'db>,
+    ) -> Result<Option<IndexRef<'a>>> {
+        if !self.index_cf.get_slice_into(slot, pinnable_slice)? {
+            return Ok(None);
+        }
+        let bytes = (*pinnable_slice).as_ref();
+        Ok(Some(wincode::deserialize(bytes)?))
     }
 
     fn get_index_from_location(
@@ -5048,7 +5398,7 @@ impl Blockstore {
         };
 
         let entries = self.get_slot_entries_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-        Ok((entries, num_shreds, slot_meta.is_full()))
+        Ok((entries, num_shreds, slot_meta.is_full_and_checked()))
     }
 
     /// Returns the entry-view vector for the slot starting with `shred_start_index`, the number
@@ -5068,7 +5418,7 @@ impl Blockstore {
 
         let entries =
             self.get_slot_entry_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
-        Ok((entries, num_shreds, slot_meta.is_full()))
+        Ok((entries, num_shreds, slot_meta.is_full_and_checked()))
     }
 
     /// Returns the components vector for the slot starting with `shred_start_index`, the number of
@@ -5089,7 +5439,11 @@ impl Blockstore {
         let components =
             self.get_slot_components_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         debug_assert_eq!(completed_ranges.len(), components.len());
-        Ok((components, completed_ranges, slot_meta.is_full()))
+        Ok((
+            components,
+            completed_ranges,
+            slot_meta.is_full_and_checked(),
+        ))
     }
 
     pub fn get_slot_component_views_with_shred_info(
@@ -5107,7 +5461,11 @@ impl Blockstore {
         let components =
             self.get_slot_component_views_in_block(slot, &completed_ranges, Some(&slot_meta))?;
         debug_assert_eq!(completed_ranges.len(), components.len());
-        Ok((components, completed_ranges, slot_meta.is_full()))
+        Ok((
+            components,
+            completed_ranges,
+            slot_meta.is_full_and_checked(),
+        ))
     }
 
     /// Gets accounts used in transactions in the slot range [starting_slot, ending_slot].
@@ -5192,7 +5550,9 @@ impl Blockstore {
         let completed_ranges = Self::get_completed_data_ranges(
             start_index as u32,
             &slot_meta.completed_data_indexes,
-            slot_meta.consumed as u32,
+            slot_meta
+                .fec_validation
+                .checked_end(slot_meta.consumed as u32),
         );
 
         Ok((completed_ranges, Some(slot_meta)))
@@ -6176,7 +6536,11 @@ impl Blockstore {
             }
             // Check if the working copy of the metadata has changed
             if Some(meta) != meta_backup.as_ref() {
-                should_signal = should_signal || slot_has_updates(meta, meta_backup);
+                should_signal = should_signal
+                    || slot_has_updates(meta, meta_backup)
+                    || meta_backup
+                        .as_ref()
+                        .is_some_and(|old| old.fec_validation != meta.fec_validation);
                 self.put_meta_in_batch(write_batch, slot, location, meta)?;
             }
 
