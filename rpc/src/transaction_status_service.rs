@@ -571,6 +571,36 @@ pub(crate) mod tests {
         system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
     }
 
+    #[test]
+    fn test_transaction_status_dependencies_contiguous_completion() {
+        let tracker = Arc::new(DependencyTracker::default());
+        let mut dependencies = TransactionStatusDependencies::new(tracker.clone());
+        for _ in 0..8 {
+            tracker.declare_work();
+        }
+        assert_eq!(tracker.get_current_processed_work(), None);
+
+        // Leave several gaps, then fill them out of order. Each gap must stop
+        // the shared completion marker even if later work is already done.
+        for (work_id, expected) in [
+            (5, None),
+            (3, None),
+            (1, Some(1)),
+            (7, Some(1)),
+            (2, Some(3)),
+            (6, Some(3)),
+            (4, Some(7)),
+            (8, Some(8)),
+        ] {
+            dependencies.mark_processed(work_id);
+            assert_eq!(
+                tracker.get_current_processed_work(),
+                expected,
+                "after completing work id {work_id}",
+            );
+        }
+    }
+
     #[test_case::test_case(false; "without_rpc_history")]
     #[test_case::test_case(true; "with_rpc_history")]
     fn test_frozen_notification_waits_for_out_of_order_transactions(rpc_history: bool) {
