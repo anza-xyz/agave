@@ -9,11 +9,32 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 Release channels have their own copy of this changelog:
 
-* [edge - v4.5](#450-unreleased)
+* [edge - v5.0](#500-unreleased)
+* [alpha - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
 * [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 * [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
 
-## 4.5.0-Unreleased
+## 5.0.0-Unreleased
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+### Validator
+
+#### Breaking
+
+#### Changes
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+## 4.5.0
 
 ### RPC
 
