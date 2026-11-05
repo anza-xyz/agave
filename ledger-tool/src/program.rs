@@ -10,14 +10,16 @@ use {
     solana_ledger::blockstore_options::AccessType,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
+        abi::ABI,
         create_vm,
         invoke_context::{BpfAllocator, InvokeContext},
-        loaded_programs::ProgramRuntimeEnvironment,
         memory_context::MemoryContext,
-        program_cache_entry::{
-            DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
+        program_cache::{
+            DELAY_VISIBILITY_SLOT_OFFSET,
+            entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            env::ProgramRuntimeEnvironment,
+            metrics::LoadProgramMetrics,
         },
-        program_metrics::LoadProgramMetrics,
         serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
     },
@@ -112,6 +114,7 @@ impl ProgramSubCommand for App<'_, '_> {
             .index(1);
 
         let load_genesis_config_arg = load_genesis_arg();
+        let accounts_db_config_args = accounts_db_args();
         let snapshot_config_args = snapshot_args();
 
         self.subcommand(
@@ -165,6 +168,7 @@ and the following fields are required
                         .default_value("0"),
                 )
                 .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(
                     Arg::with_name("mode")
@@ -378,7 +382,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let pubkey = Pubkey::new_unique();
             transaction_accounts.push((
                 pubkey,
-                AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(
+                    0,
+                    vec![0; allocation_size],
+                    &Pubkey::new_unique(),
+                ),
             ));
             instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]
@@ -505,6 +513,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
+        ABI::V1,
         false, // virtual_address_space_adjustments
         false, // account_data_direct_mapping
         false, // direct_account_pointers_in_program_input

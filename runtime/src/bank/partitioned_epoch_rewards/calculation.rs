@@ -659,8 +659,6 @@ impl Bank {
         cached_vote_accounts: &CachedVoteAccounts<'_>,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
-        delay_commission_updates: bool,
-        commission_rate_in_basis_points: bool,
         adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
@@ -741,25 +739,12 @@ impl Bank {
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
         // full epoch.
-        // When `commission_rate_in_basis_points` is true, use the new field
-        // `inflation_rewards_commission_bps`; otherwise use the legacy
-        // percentage field and convert to basis points by multiplying by 100.
-        let commission_bps = if delay_commission_updates {
-            let vote_state_for_commission = snapshot_epoch_vote_accounts
-                .and_then(|eva| eva.get(&vote_pubkey))
-                .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
-                .map(|vote_account| vote_account.vote_state_view())
-                .unwrap_or(vote_state);
-            if commission_rate_in_basis_points {
-                vote_state_for_commission.inflation_rewards_commission()
-            } else {
-                vote_state_for_commission.commission() as u16 * 100
-            }
-        } else if commission_rate_in_basis_points {
-            vote_state.inflation_rewards_commission()
-        } else {
-            vote_state.commission() as u16 * 100
-        };
+        let commission_bps = snapshot_epoch_vote_accounts
+            .and_then(|eva| eva.get(&vote_pubkey))
+            .or_else(|| rewarded_epoch_vote_accounts.and_then(|eva| eva.get(&vote_pubkey)))
+            .map(|vote_account| vote_account.vote_state_view())
+            .unwrap_or(vote_state)
+            .inflation_rewards_commission();
 
         match redeem_rewards(
             stake,
@@ -770,7 +755,6 @@ impl Bank {
                 point_value,
                 stake_history,
                 new_rate_activation_epoch,
-                commission_rate_in_basis_points,
                 adjust_delegations_for_rent,
             },
             reward_calc_tracer,
@@ -828,8 +812,6 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
-        let delay_commission_updates = feature_snapshot.delay_commission_updates;
-        let commission_rate_in_basis_points = feature_snapshot.commission_rate_in_basis_points;
         // Name intentionally doesn't match -- "adjust delegations for rent" is
         // part of relaxing post-exec min balance checks.
         let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
@@ -887,8 +869,6 @@ impl Bank {
                         &cached_vote_accounts,
                         reward_calc_tracer.as_ref(),
                         new_warmup_cooldown_rate_epoch,
-                        delay_commission_updates,
-                        commission_rate_in_basis_points,
                         adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
@@ -1375,7 +1355,7 @@ mod tests {
             stake_utils,
             stakes::{Stakes, tests::create_staked_node_accounts},
         },
-        agave_feature_set::{FeatureSet, delay_commission_updates},
+        agave_feature_set::FeatureSet,
         agave_votor_messages::{
             consensus_message::BLS_KEYPAIR_DERIVE_SEED, migration::AG_MIGRATION_EPOCH_CREDIT,
         },
@@ -1472,18 +1452,13 @@ mod tests {
             },
             credits_observed: vote_credits,
         };
-        let mut account = AccountSharedData::new(
+        let account = AccountSharedData::new_data_with_space(
             rent_exempt_reserve + non_rent_lamports,
+            &StakeStateV2::Stake(Meta::default(), stake, StakeFlags::default()),
             StakeStateV2::size_of(),
             &solana_stake_interface::program::id(),
-        );
-        account
-            .set_state(&StakeStateV2::Stake(
-                Meta::default(),
-                stake,
-                StakeFlags::default(),
-            ))
-            .unwrap();
+        )
+        .unwrap();
         let stake_account = StakeAccount::try_from(account).unwrap();
         let stake_pubkey = Pubkey::new_unique();
         let point_value = PointValue {
@@ -1517,10 +1492,8 @@ mod tests {
                 &stake_history,
                 &cached_vote_accounts,
                 null_tracer(),
-                None,  // new_rate_activation_epoch
-                false, // delay_commission_updates
-                true,  // commission_rate_in_basis_points
-                true,  // adjust_delegations_for_rent (SIMD-0392)
+                None, // new_rate_activation_epoch
+                true, // adjust_delegations_for_rent (SIMD-0392)
                 &AlpenglowEpochType::Tower,
                 false, // custom_commission_collector
             );
@@ -1945,11 +1918,6 @@ mod tests {
         vote_address: &Pubkey,
         activation_epoch: Epoch,
     ) -> AccountSharedData {
-        let mut stake_account = AccountSharedData::new(
-            lamports,
-            StakeStateV2::size_of(),
-            &solana_sdk_ids::stake::id(),
-        );
         let rent_exempt_reserve = lamports.saturating_sub(delegation);
 
         let meta = Meta {
@@ -1964,10 +1932,13 @@ mod tests {
             credits_observed: 0,
         };
 
-        stake_account
-            .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-            .expect("set_state");
-        stake_account
+        AccountSharedData::new_data_with_space(
+            lamports,
+            &StakeStateV2::Stake(meta, stake, StakeFlags::empty()),
+            StakeStateV2::size_of(),
+            &solana_sdk_ids::stake::id(),
+        )
+        .expect("set_state")
     }
 
     fn apply_epoch_operations(
@@ -2172,22 +2143,14 @@ mod tests {
         bank
     }
 
-    #[test_case(true, true; "alpenglow_delay_commission_updates")]
-    #[test_case(false, true; "alpenglow_instant_commission_updates")]
-    #[test_case(true, false; "towerbft_delay_commission_updates")]
-    #[test_case(false, false; "towerbft_instant_commission_updates")]
-    fn test_calculate_stake_vote_rewards_new_vote_account(
-        delay_commission_updates: bool,
-        is_alpenglow: bool,
-    ) {
+    #[test_case(true; "alpenglow")]
+    #[test_case(false; "towerbft")]
+    fn test_calculate_stake_vote_rewards_new_vote_account(is_alpenglow: bool) {
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = create_epoch_operations_genesis(is_alpenglow);
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-        if !delay_commission_updates {
-            deactivate_features(&mut genesis_config, &vec![delay_commission_updates::id()]);
-        }
 
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -2261,7 +2224,6 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let vote_address = Pubkey::new_unique();
         let mut bank = apply_epoch_operations(
@@ -2526,7 +2488,6 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let genesis_vote_address = voting_keypair.pubkey();
 
@@ -3877,7 +3838,7 @@ mod tests {
         let (expected_stake_rewards, expected_rewards) = if is_alpenglow {
             (0, 0)
         } else {
-            (374600, 374656)
+            (394300, 394375)
         };
         assert_cached_rewards(
             &bank1,
@@ -3912,9 +3873,9 @@ mod tests {
             expected_rewards,
             expected_points,
         ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 374656, 0)
+            (&no_reward_accounts, &no_reward_accounts, 0, 0, 394375, 0)
         } else {
-            (&voters, &stakers, 4165, 371020, 375234, 9_450_000_000_000)
+            (&voters, &stakers, 4385, 390495, 394984, 9_450_000_000_000)
         };
         let capitalization_after_vat_burn = if is_alpenglow {
             let num_vat_burns = RewardEpochDelegatedStakes::get(&bank2)
@@ -3954,9 +3915,9 @@ mod tests {
             expected_rewards,
             expected_points,
         ) = if is_alpenglow {
-            (&no_reward_accounts, &no_reward_accounts, 0, 0, 371535, 0)
+            (&no_reward_accounts, &no_reward_accounts, 0, 0, 391090, 0)
         } else {
-            (&voters, &stakers, 12980, 364020, 377084, 12_810_000_000_000)
+            (&voters, &stakers, 13660, 383170, 396930, 12_810_000_000_000)
         };
         let capitalization_after_vat_burn = if is_alpenglow {
             let num_vat_burns = RewardEpochDelegatedStakes::get(&bank3)

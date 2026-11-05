@@ -32,7 +32,6 @@ use {
     solana_clock::Slot,
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
-        consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
@@ -55,11 +54,10 @@ use {
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_poh::poh_service,
     solana_pubkey::Pubkey,
+    solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
-    solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -114,7 +112,6 @@ pub fn execute(
         tpu_sigverify_threads: _,
         tpu_transaction_forward_receive_threads: _,
         tpu_transaction_receive_threads: _,
-        tpu_vote_transaction_receive_threads: _,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
@@ -165,21 +162,19 @@ pub fn execute(
             Err(format!("invalid entrypoint address: {addr}"))?;
         }
     }
-    #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-
-    #[cfg(not(target_os = "linux"))]
-    let poh_pinned_cpu_core = None;
-
+    // Must happen before the XDP setup below: attaching a zero-copy XDP
+    // program makes some drivers (e.g. igb, ixgbe) reset the NIC, and while
+    // the link is down this query fails against every entrypoint.
+    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
+        .ok()
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<XdpConfig> = if operation == Operation::Initialize {
         None
     } else {
-        args::xdp_config::new_config(matches, &bind_addresses, poh_pinned_cpu_core)?
+        args::xdp_config::new_config(matches, &bind_addresses)?
     };
 
     let dynamic_port_range =
@@ -421,19 +416,6 @@ pub fn execute(
     let use_direct_io = !matches.is_present("no_accounts_db_snapshots_direct_io");
     let accounts_db_config =
         args::accounts_db_config::new_config(matches, &ledger_path, &num_threads, use_direct_io)?;
-    // TODO: Once entrypoints are updated to return shred-version, this should
-    // abort if it fails to obtain a shred-version, so that nodes always join
-    // gossip with a valid shred-version. The code to adopt entrypoint shred
-    // version can then be deleted from gossip and get_rpc_node above.
-    let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
-        .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
-
-    let tower_path = value_t!(matches, "tower", PathBuf)
-        .ok()
-        .unwrap_or_else(|| ledger_path.clone());
-    let tower_storage: Arc<dyn tower_storage::TowerStorage> =
-        Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
     let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
         vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
@@ -489,9 +471,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        require_tower: false,
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
-        tower_storage,
         vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
@@ -540,7 +520,6 @@ pub fn execute(
         contact_debug_interval,
         contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         send_transaction_service_config: run_args.send_transaction_service_config,
-        no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
         xdp_network_config_report,
@@ -549,14 +528,10 @@ pub fn execute(
         // The validator needs to open many files, check that the process has
         // permission to do so in order to fail quickly and give a direct error
         enforce_ulimit_nofile: true,
-        poh_pinned_cpu_core,
-        poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
-            .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
         account_paths,
         accounts_db_config,
         snapshot_config,
-        no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         wait_to_vote_slot: value_t!(matches, "wait_to_vote_slot", Slot).ok(),
         staked_nodes_overrides: staked_nodes_overrides.clone(),
         use_snapshot_archives_at_startup,
@@ -569,7 +544,6 @@ pub fn execute(
         delay_leader_block_for_pending_fork: !matches
             .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
-        broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",
@@ -593,10 +567,16 @@ pub fn execute(
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
-        validator_exit_backpressure: [(
-            SnapshotPackagerService::NAME.to_string(),
-            Arc::new(AtomicBool::new(false)),
-        )]
+        validator_exit_backpressure: [
+            (
+                SnapshotPackagerService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            ),
+            (
+                TransactionStatusService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            ),
+        ]
         .into(),
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,
@@ -665,7 +645,6 @@ pub fn execute(
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
-            tower_storage: validator_config.tower_storage.clone(),
             vote_history_storage: validator_config.vote_history_storage.clone(),
             staked_nodes_overrides,
             rpc_to_plugin_manager_sender,
@@ -773,7 +752,7 @@ pub fn execute(
     info!("Validator initialized");
     validator.listen_for_signals()?;
     validator.close();
-    info!("Validator exiting...");
+    info!("Validator exiting");
 
     Ok(())
 }

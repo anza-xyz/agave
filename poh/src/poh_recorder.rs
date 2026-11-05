@@ -1306,6 +1306,7 @@ mod tests {
         solana_perf::test_tx::test_tx,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
+        std::assert_matches,
     };
 
     #[test]

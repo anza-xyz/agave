@@ -460,8 +460,12 @@ pub(crate) mod external {
             let Ok((transaction, _)) = translate_sanitized_to_runtime_view(
                 transaction,
                 root_bank,
-                root_bank.get_transaction_account_lock_limit(),
+                root_bank.get_transaction_account_lock_limits(),
                 preloaded_addresses,
+                !root_bank
+                    .feature_set
+                    .snapshot()
+                    .loaderv3_programdata_size_floor,
             ) else {
                 if flags & check_message_flags::CALCULATE_SCHEDULING_DETAILS != 0 {
                     response.scheduling_details_flags |= scheduling_details_flags::FAILED;

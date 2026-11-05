@@ -1,66 +1,21 @@
 #[cfg(feature = "metrics")]
-use crate::program_metrics::LoadProgramMetrics;
+use crate::program_cache::metrics::LoadProgramMetrics;
 use {
     crate::{
         invoke_context::{BuiltinFunctionRegisterer, InvokeContext},
-        loaded_programs::ProgramRuntimeEnvironment,
-        program_metrics::ProgramStatistics,
+        program_cache::{
+            DELAY_VISIBILITY_SLOT_OFFSET, env::ProgramRuntimeEnvironment,
+            metrics::ProgramStatistics, owner::ProgramCacheEntryOwner,
+        },
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_sbpf::{elf::Executable, program::BuiltinProgram, verifier::RequisiteVerifier},
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-    },
     solana_svm_type_overrides::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
-
-pub const DELAY_VISIBILITY_SLOT_OFFSET: Slot = 1;
-
-/// The owner of a programs accounts, thus the loader of a program
-#[derive(Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Debug)]
-pub enum ProgramCacheEntryOwner {
-    #[default]
-    NativeLoader,
-    LoaderV1,
-    LoaderV2,
-    LoaderV3,
-    LoaderV4,
-}
-
-impl TryFrom<&Pubkey> for ProgramCacheEntryOwner {
-    type Error = ();
-    fn try_from(loader_key: &Pubkey) -> Result<Self, ()> {
-        if native_loader::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::NativeLoader)
-        } else if bpf_loader_deprecated::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV1)
-        } else if bpf_loader::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV2)
-        } else if bpf_loader_upgradeable::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV3)
-        } else if loader_v4::check_id(loader_key) {
-            Ok(ProgramCacheEntryOwner::LoaderV4)
-        } else {
-            Err(())
-        }
-    }
-}
-
-impl From<ProgramCacheEntryOwner> for Pubkey {
-    fn from(program_cache_entry_owner: ProgramCacheEntryOwner) -> Self {
-        match program_cache_entry_owner {
-            ProgramCacheEntryOwner::NativeLoader => native_loader::id(),
-            ProgramCacheEntryOwner::LoaderV1 => bpf_loader_deprecated::id(),
-            ProgramCacheEntryOwner::LoaderV2 => bpf_loader::id(),
-            ProgramCacheEntryOwner::LoaderV3 => bpf_loader_upgradeable::id(),
-            ProgramCacheEntryOwner::LoaderV4 => loader_v4::id(),
-        }
-    }
-}
 
 /*
     The possible ProgramCacheEntryType transitions:
@@ -419,11 +374,39 @@ pub(crate) const fn retention_score(last_access: u64, recovery_cost: u64, freque
 }
 
 #[cfg(test)]
+pub(crate) fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
+    use std::{fs::File, io::Read};
+
+    let mut elf = Vec::new();
+    File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so")
+        .unwrap()
+        .read_to_end(&mut elf)
+        .unwrap();
+    let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
+    ProgramCacheEntryType::Loaded(executable)
+}
+
+#[cfg(test)]
+pub(crate) fn new_test_entry_with_usage(
+    deployment_slot: Slot,
+    stats: ProgramStatistics,
+) -> Arc<ProgramCacheEntry> {
+    use crate::program_cache::env::get_mock_program_runtime_environment;
+
+    Arc::new(ProgramCacheEntry {
+        program: new_loaded_entry(get_mock_program_runtime_environment()),
+        account_owner: ProgramCacheEntryOwner::LoaderV2,
+        deployment_slot,
+        stats: Arc::new(stats),
+        latest_access_slot: AtomicU64::new(deployment_slot),
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use {
-        crate::{
-            loaded_programs::tests::new_test_entry_with_usage, program_metrics::ProgramStatistics,
-        },
+        super::new_test_entry_with_usage,
+        crate::program_cache::metrics::ProgramStatistics,
         std::sync::atomic::{AtomicU64, Ordering},
     };
 

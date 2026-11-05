@@ -555,10 +555,19 @@ impl AppendVec {
     /// return an `AccountSharedData` for an account at `logical_offset`.
     /// This fn can efficiently return exactly what is needed by a caller.
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
-    pub fn get_account_shared_data(
+    ///
+    /// `load_filter` is a predicate that determines if the account should be loaded in full.
+    /// The parameters are lamports, owner, and data length.
+    ///
+    /// Returns:
+    /// * None if there is an error reading the account.
+    /// * Some(None) if `load_filter` returns false.
+    /// * Some(Some(account)) otherwise.
+    pub fn get_account_shared_data_if(
         &self,
         logical_offset: LogicalOffset,
-    ) -> Option<AccountSharedData> {
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<Option<AccountSharedData>> {
         let offset = file_offset_from_logical(logical_offset);
         let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
         let bytes_read = read_into_buffer(&self.file, self.len() as FileSize, offset, unsafe {
@@ -572,8 +581,15 @@ impl AppendVec {
         let (account_meta, next) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
         let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(valid_bytes, next)?;
         let data_len = meta.data_len;
+        if !load_filter(
+            account_meta.lamports,
+            &account_meta.owner,
+            data_len as usize,
+        ) {
+            return Some(None);
+        }
         let remaining_bytes_for_data = bytes_read - next;
-        Some(if remaining_bytes_for_data >= data_len as usize {
+        Some(Some(if remaining_bytes_for_data >= data_len as usize {
             // we already read enough data to load this account
             let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
             let stored_size = next;
@@ -615,7 +631,7 @@ impl AppendVec {
                 account_meta.executable,
                 account_meta.rent_epoch,
             )
-        })
+        }))
     }
 
     /// Returns the path to the file where the data is stored
@@ -1134,12 +1150,12 @@ fn stored_account_from<'a>(stored_account_meta: StoredAccountMeta<'a>) -> Stored
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
         solana_account::{AccountSharedData, WritableAccount, accounts_equal},
         solana_clock::Slot,
         std::{
+            assert_matches,
             io::{Seek as _, SeekFrom, Write as _},
             iter,
             mem::ManuallyDrop,
@@ -1197,7 +1213,9 @@ mod tests {
                 .sum();
             let offset = file_offset_from_logical(logical_offset);
             let result = self.get_stored_account_meta_callback(offset, |r_callback| {
-                let r2 = self.get_account_shared_data(logical_offset);
+                let r2 = self
+                    .get_account_shared_data_if(logical_offset, |_, _, _| true)
+                    .unwrap();
                 assert!(solana_account::accounts_equal(
                     &r_callback,
                     r2.as_ref().unwrap()
@@ -1211,7 +1229,10 @@ mod tests {
                     self.get_stored_account_meta_callback(offset, |_| {})
                         .is_none()
                 );
-                assert!(self.get_account_shared_data(logical_offset).is_none());
+                assert!(
+                    self.get_account_shared_data_if(logical_offset, |_, _, _| true)
+                        .is_none()
+                );
                 // it has different rules for checking len and returning None
                 assert_eq!(sizes, 0);
             }
@@ -1844,7 +1865,33 @@ mod tests {
     }
 
     #[test]
-    fn test_get_account_shared_data_from_truncated_file() {
+    fn test_get_account_shared_data_if() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 10_000);
+        let account = AccountSharedData::new_with_data(123, vec![42; 165], &Pubkey::new_unique());
+        let offset = av
+            .append_account_test(&(Pubkey::new_unique(), account.clone()))
+            .unwrap();
+
+        for should_load in [false, true] {
+            let loaded_account = av
+                .get_account_shared_data_if(
+                    offset,
+                    |stored_lamports, stored_owner, stored_data_len| {
+                        assert_eq!(stored_lamports, account.lamports());
+                        assert_eq!(stored_owner, account.owner());
+                        assert_eq!(stored_data_len, account.data().len());
+                        should_load
+                    },
+                )
+                .unwrap();
+            assert_eq!(loaded_account.as_ref(), should_load.then_some(&account));
+        }
+    }
+
+    #[test]
+    fn test_get_account_shared_data_if_from_truncated_file() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("append_vec");
 
@@ -1853,7 +1900,8 @@ mod tests {
             // AppendVec internal buffer size is PAGESIZE).
             let data_len: usize = 2 * PAGE_SIZE;
             let pubkey = Pubkey::default();
-            let account = AccountSharedData::new(100, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(100, vec![0; data_len], &Pubkey::default());
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(
                 &path,
@@ -1868,8 +1916,14 @@ mod tests {
         let file_info = FileInfo::new_from_path(&path).unwrap();
         let av =
             AppendVec::new_from_file_info_unchecked(file_info, truncated_accounts_len).unwrap();
-        let account = av.get_account_shared_data(0);
+        let account = av.get_account_shared_data_if(0, |_, _, _| true);
         assert!(account.is_none()); // Expect None to be returned.
+
+        // the load filter returns false, so ensure no loaded account
+        assert_eq!(
+            av.get_account_shared_data_if(0, |_, _, _| false),
+            Some(None)
+        );
 
         let result = av.get_stored_account_meta_callback(0, |_| true);
         assert!(result.is_none()); // Expect None to be returned.
@@ -1891,7 +1945,8 @@ mod tests {
         for _ in &pubkeys {
             let lamports = rng.random();
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
-            let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(lamports, vec![0; data_len], &Pubkey::default());
             accounts.push(account);
             stored_sizes.push(AppendVec::calculate_stored_size(data_len));
         }
@@ -1944,7 +1999,8 @@ mod tests {
         for _ in &pubkeys {
             let lamports = rng.random();
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
-            let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(lamports, vec![0; data_len], &Pubkey::default());
             accounts.push(account);
             total_stored_size += AppendVec::calculate_stored_size(data_len);
         }

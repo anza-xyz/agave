@@ -41,7 +41,6 @@ bip39 = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
-const_format = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 log = { workspace = true }
@@ -111,7 +110,6 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }

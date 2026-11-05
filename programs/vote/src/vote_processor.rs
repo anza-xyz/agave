@@ -63,7 +63,6 @@ where
 fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
     let feature_set = invoke_context.get_feature_set();
     feature_set.bls_pubkey_management_in_vote_account
-        && feature_set.commission_rate_in_basis_points
         && feature_set.custom_commission_collector
         && feature_set.block_revenue_sharing
         && feature_set.vote_account_initialize_v2
@@ -186,23 +185,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::UpdateCommission(commission) => {
-            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
-
-            // Disable the commission update rule after the "delay commission
-            // update" feature is activated because it imposes a minimum delay
-            // of one full epoch before the new commission rate takes effect.
-            let disable_commission_update_rule =
-                invoke_context.get_feature_set().delay_commission_updates;
-
-            vote_state::update_commission(
-                &mut me,
-                target_version,
-                commission,
-                &signers,
-                sysvar_cache.get_epoch_schedule()?.as_ref(),
-                sysvar_cache.get_clock()?.as_ref(),
-                disable_commission_update_rule,
-            )
+            vote_state::update_commission(&mut me, target_version, commission, &signers)
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
             if should_reject_legacy_vote_instructions(invoke_context) {
@@ -345,24 +328,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateCommissionBps {
             commission_bps,
             kind,
-        } => {
-            // SIMD-0291: Commission Rate in Basis Points
-            // Requires SIMD-0185: Vote State V4
-            // Requires SIMD-0249: Delay Commission Updates
-            let feature_set = invoke_context.get_feature_set();
-            if !feature_set.commission_rate_in_basis_points || !feature_set.delay_commission_updates
-            {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-            vote_state::update_commission_bps(
-                &mut me,
-                target_version,
-                commission_bps,
-                kind,
-                &signers,
-                feature_set.block_revenue_sharing,
-            )
-        }
+        } => vote_state::update_commission_bps(
+            &mut me,
+            target_version,
+            commission_bps,
+            kind,
+            &signers,
+            invoke_context.get_feature_set().block_revenue_sharing,
+        ),
         VoteInstruction::UpdateCommissionCollector(kind) => {
             // SIMD-0232: Custom Commission Collector Account
             // Requires SIMD-0185: Vote State V4
@@ -426,7 +399,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            program_cache_entry::ProgramCacheEntry,
+            program_cache::entry::ProgramCacheEntry,
             solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
@@ -495,7 +468,6 @@ mod tests {
     #[derive(Clone, Copy, Default)]
     struct VoteProgramFeatures {
         bls_pubkey_management_in_vote_account: bool,
-        commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
@@ -506,7 +478,6 @@ mod tests {
         fn all_enabled() -> Self {
             Self {
                 bls_pubkey_management_in_vote_account: true,
-                commission_rate_in_basis_points: true,
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
@@ -542,7 +513,6 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         let VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
@@ -573,7 +543,6 @@ mod tests {
             },
             &SVMFeatureSet {
                 bls_pubkey_management_in_vote_account,
-                commission_rate_in_basis_points,
                 custom_commission_collector,
                 block_revenue_sharing,
                 vote_account_initialize_v2,
@@ -697,7 +666,6 @@ mod tests {
         let node_pubkey = solana_pubkey::new_rand();
         let balance = rent.minimum_balance(VoteStateV4::size_of());
 
-        let mut account = AccountSharedData::new(balance, VoteStateV4::size_of(), &id());
         let vote_state = VoteStateV4::new_with_defaults(
             &vote_pubkey,
             &VoteInit {
@@ -708,9 +676,11 @@ mod tests {
             },
             &Clock::default(),
         );
-        VoteStateV4::serialize(
+        let account = AccountSharedData::new_data_with_space(
+            balance,
             &VoteStateVersions::V4(Box::new(vote_state)),
-            account.data_as_mut_slice(),
+            VoteStateV4::size_of(),
+            &id(),
         )
         .unwrap();
 
@@ -726,7 +696,6 @@ mod tests {
         let node_pubkey = solana_pubkey::new_rand();
         let balance = rent.minimum_balance(VoteStateV3::size_of());
 
-        let mut account = AccountSharedData::new(balance, VoteStateV3::size_of(), &id());
         let vote_state = VoteStateV3::new(
             &VoteInit {
                 node_pubkey,
@@ -736,9 +705,11 @@ mod tests {
             },
             &Clock::default(),
         );
-        VoteStateV3::serialize(
+        let account = AccountSharedData::new_data_with_space(
+            balance,
             &VoteStateVersions::V3(Box::new(vote_state)),
-            account.data_as_mut_slice(),
+            VoteStateV3::size_of(),
+            &id(),
         )
         .unwrap();
 
@@ -911,18 +882,17 @@ mod tests {
         [false, true],
         [false, true],
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account(
         bls_pubkey_management_in_vote_account: bool,
-        commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
     ) {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+        let vote_account =
+            AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
         let instruction_data = wincode::serialize(&VoteInstruction::InitializeAccount(VoteInit {
@@ -957,7 +927,6 @@ mod tests {
 
         let features = VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
@@ -998,7 +967,7 @@ mod tests {
             vec![
                 (
                     vote_pubkey,
-                    AccountSharedData::new(100, 2 * vote_state_size_of(), &id()),
+                    AccountSharedData::new_with_data(100, vec![0; 2 * vote_state_size_of()], &id()),
                 ),
                 (sysvar::rent::id(), create_default_rent_account()),
                 (sysvar::clock::id(), create_default_clock_account()),
@@ -1028,18 +997,17 @@ mod tests {
         [false, true],
         [false, true],
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account_v2(
         bls_pubkey_management_in_vote_account: bool,
-        commission_rate_in_basis_points: bool,
         custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
     ) {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+        let vote_account =
+            AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
         let authorized_voter = solana_pubkey::new_rand();
@@ -1090,7 +1058,6 @@ mod tests {
 
         let features = VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            commission_rate_in_basis_points,
             custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
@@ -1098,7 +1065,6 @@ mod tests {
         };
 
         let all_v2_features_enabled = bls_pubkey_management_in_vote_account
-            && commission_rate_in_basis_points
             && custom_commission_collector
             && block_revenue_sharing
             && vote_account_initialize_v2;
@@ -1211,7 +1177,7 @@ mod tests {
             vec![
                 (
                     vote_pubkey,
-                    AccountSharedData::new(100, 2 * vote_state_size_of(), &id()),
+                    AccountSharedData::new_with_data(100, vec![0; 2 * vote_state_size_of()], &id()),
                 ),
                 (node_pubkey, node_account.clone()),
                 (
@@ -1322,7 +1288,8 @@ mod tests {
     #[test]
     fn test_initialize_vote_account_v2_bad_proof_of_possession() {
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(100, VoteStateV4::size_of(), &id());
+        let vote_account =
+            AccountSharedData::new_with_data(100, vec![0; VoteStateV4::size_of()], &id());
         let node_pubkey = solana_pubkey::new_rand();
         let node_account = AccountSharedData::default();
         let inflation_rewards_collector = solana_pubkey::new_rand();
@@ -2268,7 +2235,8 @@ mod tests {
             transaction_accounts[1] = (sysvar::slot_hashes::id(), slot_hashes_account.clone());
 
             // should fail, uninitialized
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             transaction_accounts[0] = (vote_pubkey, vote_account);
             process_instruction(
                 features,
@@ -4142,7 +4110,7 @@ mod tests {
         // expediency
         let space = usize::from_le_bytes(instructions[0].data[12..20].try_into().unwrap());
         assert_eq!(space, vote_state::VoteState1_14_11::size_of());
-        let empty_vote_account = AccountSharedData::new(101, space, &id());
+        let empty_vote_account = AccountSharedData::new_with_data(101, vec![0; space], &id());
 
         let transaction_accounts = vec![
             (vote_pubkey, empty_vote_account),
@@ -4186,7 +4154,7 @@ mod tests {
         // expediency
         let space = usize::from_le_bytes(instructions[0].data[12..20].try_into().unwrap());
         assert_eq!(space, vote_state_size_of());
-        let empty_vote_account = AccountSharedData::new(101, space, &id());
+        let empty_vote_account = AccountSharedData::new_with_data(101, vec![0; space], &id());
 
         let transaction_accounts = vec![
             (vote_pubkey, empty_vote_account),
@@ -4531,7 +4499,8 @@ mod tests {
     fn test_uninitialized_vote_account() {
         // Set up uninitialized vote account.
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+        let vote_account =
+            AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
 
         let expected_error = InstructionError::InvalidAccountData;
 
@@ -4578,7 +4547,8 @@ mod tests {
 
         // VoteInstruction::AuthorizeWithSeed
         {
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             let current_authority_base_key = Pubkey::new_unique();
             let current_authority_owner = Pubkey::new_unique();
             let new_authority_pubkey = Pubkey::new_unique();
@@ -4628,7 +4598,8 @@ mod tests {
 
         // VoteInstruction::AuthorizeCheckedWithSeed
         {
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             let current_authority_base_key = Pubkey::new_unique();
             let current_authority_owner = Pubkey::new_unique();
             let new_authority_pubkey = Pubkey::new_unique();
@@ -4683,7 +4654,8 @@ mod tests {
 
         // VoteInstruction::UpdateValidatorIdentity
         {
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             let node_pubkey = Pubkey::new_unique();
             let authorized_withdrawer = Pubkey::new_unique();
 
@@ -4725,7 +4697,8 @@ mod tests {
 
         // VoteInstruction::UpdateCommission
         {
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             let authorized_withdrawer = Pubkey::new_unique();
 
             let instruction_data =
@@ -4768,7 +4741,8 @@ mod tests {
 
         // VoteInstruction::Withdraw
         {
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             let recipient = Pubkey::new_unique();
 
             let instruction_data = wincode::serialize(&VoteInstruction::Withdraw(10)).unwrap();
@@ -4804,7 +4778,8 @@ mod tests {
 
         // VoteInstruction::AuthorizeChecked
         {
-            let vote_account = AccountSharedData::new(100, vote_state_size_of(), &id());
+            let vote_account =
+                AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
             let authorized_pubkey = Pubkey::new_unique();
             let new_authorized_pubkey = Pubkey::new_unique();
 
@@ -4957,24 +4932,9 @@ mod tests {
             ),
         ];
 
-        // Fail - SIMD-0291: commission_rate_in_basis_points disabled.
-        process_instruction(
-            VoteProgramFeatures {
-                commission_rate_in_basis_points: false,
-                custom_commission_collector: true,
-                block_revenue_sharing: true,
-                ..Default::default()
-            },
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Err(InstructionError::InvalidInstructionData),
-        );
-
         // Fail - SIMD-0232: custom_commission_collector disabled.
         process_instruction(
             VoteProgramFeatures {
-                commission_rate_in_basis_points: true,
                 custom_commission_collector: false,
                 block_revenue_sharing: true,
                 ..Default::default()
@@ -4988,7 +4948,6 @@ mod tests {
         // Fail - SIMD-0123: block_revenue_sharing disabled.
         process_instruction(
             VoteProgramFeatures {
-                commission_rate_in_basis_points: true,
                 custom_commission_collector: true,
                 block_revenue_sharing: false,
                 ..Default::default()
@@ -5040,7 +4999,8 @@ mod tests {
         );
 
         // Fail - Vote account fails to deserialize (zeroed/uninitialized data).
-        let invalid_vote_account = AccountSharedData::new(1_000_000, VoteStateV4::size_of(), &id());
+        let invalid_vote_account =
+            AccountSharedData::new_with_data(1_000_000, vec![0; VoteStateV4::size_of()], &id());
         process_instruction(
             VoteProgramFeatures::all_enabled(),
             &instruction_data,

@@ -321,9 +321,7 @@ mod tests {
                 setup_nonce_with_bank,
             },
         },
-        solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
-        },
+        solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
@@ -436,13 +434,13 @@ mod tests {
         ));
 
         let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        let mut resized_nonce_account = AccountSharedData::new(
+        let mut resized_data = nonce_account.data().to_vec();
+        resized_data.resize(NonceState::size() + 1, 0);
+        let resized_nonce_account = AccountSharedData::new_with_data(
             nonce_account.lamports(),
-            NonceState::size() + 1,
+            resized_data,
             nonce_account.owner(),
         );
-        resized_nonce_account.data_as_mut_slice()[..nonce_account.data().len()]
-            .copy_from_slice(nonce_account.data());
         bank.store_account(&nonce_pubkey, &resized_nonce_account);
 
         let nonce_address = bank

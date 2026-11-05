@@ -1184,7 +1184,7 @@ mod tests {
             Ok(State::Initialized(data))
         );
 
-        let wrong_data_size_account = Account::new(1, 1, &system_program::id());
+        let wrong_data_size_account = Account::new_with_data(1, vec![0], &system_program::id());
         assert_eq!(
             state_from_account(&wrong_data_size_account),
             Err(Error::InvalidAccountData),

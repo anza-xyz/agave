@@ -10,6 +10,10 @@ mod io_uring;
 pub mod metadata;
 
 pub use file_info::FileInfo;
+#[cfg(unix)]
+pub use std::os::unix::fs::symlink;
+#[cfg(windows)]
+pub use std::os::windows::fs::symlink_file as symlink;
 
 /// Alias for file offsets and sizes - since files can exceed 4GB, use 64-bits
 pub type FileSize = u64;

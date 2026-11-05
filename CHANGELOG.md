@@ -9,11 +9,42 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 Release channels have their own copy of this changelog:
 
-* [edge - v4.5](#450-unreleased)
+* [edge - v5.0](#500-unreleased)
+* [alpha - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
 * [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 * [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
 
-## 4.5.0-Unreleased
+## 5.0.0-Unreleased
+
+### RPC
+
+#### Breaking
+
+#### Changes
+
+### Validator
+
+#### Breaking
+
+* The following TowerBFT/PoH related flags have been removed `--tower`, `--no_poh_speed_test`,
+  `--no-wait-for-vote-to-start-leader`, `--poh_pinned_cpu_core`, and `--poh_hashes_per_batch`
+* Removed deprecated arguments
+  * `--account-shrink-path`
+  * `--accounts-db-access-storages-method`
+  * `--accounts-db-cache-limit-mb`
+  * `--accounts-db-foreground-threads`
+  * `--enable-accounts-disk-index`
+  * `--no-skip-initial-accounts-db-clean`
+
+#### Changes
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+## 4.5.0
 
 ### RPC
 
@@ -25,17 +56,20 @@ Release channels have their own copy of this changelog:
   `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
   below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
   `getBlocks` behavior.
-* Added `getRankMap` to return validator ranks, vote accounts, identities, BLS keys, and stakes
-  for the epoch containing a requested slot, with an optional identity filter. Always queries
-  finalized state; there is no commitment parameter.
-* Added `RpcClient::get_rank_map` and `RpcClient::get_rank_map_with_config`.
+* Added `getVatActiveSetRankMap` to return validator ranks, vote accounts, identities, BLS keys,
+  and stakes for the epoch containing a requested slot, with an optional identity filter.
+  Always queries finalized state; there is no commitment parameter.
+* Added `RpcClient::get_vat_active_set_rank_map`, which accepts an optional identity filter
+  and minimum context slot through its config argument.
 * Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
   instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
   preserves the existing parsed output.
 * `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
   `--full-rpc-api`.
-* `getFeeForMessage` no longer returns `null` when the message's recent blockhash has expired or
-  its durable nonce is invalid. The fee does not depend on either, so it is now returned.
+* `getFeeForMessage` now computes the fee from the message alone. It no longer returns `null` when
+  the message's recent blockhash has expired or its durable nonce is invalid, and no longer returns
+  an `invalid transaction message` error when it references missing or invalid address lookup
+  tables.
 * `getInflationReward` provides the block rewards for stake accounts as a separate
   `blockRewardAmount` field in the response, if block revenue sharing is enabled in the epoch.
   Otherwise, the field is present with a value of `null`. The `amount` field always contains
@@ -44,6 +78,14 @@ Release channels have their own copy of this changelog:
   means a single stake account has two separate reward entries in a block if it received
   block rewards and inflation rewards. The new entries can only appear when block revenue
   sharing is enabled.
+* Some error messages from `sendTransaction`, `simulateTransaction` and `getFeeForMessage` changed,
+  error codes are unchanged. Size errors say `data` instead of a type name
+  (`base64 encoded data too large: …`), malformed transactions return
+  `failed to deserialize transaction` (including some previously reported as
+  `Transaction failed to sanitize accounts offsets correctly`), and malformed messages return
+  `invalid transaction message` without further detail.
+* `jsonParsed` ProgramData accounts of programs without an upgrade authority no longer return the
+  removed authority's 32 bytes in front of the program data.
 
 ### Validator
 
@@ -62,6 +104,8 @@ Release channels have their own copy of this changelog:
   panicking.
 * Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
   the ledger, and an existing one can be deleted.
+* The TPU vote QUIC server has been removed; the node no longer advertises a `tpu_vote` QUIC
+  address in gossip. Votes are received over UDP `tpu_vote` and gossip.
 
 #### Deprecations
 
@@ -72,11 +116,13 @@ Release channels have their own copy of this changelog:
   Replace `--tpu-max-connections-per-peer N` with
   `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
 * `--require-tower` is deprecated and will be removed in a future release.
+* `--tpu-vote-transaction-receive-threads` is deprecated - it only applied to TowerBFT and is a no-op.
 
 ### CLI
 
 #### Breaking
 
+* Prebuilt MacOS x86-64 releases are no longer provided.
 * Prebuilt Windows releases are no longer provided.
 * `solana-genesis` no longer accepts the `--alpenglow` option.
 * **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave
@@ -91,6 +137,14 @@ Release channels have their own copy of this changelog:
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 * The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
   support parsing and signing txv1 transactions may no longer work with the CLI.
+* `withdraw-from-vote-account --sign-only` now requires
+  `--allow-vat-withdrawal`, because the vote account balance and VAT reserve cannot be
+  checked offline.
+* **`solana program deploy` no longer generates an ephemeral keypair signer as a
+  default fallback**. Users must explicitly call `--generate-ephemeral-program-id`
+  if this behavior is desired. This affects both `solana program deploy` and `solana
+  program deploy --buffer <BUFFER>`. This prevents users from creating keypairs they
+  can no longer recover unless they opt in.
 
 #### Changes
 
@@ -99,6 +153,10 @@ Release channels have their own copy of this changelog:
 * `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
   no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
 * `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `withdraw-from-vote-account` now preserves enough SOL for the next Validator Admission Ticket (VAT)
+  burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.
+  Pass `--allow-vat-withdrawal` to include the VAT reserve in the withdrawable balance; the flag is
+  required with `--sign-only`.
 
 ### Geyser
 

@@ -24,14 +24,14 @@ impl BigTableUploadService {
         runtime: Arc<Runtime>,
         bigtable_ledger_storage: solana_storage_bigtable::LedgerStorage,
         blockstore: Arc<Blockstore>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         Self::new_with_config(
             runtime,
             bigtable_ledger_storage,
             blockstore,
-            max_complete_transaction_status_slot,
+            max_complete_and_rooted_transaction_status_slot,
             ConfirmedBlockUploadConfig::default(),
             exit,
         )
@@ -41,7 +41,7 @@ impl BigTableUploadService {
         runtime: Arc<Runtime>,
         bigtable_ledger_storage: solana_storage_bigtable::LedgerStorage,
         blockstore: Arc<Blockstore>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         config: ConfirmedBlockUploadConfig,
         exit: Arc<AtomicBool>,
     ) -> Self {
@@ -53,7 +53,7 @@ impl BigTableUploadService {
                     runtime,
                     bigtable_ledger_storage,
                     blockstore,
-                    max_complete_transaction_status_slot,
+                    max_complete_and_rooted_transaction_status_slot,
                     config,
                     exit,
                 )
@@ -67,7 +67,7 @@ impl BigTableUploadService {
         runtime: Arc<Runtime>,
         bigtable_ledger_storage: solana_storage_bigtable::LedgerStorage,
         blockstore: Arc<Blockstore>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         config: ConfirmedBlockUploadConfig,
         exit: Arc<AtomicBool>,
     ) {
@@ -79,7 +79,7 @@ impl BigTableUploadService {
 
             let Some(end_slot) = next_upload_end_slot(
                 start_slot,
-                &max_complete_transaction_status_slot,
+                &max_complete_and_rooted_transaction_status_slot,
                 &blockstore,
                 &config,
             ) else {
@@ -121,12 +121,12 @@ impl BigTableUploadService {
 /// `upload_confirmed_blocks` treats a range with no rooted slots as done.
 fn next_upload_end_slot(
     start_slot: Slot,
-    max_complete_transaction_status_slot: &AtomicU64,
+    max_complete_and_rooted_transaction_status_slot: &AtomicU64,
     blockstore: &Blockstore,
     config: &ConfirmedBlockUploadConfig,
 ) -> Option<Slot> {
     let highest_complete_root = min(
-        max_complete_transaction_status_slot.load(Ordering::SeqCst),
+        max_complete_and_rooted_transaction_status_slot.load(Ordering::SeqCst),
         blockstore.max_root(),
     );
     let end_slot = min(
@@ -141,7 +141,7 @@ mod tests {
     use {super::*, crate::get_tmp_ledger_path_auto_delete};
 
     #[test]
-    fn test_block_after_skipped_window_waits_for_root_marker() {
+    fn test_block_after_skipped_window_waits_for_tss_root() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let config = ConfirmedBlockUploadConfig {
@@ -151,16 +151,18 @@ mod tests {
 
         // Everything up to root 150 is uploaded. Slots 151..=155 were skipped,
         // and block 156 is the new root. Its transaction statuses are written,
-        // but its root marker isn't yet.
+        // but TSS hasn't processed its root message yet.
         blockstore.set_roots([0, 150].iter()).unwrap();
-        let max_complete_transaction_status_slot = AtomicU64::new(156);
+        let max_complete_and_rooted_transaction_status_slot = AtomicU64::new(150);
 
-        // The pass must not run past the unwritten root.
+        blockstore.set_roots([156].iter()).unwrap();
+
+        // The pass must not run past the root whose TSS root message is pending.
         let start_slot = 151;
         assert_eq!(
             next_upload_end_slot(
                 start_slot,
-                &max_complete_transaction_status_slot,
+                &max_complete_and_rooted_transaction_status_slot,
                 &blockstore,
                 &config,
             ),
@@ -172,7 +174,7 @@ mod tests {
         assert_eq!(
             next_upload_end_slot(
                 149,
-                &max_complete_transaction_status_slot,
+                &max_complete_and_rooted_transaction_status_slot,
                 &blockstore,
                 &config
             ),
@@ -182,19 +184,19 @@ mod tests {
         assert_eq!(
             next_upload_end_slot(
                 150,
-                &max_complete_transaction_status_slot,
+                &max_complete_and_rooted_transaction_status_slot,
                 &blockstore,
                 &config
             ),
             None,
         );
 
-        // Once the marker is written, the pass from 151 includes 156.
-        blockstore.set_roots([156].iter()).unwrap();
+        // Once TSS processes the root message, the pass from 151 includes 156.
+        max_complete_and_rooted_transaction_status_slot.store(156, Ordering::SeqCst);
         assert_eq!(
             next_upload_end_slot(
                 start_slot,
-                &max_complete_transaction_status_slot,
+                &max_complete_and_rooted_transaction_status_slot,
                 &blockstore,
                 &config,
             ),

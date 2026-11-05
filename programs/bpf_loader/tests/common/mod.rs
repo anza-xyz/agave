@@ -23,6 +23,8 @@ pub struct LoaderV3Features {
     pub unbound_loader_v3_instruction_data: bool,
     /// SIMD-0684
     pub allow_prefunded_programdata: bool,
+    /// SIMD-0685
+    pub remove_extend_program: bool,
 }
 
 impl LoaderV3Features {
@@ -31,6 +33,7 @@ impl LoaderV3Features {
             set_programdata_to_elf_length: true,
             unbound_loader_v3_instruction_data: true,
             allow_prefunded_programdata: true,
+            remove_extend_program: true,
         }
     }
 }
@@ -40,10 +43,12 @@ fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3F
         set_programdata_to_elf_length,
         unbound_loader_v3_instruction_data,
         allow_prefunded_programdata,
+        remove_extend_program,
     } = loader_v3_features;
     feature_set.loader_v3_set_program_data_to_elf_length = set_programdata_to_elf_length;
     feature_set.unbound_loader_v3_instruction_data = unbound_loader_v3_instruction_data;
     feature_set.loader_v3_allow_prefunded_programdata = allow_prefunded_programdata;
+    feature_set.loader_v3_remove_extend_program = remove_extend_program;
 }
 
 pub fn create_sysvar_account<T>(value: &T) -> AccountSharedData

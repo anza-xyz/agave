@@ -1,6 +1,7 @@
 use {
+    arrayvec::ArrayVec,
     base64::{display::Base64Display, prelude::BASE64_STANDARD},
-    std::{fmt, str},
+    std::{cell::RefCell, fmt, str},
 };
 
 /// A 16-bit, 1024 element lattice-based incremental hash based on blake3
@@ -74,6 +75,87 @@ impl SingleLtHashUpdater for blake3::Hasher {
     fn write_part(&mut self, bytes: &[u8]) {
         self.update(bytes);
     }
+}
+
+impl<T: SingleLtHashUpdater + ?Sized> SingleLtHashUpdater for &mut T {
+    fn write_part(&mut self, bytes: &[u8]) {
+        (**self).write_part(bytes);
+    }
+}
+
+/// Number of input bytes that [`BufferingHasher`] buffers before streaming the rest directly:
+/// 16 BLAKE3 chunks, the widest SIMD batch.
+const BUFFERED_PREFIX_LEN: usize = 16 * blake3::CHUNK_LEN;
+
+/// Hashes an input given in parts, buffering its first 16 KiB.
+///
+/// BLAKE3 hashes its 1 KiB chunks in parallel only from a chunk-aligned start, so a short
+/// first part makes it hash the following chunks serially and widen its batches gradually.
+/// Handing BLAKE3 the buffered prefix as one slice keeps every batch at full SIMD width.
+#[derive(Default)]
+pub struct BufferingHasher {
+    hasher: blake3::Hasher,
+    buffer: ArrayVec<u8, BUFFERED_PREFIX_LEN>,
+    is_prefix_hashed: bool,
+}
+
+impl BufferingHasher {
+    /// Discards the input written so far.
+    pub fn reset(&mut self) {
+        self.hasher.reset();
+        self.buffer.clear();
+        self.is_prefix_hashed = false;
+    }
+
+    /// Writes `bytes` to BLAKE3 without buffering.
+    ///
+    /// It hashes any buffered prefix first, to keep the input in order, and stops buffering
+    /// later parts. Suits an input that is already one slice.
+    pub fn write_unbuffered(&mut self, bytes: &[u8]) {
+        self.flush_and_stop_buffering();
+        self.hasher.update(bytes);
+    }
+
+    /// Returns the lt hash of the input written since the last `reset()`.
+    #[must_use]
+    pub fn finish(&mut self) -> LtHash {
+        self.flush_and_stop_buffering();
+        LtHash::with(&self.hasher)
+    }
+
+    /// Feeds any buffered input to the inner hasher and disables further buffering.
+    fn flush_and_stop_buffering(&mut self) {
+        if !self.is_prefix_hashed {
+            self.hasher.update(&self.buffer);
+            self.is_prefix_hashed = true;
+        }
+    }
+}
+
+impl SingleLtHashUpdater for BufferingHasher {
+    fn write_part(&mut self, bytes: &[u8]) {
+        if self.is_prefix_hashed {
+            self.hasher.update(bytes);
+            return;
+        }
+        let (prefix, rest) = bytes.split_at(bytes.len().min(self.buffer.remaining_capacity()));
+        self.buffer
+            .try_extend_from_slice(prefix)
+            .expect("prefix fits the free capacity");
+        if self.buffer.is_full() {
+            self.write_unbuffered(rest);
+        }
+    }
+}
+
+/// Calls `f` with this thread's [`BufferingHasher`].
+pub fn with_thread_hasher<R>(f: impl FnOnce(&mut BufferingHasher) -> R) -> R {
+    thread_local! {
+        // Boxed, so only threads that hash allocate the hasher, instead of every thread
+        // carrying it in its static TLS.
+        static HASHER: RefCell<Box<BufferingHasher>> = RefCell::default();
+    }
+    HASHER.with_borrow_mut(|hasher| f(hasher))
 }
 
 /// A smaller "checksum" of the LtHash, useful when 2 KiB is too large
@@ -403,5 +485,43 @@ mod tests {
         let checksum = lt_hash.checksum();
         let str = checksum.to_string();
         assert_eq!(str.as_str(), "DoL6fvKuTpTQCyUh83NxQw2ewKzWYtq9gsTKp1eQiGC2");
+    }
+
+    /// Splitting the input into parts must not change its lt hash, wherever the parts
+    /// cross the buffered prefix.
+    #[test]
+    fn test_buffering_hasher_matches_contiguous_input() {
+        let mut hasher = BufferingHasher::default();
+        for len in [0, 1, 1024, 16383, 16384, 16385, 50_000] {
+            let input = (0..len).map(|i| i as u8).collect::<Vec<_>>();
+            let expected = LtHash::with(blake3::Hasher::new().update(&input));
+            for part_len in [1, 7, 8, 1000, 16384, usize::MAX] {
+                hasher.reset();
+                for part in input.chunks(part_len.min(len.max(1))) {
+                    hasher.write_part(part);
+                }
+                assert_eq!(hasher.finish(), expected, "len={len} part_len={part_len}");
+            }
+        }
+    }
+
+    /// An unbuffered write must keep the input in order after buffered parts, and the parts
+    /// written after it.
+    #[test]
+    fn test_buffering_hasher_write_unbuffered_keeps_order() {
+        let mut hasher = BufferingHasher::default();
+        let input = (0..40_000).map(|i| i as u8).collect::<Vec<_>>();
+        let expected = LtHash::with(blake3::Hasher::new().update(&input));
+        for (unbuffered_start, unbuffered_end) in [(0, 1), (100, 5000), (16384, 20_000)] {
+            hasher.reset();
+            hasher.write_part(&input[..unbuffered_start]);
+            hasher.write_unbuffered(&input[unbuffered_start..unbuffered_end]);
+            hasher.write_part(&input[unbuffered_end..]);
+            assert_eq!(
+                hasher.finish(),
+                expected,
+                "unbuffered {unbuffered_start}..{unbuffered_end}"
+            );
+        }
     }
 }

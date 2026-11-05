@@ -36,7 +36,6 @@ use {
         crds_shards::CrdsShards,
         crds_value::{CrdsValue, CrdsValueLabel},
     },
-    assert_matches::debug_assert_matches,
     indexmap::{
         map::{Entry, IndexMap},
         set::IndexSet,
@@ -51,6 +50,7 @@ use {
     std::{
         cmp::Ordering,
         collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
+        debug_assert_matches,
         ops::{Bound, Index, IndexMut, Range},
         sync::Mutex,
     },
@@ -963,6 +963,7 @@ mod tests {
         solana_signer::Signer,
         solana_time_utils::timestamp,
         std::{
+            assert_matches,
             collections::{HashMap, HashSet},
             iter::repeat_with,
             net::Ipv4Addr,

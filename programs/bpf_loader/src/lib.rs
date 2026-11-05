@@ -15,7 +15,10 @@ use {
     solana_program_runtime::{
         deploy_program,
         invoke_context::InvokeContext,
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache::{
+            entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            owner::ProgramCacheEntryOwner,
+        },
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
     },
@@ -265,6 +268,14 @@ fn process_loader_upgradeable_instruction(
             // Verify Program account
 
             let program = instruction_context.try_borrow_instruction_account(2)?;
+            if !program.is_writable() {
+                ic_logger_msg!(log_collector, "Program account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
+            if program.get_owner() != program_id {
+                ic_logger_msg!(log_collector, "Program account not owned by loader");
+                return Err(InstructionError::IncorrectProgramId);
+            }
             if UpgradeableLoaderState::Uninitialized != program.get_state()? {
                 ic_logger_msg!(log_collector, "Program account already initialized");
                 return Err(InstructionError::AccountAlreadyInitialized);
@@ -512,6 +523,10 @@ fn process_loader_upgradeable_instruction(
             // Verify ProgramData account
 
             let programdata = instruction_context.try_borrow_instruction_account(0)?;
+            if !programdata.is_writable() {
+                ic_logger_msg!(log_collector, "ProgramData account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
             let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
             let (programdata_len, programdata_balance_required) = if set_programdata_to_elf_len {
                 // SIMD-0433: we'll resize the programdata account to the new ELF.
@@ -570,6 +585,13 @@ fn process_loader_upgradeable_instruction(
                 return Err(InstructionError::InvalidAccountData);
             };
             drop(programdata);
+
+            // Verify Spill account
+
+            if !instruction_context.is_instruction_account_writable(3)? {
+                ic_logger_msg!(log_collector, "Spill account not writeable");
+                return Err(InstructionError::InvalidArgument);
+            }
 
             // Load and verify the program bits
             let buffer = instruction_context.try_borrow_instruction_account(2)?;
@@ -876,6 +898,14 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
+            if invoke_context
+                .get_feature_set()
+                .loader_v3_remove_extend_program
+            {
+                // SIMD-0685: Remove ExtendProgram
+                ic_logger_msg!(log_collector, "ExtendProgram has been disabled");
+                return Err(InstructionError::InvalidInstructionData);
+            }
             common_extend_program(invoke_context, additional_bytes, false)?;
         }
     }
@@ -1112,11 +1142,11 @@ fn common_close_account(
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
     #[cfg(all(feature = "svm-internal", feature = "metrics"))]
-    use solana_program_runtime::program_metrics::LoadProgramMetrics;
+    use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
         super::*, solana_account::ReadableAccount,
-        solana_program_runtime::loaded_programs::ProgramRuntimeEnvironment,
+        solana_program_runtime::program_cache::env::ProgramRuntimeEnvironment,
         solana_syscalls::create_program_runtime_environment,
     };
 
@@ -1180,20 +1210,20 @@ mod test_utils {
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
         solana_program_runtime::{
-            loaded_programs::ProgramRuntimeEnvironment, program_metrics::ProgramStatistics,
-            vm::calculate_heap_cost, with_mock_invoke_context,
+            program_cache::{env::ProgramRuntimeEnvironment, metrics::ProgramStatistics},
+            vm::calculate_heap_cost,
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_sbpf::program::BuiltinProgram,
         solana_sdk_ids::sysvar,
         solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
         solana_sysvar_id::SysvarId,
-        std::{fs::File, io::Read},
+        std::{assert_matches, fs::File, io::Read},
         test_case::test_case,
     };
 

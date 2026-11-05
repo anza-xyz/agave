@@ -15,7 +15,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
-    solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
+    solana_program_runtime::program_cache::fork_graph::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},
@@ -438,7 +438,7 @@ impl BankForks {
 
         let root_bank = self.root_bank();
 
-        root_bank.remove_unrooted_slots(&slots_to_purge);
+        root_bank.mark_banks_removed(&slots_to_purge);
         drop(removed_banks);
 
         for (slot, _) in slots_to_purge {
@@ -540,9 +540,9 @@ impl BankForks {
         )
     }
 
-    pub fn prune_program_cache(&self, root: Slot) {
+    pub fn root_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(self);
+            root_bank.root_program_cache(self);
         }
     }
 
@@ -790,7 +790,6 @@ mod tests {
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
             wire::{WireBlockCertMessage, WireCertSignature},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{Account, AccountSharedData},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -806,7 +805,7 @@ mod tests {
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
-        std::{fmt::Debug, thread, time::Duration},
+        std::{assert_matches, fmt::Debug, thread, time::Duration},
     };
 
     struct BlockingScheduler {
@@ -979,7 +978,8 @@ mod tests {
         finish_done_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        assert!(child_bank.get_account(&account_key).is_none());
+        // A removed bank's write cache stays until the bank drops
+        assert!(child_bank.get_account(&account_key).is_some());
     }
 
     fn make_root_bank_for_migration_status_test(
@@ -1002,8 +1002,7 @@ mod tests {
             };
             let cert_data = wincode::serialize(&cert).unwrap();
             let lamports = Rent::default().minimum_balance(cert_data.len());
-            let mut cert_account = Account::new(lamports, cert_data.len(), &system_program::ID);
-            cert_account.data = cert_data;
+            let cert_account = Account::new_with_data(lamports, cert_data, &system_program::ID);
             genesis_config
                 .accounts
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);

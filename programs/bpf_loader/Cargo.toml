@@ -55,7 +55,6 @@ solana-transaction-context = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }

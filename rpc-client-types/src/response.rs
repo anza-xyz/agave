@@ -374,35 +374,20 @@ pub struct RpcIdentity {
     pub identity: String,
 }
 
-/// A legacy TowerBFT vote notification payload.
-///
-/// These notifications are no longer produced. This type is retained for API
-/// compatibility until the next major release.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcVote {
-    /// Vote account address, as base-58 encoded string
-    pub vote_pubkey: String,
-    pub slots: Vec<Slot>,
-    pub hash: String,
-    pub timestamp: Option<UnixTimestamp>,
-    pub signature: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RpcRankMap {
+pub struct RpcVatActiveSetRankMap {
     /// Epoch in which this rank map is effective.
     pub epoch: Epoch,
     /// Total stake in the full rank map, in lamports, regardless of the identity filter.
     pub total_stake: NonZero<u64>,
     /// Validators ordered by their Alpenglow rank.
-    pub validators: Vec<RpcRankMapEntry>,
+    pub validators: Vec<RpcVatActiveSetRankMapEntry>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcRankMapEntry {
+pub struct RpcVatActiveSetRankMapEntry {
     /// Zero-based index used in Alpenglow certificate bitmaps.
     pub rank: u16,
     /// Vote account address, as a base-58 encoded string.
@@ -435,15 +420,12 @@ pub struct RpcVoteAccountInfo {
     pub activated_stake: u64,
 
     /// An 8-bit unsigned integer used as a fraction (commission/100) for
-    /// rewards payout. Before SIMD-0291 activation, this is the native
-    /// commission value. After activation, this is derived from basis
-    /// points with: `bps.div_ceil(100).min(255)`.
+    /// rewards payout, derived from basis points with:
+    /// `bps.div_ceil(100).min(255)`.
     pub commission: u8,
 
     /// A 16-bit unsigned integer used as the raw basis points for rewards
-    /// payout. Before SIMD-0291 activation, this is derived from the
-    /// percentage commission: `percent * 100`. After activation, this is the
-    /// native basis points value stored in vote state.
+    /// payout, as stored natively in vote state.
     ///
     /// Note: Field is `None` when querying a node that predates this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -632,13 +614,13 @@ pub mod tests {
                 "blsPubkeyCompressed": "bls", "stake": 100
             }]
         });
-        let response: RpcRankMap = serde_json::from_value(value.clone()).unwrap();
+        let response: RpcVatActiveSetRankMap = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(response).unwrap(), value);
         value["totalStake"] = json!(0);
-        assert!(serde_json::from_value::<RpcRankMap>(value.clone()).is_err());
+        assert!(serde_json::from_value::<RpcVatActiveSetRankMap>(value.clone()).is_err());
         value["totalStake"] = json!(100);
         value["validators"][0]["stake"] = json!(0);
-        assert!(serde_json::from_value::<RpcRankMap>(value).is_err());
+        assert!(serde_json::from_value::<RpcVatActiveSetRankMap>(value).is_err());
     }
 
     // Make sure that `RpcPerfSample` can read previous version JSON, one without the

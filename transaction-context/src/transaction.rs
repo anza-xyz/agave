@@ -892,8 +892,11 @@ mod tests {
         let rent_exempt_lamports = Rent::default().minimum_balance(correct_space);
 
         // First try it with the wrong owner.
-        let account =
-            AccountSharedData::new(rent_exempt_lamports, correct_space, &Pubkey::new_unique());
+        let account = AccountSharedData::new_with_data(
+            rent_exempt_lamports,
+            vec![0; correct_space],
+            &Pubkey::new_unique(),
+        );
         assert_eq!(
             build_transaction_context(account).push(true),
             Err(InstructionError::InvalidAccountOwner),
@@ -908,9 +911,9 @@ mod tests {
         );
 
         // Finally provide the correct account setup.
-        let account = AccountSharedData::new(
+        let account = AccountSharedData::new_with_data(
             rent_exempt_lamports,
-            correct_space,
+            vec![0; correct_space],
             &solana_sdk_ids::sysvar::id(),
         );
         assert_eq!(build_transaction_context(account).push(true), Ok(()),);
@@ -921,7 +924,7 @@ mod tests {
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
             )],
             Rent::default(),
             20,

@@ -145,6 +145,17 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         (transaction_accounts, instruction_accounts)
     }
 
+    fn corrupt_buffer_elf(transaction_accounts: &mut [(Pubkey, AccountSharedData)]) {
+        transaction_accounts
+            .get_mut(2)
+            .unwrap()
+            .1
+            .data_as_mut_slice()
+            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+            .unwrap()
+            .fill(0xff);
+    }
+
     let process_instruction =
         |transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
          instruction_accounts: Vec<AccountMeta>,
@@ -256,18 +267,38 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
     }
 
     // Case: ProgramData account not writable
-    let (transaction_accounts, mut instruction_accounts) = get_accounts(
+    //
+    // The buffer ELF is corrupted so that `InvalidArgument` proves the
+    // writability check fires before the ELF is loaded and verified.
+    let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
         &buffer_address,
         &upgrade_authority_address,
         &upgrade_authority_address,
         &elf_orig,
         &elf_new,
     );
+    corrupt_buffer_elf(&mut transaction_accounts);
     instruction_accounts.first_mut().unwrap().is_writable = false;
     process_instruction(
         transaction_accounts,
         instruction_accounts,
-        Err(InstructionError::ReadonlyDataModified),
+        Err(InstructionError::InvalidArgument),
+    );
+
+    // Case: Spill account not writable
+    let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
+        &buffer_address,
+        &upgrade_authority_address,
+        &upgrade_authority_address,
+        &elf_orig,
+        &elf_new,
+    );
+    corrupt_buffer_elf(&mut transaction_accounts);
+    instruction_accounts.get_mut(3).unwrap().is_writable = false;
+    process_instruction(
+        transaction_accounts,
+        instruction_accounts,
+        Err(InstructionError::InvalidArgument),
     );
 
     // Case: ProgramData account not owned by loader

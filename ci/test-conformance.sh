@@ -57,6 +57,10 @@ passed=$(grep -c '^OK: ' "$log" || true)
 if ((passed != total)); then
   grep -v '^OK: ' "$log" | head -n 2000 | print_failures || true
   echo "error: $bin passed $passed/$total fixtures in $fixtures_dir" >&2
+  if [[ $(basename "$(dirname "$fixtures_dir")") == fd-vectors ]]; then
+    echo "To regenerate the failing fixtures and view their diff, run:" >&2
+    echo "  ci/regenerate-test-vectors.sh $(basename "$fixtures_dir")" >&2
+  fi
   exit 1
 fi
 echo "$bin passed $passed/$total fixtures in $fixtures_dir"

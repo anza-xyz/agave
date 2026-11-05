@@ -25,7 +25,6 @@ use {
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionResult,
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
@@ -52,6 +51,10 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    Rooted {
+        slot: Slot,
+        bank_id: BankId,
+    },
     PurgeTransactionHistory {
         slot: Slot,
         source: TransactionHistoryPurgeSource,
@@ -95,7 +98,7 @@ impl TransactionHistoryPurgeSource {
     }
 }
 
-pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
+pub struct TransactionBatchWithIndexes<'a, 'b, Tx: TransactionWithMeta> {
     pub batch: TransactionBatch<'a, 'b, Tx>,
     pub transaction_indexes: Vec<usize>,
 }
@@ -221,7 +224,7 @@ fn get_transaction_costs<Tx: TransactionWithMeta>(
     Ok(tx_costs)
 }
 
-fn get_first_error<T, Tx: SVMTransaction>(
+fn get_first_error<T, Tx: TransactionWithMeta>(
     batch: &TransactionBatch<Tx>,
     commit_results: &[TransactionResult<T>],
 ) -> TransactionResult<()> {
@@ -231,7 +234,7 @@ fn get_first_error<T, Tx: SVMTransaction>(
 }
 
 // Includes transaction signature for unit-testing
-fn do_get_first_error<T, Tx: SVMTransaction>(
+fn do_get_first_error<T, Tx: TransactionWithMeta>(
     batch: &TransactionBatch<Tx>,
     results: &[TransactionResult<T>],
 ) -> Option<(TransactionResult<()>, Signature)> {
@@ -308,6 +311,16 @@ impl TransactionStatusSender {
         {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
+        }
+    }
+
+    pub fn send_transaction_status_rooted_message(&self, bank: &Arc<Bank>) {
+        if let Err(e) = self.sender.send(TransactionStatusMessage::Rooted {
+            slot: bank.slot(),
+            bank_id: bank.bank_id(),
+        }) {
+            let slot = bank.slot();
+            warn!("Slot {slot} transaction_status send rooted message failed: {e:?}");
         }
     }
 
@@ -425,7 +438,7 @@ mod tests {
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let present_account_key = Keypair::new();
-        let present_account = AccountSharedData::new(1, 10, &Pubkey::default());
+        let present_account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
         bank.store_account(&present_account_key.pubkey(), &present_account);
 
         // Create array of two transactions which throw different errors

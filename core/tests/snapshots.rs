@@ -197,7 +197,7 @@ where
             if bank.block_id().is_none() {
                 bank.set_block_id(Some(BlockId::default()));
             }
-            bank_forks.read().unwrap().prune_program_cache(bank.slot());
+            bank_forks.read().unwrap().root_program_cache(bank.slot());
             // set_root should send a snapshot request
             bank_forks
                 .write()
@@ -302,7 +302,7 @@ fn test_slots_to_snapshot() {
             bank_forks
                 .read()
                 .unwrap()
-                .prune_program_cache(current_bank.slot());
+                .root_program_cache(current_bank.slot());
             bank_forks.write().unwrap().set_root(
                 current_bank.slot(),
                 Some(&snapshot_controller),
@@ -444,7 +444,7 @@ fn test_bank_forks_incremental_snapshot() {
         // kick in
         if slot % SET_ROOT_INTERVAL == 0 {
             // set_root sends a snapshot request
-            bank_forks.read().unwrap().prune_program_cache(bank.slot());
+            bank_forks.read().unwrap().root_program_cache(bank.slot());
             bank_forks
                 .write()
                 .unwrap()
@@ -701,7 +701,7 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
                     "Waiting for fastboot snapshot {slot} exceeded the {MAX_WAIT_DURATION:?} \
                      maximum wait duration!",
                 );
-                std::thread::sleep(Duration::from_secs(1));
+                std::thread::sleep(Duration::from_millis(11));
             }
             // The held requests were dropped when the fastboot request was handled
             assert!(snapshot_controller.request_sender().is_empty());
@@ -734,7 +734,7 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
                     "Waiting for full snapshot {snapshot_slot} exceeded the {MAX_WAIT_DURATION:?} \
                      maximum wait duration!",
                 );
-                std::thread::sleep(Duration::from_secs(1));
+                std::thread::sleep(Duration::from_millis(11));
             }
             latest_full_snapshot_slot = Some(snapshot_slot);
         } else if snapshot_slot.is_multiple_of(INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS)
@@ -753,7 +753,7 @@ fn test_snapshots_with_background_services(request_fastboot: bool) {
                     "Waiting for incremental snapshot {snapshot_slot} exceeded the \
                      {MAX_WAIT_DURATION:?} maximum wait duration!",
                 );
-                std::thread::sleep(Duration::from_secs(1));
+                std::thread::sleep(Duration::from_millis(11));
             }
             latest_incremental_snapshot_slot = Some(snapshot_slot);
         }

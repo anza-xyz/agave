@@ -27,7 +27,8 @@ use {
     scopeguard::defer,
     smallvec::SmallVec,
     solana_accounts_db::{
-        account_locks::validate_account_locks, accounts_db::AccountsDbConfig,
+        account_locks::{TransactionAccountLockLimits, validate_account_locks},
+        accounts_db::AccountsDbConfig,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
     solana_clock::Slot,
@@ -204,15 +205,21 @@ fn schedule_entries_for_tests(
         })
     });
 
-    process_entries(bank, replay_entries)
+    if let Some(hash) = schedule_entries(bank, replay_entries)? {
+        bank.register_tick(&hash);
+    }
+    Ok(())
 }
 
-fn process_entries(
+// Schedules transactions for execution.
+//
+// Returns the hash of the last tick if a block boundary is reached (the alpentick). The caller must
+// call `bank.register_tick(hash)` with it. We avoid registering it here to allow the caller to
+// queue more async work, as register_tick(alpentick) will drain the scheduler.
+fn schedule_entries(
     bank: &BankWithScheduler,
     entries: impl IntoIterator<Item = result::Result<ReplayEntry, BlockstoreProcessorError>>,
-) -> result::Result<(), BlockstoreProcessorError> {
-    let mut tick_hashes = vec![];
-
+) -> result::Result<Option<Hash>, BlockstoreProcessorError> {
     for entry in entries {
         let ReplayEntry {
             entry,
@@ -220,11 +227,10 @@ fn process_entries(
         } = entry?;
         match entry {
             EntryType::Tick(hash) => {
-                // If it's a tick, save it for later
-                tick_hashes.push(hash);
-                if bank.is_block_boundary(bank.tick_height() + tick_hashes.len() as u64) {
-                    break;
+                if bank.is_block_boundary(bank.tick_height() + 1) {
+                    return Ok(Some(hash));
                 }
+                bank.register_tick(&hash);
             }
             EntryType::Transactions(transactions) => {
                 // Any bank replaying transactions must have a scheduler installed. Slot 0 -
@@ -237,7 +243,7 @@ fn process_entries(
                 );
                 validate_entry_transactions(
                     &transactions,
-                    bank.get_transaction_account_lock_limit(),
+                    bank.get_transaction_account_lock_limits(),
                 )?;
 
                 let indexes = starting_index..starting_index + transactions.len();
@@ -248,20 +254,20 @@ fn process_entries(
             }
         }
     }
-    for hash in tick_hashes {
-        bank.register_tick(&hash);
-    }
-    Ok(())
+    Ok(None)
 }
 
 /// Validate an entry's transactions before scheduling: each transaction's account
 /// locks (count and duplicates). Does not take account locks - the unified scheduler orders conflicts.
 fn validate_entry_transactions(
     transactions: &[ReplayTransaction],
-    tx_account_lock_limit: usize,
+    tx_account_lock_limits: TransactionAccountLockLimits,
 ) -> Result<()> {
     for transaction in transactions {
-        validate_account_locks(transaction.account_keys(), tx_account_lock_limit)?;
+        validate_account_locks(
+            transaction.account_keys(),
+            tx_account_lock_limits.for_version(transaction.version().into())?,
+        )?;
     }
 
     Ok(())
@@ -1660,22 +1666,8 @@ fn confirm_slot_entries(
     }
 
     let last_entry_hash = entries.last().map(|e| e.hash);
-    if !skip_verification {
-        let start_hash = progress.last_entry;
-        let verify_entries = entry::entry_views_to_verification_data(&entries);
-        datapoint_debug!(
-            "verify-batch-size",
-            ("size", verify_entries.len() as i64, i64)
-        );
-        progress
-            .async_verification(replay_verification_worker_pool)
-            .spawn_poh_verification(
-                replay_verification_worker_pool,
-                verify_entries,
-                start_hash,
-                slot,
-            )?;
-    }
+    let verify_entries =
+        (!skip_verification).then(|| entry::entry_views_to_verification_data(&entries));
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
@@ -1702,31 +1694,6 @@ fn confirm_slot_entries(
             return Err(err.into());
         }
     };
-    let bank_id = bank.bank_id();
-    if skip_verification {
-        if let Some(replay_vote_sender) = replay_vote_sender {
-            let message_hashes = unverified_signatures.vote_transaction_message_hashes();
-            if !message_hashes.is_empty() {
-                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
-                    replay_bank_id: bank_id,
-                    replay_slot: slot,
-                    message_hashes,
-                });
-            }
-        }
-    } else {
-        let replay_vote_sender = replay_vote_sender.cloned();
-        progress
-            .async_verification(replay_verification_worker_pool)
-            .spawn_signature_verification(
-                replay_verification_worker_pool,
-                unverified_signatures,
-                slot,
-                bank_id,
-                replay_vote_sender,
-            )?;
-    }
-
     let mut replay_timer = Measure::start("replay_elapsed");
     let is_vote_only_bank = bank.vote_only_bank();
     let replay_entries =
@@ -1757,11 +1724,59 @@ fn confirm_slot_entries(
                 })
             });
 
-    let process_result = process_entries(bank, replay_entries);
+    let schedule_result = schedule_entries(bank, replay_entries);
     replay_timer.stop();
     *replay_elapsed += replay_timer.as_us();
 
-    process_result?;
+    // Submit verification before registering the final tick, which can wait for execution to finish.
+    if let Some(verify_entries) = verify_entries {
+        let start_hash = progress.last_entry;
+        datapoint_debug!(
+            "verify-batch-size",
+            ("size", verify_entries.len() as i64, i64)
+        );
+        progress
+            .async_verification(replay_verification_worker_pool)
+            .spawn_poh_verification(
+                replay_verification_worker_pool,
+                verify_entries,
+                start_hash,
+                slot,
+            )?;
+    }
+
+    if skip_verification {
+        if let Some(replay_vote_sender) = replay_vote_sender {
+            let message_hashes = unverified_signatures.vote_transaction_message_hashes();
+            if !message_hashes.is_empty() {
+                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
+                    replay_bank_id: bank_id,
+                    replay_slot: slot,
+                    message_hashes,
+                });
+            }
+        }
+    } else {
+        let replay_vote_sender = replay_vote_sender.cloned();
+        progress
+            .async_verification(replay_verification_worker_pool)
+            .spawn_signature_verification(
+                replay_verification_worker_pool,
+                unverified_signatures,
+                slot,
+                bank_id,
+                replay_vote_sender,
+            )?;
+    }
+
+    let final_tick_hash = schedule_result?;
+    let mut replay_timer = Measure::start("replay_elapsed");
+    if let Some(hash) = final_tick_hash {
+        bank.register_tick(&hash);
+    }
+    replay_timer.stop();
+    *replay_elapsed += replay_timer.as_us();
+
     progress
         .collect_available_verification_results(poh_verify_elapsed, transaction_verify_elapsed)?;
 
@@ -1828,7 +1843,7 @@ fn cleanup_outdated_tower_bft_startup_banks(
     blockstore: &Blockstore,
     slots_to_cleanup: &[(Slot, BankId)],
 ) {
-    root_bank.remove_unrooted_slots(slots_to_cleanup);
+    root_bank.mark_banks_removed(slots_to_cleanup);
 
     for &(slot, _) in slots_to_cleanup {
         root_bank.clear_slot_signatures(slot);
@@ -2255,7 +2270,7 @@ fn load_frozen_forks(
                 root = new_root_bank.slot();
 
                 leader_schedule_cache.set_root(new_root_bank);
-                new_root_bank.prune_program_cache(&bank_forks.read().unwrap());
+                new_root_bank.root_program_cache(&bank_forks.read().unwrap());
                 let _ = bank_forks
                     .write()
                     .unwrap()
@@ -2581,7 +2596,6 @@ pub mod tests {
             certificate::{CertSignature, GenesisCert},
             consensus_message::{Block, BlockId},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::bounded,
         rand::{Rng, rng},
         solana_account::{AccountSharedData, WritableAccount},
@@ -2629,6 +2643,7 @@ pub mod tests {
             vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
         },
         std::{
+            assert_matches,
             collections::BTreeSet,
             sync::{Arc, Barrier, Mutex, RwLock, atomic::Ordering},
             thread,
@@ -5308,7 +5323,8 @@ pub mod tests {
                     indexes.extend_from_slice(&batch.transaction_indexes);
                 }
                 TransactionStatusMessage::Freeze(_) => {}
-                TransactionStatusMessage::PurgeTransactionHistory { .. } => unreachable!(),
+                TransactionStatusMessage::Rooted { .. }
+                | TransactionStatusMessage::PurgeTransactionHistory { .. } => unreachable!(),
             }
         }
         indexes.sort();
@@ -5612,16 +5628,14 @@ pub mod tests {
             });
         let bank = BankWithScheduler::new(bank, Some(Box::new(mocked_scheduler)));
 
-        // process_batches was removed; drive the same scheduling path through
-        // process_entries with a single transaction entry.
         let replay_entry = ReplayEntry {
             entry: EntryType::Transactions(txs),
             starting_index: 0,
         };
 
-        let result = process_entries(&bank, std::iter::once(Ok(replay_entry)));
+        let result = schedule_entries(&bank, std::iter::once(Ok(replay_entry)));
         if should_succeed {
-            assert_matches!(result, Ok(()));
+            assert_matches!(result, Ok(None));
         } else {
             assert_matches!(
                 result,
@@ -6220,11 +6234,6 @@ pub mod tests {
 
         assert!(!blockstore.is_dead(1));
         assert!(!blockstore.is_dead(2));
-        assert!(
-            first_alpenglow_bank
-                .get_account(&first_alpenglow_key)
-                .is_none()
-        );
 
         let queued_slots: BTreeSet<_> = pending_slots
             .iter()
@@ -6514,7 +6523,17 @@ pub mod tests {
                 hash,
             )),
         ];
-        assert_eq!(validate_entry_transactions(&txs, 10), Ok(()));
+        assert_eq!(
+            validate_entry_transactions(
+                &txs,
+                TransactionAccountLockLimits {
+                    legacy: 10,
+                    v0: 10,
+                    v1: 10
+                }
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -6527,7 +6546,14 @@ pub mod tests {
         ))];
         // transfer touches >1 account; limit of 1 must reject
         assert_eq!(
-            validate_entry_transactions(&txs, 1),
+            validate_entry_transactions(
+                &txs,
+                TransactionAccountLockLimits {
+                    legacy: 1,
+                    v0: 1,
+                    v1: 1
+                }
+            ),
             Err(TransactionError::TooManyAccountLocks)
         );
     }

@@ -37,7 +37,6 @@ pub(crate) struct CalculationEnvironment<'a> {
     pub(crate) point_value: &'a PointValue,
     pub(crate) stake_history: &'a StakeHistory,
     pub(crate) new_rate_activation_epoch: Option<Epoch>,
-    pub(crate) commission_rate_in_basis_points: bool,
     pub(crate) adjust_delegations_for_rent: bool,
 }
 
@@ -48,10 +47,7 @@ pub enum InflationPointCalculationEvent {
     EffectiveStakeAtRewardedEpoch(u64),
     PriorTotalLamports(u64),
     Delegation(Delegation, Pubkey),
-    /// Commission as a percentage (0-100).
-    Commission(u8),
     /// Commission in basis points (0-10,000 representing 0-100%).
-    /// Used when `commission_rate_in_basis_points` feature is active.
     CommissionBps(u16),
     CreditsObserved(u64, Option<u64>),
     Skipped(SkippedReason),

@@ -1004,7 +1004,7 @@ mod tests {
         assert_eq!(accounts[1], unchanged_account);
 
         // Attempt to create system account in account that already has data
-        let owned_account = AccountSharedData::new(0, 1, &Pubkey::default());
+        let owned_account = AccountSharedData::new_with_data(0, vec![0; 1], &Pubkey::default());
         let unchanged_account = owned_account.clone();
         let accounts = process_instruction(
             &wincode::serialize(&SystemInstruction::CreateAccount {
@@ -2085,7 +2085,8 @@ mod tests {
     fn test_assign_native_loader_and_transfer() {
         for size in [0, 10] {
             let pubkey = Pubkey::new_unique();
-            let account = AccountSharedData::new(100, size, &system_program::id());
+            let account =
+                AccountSharedData::new_with_data(100, vec![0; size], &system_program::id());
             let accounts = process_instruction(
                 &wincode::serialize(&SystemInstruction::Assign {
                     owner: solana_sdk_ids::native_loader::id(),
@@ -2215,7 +2216,10 @@ mod tests {
         process_instruction(
             &ix_data,
             vec![
-                (to, AccountSharedData::new(0, 1, &Pubkey::default())),
+                (
+                    to,
+                    AccountSharedData::new_with_data(0, vec![0; 1], &Pubkey::default()),
+                ),
                 (from, from_account.clone()),
             ],
             ix_accounts.clone(),

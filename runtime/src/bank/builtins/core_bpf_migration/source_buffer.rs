@@ -75,15 +75,14 @@ impl SourceBuffer {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::bank::tests::create_simple_test_bank, assert_matches::assert_matches,
-        solana_account::WritableAccount, solana_sdk_ids::bpf_loader_upgradeable,
+        super::*, crate::bank::tests::create_simple_test_bank,
+        solana_sdk_ids::bpf_loader_upgradeable, std::assert_matches,
     };
 
     fn store_account(bank: &Bank, address: &Pubkey, data: &[u8], owner: &Pubkey) {
         let space = data.len();
         let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-        let mut account = AccountSharedData::new(lamports, space, owner);
-        account.data_as_mut_slice().copy_from_slice(data);
+        let account = AccountSharedData::new_with_data(lamports, data.to_vec(), owner);
         bank.store_account_and_update_capitalization(address, &account);
     }
 

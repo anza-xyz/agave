@@ -19,10 +19,11 @@ use {
     solana_program_runtime::{
         deploy::deploy_program,
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        program_cache::{
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            metrics::LoadProgramMetrics,
+            tx_batch::ProgramCacheForTxBatch,
         },
-        program_metrics::LoadProgramMetrics,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -404,7 +405,7 @@ impl Bank {
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
     /// (state equal to [`UpgradeableLoaderState::Buffer`]).
-    #[cfg_attr(not(test), expect(dead_code))] // Only used when an upgrade is configured.
+    //#[cfg_attr(not(test), expect(dead_code))] // Only used when an upgrade is configured.
     pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &self,
         loader_v2_bpf_program_address: &Pubkey,
@@ -522,7 +523,6 @@ pub(crate) mod tests {
             bank_forks::BankForks,
         },
         agave_feature_set::FeatureSet,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_builtins::{
             BUILTINS,
@@ -539,8 +539,9 @@ pub(crate) mod tests {
         solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
-            program_cache_entry::{
-                ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            program_cache::{
+                entry::{ProgramCacheEntry, ProgramCacheEntryType},
+                owner::ProgramCacheEntryOwner,
             },
             solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
@@ -554,6 +555,7 @@ pub(crate) mod tests {
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         std::{
+            assert_matches,
             fs::File,
             io::Read,
             sync::{Arc, RwLock},
@@ -1800,6 +1802,16 @@ pub(crate) mod tests {
             );
         }
 
+        // Enter the window and root the bank, latching EBPP.
+        goto_end_of_slot(bank.clone());
+        let bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            slots_per_epoch / 2,
+        );
+        bank.root_program_cache(&bank_forks.read().unwrap());
+
         // Advance to the last slot of the epoch, observe the two environments.
         goto_end_of_slot(bank.clone());
         let bank = Bank::new_from_parent_with_bank_forks(
@@ -2087,9 +2099,8 @@ pub(crate) mod tests {
                 let lamports = bank.get_minimum_balance_for_rent_exemption(space);
                 let owner = &bpf_loader::id();
 
-                let mut account = AccountSharedData::new(lamports, space, owner);
+                let mut account = AccountSharedData::new_with_data(lamports, elf.to_vec(), owner);
                 account.set_executable(true);
-                account.data_as_mut_slice().copy_from_slice(&elf);
                 bank.store_account_and_update_capitalization(
                     &bpf_loader_v2_program_address,
                     &account,
@@ -2170,9 +2181,8 @@ pub(crate) mod tests {
                 let lamports = bank.get_minimum_balance_for_rent_exemption(space);
                 let owner = &bpf_loader::id();
 
-                let mut account = AccountSharedData::new(lamports, space, owner);
+                let mut account = AccountSharedData::new_with_data(lamports, elf.to_vec(), owner);
                 account.set_executable(true);
-                account.data_as_mut_slice().copy_from_slice(&elf);
                 bank.store_account_and_update_capitalization(
                     &bpf_loader_v2_program_address,
                     &account,
@@ -2237,9 +2247,9 @@ pub(crate) mod tests {
             let elf = [4u8; 200]; // Mock ELF to start.
             let space = elf.len();
             let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-            let mut account = AccountSharedData::new(lamports, space, &bpf_loader::id());
+            let mut account =
+                AccountSharedData::new_with_data(lamports, elf.to_vec(), &bpf_loader::id());
             account.set_executable(true);
-            account.data_as_mut_slice().copy_from_slice(&elf);
             bank.store_account_and_update_capitalization(&bpf_loader_v2_program_address, &account);
         }
 

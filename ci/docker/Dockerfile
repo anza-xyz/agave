@@ -6,7 +6,6 @@ COPY --from=koalaman/shellcheck:v0.8.0 /bin/shellcheck /usr/local/bin/shellcheck
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  SCCACHE_VERSION= \
   NEXTEST_VERSION= \
   GRCOV_VERSION= \
   CODECOV_VERSION=
@@ -26,7 +25,6 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
-  if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$NEXTEST_VERSION" ]; then echo "ERROR: The NEXTEST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$CODECOV_VERSION" ]; then echo "ERROR: The CODECOV_VERSION argument is required!" && exit 1; fi && \
@@ -85,11 +83,11 @@ RUN \
   rustup component add rustfmt --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup component add miri --toolchain=$RUST_NIGHTLY_VERSION && \
   rustup component add llvm-tools-preview --toolchain=$RUST_NIGHTLY_VERSION && \
-  cargo install cargo-audit && \
-  cargo install cargo-hack && \
-  cargo install rustfilt && \
+  cargo install cargo-audit@0.22.2 --locked && \
+  cargo install cargo-hack@0.6.46 --locked && \
+  cargo install rustfilt@0.2.2 --locked && \
   cargo install rumdl@0.2.71 --locked && \
-  cargo install cargo-build-sbf@4.3.0 --locked && \
+  cargo install cargo-build-sbf@4.5.0 --locked && \
   cargo install cargo-deny@0.20.2 --locked && \
   # tombi v1.5.0
   cargo install --git https://github.com/tombi-toml/tombi.git --rev e735f817881f328daee6f9f0f458ba1ac4328a44 --locked tombi-cli && \
@@ -98,13 +96,6 @@ RUN \
   cargo --version && \
   chmod -R a+w $CARGO_HOME $RUSTUP_HOME && \
   rm -rf $CARGO_HOME/registry && \
-  # sccache
-  curl -LOsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  echo "$(curl -LsS "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz.sha256")  sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c - && \
-  tar -xzf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  mv "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"/sccache "$CARGO_HOME/bin/" && \
-  rm "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
-  rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
   curl -LOsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.tar.gz" && \
   curl -LsS "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-musl.sha256" | sha256sum -c - && \

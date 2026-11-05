@@ -24,11 +24,9 @@ pub struct SVMFeatureSet {
     pub deprecate_legacy_vote_ixs: bool,
     pub simplify_alt_bn128_syscall_error_codes: bool,
     pub fix_alt_bn128_multiplication_input_length: bool,
-    pub increase_tx_account_lock_limit: bool,
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
-    pub delay_commission_updates: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
     pub increase_cpi_account_info_limit: bool,
     pub poseidon_enforce_padding: bool,
@@ -37,7 +35,6 @@ pub struct SVMFeatureSet {
     pub create_account_allow_prefund: bool,
     pub bls_pubkey_management_in_vote_account: bool,
     pub enable_alt_bn128_g2_syscalls: bool,
-    pub commission_rate_in_basis_points: bool,
     pub custom_commission_collector: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
@@ -51,6 +48,9 @@ pub struct SVMFeatureSet {
     pub pass_input_metadata_in_vm_r3_r5: bool,
     pub secp256r1_syscall_enabled: bool,
     pub loader_v3_allow_prefunded_programdata: bool,
+    pub loader_v3_remove_extend_program: bool,
+    pub invoke_signed_v2: bool,
+    pub loaderv3_programdata_size_floor: bool,
 }
 
 impl SVMFeatureSet {
@@ -79,11 +79,9 @@ impl SVMFeatureSet {
             deprecate_legacy_vote_ixs: true,
             simplify_alt_bn128_syscall_error_codes: true,
             fix_alt_bn128_multiplication_input_length: true,
-            increase_tx_account_lock_limit: true,
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
-            delay_commission_updates: true,
             raise_cpi_nesting_limit_to_8: true,
             increase_cpi_account_info_limit: true,
             poseidon_enforce_padding: true,
@@ -92,7 +90,6 @@ impl SVMFeatureSet {
             create_account_allow_prefund: true,
             bls_pubkey_management_in_vote_account: true,
             enable_alt_bn128_g2_syscalls: true,
-            commission_rate_in_basis_points: true,
             custom_commission_collector: true,
             block_revenue_sharing: true,
             vote_account_initialize_v2: true,
@@ -106,6 +103,9 @@ impl SVMFeatureSet {
             pass_input_metadata_in_vm_r3_r5: true,
             secp256r1_syscall_enabled: true,
             loader_v3_allow_prefunded_programdata: true,
+            loader_v3_remove_extend_program: true,
+            invoke_signed_v2: true,
+            loaderv3_programdata_size_floor: true,
         }
     }
 }

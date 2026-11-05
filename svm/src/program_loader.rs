@@ -1,16 +1,16 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 #[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
+use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::Slot,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
-    solana_program_runtime::{
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+    solana_program_runtime::program_cache::{
+        entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment, global::ProgramToLoad,
+        owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
     },
     solana_pubkey::Pubkey,
     solana_sbpf::elf_parser::consts::ELFMAG,
@@ -383,11 +383,11 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
-            loaded_programs::{
-                BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
-                get_mock_program_runtime_environment,
+            program_cache::{
+                entry::ProgramCacheEntryType,
+                env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+                fork_graph::{BlockRelation, ForkGraph},
             },
-            program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
@@ -1068,7 +1068,7 @@ mod tests {
 
         // Fail: program account invalid state
         let invalid_program_account =
-            AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
+            AccountSharedData::new_with_data(100, vec![0; 100], &bpf_loader_upgradeable::id());
         assert_eq!(
             get_program_deployment_slot(
                 &mock_bank,
@@ -1239,19 +1239,18 @@ mod tests {
                     latest_access_slot: AtomicU64::default(),
                 }),
             );
-            mock_bank
-                .account_shared_data
-                .borrow_mut()
-                .insert(loader_ids[i], AccountSharedData::new(1, 1, &program_ids[3]));
-            let mut program = AccountSharedData::new(1, 1, &loader_ids[i]);
-            program.set_data_from_slice(&ELFMAG);
+            mock_bank.account_shared_data.borrow_mut().insert(
+                loader_ids[i],
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[3]),
+            );
+            let program = AccountSharedData::new_with_data(1, ELFMAG.to_vec(), &loader_ids[i]);
             mock_bank
                 .account_shared_data
                 .borrow_mut()
                 .insert(program_ids[i], program);
             mock_bank.account_shared_data.borrow_mut().insert(
                 account_ids[i],
-                AccountSharedData::new(1, 1, &program_ids[i]),
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[i]),
             );
         }
 

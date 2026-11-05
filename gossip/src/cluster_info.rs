@@ -79,7 +79,7 @@ use {
     std::{
         borrow::Borrow,
         collections::{HashMap, HashSet},
-        fmt::Debug,
+        fmt::{Debug, Write as _},
         fs::{self, File},
         io::{BufReader, BufWriter, Write},
         iter::repeat,
@@ -110,6 +110,11 @@ const PULL_REQUEST_PERIOD: usize = 5;
 /// 64 batches * 64 packets * ~150us per packet / 8 threads = 80ms.
 /// Here 150us is rough estimate of time to sigverify 1 Protocol instance.
 const SIGVERIFY_BATCH_CAPACITY: usize = 64;
+
+/// Min number of packets per rayon task in [`ClusterInfo::run_socket_consume`]. Fewer than
+/// twice this many packets would make a single task, so they are sigverified on the calling
+/// thread instead of waking up the thread pool.
+const MIN_SIGVERIFY_PACKETS_PER_TASK: usize = 8;
 
 /// Channel capacity for the gossip sigverify -> listen channel, and max number of
 /// sigverified message sets processed per [`ClusterInfo::run_listen`] iteration.
@@ -604,6 +609,22 @@ impl ClusterInfo {
             .unwrap_or_else(|| String::from("none"))
     }
 
+    fn trace_table(header: &str, num_rows: usize) -> String {
+        let capacity = header
+            .len()
+            .saturating_mul(num_rows.saturating_add(2))
+            .saturating_add(80);
+        let mut output = String::with_capacity(capacity);
+        output.push_str(header);
+        // The separator between header and data
+        output.extend(header.chars().map(|s| match s {
+            '|' => '+',
+            '\n' => '\n',
+            _ => '-',
+        }));
+        output
+    }
+
     pub fn rpc_info_trace(&self) -> String {
         // This sets the format string for the table, defining the columns and their widths
         // For reference, this is the header of the table:
@@ -625,50 +646,47 @@ impl ClusterInfo {
             "PubSub",
             "ShredVer"
         );
-        // header_bottom is a String representing the separator between header and data
-        let header_bottom: String = header
-            .chars()
-            .map(|s| match s {
-                '|' => '+',
-                '\n' => '\n',
-                _ => '-',
-            })
-            .collect();
         let now = timestamp();
         let my_pubkey = self.id();
-        let nodes: Vec<_> = self
-            .all_peers()
-            .into_iter()
-            .filter_map(|(node, last_updated)| {
-                let node_rpc = node
-                    .rpc()
-                    .filter(|addr| self.socket_addr_space.check(addr))?;
-                let rpc_addr = node_rpc.ip();
-                Some(format!(
-                    format_string!(),
-                    rpc_addr.to_string(),
-                    if node.pubkey() == &my_pubkey {
-                        "me"
-                    } else {
-                        ""
-                    },
-                    now.saturating_sub(last_updated),
-                    node.pubkey().to_string(),
-                    node.version().to_string(),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc()),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub()),
-                    node.shred_version(),
-                ))
+        struct Node {
+            pubkey: Pubkey,
+            version: solana_version::Version,
+            shred_version: u16,
+            rpc: SocketAddr,
+            rpc_pubsub: Option<SocketAddr>,
+        }
+        let nodes = self.contact_infos(|node| {
+            let rpc = node
+                .rpc()
+                .filter(|addr| self.socket_addr_space.check(addr))?;
+            Some(Node {
+                pubkey: *node.pubkey(),
+                version: node.version().clone(),
+                shred_version: node.shred_version(),
+                rpc,
+                rpc_pubsub: node.rpc_pubsub(),
             })
-            .collect();
-
-        format!(
-            "{}{}{}\nRPC Enabled Nodes: {}\n",
-            header,
-            header_bottom,
-            nodes.join(""),
-            nodes.len(),
-        )
+        });
+        let num_nodes = nodes.len();
+        let mut output = Self::trace_table(&header, num_nodes);
+        for (node, last_updated) in nodes {
+            let rpc_addr = node.rpc.ip();
+            write!(
+                &mut output,
+                format_string!(),
+                rpc_addr,
+                if node.pubkey == my_pubkey { "me" } else { "" },
+                now.saturating_sub(last_updated),
+                node.pubkey.to_string(),
+                node.version.to_string(),
+                node.rpc.port(),
+                self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub),
+                node.shred_version,
+            )
+            .unwrap();
+        }
+        writeln!(&mut output, "\nRPC Enabled Nodes: {num_nodes}").unwrap();
+        output
     }
 
     pub fn contact_info_trace(&self) -> String {
@@ -697,68 +715,80 @@ impl ClusterInfo {
             "Alpeng",
             "ShredVer"
         );
-        // header_bottom is a String representing the separator between header and data
-        let header_bottom: String = header
-            .chars()
-            .map(|s| match s {
-                '|' => '+',
-                '\n' => '\n',
-                _ => '-',
-            })
-            .collect();
 
         let now = timestamp();
         let mut total_spy_nodes = 0usize;
         let my_pubkey = self.id();
-        let nodes: Vec<_> = self
-            .all_peers()
-            .into_iter()
-            .map(|(node, last_updated)| {
-                let is_spy_node = Self::is_spy_node(&node, &self.socket_addr_space);
-                if is_spy_node {
-                    total_spy_nodes = total_spy_nodes.saturating_add(1);
-                }
-
-                let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
-                format!(
-                    format_string!(),
-                    node.gossip()
-                        .filter(|addr| self.socket_addr_space.check(addr))
-                        .as_ref()
-                        .map(SocketAddr::ip)
-                        .as_ref()
-                        .map(IpAddr::to_string)
-                        .unwrap_or_else(|| String::from("none")),
-                    if node.pubkey() == &my_pubkey {
-                        "me"
-                    } else {
-                        ""
-                    },
-                    now.saturating_sub(last_updated),
-                    node.pubkey().to_string(),
-                    node.version().to_string(),
-                    self.addr_to_string(&ip_addr, &node.gossip()),
-                    self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::QUIC)),
-                    self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::QUIC)),
-                    self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
-                    self.addr_to_string(&ip_addr, &node.alpenglow()),
-                    node.shred_version(),
-                )
+        struct Node {
+            pubkey: Pubkey,
+            version: solana_version::Version,
+            shred_version: u16,
+            is_spy_node: bool,
+            gossip: Option<SocketAddr>,
+            tpu_vote: Option<SocketAddr>,
+            tpu: Option<SocketAddr>,
+            tpu_forwards: Option<SocketAddr>,
+            tvu: Option<SocketAddr>,
+            serve_repair: Option<SocketAddr>,
+            alpenglow: Option<SocketAddr>,
+        }
+        let nodes = self.contact_infos(|node| {
+            Some(Node {
+                pubkey: *node.pubkey(),
+                version: node.version().clone(),
+                shred_version: node.shred_version(),
+                is_spy_node: Self::is_spy_node(node, &self.socket_addr_space),
+                gossip: node.gossip(),
+                tpu_vote: node.tpu_vote(contact_info::Protocol::UDP),
+                tpu: node.tpu(contact_info::Protocol::QUIC),
+                tpu_forwards: node.tpu_forwards(contact_info::Protocol::QUIC),
+                tvu: node.tvu(contact_info::Protocol::UDP),
+                serve_repair: node.serve_repair(contact_info::Protocol::UDP),
+                alpenglow: node.alpenglow(),
             })
-            .collect();
-
-        format!(
-            "{header}{header_bottom}{}Nodes: {}{}",
-            nodes.join(""),
-            nodes.len().saturating_sub(total_spy_nodes),
-            if total_spy_nodes > 0 {
-                format!("\nSpies: {total_spy_nodes}")
-            } else {
-                "".to_string()
+        });
+        let num_nodes = nodes.len();
+        let mut output = Self::trace_table(&header, num_nodes);
+        for (node, last_updated) in nodes {
+            if node.is_spy_node {
+                total_spy_nodes = total_spy_nodes.saturating_add(1);
             }
+            let ip_addr = node.gossip.as_ref().map(SocketAddr::ip);
+            write!(
+                &mut output,
+                format_string!(),
+                node.gossip
+                    .filter(|addr| self.socket_addr_space.check(addr))
+                    .as_ref()
+                    .map(SocketAddr::ip)
+                    .as_ref()
+                    .map(IpAddr::to_string)
+                    .unwrap_or_else(|| String::from("none")),
+                if node.pubkey == my_pubkey { "me" } else { "" },
+                now.saturating_sub(last_updated),
+                node.pubkey.to_string(),
+                node.version.to_string(),
+                self.addr_to_string(&ip_addr, &node.gossip),
+                self.addr_to_string(&ip_addr, &node.tpu_vote),
+                self.addr_to_string(&ip_addr, &node.tpu),
+                self.addr_to_string(&ip_addr, &node.tpu_forwards),
+                self.addr_to_string(&ip_addr, &node.tvu),
+                self.addr_to_string(&ip_addr, &node.serve_repair),
+                self.addr_to_string(&ip_addr, &node.alpenglow),
+                node.shred_version,
+            )
+            .unwrap();
+        }
+        write!(
+            &mut output,
+            "Nodes: {}",
+            num_nodes.saturating_sub(total_spy_nodes)
         )
+        .unwrap();
+        if total_spy_nodes > 0 {
+            write!(&mut output, "\nSpies: {total_spy_nodes}").unwrap();
+        }
+        output
     }
 
     // TODO: This has a race condition if called from more than one thread.
@@ -1140,8 +1170,17 @@ impl ClusterInfo {
 
     // All nodes in gossip (including spy nodes) and the last time we heard about them
     pub fn all_peers(&self) -> Vec<(ContactInfo, u64)> {
+        self.contact_infos(|node| Some(node.clone()))
+    }
+
+    /// Projects all contact infos, including spies, with their receive timestamps.
+    /// Runs `query` under batched read locks, so keep it to cheap copies and
+    /// filters; format afterward.
+    /// Nodes for which `query` returns `None` are skipped.
+    pub fn contact_infos<R>(&self, query: impl ContactInfoQuery<Option<R>>) -> Vec<(R, u64)> {
         self.collect_nodes(|_, value| {
-            Some((value.value.contact_info()?.clone(), value.local_timestamp))
+            let node = value.value.contact_info()?;
+            Some((query(node)?, value.local_timestamp))
         })
     }
 
@@ -1519,7 +1558,7 @@ impl ClusterInfo {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(std::cmp::min(get_thread_count(), 8))
+            .num_threads(std::cmp::min(get_thread_count(), 4))
             .thread_name(|i| format!("solGossipRun{i:02}"))
             .build()
             .unwrap();
@@ -1959,6 +1998,9 @@ impl ClusterInfo {
             self.gossip
                 .prune_received_cache(&self_pubkey, origins, stakes)
         };
+        if prunes.is_empty() {
+            return vec![];
+        }
         // Look up gossip addresses of destination nodes.
         let prunes: Vec<(
             Pubkey,      // gossip peer to be pruned
@@ -2244,24 +2286,29 @@ impl ClusterInfo {
             .unwrap_or_default();
         let packets_verified: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
-            thread_pool.install(|| {
-                if packet_buf.len() == 1 {
-                    packet_buf[0]
-                        .par_iter()
-                        .filter_map(|packet| {
-                            verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
-                        })
-                        .collect()
-                } else {
+            if num_packets < 2 * MIN_SIGVERIFY_PACKETS_PER_TASK {
+                packet_buf
+                    .iter()
+                    .flatten()
+                    .filter_map(|packet| {
+                        verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
+                    })
+                    .collect()
+            } else {
+                thread_pool.install(|| {
                     packet_buf
                         .par_iter()
-                        .flatten()
+                        .flat_map(|packet_batch| {
+                            packet_batch
+                                .par_iter()
+                                .with_min_len(MIN_SIGVERIFY_PACKETS_PER_TASK)
+                        })
                         .filter_map(|packet| {
                             verify_packet(packet, &stakes, &self.stats, &self.sigverify_cache)
                         })
                         .collect()
-                }
-            })
+                })
+            }
         };
         if !packets_verified.is_empty()
             && let Err(TrySendError::Full(_)) = sender.try_send(packets_verified)
@@ -2362,7 +2409,7 @@ impl ClusterInfo {
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(get_thread_count().min(8))
+            .num_threads(get_thread_count().min(2))
             .thread_name(|i| format!("solGossipWork{i:02}"))
             .build()
             .unwrap();
@@ -2456,7 +2503,6 @@ pub struct Sockets {
     pub ancestor_hashes_requests: UdpSocket, // udp read/write
     pub tpu_quic: Vec<UdpSocket>,            // quic read only
     pub tpu_forwards_quic: Vec<UdpSocket>,   // quic read only
-    pub tpu_vote_quic: Vec<UdpSocket>,       // quic read only
     // Socket sending out BlockIdRepairType requests,
     // and receiving BlockIdRepairResponse from the cluster.
     pub block_id_repair: UdpSocket,
@@ -2467,8 +2513,6 @@ pub struct Sockets {
     pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
     /// UDP sockets for the alpenglow votor QUIC server endpoints.
     pub votor_server: Vec<UdpSocket>, // quic read only
-    /// Connection cache endpoint for QUIC-based Vote
-    pub quic_vote_client: UdpSocket, // quic write only
     /// Client-side socket for the alpenglow votor QUIC endpoint.
     pub quic_votor_client: UdpSocket, // quic write only
     /// Client-side socket for RPC/SendTransactionService.
@@ -3990,6 +4034,53 @@ mod tests {
         let trace = cluster_info44.rpc_info_trace();
         info!("rpc:\n{trace}");
         check_table_layout(trace);
+    }
+
+    #[test]
+    fn test_rpc_info_trace() {
+        let mut rpc_node = ContactInfo::new_localhost(&Pubkey::new_unique(), timestamp());
+        rpc_node.set_rpc((Ipv4Addr::new(1, 2, 3, 4), 1234)).unwrap();
+        rpc_node
+            .set_rpc_pubsub((Ipv4Addr::new(5, 6, 7, 8), 5678))
+            .unwrap();
+        let rpc_info_trace = |socket_addr_space| {
+            let keypair = Arc::new(Keypair::new());
+            let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), timestamp());
+            let cluster_info = ClusterInfo::new(contact_info, keypair, socket_addr_space);
+            // More nodes than fit in one chunk.
+            for _ in 0..LOCK_CHUNK_SIZE {
+                let node = ContactInfo::new_localhost(&Pubkey::new_unique(), timestamp());
+                cluster_info.insert_info(node);
+                let (spy, _, _) = ClusterInfo::spy_node(Pubkey::new_unique(), 0);
+                cluster_info.insert_info(spy);
+            }
+            cluster_info.insert_info(rpc_node.clone());
+            cluster_info.rpc_info_trace()
+        };
+        let is_rpc_node_row = |line: &str| {
+            line.starts_with("1.2.3.4 ")
+                && line.contains(&rpc_node.pubkey().to_string())
+                && line.contains("| 1234 |5.6.7.8:5678|")
+        };
+
+        let trace = rpc_info_trace(SocketAddrSpace::Unspecified);
+        let lines: Vec<_> = trace.lines().collect();
+        let rows = &lines[2..lines.len() - 2];
+        assert_eq!(rows.len(), LOCK_CHUNK_SIZE + 2, "{trace}");
+        assert_eq!(rows.iter().filter(|l| is_rpc_node_row(l)).count(), 1);
+        assert_eq!(rows.iter().filter(|l| l.contains(" me|")).count(), 1);
+        for line in rows.iter().filter(|l| !is_rpc_node_row(l)) {
+            assert!(line.starts_with("127.0.0.1 "), "{line}");
+            assert_eq!(line.len(), lines[0].len(), "{line}");
+        }
+        let footer = format!("\nRPC Enabled Nodes: {}\n", LOCK_CHUNK_SIZE + 2);
+        assert!(trace.ends_with(&footer), "{trace}");
+
+        let trace = rpc_info_trace(SocketAddrSpace::Global);
+        let lines: Vec<_> = trace.lines().collect();
+        assert_eq!(lines.len(), 5, "{trace}");
+        assert!(is_rpc_node_row(lines[2]), "{trace}");
+        assert!(trace.ends_with("\nRPC Enabled Nodes: 1\n"), "{trace}");
     }
 
     #[test]

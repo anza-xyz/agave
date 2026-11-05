@@ -2,7 +2,6 @@
 
 use {
     crate::mock_bank::{MockForkGraph, create_custom_loader, deploy_program, register_builtins},
-    assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
         Config, Runner,
@@ -13,9 +12,10 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        program_cache_entry::ProgramCacheEntryType,
-        program_metrics::ProgramStatistics,
+        program_cache::{
+            entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironments,
+            metrics::ProgramStatistics, tx_batch::ProgramCacheForTxBatch,
+        },
     },
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -32,7 +32,7 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-    std::collections::HashSet,
+    std::{assert_matches, collections::HashSet},
 };
 
 mod mock_bank;

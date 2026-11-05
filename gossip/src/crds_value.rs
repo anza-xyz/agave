@@ -114,7 +114,7 @@ impl CrdsValueLabel {
 impl CrdsValue {
     /// Verify the signature, short-circuiting on a previously-verified value
     /// hash and otherwise reusing a cached decompressed verifying key. Both
-    /// caches are populated only after `verify_strict` succeeds, so neither can
+    /// caches are populated only after `verify_dalek` succeeds, so neither can
     /// be seeded with arbitrary entries to evict useful ones.
     pub(crate) fn verify_with_cache(&self, cache: &SigVerifyCache) -> bool {
         if cache.verified_values.contains(&self.hash) {
@@ -124,14 +124,15 @@ impl CrdsValue {
         let signable_data = self.signable_data();
         let message = signable_data.borrow();
         let sig_bytes: [u8; 64] = self.signature.into();
-        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        let signature = solana_ed25519::ed_sigs::Signature::from_bytes(&sig_bytes);
         let verified = match cache.verifying_keys.get(&pubkey) {
-            Some(vk) => vk.verify_strict(message, &signature).is_ok(),
+            Some(vk) => vk.verify_dalek(&signature, message).is_ok(),
             None => {
-                let Ok(vk) = ed25519_dalek::VerifyingKey::try_from(pubkey.as_ref()) else {
+                let Ok(vk) = solana_ed25519::ed_sigs::VerificationKey::try_from(pubkey.as_ref())
+                else {
                     return false;
                 };
-                if vk.verify_strict(message, &signature).is_err() {
+                if vk.verify_dalek(&signature, message).is_err() {
                     return false;
                 }
                 cache.verifying_keys.insert(pubkey, vk);

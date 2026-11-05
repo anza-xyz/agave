@@ -222,14 +222,26 @@ impl AccountsFile {
         })
     }
 
-    /// return an `AccountSharedData` for an account at `offset`, if any.  Otherwise return None.
-    pub(crate) fn get_account_shared_data(&self, offset: Offset) -> Result<AccountSharedData> {
+    /// Loads account at `offset`, if there is one.
+    ///
+    /// `load_filter` is a predicate that determines if the account should be loaded in full.
+    /// The parameters are lamports, owner, and data length.
+    ///
+    /// Returns:
+    /// * Err if there is an error reading the account.
+    /// * Ok(None) if `load_filter` returns false.
+    /// * Ok(Some(account)) otherwise.
+    pub(crate) fn get_account_shared_data_if(
+        &self,
+        offset: Offset,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Result<Option<AccountSharedData>> {
         Ok(match self {
             Self::AppendVec(av) => av
-                .get_account_shared_data(offset)
+                .get_account_shared_data_if(offset, load_filter)
                 .ok_or_else(|| io::Error::other("AppendVec did not load an account"))?,
             Self::Split(split) => {
-                split.get_account_shared_data(split_file::LogicalOffset(offset))?
+                split.get_account_shared_data_if(split_file::LogicalOffset(offset), load_filter)?
             }
         })
     }
@@ -519,11 +531,19 @@ mod tests {
             (Pubkey::new_unique(), AccountSharedData::new(0, 0, &owner)),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(33, 10_000, &owner),
+                AccountSharedData::new_with_data(
+                    33,
+                    rand::random_iter().take(10_000).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(44, 222, &owner),
+                AccountSharedData::new_with_data(
+                    44,
+                    rand::random_iter().take(222).collect(),
+                    &owner,
+                ),
             ),
         ];
         let dummy_slot = 12; // value isn't used

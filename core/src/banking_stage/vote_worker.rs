@@ -242,12 +242,23 @@ impl VoteWorker {
         // 0 stake are ignored.
         let mut all_vote_packets = self.storage.drain_unprocessed(bank).into_iter();
         let mut error_counters: TransactionErrorMetrics = TransactionErrorMetrics::default();
+        let enable_implicit_read_locks = !self
+            .bank_forks
+            .read()
+            .unwrap()
+            .root_bank()
+            .feature_set
+            .snapshot()
+            .loaderv3_programdata_size_floor;
         // Process one vote at a time to avoid over-reserving block CUs during packing.
         // This also keeps each recorded vote batch small, which favors entry/FEC-set packing.
         while let Some(packet) = all_vote_packets.next() {
-            let Some(sanitized_transaction) =
-                consume_scan_should_process_packet(bank, packet, &mut error_counters)
-            else {
+            let Some(sanitized_transaction) = consume_scan_should_process_packet(
+                bank,
+                packet,
+                &mut error_counters,
+                enable_implicit_read_locks,
+            ) else {
                 continue;
             };
 
@@ -470,6 +481,7 @@ fn consume_scan_should_process_packet(
     bank: &Bank,
     packet: SanitizedTransactionView<Bytes>,
     error_counters: &mut TransactionErrorMetrics,
+    enable_implicit_read_locks: bool,
 ) -> Option<RuntimeTransactionView> {
     // Construct the RuntimeTransaction.
     let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
@@ -487,18 +499,20 @@ fn consume_scan_should_process_packet(
 
     // Resolve the transaction (votes do not have LUTs).
     debug_assert!(!matches!(view.version(), TransactionVersion::V0));
-    let Ok(view) = RuntimeTransactionView::try_new(view, None, bank.get_reserved_account_keys())
+    let Ok(mut view) =
+        RuntimeTransactionView::try_new(view, None, bank.get_reserved_account_keys())
     else {
         return None;
     };
 
     // Check the number of locks and whether there are duplicates
-    if validate_account_locks(
-        view.account_keys(),
-        bank.get_transaction_account_lock_limit(),
-    )
-    .is_err()
-    {
+    let Ok(limit) = bank
+        .get_transaction_account_lock_limits()
+        .for_version(view.version().into())
+    else {
+        return None;
+    };
+    if validate_account_locks(view.account_keys(), limit).is_err() {
         return None;
     }
 
@@ -506,6 +520,9 @@ fn consume_scan_should_process_packet(
         return None;
     }
 
+    if enable_implicit_read_locks {
+        view.load_implicit_read_locks();
+    }
     Some(view)
 }
 

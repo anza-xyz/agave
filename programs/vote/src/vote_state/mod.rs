@@ -8,7 +8,7 @@ use {
     crate::vote_state::handler::VoteStateVersionsInline,
     handler::{VoteStateHandler, VoteStateTargetVersion},
     log::*,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_bls_signatures::{VerifiableProofOfPossession, keypair::Keypair as BLSKeypair},
     solana_clock::{Clock, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
@@ -805,21 +805,8 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     target_version: VoteStateTargetVersion,
     commission: u8,
     signers: &HashSet<Pubkey, S>,
-    epoch_schedule: &EpochSchedule,
-    clock: &Clock,
-    disable_commission_update_rule: bool,
 ) -> Result<(), InstructionError> {
     let vote_state_result = get_vote_state_handler_checked(vote_account, target_version);
-    let enforce_commission_update_rule = !disable_commission_update_rule
-        && match vote_state_result.as_ref() {
-            Ok(decoded_vote_state) => commission > decoded_vote_state.commission(),
-            Err(_) => true,
-        };
-
-    if enforce_commission_update_rule && !is_commission_update_allowed(clock.slot, epoch_schedule) {
-        return Err(VoteError::CommissionUpdateTooLate.into());
-    }
-
     let mut vote_state = vote_state_result?;
 
     // current authorized withdrawer must say "yay"
@@ -1368,8 +1355,6 @@ pub fn create_v4_account_with_authorized(
     block_revenue_collector: &Pubkey,
     lamports: u64,
 ) -> AccountSharedData {
-    let mut vote_account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &id());
-
     // PoP is stubbed here, since creation of an account assumes the account
     // was already initialized via `IntializeAccount` or `InitializeAccountV2`.
     let authorized_voter_bls_proof_of_possession = [0; BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE];
@@ -1389,13 +1374,13 @@ pub fn create_v4_account_with_authorized(
         &Clock::default(),
     );
 
-    VoteStateV4::serialize(
+    AccountSharedData::new_data_with_space(
+        lamports,
         &VoteStateVersions::V4(Box::new(vote_state)),
-        vote_account.data_as_mut_slice(),
+        VoteStateV4::size_of(),
+        &id(),
     )
-    .unwrap();
-
-    vote_account
+    .unwrap()
 }
 
 pub fn create_bls_pubkey_and_proof_of_possession(
@@ -1429,7 +1414,6 @@ pub fn create_bls_proof_of_possession(
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
@@ -1437,7 +1421,8 @@ mod tests {
             instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
-        test_case::{test_case, test_matrix},
+        std::assert_matches,
+        test_case::test_case,
     };
 
     fn boxed(versions: VoteStateVersionsInline) -> VoteStateVersions {
@@ -1745,14 +1730,9 @@ mod tests {
         assert_eq!(vote_state.votes().len(), 2);
     }
 
-    #[test_matrix(
-        [VoteStateTargetVersion::V4],
-        [true, false]
-    )]
-    fn test_update_commission(
-        target_version: VoteStateTargetVersion,
-        disable_commission_update_rule: bool,
-    ) {
+    #[test]
+    fn test_update_commission() {
+        let target_version = VoteStateTargetVersion::V4;
         let mut vote_state = vote_state_new_for_test(&solana_pubkey::new_rand(), target_version);
         let node_pubkey = *vote_state.node_pubkey();
         let withdrawer_pubkey = *vote_state.authorized_withdrawer();
@@ -1790,21 +1770,9 @@ mod tests {
             .try_borrow_instruction_account(0)
             .unwrap();
 
-        let epoch_schedule = std::sync::Arc::new(EpochSchedule::without_warmup());
-
-        let first_half_clock = std::sync::Arc::new(Clock {
-            slot: epoch_schedule.slots_per_epoch / 4,
-            ..Clock::default()
-        });
-
-        let second_half_clock = std::sync::Arc::new(Clock {
-            slot: (epoch_schedule.slots_per_epoch * 3) / 4,
-            ..Clock::default()
-        });
-
         let signers: HashSet<Pubkey> = vec![withdrawer_pubkey].into_iter().collect();
 
-        // Increase commission in first half of epoch -- allowed
+        // Increase commission
         assert_eq!(
             get_vote_state_handler_checked(&borrowed_account, target_version,)
                 .unwrap()
@@ -1812,15 +1780,7 @@ mod tests {
             10
         );
         assert_matches!(
-            update_commission(
-                &mut borrowed_account,
-                target_version,
-                11,
-                &signers,
-                &epoch_schedule,
-                &first_half_clock,
-                disable_commission_update_rule,
-            ),
+            update_commission(&mut borrowed_account, target_version, 11, &signers,),
             Ok(())
         );
         assert_eq!(
@@ -1830,38 +1790,9 @@ mod tests {
             11
         );
 
-        // Increase commission in second half of epoch -- disallowed if update rule is enabled
-        let result = update_commission(
-            &mut borrowed_account,
-            target_version,
-            12,
-            &signers,
-            &epoch_schedule,
-            &second_half_clock,
-            disable_commission_update_rule,
-        );
-        let state_commission = get_vote_state_handler_checked(&borrowed_account, target_version)
-            .unwrap()
-            .commission();
-        if disable_commission_update_rule {
-            assert_matches!(result, Ok(()));
-            assert_eq!(state_commission, 12);
-        } else {
-            assert_matches!(result, Err(_));
-            assert_eq!(state_commission, 11);
-        }
-
-        // Decrease commission in first half of epoch -- always allowed
+        // Decrease commission
         assert_matches!(
-            update_commission(
-                &mut borrowed_account,
-                target_version,
-                10,
-                &signers,
-                &epoch_schedule,
-                &first_half_clock,
-                disable_commission_update_rule,
-            ),
+            update_commission(&mut borrowed_account, target_version, 10, &signers,),
             Ok(())
         );
         assert_eq!(
@@ -1869,33 +1800,6 @@ mod tests {
                 .unwrap()
                 .commission(),
             10
-        );
-
-        assert_eq!(
-            get_vote_state_handler_checked(&borrowed_account, target_version,)
-                .unwrap()
-                .commission(),
-            10
-        );
-
-        // Decrease commission in second half of epoch -- always allowed
-        assert_matches!(
-            update_commission(
-                &mut borrowed_account,
-                target_version,
-                9,
-                &signers,
-                &epoch_schedule,
-                &second_half_clock,
-                disable_commission_update_rule,
-            ),
-            Ok(())
-        );
-        assert_eq!(
-            get_vote_state_handler_checked(&borrowed_account, target_version,)
-                .unwrap()
-                .commission(),
-            9
         );
     }
 
@@ -5153,7 +5057,8 @@ mod tests {
 
         let v4_size = VoteStateV4::size_of();
         let lamports = rent.minimum_balance(v4_size);
-        let make_uninit_vote_account = || AccountSharedData::new(lamports, v4_size, &id());
+        let make_uninit_vote_account =
+            || AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
         let valid_collector_account =
             || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
 
@@ -5384,8 +5289,11 @@ mod tests {
 
         // Should fail - vote account is the wrong size.
         {
-            let oversized_vote_account =
-                AccountSharedData::new(rent.minimum_balance(2 * v4_size), 2 * v4_size, &id());
+            let oversized_vote_account = AccountSharedData::new_with_data(
+                rent.minimum_balance(2 * v4_size),
+                vec![0; 2 * v4_size],
+                &id(),
+            );
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -6483,16 +6391,7 @@ mod tests {
         assert_eq!(v4.block_revenue_collector, original_block_revenue_collector);
 
         // UpdateCommission: should not change collectors.
-        update_commission(
-            &mut borrowed,
-            VoteStateTargetVersion::V4,
-            50,
-            &signers,
-            &solana_epoch_schedule::EpochSchedule::without_warmup(),
-            &clock,
-            false,
-        )
-        .unwrap();
+        update_commission(&mut borrowed, VoteStateTargetVersion::V4, 50, &signers).unwrap();
 
         let v4 = VoteStateV4::deserialize(borrowed.get_data(), &vote_state.as_ref_v4().node_pubkey)
             .unwrap();

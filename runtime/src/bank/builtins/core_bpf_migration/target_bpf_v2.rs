@@ -82,8 +82,8 @@ impl TargetBpfV2 {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::bank::tests::create_simple_test_bank, assert_matches::assert_matches,
-        solana_account::WritableAccount, solana_sdk_ids::bpf_loader, test_case::test_case,
+        super::*, crate::bank::tests::create_simple_test_bank, solana_account::WritableAccount,
+        solana_sdk_ids::bpf_loader, std::assert_matches, test_case::test_case,
     };
 
     fn store_account(
@@ -94,9 +94,8 @@ mod tests {
         owner: &Pubkey,
         executable: bool,
     ) {
-        let mut account = AccountSharedData::new(lamports, data.len(), owner);
+        let mut account = AccountSharedData::new_with_data(lamports, data.to_vec(), owner);
         account.set_executable(executable);
-        account.data_as_mut_slice().copy_from_slice(data);
         bank.store_account_and_update_capitalization(address, &account);
     }
 

@@ -53,7 +53,7 @@ pub unsafe extern "C" fn entrypoint(input: *mut u8) -> u64 {
     // account info counterparts.
     for (info, view) in account_infos.iter().zip(account_views.iter()) {
         let mismatch = info.key != view.address()
-            || info.owner != view.owner()
+            || *info.owner != view.owner()
             || info.lamports() != view.lamports()
             || info.is_signer != view.is_signer()
             || info.is_writable != view.is_writable()
