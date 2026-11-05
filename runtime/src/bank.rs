@@ -437,7 +437,6 @@ pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum TransactionLogCollectorFilter {
     All,
-    AllWithVotes,
     #[default]
     None,
     OnlyMentionedAddresses,
@@ -453,7 +452,6 @@ pub struct TransactionLogCollectorConfig {
 pub struct TransactionLogInfo {
     pub signature: Signature,
     pub result: Result<()>,
-    pub is_vote: bool,
     pub log_messages: TransactionLogMessages,
 }
 
@@ -4479,12 +4477,8 @@ impl Bank {
             }
         }
 
-        let is_vote = transaction.is_simple_vote_transaction();
         let store = match transaction_log_collector_config.filter {
-            TransactionLogCollectorFilter::All => {
-                !is_vote || !filtered_mentioned_addresses.is_empty()
-            }
-            TransactionLogCollectorFilter::AllWithVotes => true,
+            TransactionLogCollectorFilter::All => true,
             TransactionLogCollectorFilter::None => false,
             TransactionLogCollectorFilter::OnlyMentionedAddresses => {
                 !filtered_mentioned_addresses.is_empty()
@@ -4496,7 +4490,6 @@ impl Bank {
                 TransactionLogInfo {
                     signature: *transaction.signature(),
                     result: execution_details.status.clone(),
-                    is_vote,
                     log_messages: log_messages.clone(),
                 },
                 filtered_mentioned_addresses,

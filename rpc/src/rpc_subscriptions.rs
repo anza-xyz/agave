@@ -41,7 +41,6 @@ use {
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, EncodeError, VersionedConfirmedBlock,
     },
-    solana_vote::vote_transaction::VoteTransaction,
     std::{
         cell::RefCell,
         collections::{HashMap, VecDeque},
@@ -68,17 +67,10 @@ fn get_transaction_logs(
     params: &LogsSubscriptionParams,
 ) -> Option<Vec<TransactionLogInfo>> {
     let pubkey = match &params.kind {
-        LogsSubscriptionKind::All | LogsSubscriptionKind::AllWithVotes => None,
+        LogsSubscriptionKind::All => None,
         LogsSubscriptionKind::Single(pubkey) => Some(pubkey),
     };
-    let mut logs = bank.get_transaction_logs(pubkey);
-    if matches!(params.kind, LogsSubscriptionKind::All) {
-        // Filter out votes if the subscriber doesn't want them
-        if let Some(logs) = &mut logs {
-            logs.retain(|log| !log.is_vote);
-        }
-    }
-    logs
+    bank.get_transaction_logs(pubkey)
 }
 #[derive(Debug)]
 pub struct TimestampedNotificationEntry {
@@ -883,17 +875,6 @@ impl RpcSubscriptions {
 
     pub fn notify_signatures_received(&self, slot_signatures: (Slot, Vec<Signature>)) {
         self.enqueue_notification(NotificationEntry::SignaturesReceived(slot_signatures));
-    }
-
-    /// Deprecated compatibility hook for TowerBFT vote notifications.
-    ///
-    /// Vote notifications are no longer produced, so this method is a no-op.
-    #[deprecated(
-        since = "4.5.0",
-        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
-                be removed in the next major release"
-    )]
-    pub fn notify_vote(&self, _vote_pubkey: Pubkey, _vote: VoteTransaction, _signature: Signature) {
     }
 
     pub fn notify_roots(&self, mut rooted_slots: Vec<Slot>) {
@@ -3266,12 +3247,8 @@ pub(crate) mod tests {
         };
 
         let (rpc_all, mut receiver_all) = rpc_pubsub_service::test_connection(&subscriptions);
-        #[allow(deprecated)]
         let sub_id_for_all = rpc_all
-            .logs_subscribe(
-                RpcTransactionLogsFilter::AllWithVotes,
-                Some(sub_config.clone()),
-            )
+            .logs_subscribe(RpcTransactionLogsFilter::All, Some(sub_config.clone()))
             .unwrap();
         assert!(subscriptions.control.logs_subscribed(None));
 

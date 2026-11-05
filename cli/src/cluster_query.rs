@@ -1492,8 +1492,6 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
-            #[allow(deprecated)]
-            RpcTransactionLogsFilter::AllWithVotes => " (including votes)".into(),
             RpcTransactionLogsFilter::Mentions(addresses) =>
                 format!(" mentioning {}", addresses.join(",")),
         },

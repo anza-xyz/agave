@@ -8909,6 +8909,57 @@ fn test_vote_epoch_panic() {
 }
 
 #[test]
+fn test_collect_transaction_logs_ignores_vote_classification() {
+    let sender = Keypair::new();
+    let recipient = Pubkey::new_unique();
+    let execution_details = TransactionExecutionDetails {
+        status: Ok(()),
+        log_messages: Some(vec!["transaction log".to_string()]),
+        inner_instructions: None,
+        return_data: None,
+        executed_units: 0,
+        accounts_deltas: Some(AccountsDeltas {
+            accounts_resize_delta: 0,
+            accounts_uninitialized_size: 0,
+        }),
+    };
+
+    for is_simple_vote in [false, true] {
+        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
+            system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
+            solana_transaction::sanitized::MessageHash::Compute,
+            Some(is_simple_vote),
+            solana_message::SimpleAddressLoader::Disabled,
+            &HashSet::new(),
+        )
+        .unwrap();
+        let mut config = TransactionLogCollectorConfig {
+            filter: TransactionLogCollectorFilter::All,
+            mentioned_addresses: HashSet::new(),
+        };
+        let (logs, mentions) =
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+        assert_eq!(logs.signature, *transaction.signature());
+        assert_eq!(logs.log_messages, vec!["transaction log"]);
+        assert!(mentions.is_empty());
+
+        config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
+        assert!(
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
+        );
+        config.mentioned_addresses.insert(recipient);
+        let (_, mentions) =
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+        assert_eq!(mentions, vec![recipient]);
+
+        config.filter = TransactionLogCollectorFilter::None;
+        assert!(
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
+        );
+    }
+}
+
+#[test]
 fn test_tx_log_order() {
     let GenesisConfigInfo {
         genesis_config,
