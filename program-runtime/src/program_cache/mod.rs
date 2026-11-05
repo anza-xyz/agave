@@ -5,7 +5,7 @@ pub mod entry;
 pub mod env;
 pub mod fork_graph;
 pub mod global;
-mod loading_task;
+pub mod loading_task;
 pub mod metrics;
 pub mod owner;
 pub mod tx_batch;
