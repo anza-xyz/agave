@@ -16,6 +16,7 @@ use {
     },
 };
 
+pub(crate) mod meta_entry_read;
 pub mod stored_account_info;
 
 pub type AccountStorageMap = DashMap<Slot, Arc<AccountStorageEntry>>;
