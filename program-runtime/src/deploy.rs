@@ -26,9 +26,11 @@ use {
 pub fn morph_into_deployment_environment(
     from: ProgramRuntimeEnvironment,
     disable_sbpf_v0_v1_v2_deployment: bool,
+    reject_unregistered_static_syscalls: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'static, 'static>>, ElfError> {
     let mut config = (*from).get_config().clone();
     config.reject_broken_elfs = true;
+    config.reject_unregistered_static_syscalls = reject_unregistered_static_syscalls;
     if disable_sbpf_v0_v1_v2_deployment {
         config.enabled_sbpf_versions = SBPFVersion::V3..=*config.enabled_sbpf_versions.end();
     }
@@ -55,6 +57,7 @@ pub fn deploy_program(
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
     disable_sbpf_v0_v1_v2_deployment: bool,
+    reject_unregistered_static_syscalls: bool,
     program_id: &Pubkey,
     loader_key: &Pubkey,
     programdata: &[u8],
@@ -65,6 +68,7 @@ pub fn deploy_program(
     let deployment_program_runtime_environment = morph_into_deployment_environment(
         ProgramRuntimeEnvironment::clone(&program_runtime_environment),
         disable_sbpf_v0_v1_v2_deployment,
+        reject_unregistered_static_syscalls,
     )
     .map_err(|e| {
         ic_logger_msg!(log_collector, "Failed to register syscalls: {}", e);
@@ -127,7 +131,8 @@ macro_rules! deploy_program {
      $loader_key:expr,
      $programdata:expr,
      $deployment_slot:expr,
-     $disable_sbpf_v0_v1_v2_deployment:expr $(,)?) => {
+     $disable_sbpf_v0_v1_v2_deployment:expr,
+     $reject_unregistered_static_syscalls:expr $(,)?) => {
         assert_eq!(
             $deployment_slot,
             $invoke_context.program_cache_for_tx_batch.slot()
@@ -143,6 +148,7 @@ macro_rules! deploy_program {
                 .get_program_runtime_environment_for_deployment()
                 .clone(),
             $disable_sbpf_v0_v1_v2_deployment,
+            $reject_unregistered_static_syscalls,
             $program_id,
             $loader_key,
             $programdata,

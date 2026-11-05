@@ -3100,6 +3100,7 @@ fn verify_elf(
     let deployment_program_runtime_environment = Arc::new(morph_into_deployment_environment(
         program_runtime_environment,
         runtime_features.disable_sbpf_v0_v1_v2_deployment,
+        runtime_features.disable_sol_alloc_free_again,
     )?);
     let config = deployment_program_runtime_environment.get_config();
     let executable = Executable::<InvokeContext>::from_elf(
