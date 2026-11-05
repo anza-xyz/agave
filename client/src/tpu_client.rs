@@ -7,24 +7,15 @@ use {
         ConnectionCache as BackendConnectionCache, ConnectionManager, ConnectionPool,
         NewConnectionConfig,
     },
-    solana_message::Message,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::rpc_client::RpcClient,
-    solana_signer::signers::Signers,
     solana_tpu_client::tpu_client::{Result, TpuClient as BackendTpuClient},
     solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_transaction_error::{TransactionError, TransportResult},
-    solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
+    solana_transaction_error::TransportResult,
     std::sync::Arc,
 };
 
-#[deprecated(since = "4.4.0", note = "Connection cache is deprecated")]
-pub enum TpuClientWrapper {
-    Quic(BackendTpuClient<QuicPool, QuicConnectionManager, QuicConfig>),
-    Udp(BackendTpuClient<UdpPool, UdpConnectionManager, UdpConfig>),
-}
-
-/// Client which sends transactions directly to the current leader's TPU port over UDP.
+/// Client which sends transactions directly to the current leader's TPU port over QUIC.
 /// The client uses RPC to determine the current leader and fetch node contact info
 /// This is just a thin wrapper over the "BackendTpuClient", use that directly for more efficiency.
 pub struct TpuClient<
@@ -119,19 +110,6 @@ where
                 connection_cache,
             )?,
         })
-    }
-    #[deprecated(
-        since = "4.3.0",
-        note = "prefer send_and_confirm_transactions_in_parallel_v3"
-    )]
-    pub fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
-        &self,
-        messages: &[Message],
-        signers: &T,
-    ) -> Result<Vec<Option<TransactionError>>> {
-        #[allow(deprecated)]
-        self.tpu_client
-            .send_and_confirm_messages_with_spinner(messages, signers)
     }
 
     pub fn rpc_client(&self) -> &RpcClient {
