@@ -320,7 +320,6 @@ impl Tvu {
         let bls_sigverifier = bls_sigverifier::spawn_service(
             exit.clone(),
             SigVerifierContext {
-                migration_status,
                 ban_sender: votor_ban_sender,
                 sharable_banks,
                 highest_parent_ready: highest_parent_ready.clone(),
