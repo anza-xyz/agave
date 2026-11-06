@@ -52,5 +52,5 @@ $ docker logs -f grafana
 ```
 
 ### Reference
-* https://hub.docker.com/_/influxdata-influxdb
+* https://hub.docker.com/_/influxdb
 * https://hub.docker.com/r/grafana/grafana
