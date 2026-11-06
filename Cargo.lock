@@ -7998,6 +7998,7 @@ dependencies = [
  "agave-scheduler-bindings",
  "agave-scheduler-handshake",
  "agave-scheduling-utils",
+ "agave-shred-wire-format",
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor",
@@ -11485,6 +11486,7 @@ name = "solana-turbine"
 version = "5.0.0-alpha.0"
 dependencies = [
  "agave-logger",
+ "agave-shred-wire-format",
  "agave-votor",
  "agave-votor-messages",
  "agave-worker-pool",

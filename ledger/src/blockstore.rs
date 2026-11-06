@@ -22,11 +22,12 @@ use {
             ShredFlags, ShredId, ShredType, Shredder,
             filter::ShredRecoveryContext,
             merkle::{ErasureBatch, FecSetViolation},
-            merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
+            merkle_tree::{MerkleTree, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
+    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::{
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,

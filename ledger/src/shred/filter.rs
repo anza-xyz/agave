@@ -729,6 +729,10 @@ mod tests {
             genesis_utils::create_genesis_config,
             shred::{MAX_CODE_SHREDS_PER_SLOT, tests::*},
         },
+        agave_shred_wire_format::constants::{
+            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+            OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_VARIANT,
+        },
         itertools::Itertools,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_keypair::Keypair,
@@ -843,23 +847,23 @@ mod tests {
         {
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_VARIANT]);
+            let packet = to_packet(&payload[..OFFSET_OF_VARIANT]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 1);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 2);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + 1]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX + 1]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 3);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX + SIZE_OF_SHRED_INDEX - 1]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 4);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX + SIZE_OF_SHRED_INDEX + 2]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 5);
         }
@@ -906,7 +910,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
@@ -942,7 +946,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
@@ -1159,7 +1163,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&bad_index.to_le_bytes()).unwrap();
                 cursor
@@ -1185,7 +1189,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA_SHREDS as u64))
                     .unwrap();
                 cursor.write_all(&bad_num_data.to_le_bytes()).unwrap();
             }
@@ -1218,7 +1222,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut payload[..]);
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                 .unwrap();
             cursor.write_all(&bad_last_index.to_le_bytes()).unwrap();
             cursor
@@ -1583,7 +1587,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut payload[..]);
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                 .unwrap();
             cursor.write_all(&wrong_index.to_le_bytes()).unwrap();
             cursor
@@ -1591,7 +1595,7 @@ mod tests {
                 .unwrap();
             cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_FLAGS as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_FLAGS as u64))
                 .unwrap();
             cursor
                 .write_all(&[ShredFlags::DATA_COMPLETE_SHRED.bits()])
@@ -1606,7 +1610,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut payload[..]);
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                 .unwrap();
             cursor.write_all(&correct_index.to_le_bytes()).unwrap();
         }
