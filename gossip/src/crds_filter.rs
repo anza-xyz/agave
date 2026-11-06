@@ -53,12 +53,7 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::LegacyVersion(_) => false,
         CrdsData::LowestSlot(1.., _) => false,
         CrdsData::NodeInstance(_) => false,
-        CrdsData::RestartHeaviestFork(_) | CrdsData::RestartLastVotedForkSlots(_) => {
-            match direction {
-                Ingress => true,
-                EgressPush | EgressPullResponse => false,
-            }
-        }
+        CrdsData::RestartHeaviestFork(_) | CrdsData::RestartLastVotedForkSlots(_) => false,
         CrdsData::Version(_) => false,
     }
 }
