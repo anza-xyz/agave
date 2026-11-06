@@ -33,10 +33,13 @@ pub(super) fn build_xdp_transmit_setup(
     // Keep the transmitter and metrics on the selected XDP device. Source IP lookup
     // uses the same interface name, with bond-master fallback.
     xdp_config.interface = Some(xdp_interface.clone());
-    let zero_copy = xdp_config.zero_copy;
     let src_ip = resolve_xdp_source_ip(bind_addresses.active(), &xdp_interface)?;
     let transmitter_builder = TransmitterBuilder::new(xdp_config, exit)
         .map_err(|err| format!("failed to create XDP transmitter on {xdp_interface}: {err}"))?;
+    let zero_copy = transmitter_builder
+        .zero_copy()
+        .map_err(|err| format!("failed to read XDP socket mode on {xdp_interface}: {err}"))?;
+    log::info!("XDP transmitting on {xdp_interface}, zero_copy={zero_copy}");
     // Nothing can express per-component queue assignments yet, so every
     // component transmits over the whole queue set.
     let all_positions: Box<[usize]> = (0..transmitter_builder.sender_count()).collect();
