@@ -26,6 +26,7 @@ use {
         },
     },
     agave_fs::io_setup::IoSetupState,
+    agave_memory::{HugePageAlign, HugePages},
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotKind,
         error::{
@@ -168,7 +169,8 @@ pub fn bank_from_snapshot_archives(
     let io_setup = IoSetupState::default()
         .with_shared_sqpoll()?
         .with_direct_io(snapshot_config.use_direct_io)
-        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers);
+        .with_buffers_registered(snapshot_config.use_registered_io_uring_buffers)
+        .with_huge_pages(HugePages::Transparent(HugePageAlign::Start));
     let (
         UnarchivedSnapshots {
             full_storage: mut storage,

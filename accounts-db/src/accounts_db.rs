@@ -69,6 +69,7 @@ use {
         buffered_reader::{FileBufRead as _, RequiredLenBufFileRead},
         io_setup::IoSetupState,
     },
+    agave_memory::{HugePageAlign, HugePages},
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,
@@ -4460,7 +4461,9 @@ impl AccountsDb {
     ) {
         // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
         let use_direct_io = self.use_direct_io;
-        let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
+        let io_setup = IoSetupState::default()
+            .with_direct_io(use_direct_io)
+            .with_huge_pages(HugePages::Transparent(HugePageAlign::Start));
         let mut buf_reader =
             storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
                 .expect("create storage reader");
