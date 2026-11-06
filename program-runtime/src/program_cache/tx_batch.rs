@@ -35,7 +35,7 @@ pub struct ProgramCacheForTxBatch {
     ///
     /// It is folded into the primary index after the transaction is confirmed
     /// to succeed.
-    modified_entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    modified_entries: HashMap<Pubkey, TxBatchCacheEntry>,
     /// The slot of this cache's corresponding transaction batch.
     slot: Slot,
     /// Whether any programs were merged into the primary index.
@@ -75,13 +75,13 @@ impl ProgramCacheForTxBatch {
 
     /// Store an entry in `modified_entries` for a program modified during the
     /// transaction batch.
-    pub fn store_modified_entry(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
+    pub fn store_modified_entry(&mut self, key: Pubkey, entry: TxBatchCacheEntry) {
         self.modified_entries.insert(key, entry);
     }
 
     /// Drain the program cache's modified entries, returning the owned
     /// collection.
-    pub fn drain_modified_entries(&mut self) -> HashMap<Pubkey, Arc<ProgramCacheEntry>> {
+    pub fn drain_modified_entries(&mut self) -> HashMap<Pubkey, TxBatchCacheEntry> {
         std::mem::take(&mut self.modified_entries)
     }
 
@@ -91,9 +91,8 @@ impl ProgramCacheForTxBatch {
         // are loaded for the transaction batch.
         self.modified_entries
             .get(key)
-            // TODO: These internal converters are only temporary.
-            .map(|entry| TxBatchCacheEntry::from(entry.as_ref()))
-            .or_else(|| self.entries.get(key).cloned())
+            .or_else(|| self.entries.get(key))
+            .cloned()
             .map(|mut entry| {
                 if entry.is_implicit_delay_visibility_tombstone(self.slot) {
                     // Found a program entry on the current fork, but it's not effective
@@ -106,10 +105,10 @@ impl ProgramCacheForTxBatch {
     }
 
     /// Merge the provided entries into the primary index.
-    pub fn merge(&mut self, entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>) {
+    pub fn merge(&mut self, entries: &HashMap<Pubkey, TxBatchCacheEntry>) {
         entries.iter().for_each(|(key, entry)| {
             self.merged_modified = true;
-            self.replenish(*key, entry.clone());
+            self.entries.insert(*key, entry.clone());
         })
     }
 

@@ -104,6 +104,24 @@ impl From<&ProgramCacheEntry> for TxBatchCacheEntry {
 }
 
 impl TxBatchCacheEntry {
+    pub fn new_unloaded(deployment_slot: Slot, account_owner: ProgramCacheEntryOwner) -> Self {
+        Self {
+            program: TxBatchCacheEntryType::Unloaded,
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+        }
+    }
+
+    pub fn new_closed_tombstone(closed_slot: Slot, account_owner: ProgramCacheEntryOwner) -> Self {
+        Self {
+            program: TxBatchCacheEntryType::Closed,
+            account_owner,
+            deployment_slot: closed_slot,
+            stats: Arc::default(),
+        }
+    }
+
     pub fn effective_slot(&self) -> Slot {
         match self.program {
             TxBatchCacheEntryType::FailedVerification

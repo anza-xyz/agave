@@ -195,20 +195,6 @@ impl ProgramCacheEntry {
         })
     }
 
-    pub fn new_unloaded(
-        deployment_slot: Slot,
-        account_owner: ProgramCacheEntryOwner,
-        program_runtime_environment: ProgramRuntimeEnvironment,
-    ) -> Self {
-        Self {
-            program: ProgramCacheEntryType::Unloaded(program_runtime_environment),
-            account_owner,
-            deployment_slot,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::new(deployment_slot),
-        }
-    }
-
     pub fn to_unloaded(&self) -> Option<Self> {
         let environment = ProgramRuntimeEnvironment::clone(self.program.get_environment()?);
         Some(Self {
@@ -318,6 +304,23 @@ impl ProgramCacheEntry {
         let recovery_cost = self.stats.compilation_time_ema.load(Ordering::Relaxed);
         let frequency = self.stats.uses.load(Ordering::Relaxed);
         retention_score(last_access, recovery_cost, frequency)
+    }
+}
+
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl ProgramCacheEntry {
+    pub fn new_unloaded(
+        deployment_slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+        program_runtime_environment: ProgramRuntimeEnvironment,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::Unloaded(program_runtime_environment),
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(deployment_slot),
+        }
     }
 }
 

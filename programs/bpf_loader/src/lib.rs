@@ -16,8 +16,8 @@ use {
         deploy_program,
         invoke_context::InvokeContext,
         program_cache::{
-            entry::ProgramCacheEntry, owner::ProgramCacheEntryOwner,
-            tx_batch::TxBatchCacheEntryType,
+            owner::ProgramCacheEntryOwner,
+            tx_batch::{TxBatchCacheEntry, TxBatchCacheEntryType},
         },
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
@@ -27,7 +27,6 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg},
     solana_svm_measure::measure::Measure,
-    solana_svm_type_overrides::sync::Arc,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
     solana_transaction_context::{IndexOfAccount, instruction::InstructionContext},
     std::{cell::RefCell, rc::Rc},
@@ -879,10 +878,10 @@ fn process_loader_upgradeable_instruction(
                                 .program_cache_for_tx_batch
                                 .store_modified_entry(
                                     program_key,
-                                    Arc::new(ProgramCacheEntry::new_closed_tombstone(
+                                    TxBatchCacheEntry::new_closed_tombstone(
                                         clock.slot,
                                         ProgramCacheEntryOwner::LoaderV3,
-                                    )),
+                                    ),
                                 );
                         }
                         _ => {
@@ -1147,8 +1146,11 @@ mod test_utils {
     use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, solana_account::ReadableAccount,
-        solana_program_runtime::program_cache::env::ProgramRuntimeEnvironment,
+        super::*,
+        solana_account::ReadableAccount,
+        solana_program_runtime::program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+        },
         solana_syscalls::create_program_runtime_environment,
     };
 
@@ -1201,7 +1203,7 @@ mod test_utils {
                 if let Ok(loaded_program) = loaded_program {
                     invoke_context
                         .program_cache_for_tx_batch
-                        .store_modified_entry(*pubkey, Arc::new(loaded_program));
+                        .store_modified_entry(*pubkey, TxBatchCacheEntry::from(&loaded_program));
                 }
             }
         }
@@ -1217,7 +1219,8 @@ mod tests {
         solana_instruction_error::InstructionError,
         solana_program_runtime::{
             program_cache::{
-                entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironment,
+                entry::{ProgramCacheEntry, ProgramCacheEntryType},
+                env::ProgramRuntimeEnvironment,
                 metrics::ProgramStatistics,
             },
             vm::calculate_heap_cost,
@@ -1226,7 +1229,10 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_sbpf::program::BuiltinProgram,
         solana_sdk_ids::sysvar,
-        solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
+        solana_svm_type_overrides::sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
         solana_sysvar_id::SysvarId,
         std::{assert_matches, fs::File, io::Read},
         test_case::test_case,
