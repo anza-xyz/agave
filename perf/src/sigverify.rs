@@ -466,16 +466,11 @@ mod tests {
         test_verify_n(5, true);
     }
 
-    #[test_case(false, false; "ok_ixs_legacy")]
-    #[test_case(true, false; "too_many_ixs_legacy")]
-    #[test_case(false, true; "ok_ixs_versioned")]
-    #[test_case(true, true; "too_many_ixs_versioned")]
-    fn test_number_of_instructions(too_many_ixs: bool, is_versioned_tx: bool) {
-        let mut number_of_ixs = 64;
-        if too_many_ixs {
-            number_of_ixs += 1;
-        }
-
+    #[test_case(64, false; "runtime_limit_legacy")]
+    #[test_case(65, false; "over_runtime_limit_legacy")]
+    #[test_case(64, true; "runtime_limit_versioned")]
+    #[test_case(65, true; "over_runtime_limit_versioned")]
+    fn test_instruction_count_is_not_sigverify_policy(number_of_ixs: usize, is_versioned_tx: bool) {
         let mut packet = if is_versioned_tx {
             let tx: VersionedTransaction = new_test_tx_with_number_of_ixs(number_of_ixs);
             BytesPacket::from_data(tx.clone()).unwrap()
@@ -484,7 +479,9 @@ mod tests {
             BytesPacket::from_data(tx.clone()).unwrap()
         };
 
-        assert_eq!(sigverify::verify_packet(&mut packet), !too_many_ixs);
+        // The instruction count limit is enforced by the runtime, not by
+        // structural sanitization during signature verification.
+        assert!(sigverify::verify_packet(&mut packet));
     }
 
     #[test]
