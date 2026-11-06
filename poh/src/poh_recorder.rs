@@ -216,7 +216,7 @@ impl PohRecorderMetrics {
 
 pub struct PohRecorder {
     pub(crate) poh: Arc<Mutex<Poh>>,
-    clear_bank_signal: Option<Sender<bool>>,
+    clear_bank_signal: Option<Sender<()>>,
     // Cached from the bank PoH was last reset to (the parent slot). PoH does not hold the bank, so
     // it never keeps a bank alive after `BankForks` prunes it.
     start_slot: Slot,
@@ -282,7 +282,7 @@ impl PohRecorder {
         ticks_per_slot: u64,
         delay_leader_block_for_pending_fork: bool,
         blockstore: Arc<Blockstore>,
-        clear_bank_signal: Option<Sender<bool>>,
+        clear_bank_signal: Option<Sender<()>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
@@ -545,7 +545,7 @@ impl PohRecorder {
 
     pub(crate) fn notify_replay_wakeup(&self) {
         if let Some(signal) = &self.clear_bank_signal {
-            match signal.try_send(true) {
+            match signal.try_send(()) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => {
                     trace!("replay wake up signal channel is full.")
