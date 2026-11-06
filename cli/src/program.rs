@@ -17,7 +17,7 @@ use {
     log::*,
     rand::RngCore,
     solana_account::state_traits::StateMutWincode as _,
-    solana_account_decoder::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
+    solana_account_decoder_client_types::{UiAccount, UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
         self,
         compute_budget::{ComputeUnitLimit, compute_unit_price_arg},
