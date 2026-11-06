@@ -9554,9 +9554,9 @@ dependencies = [
 
 [[package]]
 name = "solana-program"
-version = "5.1.0"
+version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5da562590d2c2efe2d9cf0aa445b8e72a394afa216152364ef6970b6e27c5a77"
+checksum = "fac211a0be42c898d2288daee1fae5b592fabe76896ac34c51532063e3c1e14c"
 dependencies = [
  "solana-account-info",
  "solana-big-mod-exp",
