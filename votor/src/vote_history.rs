@@ -41,7 +41,7 @@ impl VoteHistoryVersions {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "MYpTecggZfULsn6SC1bojefNFK1R5kjBZg7wE8H8dHF",
+        abi_digest = "2B4r56NMUoKorAUYPqek39DnErVgm8PuUkmHKXfBLmkg",
         abi_serializer = "wincode"
     )
 )]
