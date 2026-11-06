@@ -602,7 +602,7 @@ mod tests {
         },
         solana_clock::Slot,
         solana_runtime::{
-            bank::{Bank, NewBankOptions, SlotLeader},
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
@@ -826,7 +826,7 @@ mod tests {
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
-        Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
+        Bank::new_from_parent(parent, leader, slot)
     }
 
     pub(crate) fn create_bank_forks(
