@@ -712,7 +712,7 @@ mod tests {
             check_work_receiver,
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
-            SharedLeaderState::new(0, None, None),
+            SharedLeaderState::new(0, None),
             Arc::default(),
         );
         TransactionViewReceiveAndBuffer::new(receiver, check_work_sender, check_result_receiver)

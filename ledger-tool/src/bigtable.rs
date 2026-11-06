@@ -1867,7 +1867,7 @@ mod tests {
         let markers = BlockMarkers {
             header: VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot,
-                parent_block_id: BlockId::default(),
+                parent_block_id: Hash::default().into(),
             }),
             footer: VersionedBlockMarker::from_block_footer(BlockFooterV1 {
                 bank_hash: Hash::new_unique(),

@@ -3292,12 +3292,11 @@ impl Blockstore {
         {
             return true;
         }
-        if !self.has_duplicate_shreds_in_slot(slot) {
-            if let Err(err) =
+        if !self.has_duplicate_shreds_in_slot(slot)
+            && let Err(err) =
                 self.store_duplicate_slot(slot, existing_shred.clone(), shred.payload().clone())
-            {
-                warn!("Unable to store conflicting payload duplicate proof for {slot}: {err}");
-            }
+        {
+            warn!("Unable to store conflicting payload duplicate proof for {slot}: {err}");
         }
         false
     }

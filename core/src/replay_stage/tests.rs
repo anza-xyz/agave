@@ -123,7 +123,7 @@ fn alpenglow_replay_components(forks: Tree<Slot>) -> AlpenglowReplayComponents {
 fn test_has_active_leader_bank_while_sending_footer() {
     let AlpenglowReplayComponents { bank_forks, .. } = alpenglow_replay_components(tr(0));
     let frozen_bank = bank_forks.read().unwrap().root_bank();
-    let mut poh_leader_state = SharedLeaderState::new(0, None, None);
+    let mut poh_leader_state = SharedLeaderState::new(0, None);
 
     assert!(!ReplayStage::has_active_leader_bank(
         &bank_forks,
@@ -136,7 +136,6 @@ fn test_has_active_leader_bank_while_sending_footer() {
         Some(frozen_bank),
         0,
         None,
-        None,
     )));
     assert!(ReplayStage::has_active_leader_bank(
         &bank_forks,
@@ -148,7 +147,6 @@ impl ProcessActiveBanksContext {
     fn new_for_tests(bank_forks: Arc<RwLock<BankForks>>, blockstore: Arc<Blockstore>) -> Self {
         let (cost_update_sender, _) = bounded(1024);
         let (votor_event_sender, _) = bounded(1024);
-        let migration_status = bank_forks.read().unwrap().migration_status();
         Self {
             bank_forks,
             blockstore,
@@ -162,7 +160,6 @@ impl ProcessActiveBanksContext {
             votor_event_sender,
             replay_mode: ForkReplayMode::Serial,
             replay_verification_worker_pool: ReplayVerificationWorkerPool::new(NonZeroUsize::MIN),
-            migration_status,
         }
     }
 }
@@ -450,10 +447,7 @@ where
             None, None, None, None,
         ));
     let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
-    blockstore_processor::set_alpenglow_ticks(
-        &bank1,
-        &bank_forks.read().unwrap().migration_status(),
-    );
+    blockstore_processor::set_alpenglow_ticks(&bank1);
     bank_forks.write().unwrap().insert(bank1);
     let bank1 = bank_forks.read().unwrap().get_with_scheduler(1).unwrap();
     let bank1_progress = progress
@@ -854,10 +848,7 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
         ));
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
-    blockstore_processor::set_alpenglow_ticks(
-        &child_bank,
-        &bank_forks.read().unwrap().migration_status(),
-    );
+    blockstore_processor::set_alpenglow_ticks(&child_bank);
     let bank = bank_forks.write().unwrap().insert(child_bank);
     let slot = bank.slot();
     let (finalization_cert_sender, _finalization_cert_receiver) = bounded(1024);
@@ -1089,40 +1080,6 @@ fn test_write_persist_transaction_status() {
         assert!(test_signatures_iter.next().is_none());
     }
     Blockstore::destroy(&ledger_path).unwrap();
-}
-
-#[test]
-fn test_cmr_mismatch_hard_dead() {
-    let AlpenglowReplayComponents {
-        blockstore,
-        bank_forks,
-        mut progress,
-        ..
-    } = alpenglow_replay_components(tr(0) / tr(1));
-    let slot = 1;
-    let context = ProcessActiveBanksContext::new_for_tests(bank_forks.clone(), blockstore.clone());
-    let replay_result = ReplaySlotFromBlockstore {
-        is_slot_dead: false,
-        bank_slot: slot,
-        replay_result: Some(Err(BlockstoreProcessorError::ChainedBlockIdFailure(
-            slot, 0,
-        ))),
-    };
-
-    ReplayStage::process_replay_results(
-        &context,
-        &mut progress,
-        &mut Vec::new(),
-        &[replay_result],
-        &Pubkey::new_unique(),
-    )
-    .unwrap();
-
-    assert!(blockstore.is_dead(slot));
-    assert_eq!(
-        progress.get(&slot).unwrap().dead_reason,
-        Some(DeadSlotReason::Hard)
-    );
 }
 
 #[test]

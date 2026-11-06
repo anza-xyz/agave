@@ -6872,9 +6872,6 @@ impl Bank {
                 bank.get_epoch_rewards_sysvar().active,
             );
         }
-        bank.stakes_cache
-            .refresh_delegated_stakes(bank.new_warmup_cooldown_rate_epoch());
-
         // If booting mid-distribution, recalculate reward partitions from the
         // EpochRewards sysvar (mirrors initialize_after_snapshot_restore).
         bank.recalculate_partitioned_rewards_if_active(|| {

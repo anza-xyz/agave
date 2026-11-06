@@ -310,12 +310,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         highest_finalized,
     };
 
-    // Configure PoH before any Alpenglow leader calls `set_bank()`. At this point,
-    // BlockCreationLoop is the sole modifier of poh_recorder.
-    {
-        let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
-        w_poh_recorder.enable_alpenglow();
-    }
     reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
 
     while !ctx.exit.load(Ordering::Relaxed) {
@@ -1813,7 +1807,7 @@ mod tests {
         let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
 
         let exit = Arc::new(AtomicBool::new(false));
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1824,8 +1818,6 @@ mod tests {
             &PohConfig::default(),
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
-
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
@@ -2011,7 +2003,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank,
@@ -2022,7 +2014,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         drop(entry_receiver);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 

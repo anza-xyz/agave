@@ -267,7 +267,6 @@ impl CompletedDataSetsService {
                     completed_data_set_starting_shred_index,
                     completed_data_set_ending_shred_index_exclusive,
                     signature,
-                    false, // is_vote
                     tx,
                     loaded_addresses.as_ref(),
                 );
@@ -357,7 +356,6 @@ pub mod test {
             completed_data_set_starting_shred_index: u32,
             completed_data_set_ending_shred_index_exclusive: u32,
             signature: &Signature,
-            _is_vote: bool,
             transaction: &VersionedTransaction,
             loaded_addresses: Option<&LoadedAddresses>,
         ) {

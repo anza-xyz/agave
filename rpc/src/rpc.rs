@@ -290,7 +290,6 @@ pub struct JsonRpcRequestProcessor {
     rank_map_cache: Arc<RankMapCache>,
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    max_complete_transaction_status_slot: Arc<AtomicU64>,
     max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     runtime: Arc<Runtime>,
@@ -456,7 +455,7 @@ impl JsonRpcRequestProcessor {
         rank_map_cache: Arc<RankMapCache>,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        _max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
@@ -480,7 +479,6 @@ impl JsonRpcRequestProcessor {
                 rank_map_cache,
                 max_slots,
                 leader_schedule_cache,
-                max_complete_transaction_status_slot,
                 max_complete_and_rooted_transaction_status_slot,
                 prioritization_fee_cache,
                 runtime,
@@ -566,7 +564,6 @@ impl JsonRpcRequestProcessor {
             rank_map_cache: Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
-            max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
             max_complete_and_rooted_transaction_status_slot: Arc::new(AtomicU64::default()),
             prioritization_fee_cache: Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
@@ -1505,18 +1502,10 @@ impl JsonRpcRequestProcessor {
             // Check if block is confirmed
             let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
             if confirmed_bank.status_cache_ancestors().contains(&slot) {
-                let max_complete_slot = if self
-                    .bank_forks
-                    .read()
-                    .unwrap()
-                    .migration_status()
-                    .is_alpenglow_enabled()
-                {
-                    &self.max_complete_and_rooted_transaction_status_slot
-                } else {
-                    &self.max_complete_transaction_status_slot
-                };
-                Self::check_blockstore_writes_complete(slot, max_complete_slot)?;
+                Self::check_blockstore_writes_complete(
+                    slot,
+                    &self.max_complete_and_rooted_transaction_status_slot,
+                )?;
                 let result = self
                     .runtime
                     .spawn_blocking({
@@ -4782,7 +4771,6 @@ fn resolve_transaction_view<D: AsRef<[u8]>>(
     let sanitized_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<D>>::try_new(
         transaction,
         MessageHash::Compute,
-        None,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))?;
     RuntimeTransaction::<ResolvedTransactionView<D>>::try_new(
@@ -8628,17 +8616,15 @@ pub mod tests {
     }
 
     #[test]
-    fn test_confirmed_get_block_waits_for_transaction_history_under_alpenglow() {
+    fn test_confirmed_get_block_waits_for_rooted_transaction_history() {
         let slot = 1;
-        let rpc = RpcHandler::start_tower();
+        let rpc = RpcHandler::start();
         fill_blockstore_slot_with_ticks(&rpc.blockstore, 1, 0, 0, Hash::default());
         let bank = rpc.advance_bank_to_confirmed_slot(slot);
         rpc.create_test_transactions_and_populate_blockstore();
         rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank;
         rpc.max_complete_transaction_status_slot
             .store(slot + 1, Ordering::SeqCst);
-        let migration_status = rpc.bank_forks.read().unwrap().migration_status();
-        assert!(!migration_status.is_alpenglow_enabled());
 
         let get_block = || {
             rpc.handle_request_sync(create_test_request(
@@ -8646,10 +8632,6 @@ pub mod tests {
                 Some(json!([slot, {"commitment": "confirmed"}])),
             ))
         };
-        let expected: Value = parse_success_result(get_block());
-        assert!(!expected.is_null());
-
-        migration_status.enable_alpenglow_for_tests();
         assert_eq!(
             parse_failure_response(get_block()).0,
             JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
@@ -8657,7 +8639,7 @@ pub mod tests {
 
         rpc.max_complete_and_rooted_transaction_status_slot
             .store(slot, Ordering::SeqCst);
-        assert_eq!(parse_success_result::<Value>(get_block()), expected);
+        assert!(!parse_success_result::<Value>(get_block()).is_null());
     }
 
     #[test]

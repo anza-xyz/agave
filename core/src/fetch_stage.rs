@@ -5,9 +5,9 @@ use {
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
     crossbeam_channel::{RecvTimeoutError, TrySendError},
     solana_clock::HOLD_TRANSACTIONS_SLOT_OFFSET,
-    solana_perf::packet::{BytesPacket, PacketFlags},
+    solana_perf::packet::{BytesPacket, PacketBatch, PacketFlags},
     solana_poh::poh_recorder::SharedLeaderState,
-    solana_streamer::streamer::{PacketBatchReceiver, PacketBatchSender},
+    solana_streamer::streamer::{ChannelSend, PacketBatchReceiver},
     std::{
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -64,7 +64,7 @@ pub struct FetchStage {
 
 impl FetchStage {
     pub fn new_with_sender(
-        sender: &PacketBatchSender,
+        sender: &impl ChannelSend<PacketBatch>,
         forward_receiver: PacketBatchReceiver,
         shared_leader_state: SharedLeaderState,
         alpenglow_slot_clock: SharedAlpenglowSlotClock,
@@ -98,7 +98,7 @@ impl FetchStage {
 
     fn handle_forwarded_packets(
         recvr: &PacketBatchReceiver,
-        sendr: &PacketBatchSender,
+        sendr: &impl ChannelSend<PacketBatch>,
         shared_leader_state: &SharedLeaderState,
         alpenglow_slot_clock: &SharedAlpenglowSlotClock,
         stats: &mut ForwardingStats,

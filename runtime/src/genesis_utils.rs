@@ -138,14 +138,13 @@ pub fn create_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
 
 #[cfg(feature = "dev-context-only-utils")]
 pub fn create_genesis_config_with_default_rent(mint_lamports: u64) -> GenesisConfigInfo {
-    create_genesis_config_with_leader_with_mint_keypair_and_alpenglow_config(
+    create_genesis_config_with_leader_with_mint_keypair_impl(
         Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap(),
         mint_lamports,
         &solana_pubkey::new_rand(), // validator_pubkey
         0,                          // validator_stake_lamports
         &FeatureSet::all_enabled(),
         Rent::default(),
-        true,
     )
 }
 

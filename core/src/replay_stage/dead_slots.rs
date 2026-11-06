@@ -80,8 +80,7 @@ pub(super) struct DeadSlotContext {
 fn is_update_parent_recoverable_replay_error(err: &BlockstoreProcessorError) -> bool {
     match err {
         BlockstoreProcessorError::InvalidBlock(_)
-        | BlockstoreProcessorError::InvalidTransaction(_)
-        | BlockstoreProcessorError::ChainedBlockIdFailure(_, _) => true,
+        | BlockstoreProcessorError::InvalidTransaction(_) => true,
         BlockstoreProcessorError::FailedToLoadEntries(
             BlockstoreError::InvalidShredData(_) | BlockstoreError::BlockAborted(_),
         ) => true,

@@ -253,3 +253,22 @@ fn set_bank_forks_root(
         info!("{my_pubkey} channel {channel_name} disconnected");
     }
 }
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn set_bank_forks_root_for_tests(
+    my_pubkey: &Pubkey,
+    new_root: Slot,
+    bank_forks: &RwLock<BankForks>,
+    snapshot_controller: Option<&SnapshotController>,
+    highest_super_majority_root: Option<Slot>,
+    drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
+) {
+    set_bank_forks_root(
+        my_pubkey,
+        new_root,
+        bank_forks,
+        snapshot_controller,
+        highest_super_majority_root,
+        drop_bank_sender,
+    );
+}

@@ -100,14 +100,13 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let drop_bank_service = DropBankService::new(drop_bank_receiver2);
 
     info!("calling set_bank_forks_root()...");
-    root_utils::set_bank_forks_root(
+    root_utils::set_bank_forks_root_for_tests(
         &Pubkey::new_unique(),
         root,
         &bank_forks,
         None, // snapshot_controller
         Some(root),
         &drop_bank_sender1,
-        |_| {},
     );
 
     // Receive pruned banks from the root change above
@@ -132,7 +131,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     info!("finally joined the drop bank service!");
 
     // Quiescing the pruned bank prevents the stalled transaction from entering
-    // execution.  CommitCancelled aborts the scheduler, so it is retired instead
+    // execution. CommitCancelled aborts the scheduler, so it is retired instead
     // of being returned to the reusable pool.
     assert_eq!(pool_raw.pooled_scheduler_count(), 0);
 }

@@ -115,6 +115,7 @@ dependencies = [
  "agave-feature-set",
  "agave-transaction-view",
  "ahash 0.8.12",
+ "bincode",
  "bv",
  "bytes",
  "clap 4.6.1",
@@ -6921,7 +6922,6 @@ dependencies = [
  "solana-bloom",
  "solana-clock",
  "solana-ed25519",
- "solana-entry",
  "solana-hash",
  "solana-keypair",
  "solana-measure",
@@ -8939,6 +8939,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-sha256-hasher",
+ "solana-signature",
  "solana-signer",
  "solana-streamer",
  "solana-system-transaction",
@@ -9034,6 +9035,7 @@ version = "7.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91bf90031e7387f9a57f8c4203d433a3ca08b9c1f24d95424e9bab38d5b2620"
 dependencies = [
+ "bincode",
  "cfg_eval",
  "num-derive 0.4.2",
  "num-traits",

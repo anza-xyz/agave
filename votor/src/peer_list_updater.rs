@@ -605,7 +605,7 @@ mod tests {
         let absent = Pubkey::new_unique();
         let pinned = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 65001);
         let (sender, receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks
                 .read()
                 .expect("test bank forks lock should not be poisoned")

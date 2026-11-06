@@ -817,7 +817,7 @@ mod tests {
             check_work_receiver,
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
-            SharedLeaderState::new(0, None, None),
+            SharedLeaderState::new(0, None),
             filter_keys,
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(

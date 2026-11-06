@@ -460,9 +460,8 @@ mod tests {
                 EpochInflationAccountState, VOTE_REWARD_ACCOUNT_ADDR,
             },
             genesis_utils::{
-                GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
-                create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
-                deactivate_features,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_leader,
+                create_genesis_config_with_vote_accounts, deactivate_features,
             },
             reward_epoch_delegated_stakes::RewardEpochDelegatedStakes,
             runtime_config::RuntimeConfig,

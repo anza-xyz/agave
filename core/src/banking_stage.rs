@@ -656,7 +656,10 @@ mod tests {
         },
         solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
-        solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
+        solana_runtime::{
+            bank::Bank, genesis_utils::bootstrap_validator_stake_lamports,
+            installed_scheduler_pool::BankWithScheduler,
+        },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
@@ -699,7 +702,7 @@ mod tests {
             poh_config,
             Arc::default(),
         );
-        poh_recorder.set_bank_for_test(bank.clone());
+        poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank.clone()));
 
         let (record_sender, mut record_receiver) = record_channels(false);
         record_receiver.restart(bank.bank_id());

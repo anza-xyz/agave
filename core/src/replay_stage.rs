@@ -17,7 +17,6 @@ use {
     agave_votor_messages::{
         certificate::Certificate,
         consensus_message::{Block, BlockId},
-        migration::MigrationStatus,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, select},
     itertools::Itertools,
@@ -203,7 +202,6 @@ struct ProcessActiveBanksContext {
     votor_event_sender: VotorEventSender,
     replay_mode: ForkReplayMode,
     replay_verification_worker_pool: ReplayVerificationWorkerPool,
-    migration_status: Arc<MigrationStatus>,
 }
 
 struct ProcessBankForksContext {
@@ -455,7 +453,6 @@ impl ReplayStage {
         trace!("replay stage");
 
         // Start the replay stage loop
-        let migration_status = bank_forks.read().unwrap().migration_status();
         let mut my_pubkey = cluster_info.id();
 
         let highest_frozen_slot = bank_forks
@@ -507,7 +504,6 @@ impl ReplayStage {
                 votor_event_sender: votor_event_sender.clone(),
                 replay_mode,
                 replay_verification_worker_pool,
-                migration_status: migration_status.clone(),
             };
             let process_bank_forks_context = ProcessBankForksContext {
                 bank_forks: bank_forks.clone(),
@@ -1098,7 +1094,6 @@ impl ReplayStage {
                 .as_ref(),
             Some(finalization_cert_sender),
             false,
-            process_active_banks_context.migration_status.as_ref(),
         )?;
         let tx_count_after = w_replay_progress.num_txs;
         let tx_count = tx_count_after - tx_count_before;
@@ -1506,7 +1501,7 @@ impl ReplayStage {
                 // finishes.
                 let block_id = process_active_banks_context
                     .blockstore
-                    .get_block_id(bank.slot(), &process_active_banks_context.migration_status)
+                    .get_block_id(bank.slot())
                     .expect("Blockstore operations must succeed")
                     .map(BlockId::from);
                 debug_assert!(block_id.is_some() || !bank.should_replay_from_blockstore());
@@ -1892,8 +1887,8 @@ impl ReplayStage {
             &context.bank_forks,
             context.rpc_subscriptions.as_deref(),
             my_pubkey,
-            |bank_forks| progress.handle_new_root(bank_forks),
         );
+        progress.handle_new_root(&context.bank_forks.read().unwrap());
 
         // Publish the root only after its root markers are written and bank
         // forks is rooted, so commitment cache readers never see a root the
@@ -1983,7 +1978,6 @@ impl ReplayStage {
             transaction_status_sender,
             my_pubkey,
         } = ctx;
-        let migration_status = bank_forks.read().unwrap().migration_status();
 
         // Find the next slot that chains to the old slot
         let mut generate_new_bank_forks_read_lock =
@@ -2066,7 +2060,7 @@ impl ReplayStage {
                     rpc_subscriptions,
                     slot_status_notifier,
                 );
-                blockstore_processor::set_alpenglow_ticks(&child_bank, &migration_status);
+                blockstore_processor::set_alpenglow_ticks(&child_bank);
 
                 new_banks.insert(child_slot, (child_bank, replay_offset));
             }

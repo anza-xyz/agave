@@ -261,11 +261,9 @@ mod tests {
             readonly: vec![duplicate_key],
         };
         let bytes = wincode::serialize(&tx).unwrap();
-        let sdk_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
-            tx,
-            MessageHash::Compute,
-        )
-        .unwrap();
+        let sdk_tx =
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(tx, MessageHash::Compute)
+                .unwrap();
         assert_eq!(
             RuntimeTransaction::<SanitizedTransaction>::try_from(
                 sdk_tx,
@@ -277,11 +275,9 @@ mod tests {
         );
 
         let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
-        let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-        )
-        .unwrap();
+        let static_tx =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+                .unwrap();
         assert_eq!(
             RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 static_tx,
@@ -404,10 +400,8 @@ mod tests {
             borrowed.err(),
             (!valid).then_some(TransactionError::SanitizeFailure)
         );
-        let owned = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-        );
+        let owned =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute);
         assert_eq!(
             owned.err(),
             (!valid).then_some(TransactionError::SanitizeFailure)
