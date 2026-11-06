@@ -1,8 +1,16 @@
 use {
     crate::IoSize,
     agave_io_uring::{Ring, RingOp},
-    std::{io, slice},
+    agave_memory::{AlignedBuffer, AllocOptions, HugePages, page_size},
+    std::{alloc::Layout, io, slice},
 };
+
+/// Allocates a zeroed, page-aligned buffer of `len` bytes with the given huge page backing.
+pub(super) fn new_io_buffer(len: usize, huge_pages: HugePages) -> io::Result<AlignedBuffer> {
+    let layout = Layout::from_size_align(len, page_size())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    AlignedBuffer::new_with_options(layout, AllocOptions::new().huge_pages(huge_pages))
+}
 
 // We use fixed buffers to save the cost of mapping/unmapping them at each operation.
 //

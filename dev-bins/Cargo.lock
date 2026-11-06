@@ -7914,6 +7914,7 @@ dependencies = [
  "agave-feature-set",
  "agave-fs",
  "agave-math-utils",
+ "agave-memory",
  "agave-precompiles",
  "agave-reserved-account-keys",
  "agave-snapshots",
