@@ -11969,7 +11969,10 @@ fn test_failed_simulation_load_error() {
         TransactionSimulationResult {
             result: Err(TransactionError::ProgramAccountNotFound),
             logs: vec![],
-            post_simulation_accounts: vec![],
+            post_simulation_accounts: vec![(
+                mint_keypair.pubkey(),
+                bank.get_account(&mint_keypair.pubkey()).unwrap(),
+            )],
             units_consumed: 0,
             loaded_accounts_data_size: TRANSACTION_ACCOUNT_BASE_SIZE as u32,
             return_data: None,

@@ -4100,7 +4100,7 @@ impl Bank {
                         )
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => (
-                        vec![],
+                        fees_only_tx.rollback_accounts.iter().cloned().collect(),
                         Err(fees_only_tx.load_error),
                         Some(fees_only_tx.fee_details.total_fee()),
                         None,
