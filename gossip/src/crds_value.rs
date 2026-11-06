@@ -24,7 +24,7 @@ use {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "7Vc2q8PVsFAPotAKQNvFJoGAZUyHd1AJkoxt8W4GVkp2",
+        abi_digest = "9UXaxWSXS3bfMbPFpX3suTzA86enEdesxBhrjNXenHuD",
         abi_serializer = ["wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.
@@ -82,8 +82,6 @@ impl Signable for CrdsValue {
 pub enum CrdsValueLabel {
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
-    RestartLastVotedForkSlots(Pubkey),
-    RestartHeaviestFork(Pubkey),
 }
 
 impl CrdsValueLabel {
@@ -91,8 +89,6 @@ impl CrdsValueLabel {
         match self {
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
-            CrdsValueLabel::RestartLastVotedForkSlots(p) => *p,
-            CrdsValueLabel::RestartHeaviestFork(p) => *p,
         }
     }
 }
@@ -200,10 +196,6 @@ impl CrdsValue {
         match self.data {
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
-            CrdsData::RestartLastVotedForkSlots(_) => {
-                CrdsValueLabel::RestartLastVotedForkSlots(pubkey)
-            }
-            CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
             // Deprecated: sanitize() rejects these before any caller reaches here.
             CrdsData::LegacyContactInfo(_)
             | CrdsData::Vote(_)
@@ -213,8 +205,10 @@ impl CrdsValue {
             | CrdsData::AccountsHashes(_)
             | CrdsData::LegacyVersion(_)
             | CrdsData::Version(_)
-            | CrdsData::NodeInstance(_)
-            | CrdsData::DuplicateShred(_) => unreachable!("deprecated CrdsData variant"),
+            | CrdsData::DuplicateShred(_)
+            | CrdsData::RestartLastVotedForkSlots(_)
+            | CrdsData::RestartHeaviestFork(_)
+            | CrdsData::NodeInstance(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
 

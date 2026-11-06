@@ -1,10 +1,7 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
-    crate::{
-        contact_info::ContactInfo,
-        restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
-    },
+    crate::contact_info::ContactInfo,
     rand::Rng,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -30,7 +27,7 @@ reject_deserialize!(Deprecated, "Trying to deserialize deprecated type");
     feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
-        abi_digest = "Gxfm7hMTct7DENZKRQWNzAPVFikcK6A6jBK1JpGyR45n",
+        abi_digest = "FzqvdPS3ks3SYLe9tiB99kNBwnoZc5SY4PLYkXBw1Em1",
         abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
@@ -60,8 +57,10 @@ pub enum CrdsData {
     DuplicateShred(Deprecated), // Deprecated
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
-    RestartLastVotedForkSlots(RestartLastVotedForkSlots), // Deprecated
-    RestartHeaviestFork(RestartHeaviestFork),             // Deprecated
+    #[allow(private_interfaces)]
+    RestartLastVotedForkSlots(Deprecated), // Deprecated
+    #[allow(private_interfaces)]
+    RestartHeaviestFork(Deprecated), // Deprecated
 }
 
 impl Sanitize for CrdsData {
@@ -69,8 +68,6 @@ impl Sanitize for CrdsData {
         match self {
             CrdsData::SnapshotHashes(val) => val.sanitize(),
             CrdsData::ContactInfo(node) => node.sanitize(),
-            CrdsData::RestartLastVotedForkSlots(slots) => slots.sanitize(),
-            CrdsData::RestartHeaviestFork(fork) => fork.sanitize(),
             // Deprecated
             CrdsData::AccountsHashes(_)
             | CrdsData::Vote(_)
@@ -81,6 +78,8 @@ impl Sanitize for CrdsData {
             | CrdsData::LegacyVersion(_)
             | CrdsData::NodeInstance(_)
             | CrdsData::DuplicateShred(_)
+            | CrdsData::RestartLastVotedForkSlots(_)
+            | CrdsData::RestartHeaviestFork(_)
             | CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
         }
     }
@@ -95,16 +94,12 @@ pub(crate) fn new_rand_timestamp<R: Rng>(rng: &mut R) -> u64 {
 impl CrdsData {
     /// New random CrdsData for tests and benchmarks.
     pub(crate) fn new_rand<R: Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> CrdsData {
-        let kind = rng.random_range(0..4);
+        let kind = rng.random_range(0..2);
         // TODO: Implement other kinds of CrdsData here.
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
         match kind {
             0 => CrdsData::from(ContactInfo::new_rand(rng, pubkey)),
-            1 => CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
-                rng, pubkey,
-            )),
-            2 => CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(rng, pubkey)),
             _ => CrdsData::SnapshotHashes(SnapshotHashes {
                 from: pubkey.unwrap_or_else(solana_pubkey::new_rand),
                 full: (rng.random_range(0..MAX_SLOT), Hash::new_unique()),
@@ -118,8 +113,6 @@ impl CrdsData {
         match self {
             CrdsData::SnapshotHashes(hash) => hash.wallclock,
             CrdsData::ContactInfo(node) => node.wallclock(),
-            CrdsData::RestartLastVotedForkSlots(slots) => slots.wallclock,
-            CrdsData::RestartHeaviestFork(fork) => fork.wallclock,
             // Deprecated: sanitize() rejects these before any caller reaches here.
             CrdsData::AccountsHashes(_)
             | CrdsData::Vote(_)
@@ -130,6 +123,8 @@ impl CrdsData {
             | CrdsData::LegacyVersion(_)
             | CrdsData::NodeInstance(_)
             | CrdsData::DuplicateShred(_)
+            | CrdsData::RestartLastVotedForkSlots(_)
+            | CrdsData::RestartHeaviestFork(_)
             | CrdsData::Version(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
@@ -138,8 +133,6 @@ impl CrdsData {
         match &self {
             CrdsData::SnapshotHashes(hash) => hash.from,
             CrdsData::ContactInfo(node) => *node.pubkey(),
-            CrdsData::RestartLastVotedForkSlots(slots) => slots.from,
-            CrdsData::RestartHeaviestFork(fork) => fork.from,
             // Deprecated: sanitize() rejects these before any caller reaches here.
             CrdsData::AccountsHashes(_)
             | CrdsData::Vote(_)
@@ -150,6 +143,8 @@ impl CrdsData {
             | CrdsData::LegacyVersion(_)
             | CrdsData::NodeInstance(_)
             | CrdsData::DuplicateShred(_)
+            | CrdsData::RestartLastVotedForkSlots(_)
+            | CrdsData::RestartHeaviestFork(_)
             | CrdsData::Version(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
@@ -261,13 +256,9 @@ impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
 {
     fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsData {
         use solana_frozen_abi::stable_abi::StableAbi;
-        match rng.random_range(0..4u8) {
+        match rng.random_range(0..2u8) {
             0 => CrdsData::SnapshotHashes(<SnapshotHashes as StableAbi>::random(rng)),
-            1 => CrdsData::ContactInfo(<ContactInfo as StableAbi>::random(rng)),
-            2 => CrdsData::RestartLastVotedForkSlots(
-                <RestartLastVotedForkSlots as StableAbi>::random(rng),
-            ),
-            _ => CrdsData::RestartHeaviestFork(<RestartHeaviestFork as StableAbi>::random(rng)),
+            _ => CrdsData::ContactInfo(<ContactInfo as StableAbi>::random(rng)),
         }
     }
 }
@@ -289,6 +280,8 @@ mod test {
             CrdsData::LegacyContactInfo(Deprecated {}),
             CrdsData::AccountsHashes(Deprecated {}),
             CrdsData::LegacySnapshotHashes(Deprecated {}),
+            CrdsData::RestartLastVotedForkSlots(Deprecated {}),
+            CrdsData::RestartHeaviestFork(Deprecated {}),
         ];
 
         for value in &deprecated_values {

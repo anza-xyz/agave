@@ -61,7 +61,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "954xE5FweiEHWpE5ScJDovwTuyRKEKh2KWL4YMSbeQwc",
+        abi_digest = "69pXLHHELg9npg6Z3zQH9LYy7xk3nZpAbs8eaWr6gZSo",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -323,7 +323,6 @@ pub(crate) mod tests {
         crate::{
             contact_info::ContactInfo,
             crds_data::{self, CrdsData, Deprecated, SnapshotHashes},
-            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::Rng,
         solana_clock::Slot,
@@ -490,8 +489,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_min_crds_value_serialized_size_holds() {
-        let mut rng = rand::rng();
-
         // One representative per CrdsData variant. The array length is keyed to
         // strum::EnumCount, so adding a new CrdsData variant without listing it
         // here is a compile error (wrong array length).
@@ -517,10 +514,8 @@ pub(crate) mod tests {
                 &Pubkey::new_unique(),
                 timestamp(),
             )),
-            CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
-                &mut rng, None,
-            )),
-            CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
+            CrdsData::RestartLastVotedForkSlots(Deprecated {}),
+            CrdsData::RestartHeaviestFork(Deprecated {}),
         ];
 
         for (discriminant, data) in variants.into_iter().enumerate() {
