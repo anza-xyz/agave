@@ -929,10 +929,7 @@ mod tests {
         agave_banking_stage_ingress_types::{
             to_banking_packet_batch, to_single_banking_packet_batch,
         },
-        solana_entry::{
-            entry::{self, EntrySlice},
-            recorder_message::RecorderMessage,
-        },
+        solana_entry::entry::{self, EntrySlice},
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
@@ -940,19 +937,21 @@ mod tests {
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
             get_tmp_ledger_path_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
         },
         solana_poh::{
-            poh_recorder::{PohRecorderError, create_test_recorder},
-            record_channels::record_channels,
+            poh_recorder::{PohRecorderError, WorkingBankMessage},
+            record_channels::{RecordReceiver, record_channels},
             transaction_recorder::RecordTransactionsSummary,
         },
+        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::{assert_matches, sync::atomic::Ordering, thread::sleep, time::Instant},
+        std::{assert_matches, thread::sleep, time::Instant},
     };
 
     pub(crate) fn sanitize_transactions(
@@ -961,6 +960,51 @@ mod tests {
         txs.into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)
             .collect()
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn create_test_recorder_without_service(
+        bank: Arc<Bank>,
+        blockstore: Arc<Blockstore>,
+        poh_config: &PohConfig,
+    ) -> (
+        Arc<RwLock<PohRecorder>>,
+        TransactionRecorder,
+        RecordReceiver,
+        Receiver<WorkingBankMessage>,
+    ) {
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            blockstore,
+            &leader_schedule_cache,
+            poh_config,
+            Arc::default(),
+        );
+        poh_recorder.set_bank_for_test(bank.clone());
+
+        let (record_sender, mut record_receiver) = record_channels(false);
+        record_receiver.restart(bank.bank_id());
+
+        (
+            Arc::new(RwLock::new(poh_recorder)),
+            TransactionRecorder::new(record_sender),
+            record_receiver,
+            entry_receiver,
+        )
+    }
+
+    fn wait_for_condition(mut condition: impl FnMut() -> bool, message: &str) {
+        const TIMEOUT: Duration = Duration::from_secs(10);
+        let start = Instant::now();
+        while !condition() {
+            assert!(start.elapsed() <= TIMEOUT, "{message}");
+            sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
@@ -980,14 +1024,21 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            transaction_recorder,
-            poh_service,
-            _entry_receiever,
-        ) = create_test_recorder(bank, blockstore, None, None);
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            blockstore,
+            &leader_schedule_cache,
+            &genesis_config.poh_config,
+            Arc::default(),
+        );
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, _record_receiver) = record_channels(false);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -1013,9 +1064,7 @@ mod tests {
         drop(non_vote_sender);
         drop(tpu_vote_sender);
         drop(gossip_vote_sender);
-        exit.store(true, Ordering::Relaxed);
         banking_stage.join().unwrap();
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -1041,14 +1090,12 @@ mod tests {
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            transaction_recorder,
-            poh_service,
-            entry_receiver,
-        ) = create_test_recorder(bank, blockstore, None, None);
+        let (poh_recorder, transaction_recorder, mut record_receiver, entry_receiver) =
+            create_test_recorder_without_service(
+                bank.clone(),
+                blockstore,
+                &genesis_config.poh_config,
+            );
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -1065,97 +1112,89 @@ mod tests {
             None,
             None,
             None,
-            bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
+            bank_forks,
             SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::new()),
         );
 
-        // good tx, and no verify
-        let to = solana_pubkey::new_rand();
-        let tx_no_ver = system_transaction::transfer(&mint_keypair, &to, 2, start_hash);
+        // This packet is valid, but explicitly discarded before BankingStage sees it.
+        let discarded_recipient = Pubkey::new_unique();
+        let discarded_tx =
+            system_transaction::transfer(&mint_keypair, &discarded_recipient, 2, start_hash);
 
-        // good tx
-        let to2 = solana_pubkey::new_rand();
-        let tx = system_transaction::transfer(&mint_keypair, &to2, 1, start_hash);
+        // This is the only valid transaction that should be recorded.
+        let valid_recipient = Pubkey::new_unique();
+        let valid_tx = system_transaction::transfer(&mint_keypair, &valid_recipient, 1, start_hash);
 
-        // bad tx, AccountNotFound
-        let keypair = Keypair::new();
-        let to3 = solana_pubkey::new_rand();
-        let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
+        // This transaction fails account loading because its source account does not exist.
+        let missing_source = Keypair::new();
+        let missing_recipient = Pubkey::new_unique();
+        let account_not_found_tx =
+            system_transaction::transfer(&missing_source, &missing_recipient, 1, start_hash);
 
-        // send 'em over
-        let mut packet_batch = to_banking_packet_batch(&[tx_no_ver, tx_anf, tx]);
+        let mut packet_batch =
+            to_banking_packet_batch(&[discarded_tx, account_not_found_tx, valid_tx]);
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
             .meta_mut()
-            .set_discard(true); // set discard on `tx_no_ver`
+            .set_discard(true);
+        non_vote_sender.send(packet_batch).unwrap();
 
-        // glad they all fit
-        assert_eq!(packet_batch.len(), 3);
-
-        non_vote_sender // no_ver, anf, tx
-            .send(packet_batch)
-            .unwrap();
-
-        // capture the entry receiver until we've received all our entries.
-        let mut entries = Vec::with_capacity(100);
-        loop {
-            if let Ok((_bank, (RecorderMessage::Entry(entry), _))) = entry_receiver.try_recv() {
-                let tx_entry = !entry.transactions.is_empty();
-                entries.push(entry);
-                if tx_entry {
-                    break; // once we have the entry break. don't expect more than one.
-                }
-            }
-            sleep(Duration::from_millis(10));
-        }
+        wait_for_condition(
+            || bank.get_balance(&valid_recipient) == 1,
+            "banking stage took too long to process the valid transaction",
+        );
 
         drop(non_vote_sender);
         drop(tpu_vote_sender);
         drop(gossip_vote_sender);
         banking_stage.join().unwrap();
 
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
+        // BlockCreationLoop owns this handoff in production. Drain it synchronously here so the
+        // test exercises the same Record -> Entry conversion without recreating PohService.
+        record_receiver.shutdown();
+        let records: Vec<_> = record_receiver.drain_after_shutdown().collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].transactions.len(), 1);
+        for record in records {
+            poh_recorder
+                .write()
+                .unwrap()
+                .record(record.bank_id, record.mixin, record.transactions)
+                .unwrap();
+        }
         drop(poh_recorder);
 
-        let blockhash = start_hash;
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // receive entries + ticks. The sender has been dropped, so there
-        // are no more entries that will ever come in after the `iter` here.
-        entries.extend(
-            entry_receiver
-                .iter()
-                .map(|(_bank, (message, _tick_height))| message.unwrap_entry()),
-        );
-
+        let entries: Vec<_> = entry_receiver
+            .iter()
+            .map(|(_bank, (message, _tick_height))| message.unwrap_entry())
+            .collect();
+        assert_eq!(entries.len(), 1);
         assert!(
             entries
-                .verify(&blockhash, &entry::thread_pool_for_tests())
+                .verify(&start_hash, &entry::thread_pool_for_tests())
                 .status()
         );
+
+        let replay_bank = Bank::new_for_tests(&genesis_config);
         for entry in entries {
-            bank.process_entry_transactions(entry.transactions)
+            replay_bank
+                .process_entry_transactions(entry.transactions)
                 .iter()
-                .for_each(|x| assert_eq!(*x, Ok(())));
+                .for_each(|result| assert_eq!(*result, Ok(())));
         }
-
-        assert_eq!(bank.get_balance(&to2), 1);
-        assert_eq!(bank.get_balance(&to), 0);
-
-        drop(entry_receiver);
+        assert_eq!(replay_bank.get_balance(&valid_recipient), 1);
+        assert_eq!(replay_bank.get_balance(&discarded_recipient), 0);
     }
 
     #[test]
     fn test_banking_stage_entryfication() {
         agave_logger::setup();
-        // In this attack we'll demonstrate that a verifier can interpret the ledger
-        // differently if either the server doesn't signal the ledger to add an
-        // Entry OR if the verifier tries to parallelize across multiple Entries.
+        // Conflicting transactions must be placed in separate entries so replay observes the
+        // same account state transitions as the producer.
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -1170,95 +1209,104 @@ mod tests {
             gossip_vote_receiver,
         } = Channels::new();
 
-        // Process a batch that includes a transaction that receives two lamports.
-        let alice = Keypair::new();
-        let tx =
-            system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
-
-        let packet_batches = to_single_banking_packet_batch(&tx);
-        non_vote_sender.send(packet_batches).unwrap();
-
-        // Process a second batch that uses the same from account, so conflicts with above TX
-        let tx =
-            system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_single_banking_packet_batch(&tx);
-        non_vote_sender.send(packet_batches).unwrap();
-
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-
-        let entry_receiver = {
-            // start a banking_stage to eat verified receiver
-            let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-            let (
-                exit,
-                poh_recorder,
-                _poh_controller,
-                transaction_recorder,
-                poh_service,
-                entry_receiver,
-            ) = create_test_recorder(bank.clone(), blockstore, None, None);
-            let banking_stage = BankingStage::new_num_threads(
-                BlockProductionMethod::CentralSchedulerGreedy,
-                poh_recorder,
-                transaction_recorder,
-                non_vote_receiver,
-                tpu_vote_receiver,
-                gossip_vote_receiver,
-                mpsc::channel(1).1,
-                DEFAULT_NUM_WORKERS,
-                SchedulerConfig {
-                    scheduler_pacing: SchedulerPacing::Disabled,
-                },
-                None,
-                None,
-                None,
-                bank_forks,
-                SharedAlpenglowSlotClock::default(),
-                None,
-                Arc::default(),
-                Arc::new(SchedulerPriorityFloor::new()),
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let start_hash = bank.last_blockhash();
+        let (poh_recorder, transaction_recorder, mut record_receiver, entry_receiver) =
+            create_test_recorder_without_service(
+                bank.clone(),
+                blockstore,
+                &genesis_config.poh_config,
             );
+        let banking_stage = BankingStage::new_num_threads(
+            BlockProductionMethod::CentralSchedulerGreedy,
+            poh_recorder.clone(),
+            transaction_recorder,
+            non_vote_receiver,
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            mpsc::channel(1).1,
+            DEFAULT_NUM_WORKERS,
+            SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
+            None,
+            None,
+            None,
+            bank_forks,
+            SharedAlpenglowSlotClock::default(),
+            None,
+            Arc::default(),
+            Arc::new(SchedulerPriorityFloor::new()),
+        );
 
-            // wait for banking_stage to eat the packets
-            const TIMEOUT: Duration = Duration::from_secs(10);
-            let start = Instant::now();
-            while bank.get_balance(&alice.pubkey()) < 1 {
-                if start.elapsed() > TIMEOUT {
-                    panic!("banking stage took too long to process transactions");
-                }
-                sleep(Duration::from_millis(10));
-            }
-            exit.store(true, Ordering::Relaxed);
-            banking_stage.join().unwrap();
-            poh_service.join().unwrap();
-            entry_receiver
-        };
+        let alice = Keypair::new();
+        let fund_alice =
+            system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
+        non_vote_sender
+            .send(to_single_banking_packet_batch(&fund_alice))
+            .unwrap();
+        wait_for_condition(
+            || bank.get_balance(&alice.pubkey()) == 2,
+            "banking stage took too long to fund the dependent account",
+        );
+
+        // The second transaction depends on the first transaction creating and funding Alice's
+        // account. If both transactions were placed in one entry, parallel replay could evaluate
+        // this spend before the funding transaction's state was visible.
+        let spend_from_alice =
+            system_transaction::transfer(&alice, &mint_keypair.pubkey(), 1, genesis_config.hash());
+        non_vote_sender
+            .send(to_single_banking_packet_batch(&spend_from_alice))
+            .unwrap();
+        wait_for_condition(
+            || bank.get_balance(&alice.pubkey()) == 1,
+            "banking stage took too long to process the dependent transaction",
+        );
+        let producer_balance = bank.get_balance(&alice.pubkey());
+        assert_eq!(producer_balance, 1);
+
         drop(non_vote_sender);
         drop(tpu_vote_sender);
         drop(gossip_vote_sender);
+        banking_stage.join().unwrap();
 
-        // consume the entire entry_receiver, feed it into a new bank
-        // check that the balance is what we expect.
+        record_receiver.shutdown();
+        let records: Vec<_> = record_receiver.drain_after_shutdown().collect();
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|record| record.transactions.len() == 1));
+        for record in records {
+            poh_recorder
+                .write()
+                .unwrap()
+                .record(record.bank_id, record.mixin, record.transactions)
+                .unwrap();
+        }
+        drop(poh_recorder);
+
         let entries: Vec<_> = entry_receiver
             .iter()
             .map(|(_bank, (message, _tick_height))| message.unwrap_entry())
             .collect();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| entry.transactions.len() == 1));
+        assert!(
+            entries
+                .verify(&start_hash, &entry::thread_pool_for_tests())
+                .status()
+        );
 
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let replay_bank = Bank::new_for_tests(&genesis_config);
         for entry in entries {
-            let _ = bank
+            let _ = replay_bank
                 .try_process_entry_transactions(entry.transactions)
-                .expect("All transactions should be processed");
+                .expect("all transactions should be processed during replay");
         }
-
-        // Assert the user doesn't hold three lamports. If the stage only outputs one
-        // entry, then one of the transactions will be rejected, because it drives
-        // the account balance below zero before the credit is added.
-        assert!(bank.get_balance(&alice.pubkey()) != 3);
+        assert_eq!(replay_bank.get_balance(&alice.pubkey()), producer_balance);
     }
 
     #[test]

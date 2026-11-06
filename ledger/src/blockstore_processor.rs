@@ -2559,7 +2559,7 @@ pub mod tests {
         std::{
             assert_matches,
             collections::BTreeSet,
-            sync::{Arc, Barrier, Mutex, RwLock, atomic::Ordering},
+            sync::{Arc, Barrier, Mutex, RwLock},
             thread,
         },
         test_case::test_case,
@@ -2597,20 +2597,16 @@ pub mod tests {
     }
 
     #[test]
-    fn test_startup_replay_enable_waits_for_poh_service_when_started() {
+    fn test_startup_replay_enable_notifies_migration_waiters() {
         let genesis_block = Block {
             slot: 1,
             block_id: BlockId::new_unique(),
         };
         let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
-        let poh_service = {
+        let waiter = {
             let migration_status = Arc::clone(&migration_status);
-            migration_status.set_poh_service_started();
             thread::spawn(move || {
-                while !migration_status.shutdown_poh.load(Ordering::Acquire) {
-                    thread::yield_now();
-                }
-                migration_status.poh_service_is_shutting_down();
+                migration_status.wait_for_migration_or_exit(&AtomicBool::new(false))
             })
         };
 
@@ -2618,13 +2614,8 @@ pub mod tests {
             migration_status.enable_alpenglow_during_startup(),
             genesis_block.slot
         );
-        poh_service.join().unwrap();
-
+        assert_eq!(waiter.join().unwrap(), Some(genesis_block));
         assert!(migration_status.is_alpenglow_enabled());
-        assert_eq!(
-            migration_status.wait_for_migration_or_exit(&AtomicBool::new(false)),
-            Some(genesis_block)
-        );
     }
 
     fn test_process_blockstore(

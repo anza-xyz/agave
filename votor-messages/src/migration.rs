@@ -33,8 +33,7 @@
 //!     - Engage in TowerBFT consensus (maybe_start_leader, handle_votable_bank, etc.) only if we're before the `ReadyToEnable` phase
 //!     - `compute_bank_stats` will track super OC blocks after we reach the `Migration` phase
 //!     - We use the super OC blocks to perform discovery of the genesis block. If found we set it here and potentially enter `ReadyToEnable`
-//!     - If we're in the `ReadyToEnable` phase notify PohService to shutdown.
-//! - PohService will be active until ReplayStage sends the signal to shutdown poh, at which point it will shutdown and transition to `AlpenglowEnabled`
+//!     - If we're in the `ReadyToEnable` phase, transition to `AlpenglowEnabled`.
 //! - Block creation loop and rest of votor will only be active in phase `AlpenglowEnabled` and further.
 //! - When votor roots a block in a new epoch we enter phase `FullAlpenglowEpoch`
 //!
@@ -293,17 +292,10 @@ pub struct MigrationStatus {
     /// The pubkey of this node
     my_pubkey: RwLock<Pubkey>,
 
-    /// Communication with PohService
-    /// Flag indicating whether we should shutdown Poh
-    pub shutdown_poh: AtomicBool,
-
-    /// Flag indicating whether PohService has been started.
-    poh_service_started: AtomicBool,
-
     /// The current phase of the migration we are in
     phase: RwLock<MigrationPhase>,
 
-    /// Used to notify threads that are waiting for Poh to be shutdown and alpenglow to be enabled
+    /// Used to notify threads that are waiting for Alpenglow to be enabled
     migration_wait: (Mutex<bool>, Condvar),
 }
 
@@ -331,8 +323,6 @@ impl MigrationStatus {
         let is_alpenglow_enabled = phase.is_alpenglow_enabled();
         Self {
             my_pubkey: RwLock::default(),
-            shutdown_poh: AtomicBool::new(is_alpenglow_enabled),
-            poh_service_started: AtomicBool::new(false),
             phase: RwLock::new(phase),
             migration_wait: (Mutex::new(is_alpenglow_enabled), Condvar::new()),
         }
@@ -431,11 +421,6 @@ impl MigrationStatus {
         let my_pubkey = self.my_pubkey();
         let phase = self.phase.read().unwrap();
         info!("{my_pubkey}: Alpenglow migration phase {phase:?}");
-    }
-
-    /// Record that PohService has started and must be coordinated with when enabling Alpenglow.
-    pub fn set_poh_service_started(&self) {
-        self.poh_service_started.store(true, Ordering::Release);
     }
 
     dispatch!(pub fn is_pre_feature_activation(&self) -> bool);
@@ -617,49 +602,6 @@ impl MigrationStatus {
         *phase = MigrationPhase::ReadyToEnable { genesis_cert: cert };
     }
 
-    /// Enable alpenglow only to be used during `ReadyToEnable` from replay_stage:
-    /// - Tell PoH to shutdown
-    /// - Wait for Poh to shutdown
-    /// - Notify all threads that are waiting for alpenglow to be enabled
-    ///
-    /// Transitions from `ReadyToEnable` to `AlpenglowEnabled`
-    pub fn enable_alpenglow(&self, exit: &AtomicBool) {
-        assert!(self.phase.read().unwrap().is_ready_to_enable());
-
-        // Tell PohService to shutdown and bump the phase to `MigrationPhase::AlpenglowEnabled`
-        self.shutdown_poh.store(true, Ordering::Release);
-        // Wait for PohService
-        self.wait_for_migration_or_exit(exit);
-
-        if exit.load(Ordering::Relaxed) {
-            info!(
-                "{}: Validator shutdown before Alpenglow could be enabled",
-                self.my_pubkey()
-            );
-            return;
-        }
-
-        info!("{}: Alpenglow enabled!", self.my_pubkey());
-    }
-
-    /// PohService is shutting down after being asked to by replay_stage via `enable_alpenglow`.
-    ///
-    /// Transition the phase from `ReadyToEnable` to `AlpenglowEnabled`
-    pub fn poh_service_is_shutting_down(&self) {
-        let MigrationPhase::ReadyToEnable { genesis_cert } = self.phase.read().unwrap().clone()
-        else {
-            unreachable!(
-                "{}: Programmer error, PohService is shutting down before we are ReadyToEnable",
-                self.my_pubkey()
-            );
-        };
-
-        *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
-        let (is_alpenglow_enabled, condvar) = &self.migration_wait;
-        *is_alpenglow_enabled.lock().unwrap() = true;
-        condvar.notify_all();
-    }
-
     /// Enables alpenglow in the startup pathway.
     /// Returns the genesis slot
     ///
@@ -676,20 +618,10 @@ impl MigrationStatus {
         };
 
         let genesis_slot = genesis_cert.block.slot;
-        if self.poh_service_started.load(Ordering::Acquire) {
-            // If `PohService` is started, use the full enable pathway
-            // We do not respect the exit flag during startup replay
-            let exit = AtomicBool::new(false);
-            self.enable_alpenglow(&exit);
-            return genesis_slot;
-        }
-
-        // If `PohService` has not yet started, enable in this single thread
-        self.shutdown_poh.store(true, Ordering::Release);
         *self.phase.write().unwrap() = MigrationPhase::AlpenglowEnabled { genesis_cert };
-        let (is_alpenglow_enabled, _condvar) = &self.migration_wait;
+        let (is_alpenglow_enabled, condvar) = &self.migration_wait;
         *is_alpenglow_enabled.lock().unwrap() = true;
-        // No need to condvar as we're in startup and no one is waiting for us.
+        condvar.notify_all();
         info!(
             "{}: Alpenglow enabled during startup! Genesis slot {genesis_slot}",
             self.my_pubkey()

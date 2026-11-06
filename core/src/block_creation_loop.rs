@@ -155,8 +155,7 @@ pub struct BlockCreationLoopConfig {
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
-    // Channel to receive RecordReceiver from PohService
-    pub record_receiver_receiver: Receiver<RecordReceiver>,
+    pub record_receiver: RecordReceiver,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
 
     /// Sender for packets to banking stage (used to re-inject transactions after sad leader handover).
@@ -267,7 +266,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         slot_status_notifier,
         entry_notification_sender,
         transaction_status_sender,
-        record_receiver_receiver,
+        record_receiver,
         leader_window_info_receiver,
         replay_highest_frozen,
         highest_parent_ready,
@@ -285,17 +284,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
     let mut my_pubkey = cluster_info.id();
 
     info!("{my_pubkey}: Block creation loop initialized");
-
-    // Wait for PohService to be shutdown
-    let record_receiver = match record_receiver_receiver.recv() {
-        Ok(receiver) => receiver,
-        Err(e) => {
-            info!("{my_pubkey}: Failed to receive RecordReceiver from PohService. Exiting: {e:?}",);
-            return;
-        }
-    };
-
-    info!("{my_pubkey}: PohService has shutdown, BlockCreationLoop is enabled");
 
     let mut ctx = LeaderContext {
         exit,
@@ -322,13 +310,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         highest_finalized,
     };
 
-    // Setup poh
-    // Important this is called *before* any new alpenglow
-    // leaders call `set_bank()`, otherwise, the old PoH
-    // tick producer will still tick in that alpenglow bank
-    // Since we received the `record_receiver` from PohService, we know that PohService has shutdown
-    // AND that replay no longer touches poh recorder. At this point BlockCreationLoop is the sole
-    // modifier of poh_recorder
+    // Configure PoH before any Alpenglow leader calls `set_bank()`. At this point,
+    // BlockCreationLoop is the sole modifier of poh_recorder.
     {
         let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
         w_poh_recorder.enable_alpenglow();

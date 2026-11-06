@@ -431,7 +431,6 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-perf",
- "solana-poh",
  "solana-pubkey 4.4.0",
  "solana-rayon-threadlimit",
  "solana-rent",
@@ -7530,7 +7529,6 @@ dependencies = [
 name = "solana-poh"
 version = "5.0.0-alpha.0"
 dependencies = [
- "agave-cpu-utils",
  "agave-votor-messages",
  "arc-swap",
  "crossbeam-channel",

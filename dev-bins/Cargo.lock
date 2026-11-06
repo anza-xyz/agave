@@ -7500,7 +7500,6 @@ dependencies = [
 name = "solana-poh"
 version = "5.0.0-alpha.0"
 dependencies = [
- "agave-cpu-utils",
  "agave-votor-messages",
  "arc-swap",
  "crossbeam-channel",
