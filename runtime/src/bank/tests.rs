@@ -11092,12 +11092,13 @@ fn test_resize_and_rent() {
     );
 
     let test_pubkey = solana_pubkey::new_rand();
-    let mut rent_paying_account = AccountSharedData::new_with_data(
-        rent_exempt_minimum_small,
-        vec![0; account_data_size_small],
-        &mock_program_id,
-    );
-    rent_paying_account.set_rent_epoch(1);
+    let rent_paying_account = AccountSharedData::from(Account {
+        lamports: rent_exempt_minimum_small,
+        data: vec![0; account_data_size_small],
+        owner: mock_program_id,
+        executable: false,
+        rent_epoch: 1,
+    });
 
     // restore program-owned account
     bank.store_account(&test_pubkey, &rent_paying_account);
