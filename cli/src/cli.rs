@@ -1,7 +1,7 @@
 use {
     crate::{
         address_lookup_table::*, clap_app::*, cluster_query::*, feature::*, inflation::*, nonce::*,
-        program::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
+        program::*, send::*, spend_utils::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
     clap::{ArgMatches, Shell, crate_description, crate_name},
     num_traits::FromPrimitive,
@@ -461,6 +461,9 @@ pub enum CliCommand {
     },
     DecodeTransaction(VersionedTransaction),
     ResolveSigner(Option<String>),
+    Send {
+        message_file: String,
+    },
     ShowAccount {
         pubkey: Pubkey,
         output_file: Option<String>,
@@ -860,6 +863,7 @@ pub fn parse_command(
                 signer_path,
             )))
         }
+        ("send", Some(matches)) => parse_send(matches, default_signer, wallet_manager),
         ("transfer", Some(matches)) => parse_transfer(matches, default_signer, wallet_manager),
         ("sign-offchain-message", Some(matches)) => {
             parse_sign_offchain_message(matches, default_signer, wallet_manager)
@@ -1792,6 +1796,9 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             } else {
                 Ok("Signer is valid".to_string())
             }
+        }
+        CliCommand::Send { message_file } => {
+            process_send(&rpc_client, config, message_file).await
         }
         CliCommand::ShowAccount {
             pubkey,
