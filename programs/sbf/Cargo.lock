@@ -6963,7 +6963,6 @@ dependencies = [
  "solana-clock",
  "solana-ed25519",
  "solana-entry",
- "solana-epoch-schedule",
  "solana-hash",
  "solana-keypair",
  "solana-ledger",
