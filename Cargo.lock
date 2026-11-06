@@ -10202,6 +10202,7 @@ dependencies = [
  "agave-snapshots",
  "agave-transaction-view",
  "agave-votor-messages",
+ "agave-worker-pool",
  "ahash 0.8.12",
  "arc-swap",
  "arrayref",
