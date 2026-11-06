@@ -1052,6 +1052,17 @@ pub struct TxExecutionGuard<'a> {
 }
 
 impl TxExecutionGuard<'_> {
+    /// Returns `true` if retirement of the Bank has been requested.
+    ///
+    /// Long-running work holding this guard delays the retirement, so it should check this
+    /// periodically and drop the guard when it returns `true`.
+    pub fn quiesce_requested(&self) -> bool {
+        self.bank
+            .transaction_execution_gate
+            .quiesce_requested
+            .load(Acquire)
+    }
+
     /// Loads and executes transactions against the Bank that admitted this guard.
     pub fn load_and_execute_transactions(
         &self,
@@ -1079,6 +1090,11 @@ impl TxExecutionGuard<'_> {
     ) -> Vec<TransactionCommitResult> {
         self.bank
             .commit_transactions(sanitized_txs, processing_results, processed_counts, timings)
+    }
+
+    /// Returns the transaction processor of the wrapped bank.
+    pub fn transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
+        &self.bank.transaction_processor
     }
 }
 
@@ -1630,6 +1646,10 @@ impl Bank {
             .write()
             .unwrap()
             .set_fork_graph(fork_graph);
+    }
+
+    pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
+        &self.transaction_processor
     }
 
     // Returns whether we've entered the recompilation window of the program
@@ -7264,10 +7284,6 @@ impl Bank {
             .accounts
             .accounts_db
             .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors)
-    }
-
-    pub fn get_transaction_processor(&self) -> &TransactionBatchProcessor<BankForks> {
-        &self.transaction_processor
     }
 
     pub fn bank_id_generator(&self) -> &BankIdGenerator {

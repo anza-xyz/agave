@@ -8,7 +8,10 @@ use {
         },
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
-        program_loader::{filter_executable_program_accounts, load_program_with_pubkey},
+        program_loader::{
+            ProgramAccountLoadResult, filter_executable_program_accounts, load_program_accounts,
+            load_program_from_accounts, load_program_with_pubkey,
+        },
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
             TransactionAccountStateInfo, get_uninitialized_accounts_size, verify_changes,
@@ -20,6 +23,7 @@ use {
         },
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
+    ahash::AHashMap,
     log::debug,
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::{Epoch, Slot},
@@ -56,6 +60,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_sbpf::elf_parser::consts::ELFMAG,
     solana_svm_callback::{
         AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
     },
@@ -969,12 +974,44 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: AccountLoadCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
+        missing_programs: Vec<ProgramToLoad>,
+        program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
+        program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
+        execute_timings: &mut ExecuteTimings,
+        limit_to_load_programs: bool,
+        increment_usage_counter: bool,
+    ) -> ReplenishProgramCacheResult {
+        self.replenish_program_cache_with_loader(
+            missing_programs,
+            program_runtime_environment_for_execution,
+            program_cache_for_tx_batch,
+            execute_timings,
+            limit_to_load_programs,
+            increment_usage_counter,
+            || false, // Execution needs all the programs.
+            |key, execute_timings| {
+                load_program_with_pubkey(
+                    account_loader,
+                    program_runtime_environment_for_execution,
+                    key,
+                    self.slot,
+                    execute_timings,
+                )
+                .expect("called load_program_with_pubkey() with nonexistent account")
+            },
+        )
+    }
+
+    fn replenish_program_cache_with_loader(
+        &self,
         mut missing_programs: Vec<ProgramToLoad>,
         program_runtime_environment_for_execution: &ProgramRuntimeEnvironment,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
+        should_stop: impl Fn() -> bool,
+        mut load_program: impl FnMut(&Pubkey, &mut ExecuteTimings) -> Arc<ProgramCacheEntry>,
     ) -> ReplenishProgramCacheResult {
         let mut result = ReplenishProgramCacheResult::default();
         if missing_programs.is_empty() {
@@ -984,6 +1021,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
         let mut count_hits_and_misses = true;
         loop {
+            // This thread holds no cooperative loading task at this point, so it
+            // can stop without leaving other threads waiting for it.
+            if should_stop() {
+                return result;
+            }
             // Lock the global cache.
             let global_program_cache = self.global_program_cache.read().unwrap();
             // Figure out which program needs to be loaded next.
@@ -1003,14 +1045,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let program_to_store = program_to_load.map(|key| {
                 // Load, verify and compile one program.
-                let program = load_program_with_pubkey(
-                    account_loader,
-                    program_runtime_environment_for_execution,
-                    &key,
-                    self.slot,
-                    execute_timings,
-                )
-                .expect("called load_program_with_pubkey() with nonexistent account");
+                let program = load_program(&key, execute_timings);
                 program.update_access_slot(self.slot.min(latest_root_slot));
                 (key, program)
             });
@@ -1046,6 +1081,84 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             }
         }
         result
+    }
+
+    /// Loads, verifies, and compiles the requested programs into the global program cache.
+    ///
+    /// This is intended for background work before transaction execution reaches the programs. It
+    /// uses the same cooperative loading mechanism as the execution path, so an execution thread
+    /// either reuses the completed entry or waits for an in-progress compilation instead of
+    /// compiling the same program again.
+    /// Account data is resolved once so cache matching and compilation use the same version.
+    ///
+    /// Neither counts program uses nor evicts the global program cache, both are left to
+    /// execution.
+    ///
+    /// `should_stop` is checked before loading the accounts of each program and before compiling
+    /// each program. When it returns `true`, the remaining programs are skipped.
+    pub fn precompile_programs<'a, CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        program_ids: impl ExactSizeIterator<Item = &'a Pubkey>,
+        should_stop: impl Fn() -> bool,
+    ) {
+        if program_ids.len() == 0 {
+            return;
+        }
+
+        let mut resolved_programs = AHashMap::new();
+        let missing_programs = program_ids
+            .take_while(|_| !should_stop())
+            .filter_map(|program_id| {
+                let accounts = load_program_accounts(callbacks, program_id)?;
+                let (loader, deployment_slot) = match &accounts {
+                    ProgramAccountLoadResult::InvalidAccountData(_) => return None,
+                    ProgramAccountLoadResult::ProgramOfLoaderV1(account) => account
+                        .data()
+                        .starts_with(&ELFMAG)
+                        .then_some((ProgramCacheEntryOwner::LoaderV1, 0))?,
+                    ProgramAccountLoadResult::ProgramOfLoaderV2(account) => account
+                        .data()
+                        .starts_with(&ELFMAG)
+                        .then_some((ProgramCacheEntryOwner::LoaderV2, 0))?,
+                    ProgramAccountLoadResult::ProgramOfLoaderV3(_, _, deployment_slot) => {
+                        (ProgramCacheEntryOwner::LoaderV3, *deployment_slot)
+                    }
+                    ProgramAccountLoadResult::ProgramOfLoaderV4(_, deployment_slot) => {
+                        (ProgramCacheEntryOwner::LoaderV4, *deployment_slot)
+                    }
+                };
+                resolved_programs.insert(*program_id, accounts);
+                Some(ProgramToLoad {
+                    program_id,
+                    loader,
+                    deployment_slot,
+                })
+            })
+            // `replenish_program_cache_with_loader` requires an owned `Vec`.
+            .collect();
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
+        self.replenish_program_cache_with_loader(
+            missing_programs,
+            &self.program_runtime_environment,
+            &mut program_cache_for_tx_batch,
+            &mut ExecuteTimings::default(),
+            false, // Speculation must not fail execution when the cache is full.
+            false, // Speculation is not program usage.
+            should_stop,
+            |key, execute_timings| {
+                let accounts = resolved_programs
+                    .get(key)
+                    .expect("missing resolved program load");
+                load_program_from_accounts(
+                    &self.program_runtime_environment,
+                    key,
+                    self.slot,
+                    execute_timings,
+                    accounts,
+                )
+            },
+        );
     }
 
     /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().
@@ -3280,6 +3393,30 @@ mod tests {
         assert!(matches!(entry.program, ProgramCacheEntryType::Loaded(_)));
         assert_eq!(entry.deployment_slot, expected_deployment_slot);
         assert_eq!(entry.account_owner, loader);
+    }
+
+    #[test]
+    fn test_precompile_programs_populates_global_cache() {
+        let mock_bank = MockBankCallback::default();
+        let program_id = Pubkey::new_unique();
+        let mut program_account = AccountSharedData::new(1, 0, &bpf_loader::id());
+        program_account.set_data_from_slice(&load_test_program());
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(program_id, program_account);
+
+        let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
+        let batch_processor =
+            TransactionBatchProcessor::new(1, 0, Arc::downgrade(&fork_graph), None);
+        batch_processor.precompile_programs(&mock_bank, std::iter::once(&program_id), || false);
+
+        let program_cache = batch_processor.global_program_cache.read().unwrap();
+        let [program] = program_cache.get_slot_versions_for_tests(&program_id) else {
+            panic!("speculatively compiled program is missing from the global cache");
+        };
+        assert!(matches!(program.program, ProgramCacheEntryType::Loaded(_)));
     }
 
     #[test_case(ProgramCacheEntryOwner::LoaderV1)]
