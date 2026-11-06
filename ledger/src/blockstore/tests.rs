@@ -7416,8 +7416,8 @@ fn test_block_header_followed_by_update_parent() {
         .get_parent_info(slot, BlockLocation::Original)
         .unwrap()
         .unwrap();
-    assert_eq!(parent_info.parent_slot, 3);
-    assert_eq!(parent_info.parent_block_id, parent_3_id.to_hash());
+    assert_eq!(parent_info.parent_block.slot, 3);
+    assert_eq!(parent_info.parent_block.block_id, parent_3_id);
     assert!(parent_info.has_update_parent());
 
     verify_next_slots(&blockstore, 5, &[]);
@@ -8426,7 +8426,7 @@ fn test_multiple_update_parents_out_of_order_marks_dead() {
         .get_parent_info(slot, BlockLocation::Original)
         .unwrap()
         .unwrap();
-    assert_eq!(parent_info.parent_slot, second_update_parent_slot);
+    assert_eq!(parent_info.parent_block.slot, second_update_parent_slot);
     assert_eq!(parent_info.replay_fec_set_index, 64);
     assert!(!blockstore.is_dead(slot));
 
