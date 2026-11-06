@@ -157,7 +157,7 @@ mod tests {
         let rent_epoch_updated_fee_payer_account = {
             let mut account = fee_payer_account.clone();
             account.set_lamports(fee_payer_account.lamports());
-            account.set_rent_epoch(fee_payer_rent_epoch + 1);
+            account.set_rent_epoch(42);
             account
         };
 

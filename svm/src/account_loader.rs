@@ -2369,6 +2369,7 @@ mod tests {
 
         let mut account = AccountSharedData::from(Account {
             lamports: 1,
+            rent_epoch: 0,
             ..Account::default()
         });
 
