@@ -30,7 +30,9 @@ use {
     agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::{
-        migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
+        unverified_vote_message::UnverifiedCertificate,
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
@@ -562,10 +564,8 @@ impl SlotMetaWorkingSetEntry {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParentInfo {
-    /// Parent slot to expose through SlotMeta and replay.
-    pub(crate) parent_slot: Slot,
-    /// Parent block id paired with `parent_slot`.
-    pub(crate) parent_block_id: Hash,
+    /// Parent block to expose through SlotMeta and replay.
+    pub(crate) parent_block: Block,
     /// Zero for the block header parent; non-zero when populated by UpdateParent.
     pub(crate) replay_fec_set_index: u32,
 }
@@ -576,11 +576,13 @@ impl ParentInfo {
     fn from_slot_meta(slot_meta: &SlotMeta) -> Option<Self> {
         let parent_slot = slot_meta.parent_slot?;
         let parent_info = ParentInfo {
-            parent_slot,
-            parent_block_id: slot_meta.parent_block_id,
+            parent_block: Block {
+                slot: parent_slot,
+                block_id: BlockId::from(slot_meta.parent_block_id),
+            },
             replay_fec_set_index: slot_meta.replay_fec_set_index,
         };
-        (parent_info.has_update_parent() || parent_info.parent_block_id != Hash::default())
+        (parent_info.has_update_parent() || parent_info.parent_block.block_id != BlockId::default())
             .then_some(parent_info)
     }
 
@@ -603,8 +605,10 @@ impl ParentInfo {
         let VersionedBlockHeader::V1(header) = marker.as_block_header()?;
 
         Some(ParentInfo {
-            parent_slot: header.parent_slot,
-            parent_block_id: header.parent_block_id.to_hash(),
+            parent_block: Block {
+                slot: header.parent_slot,
+                block_id: header.parent_block_id,
+            },
             replay_fec_set_index: 0,
         })
     }
@@ -637,7 +641,7 @@ impl ParentInfo {
             return Err(BlockstoreError::UpdateParentMatchesBlockHeader(slot));
         }
 
-        if update_parent_info.parent_slot > block_header_parent_info.parent_slot {
+        if update_parent_info.parent_block.slot > block_header_parent_info.parent_block.slot {
             return Err(BlockstoreError::UpdateParentSlotGreaterThanBlockHeader(
                 slot,
             ));
@@ -665,8 +669,8 @@ impl ParentInfo {
     }
 
     /// Parent slot and block id as a single comparable value.
-    fn block(&self) -> (Slot, Hash) {
-        (self.parent_slot, self.parent_block_id)
+    fn block(&self) -> Block {
+        self.parent_block
     }
 
     /// Validate this parent against both ledger ancestry and the shred header.
@@ -676,26 +680,26 @@ impl ParentInfo {
     /// The shred header has no parent block id, so same-slot UpdateParent
     /// switches remain legal for duplicate parent blocks.
     fn validate_shred_parent(&self, slot: Slot, shred_parent_slot: Slot, root: Slot) -> Result<()> {
-        if !verify_shred_slots(slot, self.parent_slot, root) {
+        if !verify_shred_slots(slot, self.parent_block.slot, root) {
             return Err(BlockstoreError::InvalidParentInfo {
                 slot,
-                parent_slot: self.parent_slot,
+                parent_slot: self.parent_block.slot,
                 root,
             });
         }
 
-        if self.populated_from_block_header() && self.parent_slot != shred_parent_slot {
+        if self.populated_from_block_header() && self.parent_block.slot != shred_parent_slot {
             return Err(BlockstoreError::BlockHeaderParentMismatch {
                 slot,
-                block_header_parent_slot: self.parent_slot,
+                block_header_parent_slot: self.parent_block.slot,
                 shred_parent_slot,
             });
         }
 
-        if self.has_update_parent() && self.parent_slot > shred_parent_slot {
+        if self.has_update_parent() && self.parent_block.slot > shred_parent_slot {
             return Err(BlockstoreError::UpdateParentSlotGreaterThanShredParent {
                 slot,
-                update_parent_slot: self.parent_slot,
+                update_parent_slot: self.parent_block.slot,
                 shred_parent_slot,
             });
         }
@@ -1279,8 +1283,10 @@ impl Blockstore {
         let VersionedUpdateParent::V1(update_parent) = marker.as_update_parent()?;
 
         Some(ParentInfo {
-            parent_slot: update_parent.new_parent_slot,
-            parent_block_id: update_parent.new_parent_block_id.to_hash(),
+            parent_block: Block {
+                slot: update_parent.new_parent_slot,
+                block_id: update_parent.new_parent_block_id,
+            },
             replay_fec_set_index: target_fec_set_index,
         })
     }
