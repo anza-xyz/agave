@@ -79,9 +79,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred},
+            shred::{ProcessShredsStats, Shred},
             shredder::Shredder,
         },
+        agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
         itertools::Itertools,
         rand::{Rng, seq::SliceRandom},
         solana_entry::entry::Entry,

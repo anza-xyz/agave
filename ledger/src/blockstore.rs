@@ -18,8 +18,8 @@ use {
         },
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Payload, ProcessShredsStats, Shred,
-            ShredFlags, ShredId, ShredType, Shredder,
+            self, ErasureSetId, Payload, ProcessShredsStats, Shred, ShredFlags, ShredId, ShredType,
+            Shredder,
             filter::ShredRecoveryContext,
             merkle::{ErasureBatch, FecSetViolation},
             merkle_tree::{MerkleTree, get_proof_size},
@@ -27,7 +27,7 @@ use {
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
-    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
+    agave_shred_wire_format::constants::{DATA_SHREDS_PER_FEC_BLOCK, SIZE_OF_MERKLE_PROOF_ENTRY},
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::{
         migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,

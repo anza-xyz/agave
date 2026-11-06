@@ -270,9 +270,9 @@ impl Shredder {
 mod tests {
     use {
         super::*,
-        crate::shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ShredType,
-            max_ticks_per_n_shreds, verify_test_data_shred,
+        crate::shred::{ShredType, max_ticks_per_n_shreds, verify_test_data_shred},
+        agave_shred_wire_format::constants::{
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
         },
         itertools::Itertools,
         rand::Rng,
