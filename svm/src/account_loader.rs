@@ -948,12 +948,19 @@ mod tests {
         let key0 = keypair.pubkey();
         let key1 = Pubkey::from([5u8; 32]);
 
-        let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
-        account.set_rent_epoch(1);
+        let account = AccountSharedData::from(Account {
+            lamports: 1,
+            rent_epoch: 1,
+            ..Account::default()
+        });
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
-        account.set_rent_epoch(1);
+        let account = AccountSharedData::from(Account {
+            lamports: 2,
+            data: vec![0; 1],
+            rent_epoch: 1,
+            ..Account::default()
+        });
         accounts.push((key1, account));
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
@@ -1086,20 +1093,29 @@ mod tests {
         let key1 = bpf_loader_upgradeable::id();
         let key2 = Pubkey::from([6u8; 32]);
 
-        let mut account = AccountSharedData::new(1, 0, &Pubkey::default());
-        account.set_rent_epoch(1);
+        let account = AccountSharedData::from(Account {
+            lamports: 1,
+            rent_epoch: 1,
+            ..Account::default()
+        });
         accounts.push((key0, account));
 
-        let mut account = AccountSharedData::new_with_data(40, vec![0; 1], &Pubkey::default());
-        account.set_executable(true);
-        account.set_rent_epoch(1);
-        account.set_owner(native_loader::id());
+        let account = AccountSharedData::from(Account {
+            lamports: 40,
+            data: vec![0; 1],
+            owner: native_loader::id(),
+            executable: true,
+            rent_epoch: 1,
+        });
         accounts.push((key1, account));
 
-        let mut account = AccountSharedData::new_with_data(41, vec![0; 1], &Pubkey::default());
-        account.set_executable(true);
-        account.set_rent_epoch(1);
-        account.set_owner(key1);
+        let account = AccountSharedData::from(Account {
+            lamports: 41,
+            data: vec![0; 1],
+            owner: key1,
+            executable: true,
+            rent_epoch: 1,
+        });
         accounts.push((key2, account));
 
         let instructions = vec![

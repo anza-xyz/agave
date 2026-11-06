@@ -8,7 +8,8 @@ use {
         program_data_size, register_builtins,
     },
     solana_account::{
-        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+        Account, AccountSharedData, ReadableAccount, WritableAccount,
+        state_traits::StateMutWincode as _,
     },
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
@@ -2249,9 +2250,11 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         let dealloc_fee_payer_keypair = Keypair::new();
         let dealloc_fee_payer = dealloc_fee_payer_keypair.pubkey();
 
-        let mut dealloc_fee_payer_data = AccountSharedData::default();
-        dealloc_fee_payer_data.set_lamports(LAMPORTS_PER_SIGNATURE);
-        dealloc_fee_payer_data.set_rent_epoch(u64::MAX - 1);
+        let dealloc_fee_payer_data = AccountSharedData::from(Account {
+            lamports: LAMPORTS_PER_SIGNATURE,
+            rent_epoch: u64::MAX - 1,
+            ..Account::default()
+        });
         test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
 
         let stable_fee_payer_keypair = Keypair::new();

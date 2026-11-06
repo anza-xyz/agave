@@ -1494,7 +1494,7 @@ mod tests {
             rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
-        solana_account::WritableAccount,
+        solana_account::{Account, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
@@ -2595,9 +2595,11 @@ mod tests {
         );
 
         let fee_payer_rent_epoch = current_epoch;
-        let mut fee_payer_account =
-            AccountSharedData::new_with_data(starting_balance, Vec::new(), &Pubkey::default());
-        fee_payer_account.set_rent_epoch(fee_payer_rent_epoch);
+        let fee_payer_account = AccountSharedData::from(Account {
+            lamports: starting_balance,
+            rent_epoch: fee_payer_rent_epoch,
+            ..Account::default()
+        });
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mock_bank = MockBankCallback {
@@ -2628,12 +2630,11 @@ mod tests {
                 &mut error_counters,
             );
 
-        let post_validation_fee_payer_account = {
-            let mut account = fee_payer_account.clone();
-            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-            account.set_lamports(0);
-            account
-        };
+        let post_validation_fee_payer_account = AccountSharedData::from(Account {
+            lamports: 0,
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
+            ..Account::from(fee_payer_account.clone())
+        });
 
         assert_eq!(
             result,
