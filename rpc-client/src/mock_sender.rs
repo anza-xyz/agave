@@ -577,22 +577,3 @@ pub(crate) fn mock_encoded_account(pubkey: &Pubkey) -> UiAccount {
         space: Some(0),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use {super::*, solana_account::Account, solana_account_decoder::encode_ui_account};
-
-    #[test]
-    fn test_mock_encoded_account() {
-        let pubkey = Pubkey::from_str(PUBKEY).unwrap();
-        let account = Account {
-            lamports: 1_000_000,
-            data: vec![],
-            owner: pubkey,
-            executable: false,
-            rent_epoch: 0,
-        };
-        let expected = encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None);
-        assert_eq!(expected, mock_encoded_account(&pubkey));
-    }
-}
