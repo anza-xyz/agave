@@ -3686,7 +3686,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             stored.program,
-            ProgramCacheEntryType::DelayVisibility
+            TxBatchCacheEntryType::DelayVisibility
         ));
         assert_eq!(stored.deployment_slot, BATCH_SLOT);
 

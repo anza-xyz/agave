@@ -27,7 +27,7 @@ mod entry;
 pub struct ProgramCacheForTxBatch {
     /// K: The program ID
     /// V: A cached program entry valid only for the batch
-    entries: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    entries: HashMap<Pubkey, TxBatchCacheEntry>,
     /// Program entries modified during the transaction batch.
     ///
     /// These are buffered separately in case a transaction fails, but one of
@@ -68,7 +68,9 @@ impl ProgramCacheForTxBatch {
     /// transaction processing (for program management instructions).
     /// It replaces the existing entry (if any) with the provided entry.
     pub fn replenish(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
-        self.entries.insert(key, entry);
+        // TODO: These internal converters are only temporary.
+        self.entries
+            .insert(key, TxBatchCacheEntry::from(entry.as_ref()));
     }
 
     /// Store an entry in `modified_entries` for a program modified during the
@@ -89,19 +91,17 @@ impl ProgramCacheForTxBatch {
         // are loaded for the transaction batch.
         self.modified_entries
             .get(key)
-            .or_else(|| self.entries.get(key))
-            .map(|entry| TxBatchCacheEntry {
-                program: if entry.is_implicit_delay_visibility_tombstone(self.slot) {
+            // TODO: These internal converters are only temporary.
+            .map(|entry| TxBatchCacheEntry::from(entry.as_ref()))
+            .or_else(|| self.entries.get(key).cloned())
+            .map(|mut entry| {
+                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    TxBatchCacheEntryType::DelayVisibility
-                } else {
-                    TxBatchCacheEntryType::from(&entry.program)
-                },
-                account_owner: entry.account_owner,
-                deployment_slot: entry.deployment_slot,
-                stats: Arc::clone(&entry.stats),
+                    entry.program = TxBatchCacheEntryType::DelayVisibility;
+                }
+                entry
             })
     }
 
@@ -128,7 +128,7 @@ impl ProgramCacheForTxBatch {
 
     /// Look up `entries` directly, without the delay visibility rewrite
     /// `find` performs, so a test can see the entry as it was stored.
-    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&Arc<ProgramCacheEntry>> {
+    pub fn get_entry_for_tests(&self, key: &Pubkey) -> Option<&TxBatchCacheEntry> {
         self.entries.get(key)
     }
 

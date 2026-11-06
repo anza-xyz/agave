@@ -12,12 +12,15 @@
 //! environments, since the environment is fixed for the lifetime of the batch.
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use crate::program_cache::{DELAY_VISIBILITY_SLOT_OFFSET, env::ProgramRuntimeEnvironment};
+use crate::program_cache::env::ProgramRuntimeEnvironment;
 use {
     crate::{
         invoke_context::InvokeContext,
         program_cache::{
-            entry::ProgramCacheEntryType, metrics::ProgramStatistics, owner::ProgramCacheEntryOwner,
+            DELAY_VISIBILITY_SLOT_OFFSET,
+            entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            metrics::ProgramStatistics,
+            owner::ProgramCacheEntryOwner,
         },
     },
     solana_clock::Slot,
@@ -26,6 +29,7 @@ use {
 };
 
 /// Types of entries served by the batch-local program cache.
+#[derive(Clone)]
 pub enum TxBatchCacheEntryType {
     FailedVerification,
     Closed,
@@ -75,6 +79,7 @@ impl From<&ProgramCacheEntryType> for TxBatchCacheEntryType {
 }
 
 /// A program entry served by the batch-local program cache.
+#[derive(Clone, Debug)]
 pub struct TxBatchCacheEntry {
     /// The program of this entry.
     pub program: TxBatchCacheEntryType,
@@ -85,6 +90,35 @@ pub struct TxBatchCacheEntry {
     /// Usage statistics, shared with the global entry this was created from, if
     /// any.
     pub stats: Arc<ProgramStatistics>,
+}
+
+impl From<&ProgramCacheEntry> for TxBatchCacheEntry {
+    fn from(entry: &ProgramCacheEntry) -> Self {
+        Self {
+            program: TxBatchCacheEntryType::from(&entry.program),
+            account_owner: entry.account_owner,
+            deployment_slot: entry.deployment_slot,
+            stats: Arc::clone(&entry.stats),
+        }
+    }
+}
+
+impl TxBatchCacheEntry {
+    pub fn effective_slot(&self) -> Slot {
+        match self.program {
+            TxBatchCacheEntryType::FailedVerification
+            | TxBatchCacheEntryType::Closed
+            | TxBatchCacheEntryType::DelayVisibility
+            | TxBatchCacheEntryType::Builtin(_) => self.deployment_slot,
+            TxBatchCacheEntryType::Unloaded | TxBatchCacheEntryType::Loaded(_) => self
+                .deployment_slot
+                .saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
+        }
+    }
+
+    pub(super) fn is_implicit_delay_visibility_tombstone(&self, slot: Slot) -> bool {
+        slot >= self.deployment_slot && slot < self.effective_slot()
+    }
 }
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -113,16 +147,31 @@ impl TxBatchCacheEntry {
                 | TxBatchCacheEntryType::DelayVisibility
         )
     }
+}
 
-    pub fn effective_slot(&self) -> Slot {
-        match self.program {
-            TxBatchCacheEntryType::FailedVerification
-            | TxBatchCacheEntryType::Closed
-            | TxBatchCacheEntryType::DelayVisibility
-            | TxBatchCacheEntryType::Builtin(_) => self.deployment_slot,
-            TxBatchCacheEntryType::Unloaded | TxBatchCacheEntryType::Loaded(_) => self
-                .deployment_slot
-                .saturating_add(DELAY_VISIBILITY_SLOT_OFFSET),
-        }
+#[cfg(test)]
+impl TxBatchCacheEntry {
+    /// Whether this entry was created from the given global entry.
+    pub(crate) fn is_from(&self, entry: &ProgramCacheEntry) -> bool {
+        let same_program = match (&self.program, &entry.program) {
+            (TxBatchCacheEntryType::Loaded(a), ProgramCacheEntryType::Loaded(b)) => {
+                Arc::ptr_eq(a, b)
+            }
+            (TxBatchCacheEntryType::Builtin(a), ProgramCacheEntryType::Builtin(b)) => {
+                Arc::ptr_eq(a, b)
+            }
+            (TxBatchCacheEntryType::Unloaded, ProgramCacheEntryType::Unloaded(_))
+            | (TxBatchCacheEntryType::Closed, ProgramCacheEntryType::Closed)
+            | (TxBatchCacheEntryType::DelayVisibility, ProgramCacheEntryType::DelayVisibility)
+            | (
+                TxBatchCacheEntryType::FailedVerification,
+                ProgramCacheEntryType::FailedVerification(_),
+            ) => true,
+            _ => false,
+        };
+        same_program
+            && self.deployment_slot == entry.deployment_slot
+            && self.account_owner == entry.account_owner
+            && Arc::ptr_eq(&self.stats, &entry.stats)
     }
 }
