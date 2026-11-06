@@ -121,13 +121,6 @@ impl BanksServer {
         )
     }
 
-    fn slot(&self, commitment: CommitmentLevel) -> Slot {
-        self.block_commitment_cache
-            .read()
-            .unwrap()
-            .slot_with_commitment(commitment)
-    }
-
     fn bank(&self, commitment: CommitmentLevel) -> Arc<Bank> {
         let (slot, bank_id) = {
             let cache = self.block_commitment_cache.read().unwrap();
@@ -271,7 +264,7 @@ impl Banks for BanksServer {
     }
 
     async fn get_slot_with_context(self, _: Context, commitment: CommitmentLevel) -> Slot {
-        self.slot(commitment)
+        self.bank(commitment).slot()
     }
 
     async fn get_block_height_with_context(self, _: Context, commitment: CommitmentLevel) -> u64 {
@@ -437,8 +430,8 @@ pub async fn start_local_server(
 mod tests {
     use {super::*, solana_runtime::genesis_utils::create_genesis_config};
 
-    #[test]
-    fn test_processed_bank_replacement() {
+    #[tokio::test]
+    async fn test_processed_bank_replacement() {
         let genesis = create_genesis_config(100);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
         let root = bank_forks.read().unwrap().root_bank();
@@ -455,8 +448,22 @@ mod tests {
             server.bank(CommitmentLevel::Processed).bank_id(),
             original.bank_id()
         );
+        assert_eq!(
+            server
+                .clone()
+                .get_slot_with_context(tarpc::context::current(), CommitmentLevel::Processed)
+                .await,
+            1
+        );
         bank_forks.write().unwrap().clear_bank(1, false);
         assert_eq!(server.bank(CommitmentLevel::Processed).slot(), 0);
+        assert_eq!(
+            server
+                .clone()
+                .get_slot_with_context(tarpc::context::current(), CommitmentLevel::Processed)
+                .await,
+            0
+        );
         let replacement = bank_forks
             .write()
             .unwrap()
@@ -464,10 +471,24 @@ mod tests {
             .clone_without_scheduler();
         assert_ne!(original.bank_id(), replacement.bank_id());
         assert_eq!(server.bank(CommitmentLevel::Processed).slot(), 0);
+        assert_eq!(
+            server
+                .clone()
+                .get_slot_with_context(tarpc::context::current(), CommitmentLevel::Processed)
+                .await,
+            0
+        );
         cache.write().unwrap().set_slot(1, replacement.bank_id());
         assert_eq!(
             server.bank(CommitmentLevel::Processed).bank_id(),
             replacement.bank_id()
+        );
+        assert_eq!(
+            server
+                .clone()
+                .get_slot_with_context(tarpc::context::current(), CommitmentLevel::Processed)
+                .await,
+            1
         );
         assert_eq!(server.bank(CommitmentLevel::Finalized).slot(), 0);
     }

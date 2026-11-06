@@ -6,16 +6,14 @@ use qualifier_attr::qualifiers;
 use {
     crate::{
         blockstore_meta::ErasureConfig,
-        shred::{
-            self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, SIZE_OF_NONCE, ShredFlags, ShredId,
-            ShredType, ShredVariant, merkle_tree::SIZE_OF_MERKLE_ROOT,
-        },
+        shred::{self, Error, ShredFlags, ShredId, ShredType, ShredVariant},
     },
     agave_shred_wire_format::{
         constants::{
-            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-            OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION, SIZE_OF_SIGNATURE, Section,
-            Sections, sections_with_proof_entries,
+            Nonce, OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+            OFFSET_OF_KIND_HEADER, OFFSET_OF_PARENT_OFFSET, OFFSET_OF_SLOT, OFFSET_OF_VERSION,
+            SIZE_OF_MERKLE_ROOT, SIZE_OF_NONCE, SIZE_OF_SIGNATURE, Section, Sections,
+            sections_with_proof_entries,
         },
         headers::{peek_header, peek_variant_byte},
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout as _},
@@ -85,6 +83,10 @@ pub fn get_shred_and_repair_nonce(packet: &BytesPacket) -> Option<(&[u8], Option
         return Some((shred, None));
     }
     let offset = data.len().checked_sub(SIZE_OF_NONCE)?;
+    // The nonce trails the shred and must not overlap it.
+    if offset < shred.len() {
+        return None;
+    }
     let nonce = <[u8; SIZE_OF_NONCE]>::try_from(data.get(offset..)?).ok()?;
     let nonce = u32::from_le_bytes(nonce);
     Some((shred, Some(nonce)))
@@ -92,7 +94,7 @@ pub fn get_shred_and_repair_nonce(packet: &BytesPacket) -> Option<(&[u8], Option
 
 #[inline]
 pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
-    shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
+    shred.get(..OFFSET_OF_KIND_HEADER)
 }
 
 #[inline]
@@ -380,9 +382,10 @@ mod tests {
             SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests,
             traits::{ShredCode as _, ShredData},
         },
+        bytes::Bytes,
         rand::Rng,
-        solana_perf::packet::PacketFlags,
-        std::assert_matches,
+        solana_perf::packet::{Meta, PacketFlags},
+        std::{assert_matches, iter::repeat_n},
         test_case::test_matrix,
     };
 
@@ -566,6 +569,34 @@ mod tests {
                 assert_eq!(get_flags(bytes).unwrap(), shred_data_header.flags);
                 assert_eq!(get_data_size(bytes).unwrap(), shred_data_header.size);
                 assert_eq!(get_data(bytes).unwrap(), shred.data().unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn test_repair_nonce_must_not_overlap_shred() {
+        let mut rng = rand::rng();
+        let shreds = make_merkle_shreds_for_tests(&mut rng, 1, 1200 * 32, false).unwrap();
+        let data_shred = shreds.iter().find(|shred| shred.is_data()).unwrap();
+        let code_shred = shreds.iter().find(|shred| shred.is_code()).unwrap();
+        for shred in [data_shred, code_shred] {
+            let payload = shred.payload().as_ref();
+            for trailer_len in 0..=SIZE_OF_NONCE {
+                let mut buffer = payload.to_vec();
+                buffer.extend(repeat_n(0xab, trailer_len));
+                let mut meta = Meta::default();
+                meta.size = buffer.len();
+                meta.flags |= PacketFlags::REPAIR;
+                let packet = BytesPacket::new(Bytes::from(buffer), meta);
+                let result = get_shred_and_repair_nonce(&packet);
+                if trailer_len < SIZE_OF_NONCE {
+                    assert_eq!(
+                        result, None,
+                        "nonce of a {trailer_len}-byte trailer would overlap the shred"
+                    );
+                } else {
+                    assert_eq!(result, Some((payload, Some(0xabab_abab))));
+                }
             }
         }
     }

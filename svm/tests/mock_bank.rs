@@ -14,8 +14,11 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        loaded_programs::{BlockRelation, ForkGraph, ProgramRuntimeEnvironment},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::{
+            entry::ProgramCacheEntry,
+            env::ProgramRuntimeEnvironment,
+            fork_graph::{BlockRelation, ForkGraph},
+        },
         solana_sbpf::{
             program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
             vm::Config,

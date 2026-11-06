@@ -38,10 +38,7 @@ impl AccountsDb {
                 // If a slot was found, ensure it was the requested slot
                 assert_eq!(slot_list_item.slot(), slot);
                 let mut accessor = self.get_account_accessor(slot_list_item);
-
-                accessor
-                    .check_and_get_loaded_account_shared_data(NO_LOAD_FILTER)
-                    .unwrap()
+                accessor.get_account_shared_data_if(NO_LOAD_FILTER).unwrap()
             })
     }
 }

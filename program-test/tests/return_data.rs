@@ -1,5 +1,4 @@
 use {
-    assert_matches::assert_matches,
     solana_account_info::{AccountInfo, next_account_info},
     solana_banks_client::BanksClientError,
     solana_commitment_config::CommitmentLevel,
@@ -12,7 +11,7 @@ use {
     solana_signer::Signer,
     solana_transaction::Transaction,
     solana_transaction_context::transaction::TransactionReturnData,
-    std::{slice, str::from_utf8},
+    std::{assert_matches, slice, str::from_utf8},
 };
 
 // Process instruction to get return data from another program

@@ -1,8 +1,4 @@
 //! The `pubsub` module implements a threaded subscription service on client RPC request
-// `jsonrpc_derive` references deprecated trait methods in generated server glue and does not
-// preserve item-level lint allowances on those references.
-#![allow(deprecated)]
-
 #[cfg(test)]
 use crate::{rpc_pubsub_service, rpc_subscriptions::RpcSubscriptions};
 use {
@@ -34,7 +30,7 @@ use {
         },
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVersionInfo, RpcVote, SlotInfo, SlotUpdate,
+            RpcSignatureResult, RpcVersionInfo, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -223,36 +219,6 @@ pub trait RpcSolPubSub {
         id: PubSubSubscriptionId,
     ) -> Result<bool>;
 
-    /// Subscribe to deprecated TowerBFT vote notifications.
-    ///
-    /// The server accepts this subscription for compatibility but does not
-    /// produce vote notifications.
-    #[deprecated(
-        since = "4.5.0",
-        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
-                be removed in the next major release"
-    )]
-    #[allow(deprecated)]
-    #[pubsub(subscription = "voteNotification", subscribe, name = "voteSubscribe")]
-    fn vote_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<RpcVote>);
-
-    /// Unsubscribe from a deprecated vote notification subscription.
-    #[deprecated(
-        since = "4.5.0",
-        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
-                be removed in the next major release"
-    )]
-    #[pubsub(
-        subscription = "voteNotification",
-        unsubscribe,
-        name = "voteUnsubscribe"
-    )]
-    fn vote_unsubscribe(
-        &self,
-        meta: Option<Self::Metadata>,
-        id: PubSubSubscriptionId,
-    ) -> Result<bool>;
-
     // Get notification when a new root is set
     #[pubsub(subscription = "rootNotification", subscribe, name = "rootSubscribe")]
     fn root_subscribe(&self, meta: Self::Metadata, subscriber: Subscriber<Slot>);
@@ -276,7 +242,6 @@ pub use internal::RpcSolPubSubInternal;
 mod internal {
     use super::*;
 
-    #[allow(deprecated)]
     #[rpc]
     pub trait RpcSolPubSubInternal {
         // Get notification every time account data is changed
@@ -357,24 +322,6 @@ mod internal {
         // Unsubscribe from block notification subscription.
         #[rpc(name = "blockUnsubscribe")]
         fn block_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
-
-        /// Subscribe to deprecated TowerBFT vote notifications.
-        #[deprecated(
-            since = "4.5.0",
-            note = "TowerBFT vote notifications are no longer produced; this compatibility API \
-                    will be removed in the next major release"
-        )]
-        #[rpc(name = "voteSubscribe")]
-        fn vote_subscribe(&self) -> Result<SubscriptionId>;
-
-        /// Unsubscribe from a deprecated vote notification subscription.
-        #[deprecated(
-            since = "4.5.0",
-            note = "TowerBFT vote notifications are no longer produced; this compatibility API \
-                    will be removed in the next major release"
-        )]
-        #[rpc(name = "voteUnsubscribe")]
-        fn vote_unsubscribe(&self, id: SubscriptionId) -> Result<bool>;
 
         // Get notification when a new root is set
         #[rpc(name = "rootSubscribe")]
@@ -465,7 +412,6 @@ fn param<T: FromStr>(param_str: &str, thing: &str) -> Result<T> {
     })
 }
 
-#[allow(deprecated)]
 impl RpcSolPubSubInternal for RpcSolPubSubImpl {
     fn account_subscribe(
         &self,
@@ -529,11 +475,8 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         filter: RpcTransactionLogsFilter,
         config: Option<RpcTransactionLogsConfig>,
     ) -> Result<SubscriptionId> {
-        #[allow(deprecated)]
         let kind = match filter {
-            RpcTransactionLogsFilter::All | RpcTransactionLogsFilter::AllWithVotes => {
-                LogsSubscriptionKind::All
-            }
+            RpcTransactionLogsFilter::All => LogsSubscriptionKind::All,
             RpcTransactionLogsFilter::Mentions(keys) => {
                 if keys.len() != 1 {
                     return Err(Error {
@@ -629,14 +572,6 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         if !self.config.enable_block_subscription {
             return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
         }
-        self.unsubscribe(id)
-    }
-
-    fn vote_subscribe(&self) -> Result<SubscriptionId> {
-        self.subscribe(SubscriptionParams::Vote)
-    }
-
-    fn vote_unsubscribe(&self, id: SubscriptionId) -> Result<bool> {
         self.unsubscribe(id)
     }
 
@@ -1456,8 +1391,7 @@ mod tests {
 
     #[test]
     #[serial]
-    #[allow(deprecated)]
-    fn test_vote_subscribe_and_unsubscribe_compatibility() {
+    fn test_removed_towerbft_subscriptions() {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -1465,33 +1399,26 @@ mod tests {
             Arc::new(AtomicU64::default()),
             bank_forks,
         ));
-        let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
+        let (rpc, _receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
         let mut io = IoHandler::<()>::default();
         io.extend_with(rpc.to_delegate());
 
-        // The compatibility method is available even though the deprecated
-        // enable_vote_subscription setting is false.
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"voteSubscribe","params":[]}"#;
-        let response = io.handle_request_sync(request).unwrap();
-        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
-        let subscription_id = response["result"].as_u64().unwrap();
-        assert_eq!(rpc_subscriptions.control().subscriber_total(), 1);
-
-        // Compatibility subscriptions intentionally produce no vote notifications.
-        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
-
-        let request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"voteUnsubscribe","params":[{subscription_id}]}}"#
-        );
-        let response = io.handle_request_sync(&request).unwrap();
-        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
-        assert_eq!(response["result"], true);
-        assert_eq!(rpc_subscriptions.control().subscriber_total(), 0);
-
-        // A second unsubscribe is an invalid subscription, not MethodNotFound.
-        let response = io.handle_request_sync(&request).unwrap();
+        for (method, params) in [
+            ("voteSubscribe", json!([])),
+            ("voteUnsubscribe", json!([0])),
+        ] {
+            let request = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+            let response = io.handle_request_sync(&request.to_string()).unwrap();
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["error"]["code"], -32601);
+        }
+        let request = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "logsSubscribe", "params": ["allWithVotes"]
+        });
+        let response = io.handle_request_sync(&request.to_string()).unwrap();
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(rpc_subscriptions.control().subscriber_total(), 0);
     }
 
     #[test]

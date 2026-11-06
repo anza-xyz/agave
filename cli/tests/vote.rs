@@ -202,6 +202,7 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         vote_account_pubkey,
         withdraw_authority: 1,
         withdraw_amount: SpendAmount::Some(1_000),
+        allow_vat_withdrawal: false,
         destination_account_pubkey: destination_account,
         sign_only: false,
         dump_transaction_message: false,
@@ -212,6 +213,19 @@ async fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
         fee_payer: 0,
         compute_unit_price,
     };
+    let error = process_command(&config).await.unwrap_err();
+    assert!(error.to_string().contains("Validator Admission Ticket"));
+    check_balance!(expected_balance, &rpc_client, &vote_account_pubkey);
+    check_balance!(0, &rpc_client, &destination_account);
+
+    let CliCommand::WithdrawFromVoteAccount {
+        allow_vat_withdrawal,
+        ..
+    } = &mut config.command
+    else {
+        unreachable!();
+    };
+    *allow_vat_withdrawal = true;
     process_command(&config).await.unwrap();
     let expected_balance = expected_balance - 1_000;
     check_balance!(expected_balance, &rpc_client, &vote_account_pubkey);
@@ -427,6 +441,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         vote_account_pubkey,
         withdraw_authority: 1,
         withdraw_amount: SpendAmount::Some(1_000),
+        allow_vat_withdrawal: true,
         destination_account_pubkey: destination_account,
         sign_only: true,
         dump_transaction_message: false,
@@ -448,6 +463,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         vote_account_pubkey,
         withdraw_authority: 1,
         withdraw_amount: SpendAmount::Some(1_000),
+        allow_vat_withdrawal: true,
         destination_account_pubkey: destination_account,
         sign_only: false,
         dump_transaction_message: false,
@@ -516,6 +532,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         vote_account_pubkey,
         withdraw_authority: 1,
         withdraw_amount: SpendAmount::Some(expected_balance),
+        allow_vat_withdrawal: true,
         destination_account_pubkey: destination_account,
         sign_only: true,
         dump_transaction_message: false,
@@ -538,6 +555,7 @@ async fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64
         vote_account_pubkey,
         withdraw_authority: 1,
         withdraw_amount: SpendAmount::Some(expected_balance),
+        allow_vat_withdrawal: true,
         destination_account_pubkey: destination_account,
         sign_only: false,
         dump_transaction_message: false,

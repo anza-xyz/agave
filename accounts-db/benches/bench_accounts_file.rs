@@ -169,7 +169,10 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             BenchmarkId::new("append_vec_file_get_account_shared_data", data_size),
             |b| {
                 b.iter_with_large_drop(|| {
-                    _ = append_vec_file.get_account_shared_data(0).unwrap();
+                    _ = append_vec_file
+                        .get_account_shared_data_if(0, |_, _, _| true)
+                        .unwrap()
+                        .unwrap();
                 });
             },
         );

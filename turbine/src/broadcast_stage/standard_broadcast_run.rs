@@ -24,7 +24,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
     solana_time_utils::AtomicInterval,
-    std::{borrow::Cow, collections::VecDeque, sync::RwLock},
+    std::{collections::VecDeque, sync::RwLock},
 };
 
 // Expect blacklist events to be extremely rare, so we can tightly bound the
@@ -464,7 +464,7 @@ impl StandardBroadcastRun {
             && shred.index() == 0
         {
             blockstore
-                .insert_trusted_shreds([Cow::Borrowed(shred)], pinnable_slice, write_batch)
+                .insert_trusted_shreds([shred.clone()], pinnable_slice, write_batch)
                 .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
@@ -552,7 +552,7 @@ impl StandardBroadcastRun {
             .map(usize::from)
             .unwrap_or_default();
         let num_shreds = shreds.len();
-        let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
+        let shreds = shreds.iter().skip(offset).cloned();
         blockstore
             .insert_trusted_shreds(shreds, pinnable_slice, write_batch)
             .expect("Failed to insert shreds in blockstore");

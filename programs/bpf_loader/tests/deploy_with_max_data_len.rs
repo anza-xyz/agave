@@ -12,7 +12,7 @@ use {
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
-    solana_program_runtime::program_cache_entry::ProgramCacheEntry,
+    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sbpf::program::BuiltinFunctionDefinition,

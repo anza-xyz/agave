@@ -4,9 +4,10 @@ use {
         blockstore::ParentInfo,
         shred::{
             self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
-            merkle_tree::{SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
+            merkle_tree::get_proof_size,
         },
     },
+    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
     bitflags::bitflags,
     smallvec::SmallVec,
     solana_clock::{Slot, UnixTimestamp},

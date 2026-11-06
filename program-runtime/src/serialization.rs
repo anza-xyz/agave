@@ -1,16 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    crate::memory_context::SerializedAccountMetadata,
+    crate::{abi::ABI, memory_context::SerializedAccountMetadata},
     solana_instruction_error::InstructionError,
-    solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_pubkey::Pubkey,
     solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
         ebpf::{HOST_ALIGN, MM_INPUT_START},
         memory_region::MemoryRegion,
     },
-    solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     solana_transaction_context::{
         IndexOfAccount, MAX_ACCOUNTS_PER_INSTRUCTION, instruction::InstructionContext,
@@ -80,7 +79,7 @@ struct Serializer {
     regions: Vec<MemoryRegion>,
     vaddr: u64,
     region_start: usize,
-    is_loader_v1: bool,
+    abi: ABI,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
 }
@@ -89,7 +88,7 @@ impl Serializer {
     fn new(
         size: usize,
         start_addr: u64,
-        is_loader_v1: bool,
+        abi: ABI,
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
     ) -> Serializer {
@@ -98,7 +97,7 @@ impl Serializer {
             regions: Vec::new(),
             region_start: 0,
             vaddr: start_addr,
-            is_loader_v1,
+            abi,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
         }
@@ -150,10 +149,10 @@ impl Serializer {
         if !self.virtual_address_space_adjustments {
             let vm_data_addr = self.vaddr.saturating_add(self.buffer.len() as u64);
             self.write_all(account.get_data());
-            if !self.is_loader_v1 {
+            if self.abi == ABI::V1 {
                 let align_offset =
-                    (account.get_data().len() as *const u8).align_offset(BPF_ALIGN_OF_U128);
-                self.fill_write(MAX_PERMITTED_DATA_INCREASE + align_offset, 0)
+                    (account.get_data().len() as *const u8).align_offset(self.abi.alignment());
+                self.fill_write(self.abi.account_realloc_padding() + align_offset, 0)
                     .map_err(|_| InstructionError::InvalidArgument)?;
             }
             Ok(vm_data_addr)
@@ -162,19 +161,13 @@ impl Serializer {
             let vm_data_addr = self.vaddr;
             if !self.account_data_direct_mapping {
                 self.write_all(account.get_data());
-                if !self.is_loader_v1 {
-                    self.fill_write(MAX_PERMITTED_DATA_INCREASE, 0)
-                        .map_err(|_| InstructionError::InvalidArgument)?;
-                }
+                self.fill_write(self.abi.account_realloc_padding(), 0)
+                    .map_err(|_| InstructionError::InvalidArgument)?;
             }
-            let address_space_reserved_for_account = if !self.is_loader_v1 {
-                account
-                    .get_data()
-                    .len()
-                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-            } else {
-                account.get_data().len()
-            };
+            let address_space_reserved_for_account = account
+                .get_data()
+                .len()
+                .saturating_add(self.abi.account_realloc_padding());
             if address_space_reserved_for_account > 0 {
                 if !self.account_data_direct_mapping {
                     self.push_region();
@@ -186,21 +179,21 @@ impl Serializer {
                     self.regions.push(new_region);
                 }
             }
-            if !self.is_loader_v1 {
+            if self.abi == ABI::V1 {
                 let align_offset =
-                    (account.get_data().len() as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                    (account.get_data().len() as *const u8).align_offset(self.abi.alignment());
                 if !self.account_data_direct_mapping {
                     self.fill_write(align_offset, 0)
                         .map_err(|_| InstructionError::InvalidArgument)?;
                 } else {
                     // The deserialization code is going to align the vm_addr to
-                    // BPF_ALIGN_OF_U128. Always add one BPF_ALIGN_OF_U128 worth of
+                    // the ABI's alignment. Always add one alignment worth of
                     // padding and shift the start of the next region, so that once
                     // vm_addr is aligned, the corresponding host_addr is aligned
                     // too.
-                    self.fill_write(BPF_ALIGN_OF_U128, 0)
+                    self.fill_write(self.abi.alignment(), 0)
                         .map_err(|_| InstructionError::InvalidArgument)?;
-                    self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
+                    self.region_start += self.abi.alignment().saturating_sub(align_offset);
                 }
             }
             Ok(vm_data_addr)
@@ -224,7 +217,7 @@ impl Serializer {
 
     fn debug_assert_alignment<T>(&self) {
         debug_assert!(
-            self.is_loader_v1
+            self.abi == ABI::V0
                 || self
                     .buffer
                     .as_slice()
@@ -258,6 +251,7 @@ pub struct SerializationResult {
 
 pub fn serialize_parameters(
     instruction_context: &InstructionContext,
+    abi: ABI,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
     direct_account_pointers_in_program_input: bool,
@@ -268,8 +262,6 @@ pub fn serialize_parameters(
     }
 
     let program_id = *instruction_context.get_program_key()?;
-    let is_loader_deprecated =
-        instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
 
     let accounts = (0..instruction_context.get_number_of_instruction_accounts())
         .map(|instruction_account_index| {
@@ -291,26 +283,25 @@ pub fn serialize_parameters(
         // time it's iterated on.
         .collect::<Vec<_>>();
 
-    if is_loader_deprecated {
-        // Used by loader-v1 (bpf_loader_deprecated)
-        let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
-            serialize_parameters_for_abiv0(
-                accounts,
-                instruction_context.get_instruction_data(),
-                &program_id,
-                virtual_address_space_adjustments,
-                account_data_direct_mapping,
-            )?;
-        Ok(SerializationResult {
-            parameter_bytes,
-            regions,
-            accounts_metadata,
-            instruction_data_offset,
-            account_pointers_offset: None,
-        })
-    } else {
-        // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
-        serialize_parameters_for_abiv1(
+    match abi {
+        ABI::V0 => {
+            let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
+                serialize_parameters_for_abiv0(
+                    accounts,
+                    instruction_context.get_instruction_data(),
+                    &program_id,
+                    virtual_address_space_adjustments,
+                    account_data_direct_mapping,
+                )?;
+            Ok(SerializationResult {
+                parameter_bytes,
+                regions,
+                accounts_metadata,
+                instruction_data_offset,
+                account_pointers_offset: None,
+            })
+        }
+        ABI::V1 => serialize_parameters_for_abiv1(
             accounts,
             instruction_context.get_instruction_data(),
             &program_id,
@@ -318,38 +309,34 @@ pub fn serialize_parameters(
             account_data_direct_mapping,
             // SIMD-0449: only available on ABIv1
             direct_account_pointers_in_program_input,
-        )
+        ),
     }
 }
 
 pub fn deserialize_parameters(
     instruction_context: &InstructionContext,
+    abi: ABI,
     virtual_address_space_adjustments: bool,
     account_data_direct_mapping: bool,
     buffer: &[u8],
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
-    let is_loader_deprecated =
-        instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
     let account_lengths = accounts_metadata.iter().map(|a| a.original_data_len);
-    if is_loader_deprecated {
-        // Used by loader-v1 (bpf_loader_deprecated)
-        deserialize_parameters_for_abiv0(
+    match abi {
+        ABI::V0 => deserialize_parameters_for_abiv0(
             instruction_context,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             buffer,
             account_lengths,
-        )
-    } else {
-        // Used by loader-v2 (bpf_loader) and loader-v3 (bpf_loader_upgradeable)
-        deserialize_parameters_for_abiv1(
+        ),
+        ABI::V1 => deserialize_parameters_for_abiv1(
             instruction_context,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             buffer,
             account_lengths,
-        )
+        ),
     }
 }
 
@@ -368,6 +355,8 @@ fn serialize_parameters_for_abiv0(
     ),
     InstructionError,
 > {
+    const ABI_VERSION: ABI = ABI::V0;
+
     // Calculate size in order to alloc once
     let mut size = size_of::<u64>();
     for account in &accounts {
@@ -396,7 +385,7 @@ fn serialize_parameters_for_abiv0(
     let mut s = Serializer::new(
         size,
         MM_INPUT_START,
-        true,
+        ABI_VERSION,
         virtual_address_space_adjustments,
         account_data_direct_mapping,
     );
@@ -515,6 +504,8 @@ fn serialize_parameters_for_abiv1(
     account_data_direct_mapping: bool,
     direct_account_pointers_program_input: bool,
 ) -> Result<SerializationResult, InstructionError> {
+    const ABI_VERSION: ABI = ABI::V1;
+
     let mut accounts_metadata = Vec::with_capacity(accounts.len());
     // Calculate size in order to alloc once
     let mut size = size_of::<u64>();
@@ -536,9 +527,9 @@ fn serialize_parameters_for_abiv1(
                 if !(virtual_address_space_adjustments && account_data_direct_mapping) {
                     size += data_len
                         + MAX_PERMITTED_DATA_INCREASE
-                        + (data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                        + (data_len as *const u8).align_offset(ABI_VERSION.alignment());
                 } else {
-                    size += BPF_ALIGN_OF_U128;
+                    size += ABI_VERSION.alignment();
                 }
             }
         }
@@ -549,7 +540,7 @@ fn serialize_parameters_for_abiv1(
 
     // reserve space for the array of account pointers if SIMD-0449 is enabled
     let account_pointers_padding = if direct_account_pointers_program_input {
-        let padding = (size as *const u8).align_offset(BPF_ALIGN_OF_U128);
+        let padding = (size as *const u8).align_offset(ABI_VERSION.alignment());
         size += padding + accounts.len() * size_of::<u64>();
         Some(padding)
     } else {
@@ -559,7 +550,7 @@ fn serialize_parameters_for_abiv1(
     let mut s = Serializer::new(
         size,
         MM_INPUT_START,
-        false,
+        ABI_VERSION,
         virtual_address_space_adjustments,
         account_data_direct_mapping,
     );
@@ -607,7 +598,7 @@ fn serialize_parameters_for_abiv1(
 
         if let Some(padding) = account_pointers_padding {
             // Add padding before the array of account pointers to reach
-            // 8-byte alignment (BPF_ALIGN_OF_U128).
+            // 8-byte alignment (`ABI_VERSION.alignment()`).
             s.fill_write(padding, 0)
                 .map_err(|_| InstructionError::InvalidArgument)?;
             for entry in accounts_metadata.iter() {
@@ -637,6 +628,8 @@ fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
     buffer: &[u8],
     account_lengths: I,
 ) -> Result<(), InstructionError> {
+    const ABI_VERSION: ABI = ABI::V1;
+
     let mut start = size_of::<u64>(); // number of accounts
     for (instruction_account_index, pre_len) in
         (0..instruction_context.get_number_of_instruction_accounts()).zip(account_lengths)
@@ -700,13 +693,13 @@ fn deserialize_parameters_for_abiv1<I: IntoIterator<Item = usize>>(
                 borrowed_account.set_data_length(post_len)?;
             }
             start += if !(virtual_address_space_adjustments && account_data_direct_mapping) {
-                let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                let alignment_offset = (pre_len as *const u8).align_offset(ABI_VERSION.alignment());
                 pre_len // data
                     .saturating_add(MAX_PERMITTED_DATA_INCREASE) // realloc padding
                     .saturating_add(alignment_offset)
             } else {
                 // See Serializer::write_account() as to why we have this
-                BPF_ALIGN_OF_U128
+                ABI_VERSION.alignment()
             };
             start += size_of::<u64>(); // rent_epoch
             if borrowed_account.get_owner().to_bytes() != owner {
@@ -728,13 +721,13 @@ mod tests {
         },
         solana_account::{Account, AccountSharedData},
         solana_account_info::AccountInfo,
-        solana_program_entrypoint::deserialize,
+        solana_program_entrypoint::{BPF_ALIGN_OF_U128, deserialize},
         solana_sbpf::{
             memory_region::MemoryMapping,
             program::{BuiltinProgram, SBPFVersion},
             vm::{Config, EbpfVm},
         },
-        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+        solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::{
             MAX_ACCOUNTS_PER_TRANSACTION, instruction_accounts::InstructionAccount,
@@ -880,6 +873,7 @@ mod tests {
 
                 let serialization_result = serialize_parameters(
                     &instruction_context,
+                    ABI::V1,
                     virtual_address_space_adjustments,
                     false, // account_data_direct_mapping
                     direct_account_pointers_in_program_input,
@@ -1059,6 +1053,7 @@ mod tests {
                 ..
             } = serialize_parameters(
                 &instruction_context,
+                ABI::V1,
                 virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
                 direct_account_pointers_in_program_input,
@@ -1130,6 +1125,7 @@ mod tests {
 
             deserialize_parameters(
                 &instruction_context,
+                ABI::V1,
                 virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
                 serialized.as_slice(),
@@ -1171,6 +1167,7 @@ mod tests {
                 ..
             } = serialize_parameters(
                 &instruction_context,
+                ABI::V0,
                 virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
                 direct_account_pointers_in_program_input,
@@ -1218,6 +1215,7 @@ mod tests {
 
             deserialize_parameters(
                 &instruction_context,
+                ABI::V0,
                 virtual_address_space_adjustments,
                 false, // account_data_direct_mapping
                 serialized.as_slice(),
@@ -1344,6 +1342,7 @@ mod tests {
             ..
         } = serialize_parameters(
             &instruction_context,
+            ABI::V1,
             true,
             false, // account_data_direct_mapping
             direct_account_pointers_in_program_input,
@@ -1383,6 +1382,7 @@ mod tests {
             ..
         } = serialize_parameters(
             &instruction_context,
+            ABI::V0,
             true,
             false, // account_data_direct_mapping
             direct_account_pointers_in_program_input,
@@ -1811,6 +1811,7 @@ mod tests {
             ..
         } = crate::serialization::serialize_parameters(
             &instruction_context,
+            ABI::V1,
             true,  // virtual_address_space_adjustments
             false, // account_data_direct_mapping
             false, // direct_account_pointers_in_program_input
@@ -1826,5 +1827,80 @@ mod tests {
         let vm_data_addr = account_metadata.vm_data_addr;
         let (_region_index, region) = memory_mapping.find_region(vm_data_addr).unwrap();
         assert_eq!(region.len(), 5);
+    }
+
+    // V0 serializes the owner, executable and rent epoch after the data, V1 only the rent epoch.
+    #[test_case(ABI::V0, 0, 1, 41; "abi_v0")]
+    #[test_case(ABI::V1, MAX_PERMITTED_DATA_INCREASE, BPF_ALIGN_OF_U128, 8; "abi_v1")]
+    fn test_direct_mapping_reserves_account_realloc_padding(
+        abi: ABI,
+        realloc_padding: usize,
+        alignment: usize,
+        bytes_after_data: usize,
+    ) {
+        // Unaligned, aligned and empty account data, followed by another account.
+        let account_data: [&[u8]; 4] = [b"agave", &[1; 8], &[], b"anza"];
+        let program_id = Pubkey::new_unique();
+        let mut transaction_accounts = vec![(
+            program_id,
+            AccountSharedData::from(Account {
+                executable: true,
+                owner: bpf_loader::id(),
+                ..Account::default()
+            }),
+        )];
+        transaction_accounts.extend(account_data.iter().map(|data| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new_with_data(0, data.to_vec(), &program_id),
+            )
+        }));
+        let instruction_accounts = (1..=account_data.len() as u16)
+            .map(|index_in_transaction| InstructionAccount::new(index_in_transaction, false, true))
+            .collect();
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(0, instruction_accounts, vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+
+        let SerializationResult {
+            regions,
+            accounts_metadata,
+            ..
+        } = serialize_parameters(
+            &instruction_context,
+            abi,
+            true,  // virtual_address_space_adjustments
+            true,  // account_data_direct_mapping
+            false, // direct_account_pointers_in_program_input
+        )
+        .unwrap();
+
+        assert_eq!(accounts_metadata.len(), account_data.len());
+        for (index, data) in account_data.iter().enumerate() {
+            let reserved_end =
+                accounts_metadata[index].vm_data_addr + (data.len() + realloc_padding) as u64;
+            assert!(
+                regions
+                    .iter()
+                    .any(|region| region.vm_addr_range().start == reserved_end)
+            );
+
+            // The next account starts past the remaining fields, realigned for the ABI.
+            if let Some(next_account) = accounts_metadata.get(index + 1) {
+                let align_offset = (data.len() as *const u8).align_offset(alignment);
+                assert_eq!(
+                    next_account.vm_addr,
+                    reserved_end + (align_offset + bytes_after_data) as u64,
+                );
+                assert_eq!(next_account.vm_addr % alignment as u64, 0);
+            }
+        }
     }
 }

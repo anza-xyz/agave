@@ -27,7 +27,6 @@ pub struct SVMFeatureSet {
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
-    pub delay_commission_updates: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
     pub increase_cpi_account_info_limit: bool,
     pub poseidon_enforce_padding: bool,
@@ -51,6 +50,7 @@ pub struct SVMFeatureSet {
     pub loader_v3_allow_prefunded_programdata: bool,
     pub loader_v3_remove_extend_program: bool,
     pub invoke_signed_v2: bool,
+    pub loaderv3_programdata_size_floor: bool,
 }
 
 impl SVMFeatureSet {
@@ -82,7 +82,6 @@ impl SVMFeatureSet {
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
-            delay_commission_updates: true,
             raise_cpi_nesting_limit_to_8: true,
             increase_cpi_account_info_limit: true,
             poseidon_enforce_padding: true,
@@ -106,6 +105,7 @@ impl SVMFeatureSet {
             loader_v3_allow_prefunded_programdata: true,
             loader_v3_remove_extend_program: true,
             invoke_signed_v2: true,
+            loaderv3_programdata_size_floor: true,
         }
     }
 }

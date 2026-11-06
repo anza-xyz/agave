@@ -149,9 +149,8 @@ impl<T: BroadcastStats + Default> SlotBroadcastStats<T> {
                 let slot_batch_counter = self.0.entry(batch_info.slot).or_default();
                 slot_batch_counter.broadcast_shred_stats.update(new_stats);
                 // Only count the ones where `broadcast_shred_batch_info`.is_some(), because
-                // there could potentially be other `retransmit` slots inserted into the
-                // transmit pipeline (signaled by ReplayStage) that are not created by the
-                // main shredding/broadcast pipeline
+                // `BroadcastDuplicatesRun` sends shreds without batch info that are not
+                // counted towards any batch
                 slot_batch_counter.num_batches += 1;
                 if let Some(num_expected_batches) = batch_info.num_expected_batches {
                     slot_batch_counter.num_expected_batches = Some(num_expected_batches);

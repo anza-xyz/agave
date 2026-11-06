@@ -32,6 +32,7 @@ use {
         },
     },
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_pubkey::Pubkey,
     std::{
         convert::TryFrom,
         fs::{self, File},
@@ -393,22 +394,36 @@ impl SplitFile {
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Result<Ret, SplitFileError> {
-        self._get_account_with_data(offset, |meta_entry, loaded_data| {
-            let data = match &loaded_data {
-                LoadedData::NoData => &[],
-                LoadedData::Inline(data) => *data,
-                LoadedData::External(data) => data.as_slice(),
-            };
-            callback(stored_account_from(meta_entry, data))
-        })
+        self._get_account_with_data(
+            offset,
+            |_, _, _| true,
+            |meta_entry, loaded_data| {
+                let data = match &loaded_data {
+                    LoadedData::NoData => &[],
+                    LoadedData::Inline(data) => *data,
+                    LoadedData::External(data) => data.as_slice(),
+                };
+                callback(stored_account_from(meta_entry, data))
+            },
+        )
+        .map(|account| account.expect("account was not filtered"))
     }
 
     /// Read account at `offset` and return it as an AccountSharedData.
-    pub fn get_account_shared_data(
+    ///
+    /// `load_filter` is a predicate that determines if the account should be loaded in full.
+    /// The parameters are lamports, owner, and data length.
+    ///
+    /// Returns:
+    /// * Err if there is an error reading the account.
+    /// * Ok(None) if `load_filter` returns false.
+    /// * Ok(Some(account)) otherwise.
+    pub fn get_account_shared_data_if(
         &self,
         offset: LogicalOffset,
-    ) -> Result<AccountSharedData, SplitFileError> {
-        self._get_account_with_data(offset, |meta_entry, loaded_data| {
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Result<Option<AccountSharedData>, SplitFileError> {
+        self._get_account_with_data(offset, load_filter, |meta_entry, loaded_data| {
             let data = match loaded_data {
                 LoadedData::NoData => Vec::new(),
                 LoadedData::Inline(data) => data.to_vec(),
@@ -429,20 +444,36 @@ impl SplitFile {
     /// This fn lets the caller decide how to handle account data (if any).
     /// e.g. if the caller wants an AccountSharedData with owned data (i.e. Vec),
     /// or if the caller wants a StoredAccountInfo with borrowed data (i.e. &[u8]).
+    ///
+    /// `load_filter` is a predicate that determines if the account should be loaded in full.
+    /// The parameters are lamports, owner, and data length.
+    ///
+    /// Returns None if `load_filter` returns false.
+    /// Otherwise returns Some with the result of `callback`.
     fn _get_account_with_data<Ret>(
         &self,
         offset: LogicalOffset,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
         mut callback: impl for<'local> FnMut(MetaEntryRef<'local>, LoadedData<'local>) -> Ret,
-    ) -> Result<Ret, SplitFileError> {
+    ) -> Result<Option<Ret>, SplitFileError> {
         let file_offset = file_offset_from_logical(offset);
         read_meta_entry(
             self.meta_file(),
             self.meta_len(),
             file_offset,
             |meta_entry, data_ref| -> Result<_, SplitFileError> {
+                if !load_filter(
+                    meta_entry.lamports,
+                    meta_entry.owner,
+                    meta_entry.data_len.0 as usize,
+                ) {
+                    return Ok(None);
+                }
                 match data_ref {
-                    DataRef::NoData => Ok(callback(meta_entry, LoadedData::NoData)),
-                    DataRef::Inline(data) => Ok(callback(meta_entry, LoadedData::Inline(data))),
+                    DataRef::NoData => Ok(Some(callback(meta_entry, LoadedData::NoData))),
+                    DataRef::Inline(data) => {
+                        Ok(Some(callback(meta_entry, LoadedData::Inline(data))))
+                    }
                     DataRef::External(external_data_offset) => {
                         let data_file = self.data_file().ok_or(SplitFileError::MissingDataFile)?;
                         let data_file_len = self.data_len();
@@ -453,7 +484,7 @@ impl SplitFile {
                             meta_entry.address,
                             meta_entry.data_len,
                         )?;
-                        Ok(callback(meta_entry, LoadedData::External(data)))
+                        Ok(Some(callback(meta_entry, LoadedData::External(data))))
                     }
                 }
             },
@@ -991,8 +1022,18 @@ mod tests {
                 let (address, account) = &accounts[i];
                 let logical_offset = written_logical_offsets[i];
 
-                let loaded_account = split.get_account_shared_data(logical_offset).unwrap();
+                let loaded_account = split
+                    .get_account_shared_data_if(logical_offset, |_, _, _| true)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(&loaded_account, account);
+
+                assert!(
+                    split
+                        .get_account_shared_data_if(logical_offset, |_, _, _| false)
+                        .unwrap()
+                        .is_none()
+                );
 
                 split
                     .get_account_with_data(logical_offset, |stored_account| {
@@ -1064,8 +1105,18 @@ mod tests {
                 let (address, account) = &accounts[i];
                 let logical_offset = written_logical_offsets[i];
 
-                let loaded_account = split.get_account_shared_data(logical_offset).unwrap();
+                let loaded_account = split
+                    .get_account_shared_data_if(logical_offset, |_, _, _| true)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(&loaded_account, account);
+
+                assert!(
+                    split
+                        .get_account_shared_data_if(logical_offset, |_, _, _| false)
+                        .unwrap()
+                        .is_none()
+                );
 
                 split
                     .get_account_with_data(logical_offset, |stored_account| {
