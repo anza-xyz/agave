@@ -55,7 +55,6 @@ solana-packet = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-serialize-utils = { workspace = true }
-solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
@@ -68,7 +67,6 @@ arbitrary = { workspace = true }
 bencher = { workspace = true }
 rand = { workspace = true }
 solana-keypair = { workspace = true }
-solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }

@@ -183,6 +183,7 @@ impl VoteStateHandler {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn commission(&self) -> u8 {
         match &self.target_state {
             TargetVoteState::V4(v4) => {

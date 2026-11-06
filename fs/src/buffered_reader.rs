@@ -496,6 +496,7 @@ pub fn large_file_buf_reader(
             .shared_sqpoll(io_setup.shared_sqpoll_fd())
             .use_direct_io(io_setup.use_direct_io)
             .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+            .huge_pages(io_setup.huge_pages)
             .build(buf_size)?;
         reader.set_path(path)?;
         Ok(reader)

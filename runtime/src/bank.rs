@@ -154,10 +154,12 @@ use {
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{
-            MAX_LOADED_ENTRY_COUNT, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+        program_cache::{
+            DELAY_VISIBILITY_SLOT_OFFSET, MAX_LOADED_ENTRY_COUNT,
+            ebpp::EpochBoundaryPreparation,
+            entry::ProgramCacheEntry,
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         },
-        program_cache_entry::{DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry},
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -209,10 +211,7 @@ use {
         transaction::TransactionReturnData, transaction_accounts::KeyedAccountSharedData,
     },
     solana_transaction_error::{AddressLoaderError, TransactionError, TransactionResult as Result},
-    solana_vote::{
-        vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
-        vote_parser,
-    },
+    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateV4,
     std::{
         collections::{HashMap, HashSet},
@@ -435,7 +434,6 @@ pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum TransactionLogCollectorFilter {
     All,
-    AllWithVotes,
     #[default]
     None,
     OnlyMentionedAddresses,
@@ -451,7 +449,6 @@ pub struct TransactionLogCollectorConfig {
 pub struct TransactionLogInfo {
     pub signature: Signature,
     pub result: Result<()>,
-    pub is_vote: bool,
     pub log_messages: TransactionLogMessages,
 }
 
@@ -631,7 +628,6 @@ pub struct BankFieldsToSerialize {
     pub fee_rate_governor: FeeRateGovernor,
     pub epoch_schedule: EpochSchedule,
     pub inflation: Inflation,
-    pub stakes: Stakes<StakeAccount<Delegation>>,
     pub is_delta: bool,
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
@@ -700,7 +696,6 @@ impl PartialEq for Bank {
             reserved_account_keys: _,
             drop_callback: _,
             freeze_started: _,
-            vote_only_bank: _,
             should_replay_from_blockstore: _,
             cost_tracker: _,
             accounts_data_size_initial: _,
@@ -787,7 +782,6 @@ impl BankFieldsToSerialize {
             fee_rate_governor: FeeRateGovernor::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: Stakes::<StakeAccount<Delegation>>::default(),
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
@@ -967,8 +961,6 @@ pub struct Bank {
 
     pub freeze_started: AtomicBool,
 
-    vote_only_bank: bool,
-
     /// Whether ReplayStage should execute this bank from blockstore.
     /// This defaults to true. Banks created for local block production opt out because BankingStage
     /// executes them instead.
@@ -1082,11 +1074,6 @@ impl TxExecutionGuard<'_> {
         self.bank
             .commit_transactions(sanitized_txs, processing_results, processed_counts, timings)
     }
-}
-
-#[derive(Debug, Default)]
-pub struct NewBankOptions {
-    pub vote_only_bank: bool,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -1273,7 +1260,6 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::default(),
-            vote_only_bank: false,
             should_replay_from_blockstore: true,
             cost_tracker: RwLock::<CostTracker>::default(),
             accounts_data_size_initial: 0,
@@ -1383,22 +1369,7 @@ impl Bank {
 
     /// Create a new bank that points to an immutable checkpoint of another bank.
     pub fn new_from_parent(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
-        Self::_new_from_parent(
-            parent,
-            leader,
-            slot,
-            null_tracer(),
-            NewBankOptions::default(),
-        )
-    }
-
-    pub fn new_from_parent_with_options(
-        parent: Arc<Bank>,
-        leader: SlotLeader,
-        slot: Slot,
-        new_bank_options: NewBankOptions,
-    ) -> Self {
-        Self::_new_from_parent(parent, leader, slot, null_tracer(), new_bank_options)
+        Self::_new_from_parent(parent, leader, slot, null_tracer())
     }
 
     pub fn new_from_parent_with_tracer(
@@ -1407,13 +1378,7 @@ impl Bank {
         slot: Slot,
         reward_calc_tracer: impl RewardCalcTracer,
     ) -> Self {
-        Self::_new_from_parent(
-            parent,
-            leader,
-            slot,
-            Some(reward_calc_tracer),
-            NewBankOptions::default(),
-        )
+        Self::_new_from_parent(parent, leader, slot, Some(reward_calc_tracer))
     }
 
     fn get_rent_collector_from(rent_collector: &RentCollector, epoch: Epoch) -> RentCollector {
@@ -1425,10 +1390,8 @@ impl Bank {
         leader: SlotLeader,
         slot: Slot,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-        new_bank_options: NewBankOptions,
     ) -> Self {
         let mut time = Measure::start("bank::new_from_parent");
-        let NewBankOptions { vote_only_bank } = new_bank_options;
 
         parent.freeze();
         assert_ne!(slot, parent.slot());
@@ -1508,7 +1471,6 @@ impl Bank {
                 .expect("block height addition overflowed"),
             fee_rate_governor,
             capitalization: AtomicU64::new(parent.capitalization()),
-            vote_only_bank,
             should_replay_from_blockstore: true,
             inflation: parent.inflation.clone(),
             transaction_count: AtomicU64::new(parent.transaction_count()),
@@ -1661,34 +1623,14 @@ impl Bank {
             return upcoming_feature_set;
         }
 
-        let upcoming_env = self.create_program_runtime_environment(&upcoming_feature_set);
-        let current_env = self
-            .transaction_processor
-            .program_runtime_environment
-            .clone();
-
         let mut ebpp = self
             .transaction_processor
             .epoch_boundary_preparation
             .write()
             .unwrap();
 
-        if *current_env != *upcoming_env && ebpp.upcoming_environment.as_ref().is_none() {
-            // A different environment is upcoming and we are not preparing for
-            // it yet. Initiate or restart EBPP.
-            let pc = self
-                .transaction_processor
-                .global_program_cache
-                .read()
-                .unwrap();
-            ebpp.programs_to_recompile = pc.get_flattened_entries();
-            ebpp.programs_to_recompile
-                .sort_by_cached_key(|(_id, program)| program.retention_score());
-            ebpp.upcoming_epoch = self.epoch.saturating_add(1);
-            ebpp.upcoming_environment = Some(upcoming_env);
-        }
-
-        // Proceed with recompilation, if any programs remain.
+        // Proceed with recompilation, if the root has latched EBPP (see
+        // `latch_ebpp_from_root`) and any programs remain.
         let Some(ebpp_env) = ebpp.upcoming_environment.clone() else {
             return upcoming_feature_set;
         };
@@ -1703,8 +1645,8 @@ impl Bank {
     }
 
     // In an epoch where we've activated a program runtime feature, it's
-    // possible that EBPP (above) could have latched on the *incorrect*
-    // environment, depending on which fork entered the window first.
+    // possible that EBPP could have latched on the *incorrect* environment,
+    // since the root may not have observed the latest activations yet.
     //
     // This function stages an override for `do_load_and_execute_transactions`
     // to ensure the correct deployment environment is picked up for the
@@ -1731,20 +1673,73 @@ impl Bank {
             .set_deployment_env_override(deployment_env);
     }
 
-    pub fn prune_program_cache(&self, bank_forks: &BankForks) {
-        let upcoming_environment = self
+    // Once the root enters the EBPP window, it latches EBPP onto its upcoming
+    // environment, relatching as that changes, and unlatching if it reverts to
+    // the current environment (ie. a pending activation was revoked).
+    //
+    // Returns whether EBPP was unlatched, in which case anything already
+    // recompiled for the abandoned environment should be purged.
+    //
+    // Only called on the new root bank.
+    fn latch_ebpp_from_root(&self, ebpp: &mut EpochBoundaryPreparation) -> bool {
+        if !self.in_ebpp_recompilation_window() {
+            // Not in the window, nothing to do.
+            return false;
+        }
+
+        let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
+        let upcoming_env = self.create_program_runtime_environment(&upcoming_feature_set);
+        let current_env = self
             .transaction_processor
-            .epoch_boundary_preparation
-            .write()
-            .unwrap()
-            .reroot(self.epoch());
+            .program_runtime_environment
+            .clone();
+
+        if *current_env == *upcoming_env {
+            // No different environment is upcoming. Unlatch, if latched.
+            ebpp.programs_to_recompile.clear();
+            return ebpp.upcoming_environment.take().is_some();
+        }
+
+        if ebpp
+            .upcoming_environment
+            .as_ref()
+            .is_none_or(|e| **e != *upcoming_env)
+        {
+            // A different environment is upcoming and we are not preparing for
+            // it yet. Initiate or restart EBPP.
+            let pc = self
+                .transaction_processor
+                .global_program_cache
+                .read()
+                .unwrap();
+            ebpp.programs_to_recompile = pc.get_flattened_entries();
+            ebpp.programs_to_recompile
+                .sort_by_cached_key(|(_id, program)| program.retention_score());
+            ebpp.upcoming_epoch = self.epoch.saturating_add(1);
+            ebpp.upcoming_environment = Some(upcoming_env);
+        }
+        false
+    }
+
+    pub fn root_program_cache(&self, bank_forks: &BankForks) {
+        let purge_stale_envs = {
+            // If this is an epoch rollover, rerooting will signal a purge of
+            // the old environments. Otherwise, an unlatching of EBPP could
+            // signal a purge of stale upcoming environments.
+            let mut ebpp = self
+                .transaction_processor
+                .epoch_boundary_preparation
+                .write()
+                .unwrap();
+            ebpp.reroot(self.epoch()) || self.latch_ebpp_from_root(&mut ebpp)
+        };
         self.transaction_processor
             .global_program_cache
             .write()
             .unwrap()
             .prune(
                 self.slot(),
-                upcoming_environment.map(|_| {
+                purge_stale_envs.then(|| {
                     ProgramRuntimeEnvironment::clone(
                         &self.transaction_processor.program_runtime_environment,
                     )
@@ -1981,10 +1976,6 @@ impl Bank {
         *self.drop_callback.write().unwrap() = OptionalDropCallback(callback);
     }
 
-    pub fn vote_only_bank(&self) -> bool {
-        self.vote_only_bank
-    }
-
     pub fn should_replay_from_blockstore(&self) -> bool {
         self.should_replay_from_blockstore
     }
@@ -2132,10 +2123,11 @@ impl Bank {
         let slot = fields.slot;
         let epoch = fields.epoch_schedule.get_epoch(slot);
         let bank_id = bank_rc.bank_id_generator.next();
-        bank_rc
-            .accounts
-            .accounts_db
-            .notify_bank_creation(slot, None, bank_id);
+        bank_rc.accounts.accounts_db.notify_bank_creation(
+            slot,
+            (slot != 0).then_some(fields.parent_slot),
+            bank_id,
+        );
         let ancestors = Ancestors::from(vec![(slot, bank_id)]);
         // Initialize the rewards thread pool while creating the first bank so
         // the first epoch boundary crossing does not pay the cost.
@@ -2274,7 +2266,6 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::new(fields.hash != Hash::default()),
-            vote_only_bank: false,
             should_replay_from_blockstore: true,
             cost_tracker: RwLock::new(CostTracker::default()),
             accounts_data_size_initial,
@@ -2381,7 +2372,6 @@ impl Bank {
             fee_rate_governor: self.fee_rate_governor.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
             inflation: *self.inflation.read().unwrap(),
-            stakes: self.stakes_cache.stakes().clone(),
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
             versioned_epoch_stakes: self.epoch_stakes.clone(),
@@ -3888,13 +3878,17 @@ impl Bank {
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
-                RuntimeTransaction::try_create(
+                let mut tx = RuntimeTransaction::try_create(
                     tx,
                     MessageHash::Compute,
                     None,
                     self,
                     self.get_reserved_account_keys(),
-                )
+                )?;
+                if !self.feature_set.snapshot().loaderv3_programdata_size_floor {
+                    tx.load_implicit_read_locks();
+                }
+                Ok(tx)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(TransactionBatch::new(
@@ -3963,7 +3957,7 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
-    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: SVMMessage>(
+    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: TransactionWithMeta>(
         &'a self,
         transaction: &'a Tx,
     ) -> TransactionBatch<'a, 'a, Tx> {
@@ -3994,10 +3988,6 @@ impl Bank {
         sanitized_epoch: Epoch,
         alt_invalidation_slot: Slot,
     ) -> Result<()> {
-        if self.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(transaction) {
-            return Err(TransactionError::SanitizeFailure);
-        }
-
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != sanitized_epoch {
@@ -4200,7 +4190,7 @@ impl Bank {
         account_overrides
     }
 
-    pub fn unlock_accounts<'a, Tx: SVMMessage + 'a>(
+    pub fn unlock_accounts<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         txs_and_results: impl Iterator<Item = (&'a Tx, &'a Result<()>)> + Clone,
     ) {
@@ -4224,7 +4214,7 @@ impl Bank {
 
     pub fn collect_balances(
         &self,
-        batch: &TransactionBatch<impl SVMMessage>,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
     ) -> TransactionBalances {
         let mut balances: TransactionBalances = vec![];
         for transaction in batch.sanitized_transactions() {
@@ -4451,12 +4441,8 @@ impl Bank {
             }
         }
 
-        let is_vote = transaction.is_simple_vote_transaction();
         let store = match transaction_log_collector_config.filter {
-            TransactionLogCollectorFilter::All => {
-                !is_vote || !filtered_mentioned_addresses.is_empty()
-            }
-            TransactionLogCollectorFilter::AllWithVotes => true,
+            TransactionLogCollectorFilter::All => true,
             TransactionLogCollectorFilter::None => false,
             TransactionLogCollectorFilter::OnlyMentionedAddresses => {
                 !filtered_mentioned_addresses.is_empty()
@@ -4468,7 +4454,6 @@ impl Bank {
                 TransactionLogInfo {
                     signature: *transaction.signature(),
                     result: execution_details.status.clone(),
-                    is_vote,
                     log_messages: log_messages.clone(),
                 },
                 filtered_mentioned_addresses,
@@ -5711,7 +5696,7 @@ impl Bank {
 
         // WARNING: Any pending features added here most likely must also be checked in
         //          `Bank::resanitize_transaction_minimally`.
-        let sanitized_tx = {
+        let mut sanitized_tx = {
             let size = tx.data().len();
             if size > max_transaction_size {
                 return Err(TransactionError::SanitizeFailure);
@@ -5742,6 +5727,9 @@ impl Bank {
             )
         }?;
 
+        if !self.feature_set.snapshot().loaderv3_programdata_size_floor {
+            sanitized_tx.load_implicit_read_locks();
+        }
         Ok(sanitized_tx)
     }
 

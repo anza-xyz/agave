@@ -150,6 +150,12 @@ fn test_bank_creation_from_snapshot() {
         assert_ne!(restored.bank_id(), bank.bank_id());
         let banks = notifier.banks.lock().unwrap();
         let (slot, actual_parent, _) = banks[&restored.bank_id()];
-        assert_eq!((slot, actual_parent), (bank.slot(), None));
+        assert_eq!(
+            (slot, actual_parent),
+            (
+                bank.slot(),
+                (bank.slot() != 0).then_some(bank.parent_slot())
+            )
+        );
     }
 }

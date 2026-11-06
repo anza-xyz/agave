@@ -63,7 +63,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_digest = "AkRqWQPiVAxNdHUSojq3apD4PEe7T3h7FUmzLwJAPdp3",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -324,7 +324,7 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
+            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes},
             duplicate_shred::{
                 self, MAX_DUPLICATE_SHREDS,
                 tests::{new_rand_fec_set_index, new_rand_shred},
@@ -337,11 +337,8 @@ pub(crate) mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        solana_transaction::Transaction,
-        solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -571,16 +568,13 @@ pub(crate) mod tests {
         .next()
         .unwrap();
 
-        let vote =
-            CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
-
         // One representative per CrdsData variant. The array length is keyed to
         // strum::EnumCount, so adding a new CrdsData variant without listing it
         // here is a compile error (wrong array length).
         use strum::EnumCount;
         let variants: [CrdsData; CrdsData::COUNT] = [
             CrdsData::LegacyContactInfo(Deprecated {}),
-            CrdsData::Vote(0, vote),
+            CrdsData::Vote(Deprecated {}),
             CrdsData::LowestSlot(0, LowestSlot::new(Pubkey::new_unique(), 0, timestamp())),
             CrdsData::LegacySnapshotHashes(Deprecated {}),
             CrdsData::AccountsHashes(Deprecated {}),
@@ -605,7 +599,12 @@ pub(crate) mod tests {
             CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
         ];
 
-        for data in variants {
+        for (discriminant, data) in variants.into_iter().enumerate() {
+            assert_eq!(
+                wincode::serialize(&data).unwrap()[..4],
+                (discriminant as u32).to_le_bytes(),
+                "deprecating a CRDS payload must preserve every wire discriminant"
+            );
             let value = CrdsValue::new_unsigned(data);
             let bytes = wincode::serialize(&value).unwrap();
             // Deprecated variants fail to deserialize; only assert the bound
@@ -757,34 +756,6 @@ pub(crate) mod tests {
         assert_eq!(prune_message.sanitize(), Ok(()));
         let prune_message = Protocol::PruneMessage(Pubkey::new_unique(), prune_data);
         assert_eq!(prune_message.sanitize(), Err(SanitizeError::InvalidValue));
-    }
-
-    #[test]
-    fn test_vote_size() {
-        let slots = vec![1; 32];
-        let vote = Vote::new(slots, Hash::default());
-        let keypair = Arc::new(Keypair::new());
-
-        // Create the biggest possible vote transaction
-        let vote_ix = vote_instruction::vote_switch(
-            &keypair.pubkey(),
-            &keypair.pubkey(),
-            vote,
-            Hash::default(),
-        );
-        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-
-        let vote = CrdsVote::new(
-            keypair.pubkey(),
-            vote_tx,
-            0, // wallclock
-        )
-        .unwrap();
-        let vote = CrdsValue::new(CrdsData::Vote(1, vote), &Keypair::new());
-        assert!(vote.serialized_size() <= PUSH_MESSAGE_MAX_PAYLOAD_SIZE);
     }
 
     #[test]

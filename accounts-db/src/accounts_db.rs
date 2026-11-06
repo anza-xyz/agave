@@ -69,6 +69,7 @@ use {
         buffered_reader::{FileBufRead as _, RequiredLenBufFileRead},
         io_setup::IoSetupState,
     },
+    agave_memory::{HugePageAlign, HugePages},
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,
@@ -536,34 +537,20 @@ pub struct LoadedAccountAccessor {
 }
 
 impl LoadedAccountAccessor {
-    fn check_and_get_loaded_account_shared_data(
+    fn get_account_shared_data_if(
         &mut self,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<AccountSharedData> {
-        // all of these following .expect() and .unwrap() are like serious logic errors,
-        // ideal for representing this as rust type system....
-
         // The storage was taken from the storage map under the index entry's lock, and holding it
         // keeps it readable even after it is removed from the map.
-
-        // If there's a load filter, read only the account metadata first.
-        // This way we don't read the whole account (including its data)
-        // from disk, only to discard it later.
-        let should_load_account = load_filter.is_none_or(|load_filter| {
-            self.storage_entry
-                .accounts
-                .get_stored_account_without_data_callback(self.offset, |account| {
-                    load_filter(account.lamports, account.owner, account.data_len)
-                })
-                .expect("a held storage is readable")
-        });
-
-        should_load_account.then(|| {
-            self.storage_entry
-                .accounts
-                .get_account_shared_data(self.offset)
-                .expect("a held storage is readable")
-        })
+        self.storage_entry
+            .accounts
+            .get_account_shared_data_if(self.offset, |lamports, owner, data_len| {
+                load_filter
+                    .as_ref()
+                    .is_none_or(|load_filter| load_filter(lamports, owner, data_len))
+            })
+            .expect("a held storage is readable")
     }
 
     fn get_loaded_account<T>(
@@ -2691,8 +2678,7 @@ impl AccountsDb {
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
 
-        let maybe_account =
-            account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
+        let maybe_account = account_accessor.get_account_shared_data_if(load_filter.as_ref());
 
         // Skip zero lamport accounts; a cached one would still be returned after clean removes it
         if let Some(ref account) = maybe_account
@@ -4477,7 +4463,9 @@ impl AccountsDb {
     ) {
         // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
         let use_direct_io = self.use_direct_io;
-        let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
+        let io_setup = IoSetupState::default()
+            .with_direct_io(use_direct_io)
+            .with_huge_pages(HugePages::Transparent(HugePageAlign::Start));
         let mut buf_reader =
             storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
                 .expect("create storage reader");

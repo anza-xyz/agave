@@ -1,9 +1,8 @@
 use {
     crate::shred::{
         self, CODING_SHREDS_PER_FEC_BLOCK, CodingShredHeader, DATA_SHREDS_PER_FEC_BLOCK,
-        DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK,
-        SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE, Shred,
-        ShredCommonHeader, ShredFlags, ShredVariant,
+        DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK, Shred, ShredCommonHeader,
+        ShredFlags, ShredVariant,
         common::impl_shred_common,
         merkle_tree::*,
         payload::{Payload, PayloadMutGuard},
@@ -11,7 +10,10 @@ use {
         traits::{Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait},
     },
     agave_shred_wire_format::{
-        constants::{Section, Sections, sections_with_proof_entries},
+        constants::{
+            MerkleProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_MERKLE_ROOT, SIZE_OF_SIGNATURE,
+            Section, Sections, sections_with_proof_entries,
+        },
         headers::peek_header,
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout},
     },
@@ -60,7 +62,7 @@ const_assert_eq!(ShredCode::SIZE_OF_PAYLOAD, 1228);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShredData {
     /// Deserialized copy of the common header stored in the first
-    /// `SIZE_OF_COMMON_SHRED_HEADER` bytes of `payload`.
+    /// `OFFSET_OF_KIND_HEADER` bytes of `payload`.
     ///
     /// The struct field and the `payload` bytes are two representations of the
     /// same data and are kept in sync: `from_payload` decodes the field out of
@@ -405,7 +407,7 @@ impl<'a> ShredTrait<'a> for ShredData {
     impl_shred_common!();
 
     const SIZE_OF_PAYLOAD: usize = DataLayout::SIZE_OF_PAYLOAD;
-    const SIZE_OF_HEADERS: usize = SIZE_OF_DATA_SHRED_HEADERS;
+    const SIZE_OF_HEADERS: usize = DataLayout::SIZE_OF_HEADERS;
 
     fn from_payload<T>(payload: T) -> Result<Self, Error>
     where
@@ -461,7 +463,7 @@ impl<'a> ShredTrait<'a> for ShredCode {
 
     impl_shred_common!();
     const SIZE_OF_PAYLOAD: usize = CodeLayout::SIZE_OF_PAYLOAD;
-    const SIZE_OF_HEADERS: usize = SIZE_OF_CODING_SHRED_HEADERS;
+    const SIZE_OF_HEADERS: usize = CodeLayout::SIZE_OF_HEADERS;
 
     fn from_payload<T>(payload: T) -> Result<Self, Error>
     where
@@ -719,13 +721,13 @@ impl ErasureBatch {
         }
         let capacity = ShredData::capacity(proof_size, resigned)
             .expect("the shred variant was used to rebuild the erasure batch");
-        let full_size = SIZE_OF_DATA_SHRED_HEADERS + capacity;
+        let full_size = DataLayout::SIZE_OF_HEADERS + capacity;
         let partial =
             data_headers().position(|data_header| usize::from(data_header.size) != full_size);
         if let Some(partial) = partial {
             if data_headers()
                 .skip(partial + 1)
-                .any(|data_header| usize::from(data_header.size) != SIZE_OF_DATA_SHRED_HEADERS)
+                .any(|data_header| usize::from(data_header.size) != DataLayout::SIZE_OF_HEADERS)
             {
                 return Err(FecSetViolation::Padding);
             }
@@ -2190,7 +2192,7 @@ mod test {
             let Shred::ShredData(shred) = &batch[DATA_SHREDS_PER_FEC_BLOCK - 1] else {
                 panic!("expected a data shred");
             };
-            usize::from(shred.data_header.size) == SIZE_OF_DATA_SHRED_HEADERS
+            usize::from(shred.data_header.size) == DataLayout::SIZE_OF_HEADERS
         };
         assert!(
             batches.iter().any(|batch| is_partial(batch)),
@@ -2240,7 +2242,7 @@ mod test {
     #[test_case(
         |shreds| {
             for shred in &mut shreds[5..] {
-                shred.data_header.size = SIZE_OF_DATA_SHRED_HEADERS as u16;
+                shred.data_header.size = DataLayout::SIZE_OF_HEADERS as u16;
             }
         },
         FecSetViolation::MissingDataComplete,
@@ -2250,7 +2252,7 @@ mod test {
     #[test_case(
         |shreds| {
             for shred in shreds.iter_mut() {
-                shred.data_header.size = SIZE_OF_DATA_SHRED_HEADERS as u16;
+                shred.data_header.size = DataLayout::SIZE_OF_HEADERS as u16;
             }
         },
         FecSetViolation::MissingDataComplete,
@@ -2260,7 +2262,7 @@ mod test {
     #[test_case(
         |shreds| {
             shreds[DATA_SHREDS_PER_FEC_BLOCK - 1].data_header.size =
-                SIZE_OF_DATA_SHRED_HEADERS as u16;
+                DataLayout::SIZE_OF_HEADERS as u16;
         },
         FecSetViolation::MissingDataComplete,
         Some(FecSetViolation::MissingDataComplete);
@@ -2333,7 +2335,7 @@ mod test {
                 })
                 .collect();
             for shred in &mut data_shreds[partial..] {
-                shred.data_header.size = SIZE_OF_DATA_SHRED_HEADERS as u16;
+                shred.data_header.size = DataLayout::SIZE_OF_HEADERS as u16;
             }
             data_shreds[DATA_SHREDS_PER_FEC_BLOCK - 1]
                 .data_header

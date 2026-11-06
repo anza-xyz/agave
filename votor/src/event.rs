@@ -29,6 +29,22 @@ pub struct LeaderWindowInfo {
 pub type VotorEventSender = Sender<VotorEvent>;
 pub type VotorEventReceiver = Receiver<VotorEvent>;
 
+#[derive(Debug, Clone, Copy)]
+pub enum FinalizationType {
+    Slow,
+    Fast,
+}
+
+impl FinalizationType {
+    /// returns `true` if Fast finalization else `false`
+    pub(crate) fn as_bool(self) -> bool {
+        match self {
+            Self::Slow => false,
+            Self::Fast => true,
+        }
+    }
+}
+
 /// Events that trigger actions in Votor
 #[derive(Debug, Clone)]
 pub enum VotorEvent {
@@ -65,8 +81,10 @@ pub enum VotorEvent {
     ProduceWindow(LeaderWindowInfo),
 
     /// The block has received a slow or fast finalization certificate and is eligible for rooting
-    /// The bool indicates whether the block is a fast finalization
-    Finalized(Block, bool),
+    Finalized {
+        block: Block,
+        finalization_type: FinalizationType,
+    },
 
     /// We have not observed a finalization and reached the standstill timeout
     /// The slot is the highest finalized slot
@@ -89,13 +107,10 @@ impl VotorEvent {
                 slot: s,
                 block_id: _,
             })
-            | VotorEvent::Finalized(
-                Block {
-                    slot: s,
-                    block_id: _,
-                },
-                _,
-            )
+            | VotorEvent::Finalized {
+                block: Block { slot: s, .. },
+                ..
+            }
             | VotorEvent::BlockNotarized(Block {
                 slot: s,
                 block_id: _,

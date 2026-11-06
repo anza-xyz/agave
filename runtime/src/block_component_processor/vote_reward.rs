@@ -20,7 +20,6 @@ use {
 };
 
 pub(crate) mod epoch_inflation_account_state;
-mod migration_test;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
 ///

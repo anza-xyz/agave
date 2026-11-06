@@ -51,7 +51,6 @@ pub struct FeatureSnapshot {
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub create_account_allow_prefund: bool,
-    pub delay_commission_updates: bool,
     pub increase_cpi_account_info_limit: bool,
     pub poseidon_enforce_padding: bool,
     pub fix_alt_bn128_pairing_length_check: bool,
@@ -84,6 +83,7 @@ pub struct FeatureSnapshot {
     pub replace_ata_with_p_ata: bool,
     pub increase_tx_v1_account_lock_limit: bool,
     pub invoke_signed_v2: bool,
+    pub loaderv3_programdata_size_floor: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -146,7 +146,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &provide_instruction_data_offset_in_vm_r2::ID,
             ),
             create_account_allow_prefund: is_active(&create_account_allow_prefund::ID),
-            delay_commission_updates: is_active(&delay_commission_updates::ID),
             increase_cpi_account_info_limit: is_active(&increase_cpi_account_info_limit::ID),
             poseidon_enforce_padding: is_active(&poseidon_enforce_padding::ID),
             fix_alt_bn128_pairing_length_check: is_active(&fix_alt_bn128_pairing_length_check::ID),
@@ -191,6 +190,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             replace_ata_with_p_ata: is_active(&replace_ata_with_p_ata::ID),
             increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
             invoke_signed_v2: is_active(&invoke_signed_v2::ID),
+            loaderv3_programdata_size_floor: is_active(&loaderv3_programdata_size_floor::ID),
         }
     }
 }
@@ -326,7 +326,6 @@ impl FeatureSet {
             formalize_loaded_transaction_data_size: snapshot.formalize_loaded_transaction_data_size,
             disable_zk_elgamal_proof_program: snapshot.disable_zk_elgamal_proof_program,
             reenable_zk_elgamal_proof_program: snapshot.reenable_zk_elgamal_proof_program,
-            delay_commission_updates: snapshot.delay_commission_updates,
             raise_cpi_nesting_limit_to_8: snapshot.raise_cpi_nesting_limit_to_8,
             increase_cpi_account_info_limit: snapshot.increase_cpi_account_info_limit,
             poseidon_enforce_padding: snapshot.poseidon_enforce_padding,
@@ -353,6 +352,7 @@ impl FeatureSet {
             loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
             loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
             invoke_signed_v2: snapshot.invoke_signed_v2,
+            loaderv3_programdata_size_floor: snapshot.loaderv3_programdata_size_floor,
         }
     }
 }
@@ -1525,7 +1525,7 @@ pub mod upgrade_bpf_stake_program_to_v5_1 {
 }
 
 pub mod alpenglow_fast_leader_handover {
-    solana_pubkey::declare_id!("FastLeaderHandover11111111111111111111111111");
+    solana_pubkey::declare_id!("FLh2kvwNhDNN6kkQrwdDQ4p5FrgdqxnwykgMUryABRwT");
 }
 
 pub mod relax_fee_payer_constraint {
@@ -1607,6 +1607,10 @@ pub mod increase_tx_v1_account_lock_limit {
 
 pub mod invoke_signed_v2 {
     solana_pubkey::declare_id!("inv2LMjJ1j8e5DB36ETnszFcmtYfRZGgk6oJzYr9zK8");
+}
+
+pub mod loaderv3_programdata_size_floor {
+    solana_pubkey::declare_id!("8whkDenELnfwYLirBc4Wb4H2Z1z5K7tiykpdxJS7cWg1");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2750,6 +2754,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             invoke_signed_v2::id(),
             "SIMD-0670: ABIv1 invoke signed v2 syscall",
+        ),
+        (
+            loaderv3_programdata_size_floor::id(),
+            "Apply a minimum loaded data size to loader-v3 ProgramData accounts",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

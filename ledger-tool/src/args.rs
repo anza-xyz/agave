@@ -136,16 +136,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                  together.",
             )
             .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_access_storages_method")
-            .long("accounts-db-access-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["mmap", "file"])
-            .help(
-                "[DEPRECATED] Access account storages using this method. This flag is now a \
-                 no-op: storages are always accessed via file I/O. The flag is preserved for \
-                 backward compatibility and will be removed in a future release.",
-            ),
         Arg::with_name("accounts_db_ancient_storage_ideal_size")
             .long("accounts-db-ancient-storage-ideal-size")
             .value_name("BYTES")
@@ -338,19 +328,6 @@ pub fn get_accounts_db_config(
         drives: Some(accounts_index_drives),
         ..AccountsIndexConfig::default()
     };
-
-    // The `--accounts-db-access-storages-method` flag is now a no-op. Storages are
-    // always accessed via file I/O. The flag is preserved for backward compatibility,
-    // but the value is ignored with a warning.
-    if arg_matches
-        .value_of("accounts_db_access_storages_method")
-        .is_some()
-    {
-        warn!(
-            "`--accounts-db-access-storages-method` is now a no-op; storages are always accessed \
-             via file I/O."
-        );
-    }
 
     let scan_filter_for_shrinking = arg_matches
         .value_of("accounts_db_scan_filter_for_shrinking")
