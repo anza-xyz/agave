@@ -3821,8 +3821,11 @@ fn test_flush_stores_large_accounts_in_read_cache() {
 
     // Flushing new versions replaces the large account's read cache entry; smaller accounts are
     // dropped
-    let large_account =
-        AccountSharedData::new(2, MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH, &Pubkey::default());
+    let large_account = AccountSharedData::new_with_data(
+        2,
+        vec![0; MIN_DATA_LEN_TO_READ_CACHE_ON_FLUSH],
+        &Pubkey::default(),
+    );
     let small_account = AccountSharedData::new_with_data(
         2,
         rand::random_iter()
@@ -5330,8 +5333,8 @@ fn test_load_account_and_shrink_race() {
     let ancestors = Ancestors::default();
 
     // Leave a dead account in storage so shrinking actually rewrites the live account.
-    let account = AccountSharedData::new(42, 64, &Pubkey::default());
-    let mut dead_account = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account = AccountSharedData::new_with_data(42, vec![0; 64], &Pubkey::default());
+    let mut dead_account = AccountSharedData::empty(1, &Pubkey::default());
     db.store_for_tests((
         slot,
         [(&pubkey, &account), (&dead_pubkey, &dead_account)].as_slice(),
