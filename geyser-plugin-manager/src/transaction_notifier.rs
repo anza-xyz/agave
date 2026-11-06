@@ -38,7 +38,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         index: usize,
         signature: &Signature,
         message_hash: &Hash,
-        is_vote: bool,
+        _is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
     ) {
@@ -158,7 +158,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             index,
             message_hash,
             signature,
-            is_vote,
+            is_vote: false,
             transaction,
             transaction_status_meta: &transaction_status_meta,
         };
@@ -559,7 +559,7 @@ mod tests {
             compute_units_consumed: None,
             cost_units: None,
         };
-        let expected_ok = format!("{:?}", (43u64, 9u64, 0usize, true, &expected_ok_meta));
+        let expected_ok = format!("{:?}", (43u64, 9u64, 0usize, false, &expected_ok_meta));
         assert_eq!(*captured.lock().unwrap(), vec![expected_ok]);
     }
 }

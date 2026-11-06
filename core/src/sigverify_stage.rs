@@ -134,39 +134,39 @@ impl SigVerifyStage {
     /// Joining or dropping the stage blocks until all senders of `packet_receiver` are dropped.
     pub fn new(
         packet_receiver: Receiver<PacketBatch>,
-        non_vote_sender: BankingPacketSender,
-        forward_stage_sender: Sender<(BankingPacketBatch, bool)>,
+        transaction_sender: BankingPacketSender,
+        forward_stage_sender: Sender<BankingPacketBatch>,
         num_workers: NonZeroUsize,
-        forward_non_votes: bool,
+        forward_transactions: bool,
         sharable_banks: SharableBanks,
         scheduler_priority_floor: Option<Arc<SchedulerPriorityFloor>>,
     ) -> Self {
-        let non_vote_stats = SigVerifierStats::default();
+        let transaction_stats = SigVerifierStats::default();
         let exit = Arc::new(AtomicBool::new(false));
         let mut rng = rand::rng();
-        let non_vote_deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
+        let transaction_deduper = Arc::new(Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS));
         let worker_pool = SigVerifyWorkerPool::new(
             num_workers,
             packet_receiver,
             forward_stage_sender,
-            forward_non_votes,
+            forward_transactions,
             sharable_banks,
             SigVerifyWorkerState::new(
-                non_vote_sender,
-                non_vote_deduper.clone(),
+                transaction_sender,
+                transaction_deduper.clone(),
                 SigVerifyWorkerStats {
-                    total_batches: non_vote_stats.total_batches.clone(),
-                    total_packets: non_vote_stats.total_packets.clone(),
-                    total_dedup: non_vote_stats.total_dedup.clone(),
-                    total_dedup_time_us: non_vote_stats.total_dedup_time_us.clone(),
-                    total_valid_packets: non_vote_stats.total_valid_packets.clone(),
-                    total_verify_time_us: non_vote_stats.total_verify_time_us.clone(),
-                    max_pre_send_len: non_vote_stats.max_pre_send_len.clone(),
-                    eviction_drops: non_vote_stats.eviction_drops.clone(),
-                    total_dropped_below_priority_floor: non_vote_stats
+                    total_batches: transaction_stats.total_batches.clone(),
+                    total_packets: transaction_stats.total_packets.clone(),
+                    total_dedup: transaction_stats.total_dedup.clone(),
+                    total_dedup_time_us: transaction_stats.total_dedup_time_us.clone(),
+                    total_valid_packets: transaction_stats.total_valid_packets.clone(),
+                    total_verify_time_us: transaction_stats.total_verify_time_us.clone(),
+                    max_pre_send_len: transaction_stats.max_pre_send_len.clone(),
+                    eviction_drops: transaction_stats.eviction_drops.clone(),
+                    total_dropped_below_priority_floor: transaction_stats
                         .total_dropped_below_priority_floor
                         .clone(),
-                    total_priority_floor_time_us: non_vote_stats
+                    total_priority_floor_time_us: transaction_stats
                         .total_priority_floor_time_us
                         .clone(),
                 },
@@ -176,12 +176,11 @@ impl SigVerifyStage {
         let servicer_thread_hdl = Self::servicer(
             exit.clone(),
             ServicerState {
-                deduper: non_vote_deduper,
+                deduper: transaction_deduper,
                 metrics_name: "tpu-verifier",
-                stats: non_vote_stats,
+                stats: transaction_stats,
             },
         );
-
         Self {
             exit,
             servicer_thread_hdl: Some(servicer_thread_hdl),

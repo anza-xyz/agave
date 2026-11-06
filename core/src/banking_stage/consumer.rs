@@ -1,5 +1,3 @@
-#[cfg(test)]
-use smallvec::SmallVec;
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
@@ -98,8 +96,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
 pub struct LeaderProcessedTransactionCounts {
     // Total number of transactions that were passed as candidates for processing
     pub(crate) attempted_processing_count: u64,
-    // The number of transactions of that were processed. See description of in `ProcessTransactionsSummary`
-    // for possible outcomes of execution.
+    // The number of transactions that were processed.
     pub(crate) processed_count: u64,
     // Total number of the processed transactions that returned success/not
     // an error.
@@ -132,8 +129,7 @@ impl Consumer {
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
-        let pre_results =
-            SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
+        let pre_results = std::iter::repeat_n(Ok(()), txs.len()).collect::<Vec<_>>();
         let check_results = Self::check_transactions_for_scheduling(
             bank,
             txs,
@@ -1535,7 +1531,6 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::try_create(
             tx,
             MessageHash::Compute,
-            Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
         )

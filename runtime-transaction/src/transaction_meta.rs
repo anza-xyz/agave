@@ -1,7 +1,7 @@
 //! Transaction Meta contains data that follows a transaction through the
 //! execution pipeline in runtime. Examples of metadata could be limits
-//! specified by compute-budget instructions, simple-vote flag, transaction
-//! costs, durable nonce account etc;
+//! specified by compute-budget instructions, transaction costs, durable nonce
+//! account etc;
 //!
 //! The premise is if anything qualifies as metadata, then it must be valid
 //! and available as long as the transaction itself is valid and available.
@@ -36,7 +36,6 @@ pub trait TransactionMeta {
     /// Cached implicit readonly locks for the currently loaded account keys.
     fn implicit_read_locks(&self) -> &[Pubkey];
     fn message_hash(&self) -> &Hash;
-    fn is_simple_vote_transaction(&self) -> bool;
     fn signature_details(&self) -> &TransactionSignatureDetails;
     fn transaction_configuration(
         &self,
@@ -49,7 +48,6 @@ pub trait TransactionMeta {
 #[derive(Debug)]
 pub(crate) struct CachedTransactionMeta {
     pub(crate) message_hash: Hash,
-    pub(crate) is_simple_vote_transaction: bool,
     pub(crate) signature_details: TransactionSignatureDetails,
     pub(crate) versioned_transaction_config: VersionedTransactionConfiguration,
     pub(crate) instruction_data_len: u16,
