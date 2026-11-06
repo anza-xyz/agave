@@ -389,7 +389,10 @@ fn generate_full_pipeline() -> Result<buildkite::Pipeline> {
 
 fn queue_agents() -> HashMap<String, String> {
     let queue = env::var("CI_QUEUE").unwrap_or_else(|_| String::from("default"));
-    HashMap::from([(String::from("queue"), queue)])
+    HashMap::from([
+        (String::from("queue"), queue),
+        (String::from("agent"), String::from("k8s")),
+    ])
 }
 
 fn default_sanity_step() -> buildkite::Step {
@@ -579,6 +582,7 @@ fn default_localnet_step() -> buildkite::Step {
 fn default_xdp_test_step() -> buildkite::Step {
     let mut agents = queue_agents();
     agents.insert(String::from("kernel"), String::from("host"));
+    agents.insert(String::from("agent"), String::from("static"));
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("xdp-test"),
         command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
