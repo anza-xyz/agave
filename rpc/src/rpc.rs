@@ -17,7 +17,6 @@ use {
         resolved_transaction_view::ResolvedTransactionView, result::TransactionViewError,
         transaction_view::SanitizedTransactionView,
     },
-    agave_votor_messages::wire::{WireBlockCertMessage, WireCertSignature},
     base64::{Engine, prelude::BASE64_STANDARD},
     crossbeam_channel::{Receiver, Sender, unbounded},
     jsonrpc_core::{
@@ -291,7 +290,6 @@ pub struct JsonRpcRequestProcessor {
     rank_map_cache: Arc<RankMapCache>,
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    max_complete_transaction_status_slot: Arc<AtomicU64>,
     max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     runtime: Arc<Runtime>,
@@ -457,7 +455,7 @@ impl JsonRpcRequestProcessor {
         rank_map_cache: Arc<RankMapCache>,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        _max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<Runtime>,
@@ -481,7 +479,6 @@ impl JsonRpcRequestProcessor {
                 rank_map_cache,
                 max_slots,
                 leader_schedule_cache,
-                max_complete_transaction_status_slot,
                 max_complete_and_rooted_transaction_status_slot,
                 prioritization_fee_cache,
                 runtime,
@@ -567,7 +564,6 @@ impl JsonRpcRequestProcessor {
             rank_map_cache: Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
-            max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
             max_complete_and_rooted_transaction_status_slot: Arc::new(AtomicU64::default()),
             prioritization_fee_cache: Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,
@@ -1002,18 +998,6 @@ impl JsonRpcRequestProcessor {
         // fine
         let bank = self.bank(Some(CommitmentConfig::finalized()));
         bank.epoch_schedule().clone()
-    }
-
-    pub fn get_ag_genesis_cert(&self) -> Option<WireBlockCertMessage> {
-        let bank = self.bank(Some(CommitmentConfig::finalized()));
-        bank.get_alpenglow_genesis_certificate()
-            .map(|c| WireBlockCertMessage {
-                block: c.block,
-                signature: WireCertSignature {
-                    signature: c.signature.signature,
-                    bitmap: c.signature.bitmap,
-                },
-            })
     }
 
     pub async fn get_vat_active_set_rank_map(
@@ -1518,18 +1502,10 @@ impl JsonRpcRequestProcessor {
             // Check if block is confirmed
             let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
             if confirmed_bank.status_cache_ancestors().contains(&slot) {
-                let max_complete_slot = if self
-                    .bank_forks
-                    .read()
-                    .unwrap()
-                    .migration_status()
-                    .is_alpenglow_enabled()
-                {
-                    &self.max_complete_and_rooted_transaction_status_slot
-                } else {
-                    &self.max_complete_transaction_status_slot
-                };
-                Self::check_blockstore_writes_complete(slot, max_complete_slot)?;
+                Self::check_blockstore_writes_complete(
+                    slot,
+                    &self.max_complete_and_rooted_transaction_status_slot,
+                )?;
                 let result = self
                     .runtime
                     .spawn_blocking({
@@ -3361,7 +3337,7 @@ pub mod rpc_minimal {
 // RPC interface that only depends on immediate Bank data
 // Expected to be provided by API nodes
 pub mod rpc_bank {
-    use {super::*, agave_votor_messages::wire::WireBlockCertMessage};
+    use super::*;
     #[rpc]
     pub trait BankData {
         type Metadata;
@@ -3401,10 +3377,6 @@ pub mod rpc_bank {
             start_slot: Slot,
             limit: u64,
         ) -> Result<Vec<String>>;
-
-        #[rpc(meta, name = "getAgGenesisCert")]
-        fn get_ag_genesis_cert(&self, meta: Self::Metadata)
-        -> Result<Option<WireBlockCertMessage>>;
 
         #[rpc(meta, name = "getVatActiveSetRankMap")]
         fn get_vat_active_set_rank_map(
@@ -3487,14 +3459,6 @@ pub mod rpc_bank {
                 .into_iter()
                 .map(|identity| identity.to_string())
                 .collect())
-        }
-
-        fn get_ag_genesis_cert(
-            &self,
-            meta: Self::Metadata,
-        ) -> Result<Option<WireBlockCertMessage>> {
-            debug!("get_ag_genesis_cert rpc request received");
-            Ok(meta.get_ag_genesis_cert())
         }
 
         fn get_vat_active_set_rank_map(
@@ -4807,7 +4771,6 @@ fn resolve_transaction_view<D: AsRef<[u8]>>(
     let sanitized_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<D>>::try_new(
         transaction,
         MessageHash::Compute,
-        None,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))?;
     RuntimeTransaction::<ResolvedTransactionView<D>>::try_new(
@@ -4973,9 +4936,6 @@ pub mod tests {
         solana_runtime::{
             bank::{BankTestConfig, SlotLeader},
             commitment::{BlockCommitment, CommitmentSlots},
-            genesis_utils::{
-                bootstrap_validator_stake_lamports, create_genesis_config_with_tower_leader,
-            },
             non_circulating_supply::non_circulating_accounts,
         },
         solana_sdk_ids::bpf_loader_upgradeable,
@@ -4996,11 +4956,7 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
         },
-        solana_vote_interface::state::VoteStateV4,
-        solana_vote_program::{
-            vote_instruction,
-            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteInit, VoteStateVersions},
-        },
+        solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
         spl_token_2022_interface::{
             extension::{
                 BaseStateWithExtensionsMut, ExtensionType, StateWithExtensionsMut,
@@ -5191,19 +5147,6 @@ pub mod tests {
                 enable_rpc_transaction_history: true,
                 ..JsonRpcConfig::default()
             })
-        }
-
-        fn start_tower() -> Self {
-            let config = JsonRpcConfig {
-                enable_rpc_transaction_history: true,
-                ..JsonRpcConfig::default()
-            };
-            let genesis_config_info = create_genesis_config_with_tower_leader(
-                TEST_MINT_LAMPORTS,
-                &Pubkey::new_unique(),
-                bootstrap_validator_stake_lamports(),
-            );
-            Self::start_with_config_and_genesis(config, genesis_config_info)
         }
 
         fn start_with_config(config: JsonRpcConfig) -> Self {
@@ -5489,21 +5432,6 @@ pub mod tests {
             bank
         }
 
-        fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteStateV4) {
-            let bank = self.working_bank();
-            let versioned = VoteStateVersions::new_v4(vote_state);
-            let space = VoteStateV4::size_of();
-            let balance = bank.get_minimum_balance_for_rent_exemption(space);
-            let vote_account = AccountSharedData::new_data_with_space(
-                balance,
-                &versioned,
-                space,
-                &solana_vote_program::id(),
-            )
-            .unwrap();
-            bank.store_account(vote_pubkey, &vote_account);
-        }
-
         fn update_prioritization_fee_cache(&self, transactions: Vec<Transaction>) {
             let bank = self.working_bank();
 
@@ -5641,43 +5569,6 @@ pub mod tests {
         };
         let (response, _) = futures::executor::block_on(fut);
         assert_eq!(response, 20);
-    }
-
-    #[test]
-    fn test_rpc_get_ag_genesis_cert() {
-        use {
-            agave_votor_messages::{
-                certificate::{CertSignature, GenesisCert},
-                consensus_message::Block,
-            },
-            solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        };
-
-        let rpc = RpcHandler::start();
-        // Seed the bank with a genesis certificate for the RPC to return.
-        let block = Block::new_unique(0);
-        rpc.working_bank()
-            .set_alpenglow_genesis_certificate(&GenesisCert {
-                block,
-                signature: CertSignature {
-                    signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
-                    bitmap: vec![1, 2, 3],
-                },
-            });
-
-        let request = create_test_request("getAgGenesisCert", None);
-        let result: Value = parse_success_result(rpc.handle_request_sync(request));
-        let expected = json!({
-            "block": {
-                "slot": 0,
-                "blockId": &block.block_id,
-            },
-            "signature": {
-                "signature": vec![0u8; BLS_SIGNATURE_AFFINE_SIZE],
-                "bitmap": [1, 2, 3],
-            },
-        });
-        assert_eq!(result, expected);
     }
 
     #[test]
@@ -6449,7 +6340,11 @@ pub mod tests {
             .set_highest_super_majority_root(260);
 
         let num_partitions = 3;
-        let blockhash = Hash::default(); // the test doesn't fill a real parent blockhash
+        let epoch_boundary_block = rpc
+            .blockstore
+            .get_complete_block(first_slot_of_epoch, true)
+            .unwrap();
+        let blockhash = Hash::from_str(&epoch_boundary_block.previous_blockhash).unwrap();
         let hasher = EpochRewardsHasher::new(num_partitions, &blockhash);
         let mut all_partition_rewards = [vec![], vec![], vec![]];
         let stake_only_partition = hasher
@@ -8725,17 +8620,15 @@ pub mod tests {
     }
 
     #[test]
-    fn test_confirmed_get_block_waits_for_transaction_history_under_alpenglow() {
+    fn test_confirmed_get_block_waits_for_rooted_transaction_history() {
         let slot = 1;
-        let rpc = RpcHandler::start_tower();
+        let rpc = RpcHandler::start();
         fill_blockstore_slot_with_ticks(&rpc.blockstore, 1, 0, 0, Hash::default());
         let bank = rpc.advance_bank_to_confirmed_slot(slot);
         rpc.create_test_transactions_and_populate_blockstore();
         rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank;
         rpc.max_complete_transaction_status_slot
             .store(slot + 1, Ordering::SeqCst);
-        let migration_status = rpc.bank_forks.read().unwrap().migration_status();
-        assert!(!migration_status.is_alpenglow_enabled());
 
         let get_block = || {
             rpc.handle_request_sync(create_test_request(
@@ -8743,10 +8636,6 @@ pub mod tests {
                 Some(json!([slot, {"commitment": "confirmed"}])),
             ))
         };
-        let expected: Value = parse_success_result(get_block());
-        assert!(!expected.is_null());
-
-        migration_status.enable_alpenglow_for_tests();
         assert_eq!(
             parse_failure_response(get_block()).0,
             JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
@@ -8754,7 +8643,7 @@ pub mod tests {
 
         rpc.max_complete_and_rooted_transaction_status_slot
             .store(slot, Ordering::SeqCst);
-        assert_eq!(parse_success_result::<Value>(get_block()), expected);
+        assert!(!parse_success_result::<Value>(get_block()).is_null());
     }
 
     #[test]
@@ -9177,210 +9066,6 @@ pub mod tests {
             String::from("Block not available for slot 12345"),
         );
         assert_eq!(response, expected);
-    }
-
-    #[test]
-    fn test_get_vote_accounts() {
-        let rpc = RpcHandler::start_tower();
-        let mut bank = rpc.working_bank();
-        let RpcHandler {
-            ref io,
-            ref meta,
-            ref mint_keypair,
-            ref leader_vote_keypair,
-            ..
-        } = rpc;
-
-        assert_eq!(bank.vote_accounts().len(), 1);
-
-        // Create a vote account with no stake.
-        let alice_vote_keypair = Keypair::new();
-        let alice_vote_state = VoteStateV4::new_with_defaults(
-            &alice_vote_keypair.pubkey(),
-            &VoteInit {
-                node_pubkey: mint_keypair.pubkey(),
-                authorized_voter: alice_vote_keypair.pubkey(),
-                authorized_withdrawer: alice_vote_keypair.pubkey(),
-                commission: 0,
-            },
-            &bank.get_sysvar_cache_for_tests().get_clock().unwrap(),
-        );
-        rpc.store_vote_account(&alice_vote_keypair.pubkey(), alice_vote_state);
-        assert_eq!(bank.vote_accounts().len(), 2);
-
-        // Check getVoteAccounts: the bootstrap validator vote account will be delinquent as it has
-        // stake but has never voted, and the vote account with no stake should not be present.
-        {
-            let req = r#"{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts"}"#;
-            let res = io.handle_request_sync(req, meta.clone());
-            let result: Value = serde_json::from_str(&res.expect("actual response"))
-                .expect("actual response deserialization");
-
-            let vote_account_status: RpcVoteAccountStatus =
-                serde_json::from_value(result["result"].clone()).unwrap();
-
-            assert!(vote_account_status.current.is_empty());
-            assert_eq!(vote_account_status.delinquent.len(), 1);
-            for vote_account_info in vote_account_status.delinquent {
-                assert_ne!(vote_account_info.activated_stake, 0);
-            }
-        }
-
-        let mut advance_bank = || {
-            bank.freeze();
-
-            // Votes
-            let instructions = [
-                vote_instruction::tower_sync(
-                    &leader_vote_keypair.pubkey(),
-                    &leader_vote_keypair.pubkey(),
-                    TowerSync::new_from_slot(bank.slot(), bank.hash()),
-                ),
-                vote_instruction::tower_sync(
-                    &alice_vote_keypair.pubkey(),
-                    &alice_vote_keypair.pubkey(),
-                    TowerSync::new_from_slot(bank.slot(), bank.hash()),
-                ),
-            ];
-
-            bank = rpc.advance_bank_to_confirmed_slot(bank.slot() + 1);
-
-            let transaction = Transaction::new_signed_with_payer(
-                &instructions,
-                Some(&rpc.mint_keypair.pubkey()),
-                &[&rpc.mint_keypair, leader_vote_keypair, &alice_vote_keypair],
-                bank.last_blockhash(),
-            );
-
-            bank.process_transaction(&transaction)
-                .expect("process transaction");
-        };
-
-        // Advance bank to the next epoch
-        for _ in 0..TEST_SLOTS_PER_EPOCH {
-            advance_bank();
-        }
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
-            json!([CommitmentConfig::processed()])
-        );
-
-        let res = io.handle_request_sync(&req, meta.clone());
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-
-        let vote_account_status: RpcVoteAccountStatus =
-            serde_json::from_value(result["result"].clone()).unwrap();
-
-        // The vote account with no stake should not be present.
-        assert!(vote_account_status.delinquent.is_empty());
-
-        // Both accounts should be active and have voting history.
-        assert_eq!(vote_account_status.current.len(), 2);
-        let leader_info = vote_account_status
-            .current
-            .iter()
-            .find(|x| x.vote_pubkey == leader_vote_keypair.pubkey().to_string())
-            .unwrap();
-        assert_ne!(leader_info.activated_stake, 0);
-        // Subtract one because the last vote always carries over to the next epoch
-        // Each slot earned maximum credits
-        let credits_per_slot =
-            solana_vote_program::vote_state::VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
-        let expected_credits =
-            (TEST_SLOTS_PER_EPOCH - MAX_LOCKOUT_HISTORY as u64 - 1) * credits_per_slot;
-        assert_eq!(
-            leader_info.epoch_credits,
-            vec![
-                (0, expected_credits, 0),
-                (1, expected_credits + credits_per_slot, expected_credits) // one vote in current epoch
-            ]
-        );
-
-        // Filter request based on the leader:
-        {
-            let req = format!(
-                r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
-                json!([RpcGetVoteAccountsConfig {
-                    vote_pubkey: Some(leader_vote_keypair.pubkey().to_string()),
-                    commitment: Some(CommitmentConfig::processed()),
-                    ..RpcGetVoteAccountsConfig::default()
-                }])
-            );
-
-            let res = io.handle_request_sync(&req, meta.clone());
-            let result: Value = serde_json::from_str(&res.expect("actual response"))
-                .expect("actual response deserialization");
-
-            let vote_account_status: RpcVoteAccountStatus =
-                serde_json::from_value(result["result"].clone()).unwrap();
-
-            assert_eq!(vote_account_status.current.len(), 1);
-            assert_eq!(vote_account_status.delinquent.len(), 0);
-            for vote_account_info in vote_account_status.current {
-                assert_eq!(
-                    vote_account_info.vote_pubkey,
-                    leader_vote_keypair.pubkey().to_string()
-                );
-            }
-        }
-
-        // Overflow the epoch credits history and ensure only `MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY`
-        // results are returned
-        for _ in
-            0..(TEST_SLOTS_PER_EPOCH * (MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY) as u64)
-        {
-            advance_bank();
-        }
-
-        let req = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
-            json!([CommitmentConfig::processed()])
-        );
-
-        let res = io.handle_request_sync(&req, meta.clone());
-        let result: Value = serde_json::from_str(&res.expect("actual response"))
-            .expect("actual response deserialization");
-
-        let vote_account_status: RpcVoteAccountStatus =
-            serde_json::from_value(result["result"].clone()).unwrap();
-
-        assert!(vote_account_status.delinquent.is_empty());
-        assert!(
-            !vote_account_status
-                .current
-                .iter()
-                .any(|x| x.epoch_credits.len() != MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY)
-        );
-
-        // Advance bank with no voting
-        rpc.advance_bank_to_confirmed_slot(bank.slot() + TEST_SLOTS_PER_EPOCH);
-
-        // The leader vote account should now be delinquent, and the other vote account disappears
-        // because it's inactive with no stake
-        {
-            let req = format!(
-                r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
-                json!([CommitmentConfig::processed()])
-            );
-
-            let res = io.handle_request_sync(&req, meta.clone());
-            let result: Value = serde_json::from_str(&res.expect("actual response"))
-                .expect("actual response deserialization");
-
-            let vote_account_status: RpcVoteAccountStatus =
-                serde_json::from_value(result["result"].clone()).unwrap();
-
-            assert!(vote_account_status.current.is_empty());
-            assert_eq!(vote_account_status.delinquent.len(), 1);
-            for vote_account_info in vote_account_status.delinquent {
-                assert_eq!(
-                    vote_account_info.vote_pubkey,
-                    rpc.leader_vote_keypair.pubkey().to_string()
-                );
-            }
-        }
     }
 
     #[test]

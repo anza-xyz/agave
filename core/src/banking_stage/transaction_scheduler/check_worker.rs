@@ -123,7 +123,7 @@ mod tests {
             work_receiver,
             result_sender,
             sharable_banks.clone(),
-            SharedLeaderState::new(0, None, None),
+            SharedLeaderState::new(0, None),
             Arc::default(),
         );
         for _ in 0..8 {
@@ -167,8 +167,8 @@ mod tests {
             forks.insert(working_bank);
             forks.sharable_banks()
         };
-        let mut shared_leader_state = SharedLeaderState::new(0, None, None);
-        shared_leader_state.store(Arc::new(LeaderState::new(Some(leader_bank), 0, None, None)));
+        let mut shared_leader_state = SharedLeaderState::new(0, None);
+        shared_leader_state.store(Arc::new(LeaderState::new(Some(leader_bank), 0, None)));
 
         let (work_sender, work_receiver) = bounded(1);
         let (result_sender, result_receiver) = bounded(1);
@@ -188,7 +188,7 @@ mod tests {
             .unwrap();
         assert!(result_receiver.recv().unwrap().is_ok());
 
-        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None, None)));
+        shared_leader_state.store(Arc::new(LeaderState::new(None, 0, None)));
         work_sender
             .send(transaction_bytes(&sharable_banks, &mint_keypair))
             .unwrap();
@@ -903,7 +903,7 @@ pub(crate) mod external {
             let (check_worker_to_pack, response_receiver) = shaq::mpmc::pair(16).unwrap();
             let worker_allocator = rts_alloc::Allocator::join_from_existing(&allocator)
                 .expect("join allocator from test allocator");
-            let shared_leader_state = SharedLeaderState::new(0, None, None);
+            let shared_leader_state = SharedLeaderState::new(0, None);
             let worker = ExternalCheckWorker::new(
                 Arc::new(AtomicBool::new(false)),
                 receiver,

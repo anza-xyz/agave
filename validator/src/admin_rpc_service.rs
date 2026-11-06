@@ -99,8 +99,6 @@ pub struct AdminRpcContactInfo {
     pub tpu: SocketAddr,
     pub tpu_quic: Option<SocketAddr>,
     pub tpu_forwards: SocketAddr,
-    /// Retained for compatibility with the legacy admin RPC contact-info schema.
-    pub tpu_vote: SocketAddr,
     pub rpc: SocketAddr,
     pub rpc_pubsub: SocketAddr,
     pub serve_repair: SocketAddr,
@@ -145,7 +143,6 @@ impl From<ContactInfo> for AdminRpcContactInfo {
             tpu: unwrap_socket!(tpu, Protocol::UDP),
             tpu_quic: node.tpu(Protocol::QUIC),
             tpu_forwards: unwrap_socket!(tpu_forwards, Protocol::UDP),
-            tpu_vote: unwrap_socket!(tpu_vote, Protocol::UDP),
             rpc: unwrap_socket!(rpc),
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
@@ -165,7 +162,6 @@ impl Display for AdminRpcContactInfo {
             writeln!(f, "TPU QUIC: {tpu_quic}")?;
         }
         writeln!(f, "TPU Forwards: {}", self.tpu_forwards)?;
-        writeln!(f, "TPU Votes: {}", self.tpu_vote)?;
         writeln!(f, "RPC: {}", self.rpc)?;
         writeln!(f, "RPC Pubsub: {}", self.rpc_pubsub)?;
         writeln!(f, "Serve Repair: {}", self.serve_repair)?;
@@ -244,7 +240,6 @@ pub trait AdminRpc {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()>;
 
@@ -253,7 +248,6 @@ pub trait AdminRpc {
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()>;
 
@@ -616,7 +610,6 @@ impl AdminRpc for AdminRpcImpl {
         &self,
         meta: Self::Metadata,
         keypair_file: String,
-        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity request received");
@@ -634,7 +627,6 @@ impl AdminRpc for AdminRpcImpl {
         &self,
         meta: Self::Metadata,
         identity_keypair: Vec<u8>,
-        _require_tower: bool,
         require_vote_history: bool,
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
@@ -1349,7 +1341,7 @@ mod tests {
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false, false]}}"#,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
         );
         let response = io.handle_request_sync(&set_id_request, meta.clone());
         let actual_parsed_response: Value =
@@ -1609,7 +1601,7 @@ mod tests {
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false, false]}}"#,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
         );
         let response = test_validator.handle_request(&set_id_request);
         let actual_parsed_response: Value =

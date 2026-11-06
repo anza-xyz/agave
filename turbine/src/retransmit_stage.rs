@@ -8,13 +8,13 @@ use {
         },
     },
     agave_votor::event::VotorEvent,
-    agave_votor_messages::migration::MigrationStatus,
     agave_worker_pool::{WorkerPool, WorkerPoolConfig},
     crossbeam_channel::{Receiver, Sender, TrySendError},
     lru::LruCache,
     rand::Rng,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{
@@ -124,7 +124,6 @@ struct RetransmitStats {
 struct RetransmitNotifiers {
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
-    migration_status: Arc<MigrationStatus>,
     votor_event_sender: Sender<VotorEvent>,
 }
 
@@ -516,10 +515,7 @@ impl RetransmitStage {
         xdp_sender: Option<XdpSender>,
         votor_event_sender: Sender<VotorEvent>,
     ) -> (RetransmitSender, Self) {
-        let (sharable_banks, migration_status) = {
-            let bank_forks = bank_forks.read().unwrap();
-            (bank_forks.sharable_banks(), bank_forks.migration_status())
-        };
+        let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -567,7 +563,6 @@ impl RetransmitStage {
             notifiers: RetransmitNotifiers {
                 rpc_subscriptions,
                 slot_status_notifier,
-                migration_status,
                 votor_event_sender,
             },
         };
@@ -829,7 +824,7 @@ fn notify_subscribers(
             .notify_first_shred_received(slot);
     }
 
-    if notifiers.migration_status.should_send_first_shred(slot) {
+    if slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot) {
         match notifiers
             .votor_event_sender
             .try_send(VotorEvent::FirstShred(slot))
@@ -860,7 +855,6 @@ mod tests {
         solana_entry::entry::create_ticks,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::shred::{ProcessShredsStats, Shredder},
     };
 
@@ -1007,20 +1001,16 @@ mod tests {
     }
 
     #[test]
-    fn test_notify_subscribers_sends_first_shred_after_genesis() {
+    fn test_notify_subscribers_sends_first_shred_at_leader_window_boundary() {
         let (votor_event_sender, votor_event_receiver) = crossbeam_channel::bounded(1);
-        let migration_status = Arc::new(MigrationStatus::post_migration_status());
-        let genesis_slot = migration_status.genesis_block().unwrap().slot;
         let notifiers = RetransmitNotifiers {
             rpc_subscriptions: None,
             slot_status_notifier: None,
-            migration_status,
             votor_event_sender,
         };
         let mut pending_first_shred_event = None;
 
-        let slot = genesis_slot.checked_add(1).unwrap();
-        assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
+        let slot = NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot;
         notify_subscribers(
             slot,
             /*timestamp:*/ 0,
@@ -1034,8 +1024,8 @@ mod tests {
         ));
         assert!(pending_first_shred_event.is_none());
 
-        // Later unaligned slots do not need a FirstShred event.
-        let slot = slot.checked_add(1).unwrap();
+        // Unaligned slots do not need a FirstShred event.
+        let slot = slot + 1;
         assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
         notify_subscribers(
             slot,

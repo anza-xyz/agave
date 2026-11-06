@@ -154,7 +154,7 @@ mod tests {
         for slot in 0..=4 {
             let bank_hash = Hash::new_unique();
             slot_to_bank_hash.insert(slot, bank_hash);
-            blockstore.insert_bank_hash(slot, bank_hash, false);
+            blockstore.insert_bank_hash(slot, bank_hash);
         }
 
         // Test correctness

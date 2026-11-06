@@ -438,7 +438,6 @@ mod tests {
     use {
         super::*,
         crate::{
-            alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
             bank::{
                 SlotLeader,
                 partitioned_epoch_rewards::{
@@ -451,6 +450,8 @@ mod tests {
                 points::{CalculationEnvironment, DelegatedVoteState, PointValue, null_tracer},
                 redeem_rewards,
             },
+            reward_epoch_delegated_stakes::RewardEpochDelegatedStakes,
+            reward_info::RewardInfo,
             stake_utils,
             sysvar_account::from_account,
         },
@@ -1310,6 +1311,9 @@ mod tests {
         // the vote account's reward credits. Keep one credit when inflation is
         // disabled to also exercise advancing credits without paying rewards.
         vote_state.increment_credits(rewarded_epoch, total_rewards.max(1));
+        let stake_history: &StakeHistory = &StakeHistory::default();
+        let new_rate_activation_epoch = None;
+        let adjust_delegations_for_rent = true;
         let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
             epoch: rewarded_epoch,
             delegated_stakes: [(
@@ -1319,13 +1323,6 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
-            migration_epoch: rewarded_epoch - 1,
-            reward_epoch_delegated_stakes: &reward_epoch_delegated_stakes,
-        };
-        let stake_history: &StakeHistory = &StakeHistory::default();
-        let new_rate_activation_epoch = None;
-        let adjust_delegations_for_rent = true;
 
         let maybe_rewards = redeem_rewards(
             pre_stake,
@@ -1342,7 +1339,7 @@ mod tests {
                 adjust_delegations_for_rent,
             },
             null_tracer(),
-            &ag_epoch_type,
+            &reward_epoch_delegated_stakes,
             pre_lamports,
             new_minimum_balance,
         );

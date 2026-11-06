@@ -20,14 +20,17 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Removed the obsolete `voteSubscribe` RPC PubSub method and its client APIs.
+
 #### Changes
 
 ### Validator
 
 #### Breaking
 
-* The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
-  `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`
+* The following TowerBFT/PoH related flags have been removed: `--tower`, `--require-tower`,
+  `--vote-use-quic`, `--tpu-vote-transaction-receive-threads`, `--no-poh-speed-test`,
+  `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`.
 * Removed deprecated arguments
   * `--account-shrink-path`
   * `--accounts-db-access-storages-method`
@@ -41,6 +44,8 @@ Release channels have their own copy of this changelog:
 ### CLI
 
 #### Breaking
+
+* `solana logs` no longer accepts the obsolete `--include-votes` option.
 
 #### Changes
 
@@ -150,8 +155,8 @@ Release channels have their own copy of this changelog:
 
 * `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
   when the request fails on devnet or testnet.
-* `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
-  no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
+* `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow`
+  flag has been removed, and it is no longer possible to start a test-validator with TowerBFT.
 * `solana-genesis` now activates Alpenglow consensus at genesis by default.
 * `withdraw-from-vote-account` now preserves enough SOL for the next Validator Admission Ticket (VAT)
   burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.

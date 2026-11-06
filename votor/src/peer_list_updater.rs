@@ -1,6 +1,6 @@
 use {
     agave_bls_sigverify::bls_sigverifier::NUM_SLOTS_FOR_VERIFY,
-    agave_votor_messages::{migration::MigrationStatus, reward_certificate::NUM_SLOTS_FOR_REWARD},
+    agave_votor_messages::reward_certificate::NUM_SLOTS_FOR_REWARD,
     agave_votor_transport::{PeerList, PeerListSender},
     arc_swap::ArcSwap,
     crossbeam_channel::{RecvTimeoutError, Sender, bounded},
@@ -37,36 +37,18 @@ pub struct PeerListUpdater {
     /// `None` resolves the address from gossip like any other peer, `Some` forces it,
     /// which local-cluster tests use to blackhole peers or point them at a spy listener.
     peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
-    /// Used to hold off connecting to peers until migration.
-    migration_status: Arc<MigrationStatus>,
 }
 
 impl PeerListUpdater {
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn new_for_tests(
-        sharable_banks: SharableBanks,
-        peer_list_sender: PeerListSender,
-        peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
-    ) -> Self {
-        Self::new(
-            sharable_banks,
-            peer_list_sender,
-            peer_overrides,
-            Arc::new(MigrationStatus::post_migration_status()),
-        )
-    }
-
     pub fn new(
         sharable_banks: SharableBanks,
         peer_list_sender: PeerListSender,
         peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
-        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             sharable_banks,
             peer_list_sender,
             peer_overrides,
-            migration_status,
         }
     }
 
@@ -120,8 +102,7 @@ impl PeerListUpdater {
             peers.extend(next.keys());
         }
 
-        let push_enabled =
-            peers.contains(my_identity) && !self.migration_status.is_pre_feature_activation();
+        let push_enabled = peers.contains(my_identity);
         let overrides = self.peer_overrides.load();
         // Resolve each peer once. Pinned overrides need no gossip lookup.
         let mut new_peers = HashMap::with_capacity(peers.len().saturating_add(overrides.len()));
@@ -179,7 +160,6 @@ impl PeerListService {
         peer_list: PeerListSender,
         sharable_banks: SharableBanks,
         peer_overrides: Arc<ArcSwap<HashMap<Pubkey, Option<SocketAddr>>>>,
-        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         let (key_updater_sender, key_updater_receiver) = bounded(16);
         let key_updater = Arc::new(PeerListKeyUpdater {
@@ -188,12 +168,8 @@ impl PeerListService {
         let thread_hdl = Builder::new()
             .name("solVotorPeerUpd".to_string())
             .spawn(move || {
-                let peer_list_updater = PeerListUpdater::new(
-                    sharable_banks,
-                    peer_list,
-                    peer_overrides,
-                    migration_status,
-                );
+                let peer_list_updater =
+                    PeerListUpdater::new(sharable_banks, peer_list, peer_overrides);
 
                 info!("AlpenglowPeerListService has started");
                 let mut my_identity = cluster_info.id();
@@ -401,7 +377,7 @@ mod tests {
         );
 
         let (sender, receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             sender,
             Arc::default(),
@@ -431,7 +407,7 @@ mod tests {
             create_bank_forks_and_cluster_info(num_nodes, num_zero_stake_nodes, slot_num);
 
         let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
             Arc::default(),
@@ -483,7 +459,7 @@ mod tests {
         // A zero-stake peer, which only an override can admit.
         let overridden = node_pubkeys[1];
         let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
             gossip_resolved_overrides([overridden]),
@@ -535,7 +511,7 @@ mod tests {
             "redundant_peer must not be self"
         );
         let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
             gossip_resolved_overrides([unstaked_peer, redundant_peer]),
@@ -572,7 +548,7 @@ mod tests {
 
         let absent = Pubkey::new_unique();
         let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
             gossip_resolved_overrides([absent]),
@@ -598,7 +574,7 @@ mod tests {
         let staked_peer = node_pubkeys[num_zero_stake_nodes + 1];
         let pinned = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 65001);
         let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
             Arc::new(ArcSwap::from_pointee(HashMap::from([(
@@ -629,7 +605,7 @@ mod tests {
         let absent = Pubkey::new_unique();
         let pinned = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 65001);
         let (sender, receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks
                 .read()
                 .expect("test bank forks lock should not be poisoned")
@@ -674,7 +650,7 @@ mod tests {
                 SocketAddrSpace::Global,
             );
         let (peerlist_sender, peerlist_receiver) = empty_peer_list_channel();
-        let svc = PeerListUpdater::new_for_tests(
+        let svc = PeerListUpdater::new(
             bank_forks.read().unwrap().sharable_banks(),
             peerlist_sender,
             gossip_resolved_overrides([]),

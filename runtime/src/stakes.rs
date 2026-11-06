@@ -2,8 +2,9 @@
 //! node stakes
 use {
     crate::{
-        alpenglow_epoch_type::RewardEpochDelegatedStakes, bank::rewards_calculation_thread_pool,
-        stake_account, stake_history::StakeHistory,
+        bank::rewards_calculation_thread_pool,
+        reward_epoch_delegated_stakes::RewardEpochDelegatedStakes, stake_account,
+        stake_history::StakeHistory,
     },
     imbl::HashMap as ImblHashMap,
     num_derive::ToPrimitive,

@@ -227,7 +227,7 @@ fn test_create_new_ledger() {
     let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
     let blockstore = Blockstore::open(ledger_path.path()).unwrap(); //FINDME
 
-    let ticks = create_ticks(genesis_config.ticks_per_slot, 0, genesis_config.hash());
+    let ticks = create_ticks(genesis_config.ticks_per_slot, 1, genesis_config.hash());
     let entries = blockstore.get_slot_entries(0, 0).unwrap();
 
     assert_eq!(ticks, entries);
@@ -1786,7 +1786,6 @@ fn test_should_insert_data_shred() {
         &HashMap::new(),
         max_root,
         ShredSource::Repaired,
-        &mut Vec::new(),
     ));
     let term_last_idx = terminator.last().unwrap().index() as usize;
     // Trying to insert another "is_last" shred with index < the received index should fail
@@ -1799,7 +1798,6 @@ fn test_should_insert_data_shred() {
         .unwrap();
     let slot_meta = blockstore.meta(0).unwrap().unwrap();
     assert_eq!(slot_meta.received, term_last_idx as u64 + 3);
-    let mut duplicate_shreds = vec![];
     // Now we check if terminator is eligible to be inserted
     assert!(
         !blockstore.should_insert_data_shred(
@@ -1809,17 +1807,10 @@ fn test_should_insert_data_shred() {
             &HashMap::new(),
             max_root,
             ShredSource::Repaired,
-            &mut duplicate_shreds,
         ),
         "Should not insert shred with 'last' flag set and index less than already existing shreds"
     );
     assert!(blockstore.has_duplicate_shreds_in_slot(0));
-    assert_eq!(duplicate_shreds.len(), 1);
-    assert_matches!(
-        duplicate_shreds[0],
-        PossibleDuplicateShred::LastIndexConflict(_, _)
-    );
-    assert_eq!(duplicate_shreds[0].slot(), 0);
     let last_idx = shreds.last().unwrap().index();
     // Insert all pending shreds
     blockstore.insert_shreds(shreds, false).unwrap();
@@ -1838,7 +1829,6 @@ fn test_should_insert_data_shred() {
         .0;
 
     // Trying to insert a shred with index > the "is_last" shred should fail
-    duplicate_shreds.clear();
     blockstore.duplicate_slots_cf.delete(0).unwrap();
     assert!(!blockstore.has_duplicate_shreds_in_slot(0));
     assert!(
@@ -1849,17 +1839,10 @@ fn test_should_insert_data_shred() {
             &HashMap::new(),
             max_root,
             ShredSource::Repaired,
-            &mut duplicate_shreds,
         ),
         "Shreds past end of block should fail to insert"
     );
 
-    assert_eq!(duplicate_shreds.len(), 1);
-    assert_matches!(
-        duplicate_shreds[0],
-        PossibleDuplicateShred::LastIndexConflict(_, _)
-    );
-    assert_eq!(duplicate_shreds[0].slot(), 0);
     assert!(blockstore.has_duplicate_shreds_in_slot(0));
 }
 
@@ -2028,16 +2011,11 @@ fn test_merkle_root_metas_coding() {
 
     let ShredInsertionTracker {
         ref merkle_root_metas,
-        ref duplicate_shreds,
         ..
     } = shred_insertion_tracker;
 
-    // No insert, notify duplicate
-    assert_eq!(duplicate_shreds.len(), 1);
-    match &duplicate_shreds[0] {
-        PossibleDuplicateShred::MerkleRootConflict(shred, _) if shred.slot() == slot => (),
-        _ => panic!("No merkle root conflict"),
-    }
+    // No insert, and the duplicate proof is stored immediately.
+    assert!(blockstore.has_duplicate_shreds_in_slot(slot));
 
     // Verify that we still have the merkle root meta from the original shred
     assert_eq!(merkle_root_metas.len(), 1);
@@ -2228,17 +2206,12 @@ fn test_merkle_root_metas_data() {
         .unwrap();
     let ShredInsertionTracker {
         merkle_root_metas,
-        duplicate_shreds,
         write_batch,
         ..
     } = shred_insertion_tracker;
 
-    // No insert, notify duplicate, and block is dead
-    assert_eq!(duplicate_shreds.len(), 1);
-    assert_matches!(
-        duplicate_shreds[0],
-        PossibleDuplicateShred::MerkleRootConflict(_, _)
-    );
+    // No insert, and the duplicate proof is stored immediately.
+    assert!(blockstore.has_duplicate_shreds_in_slot(slot));
 
     // Verify that we still have the merkle root meta from the original shred
     assert_eq!(merkle_root_metas.len(), 1);
@@ -2403,7 +2376,7 @@ fn test_check_insert_coding_shred() {
         ),
         Err(InsertCodingShredError::Exists)
     ));
-    assert!(shred_insertion_tracker.duplicate_shreds.is_empty());
+    assert!(!blockstore.has_duplicate_shreds_in_slot(slot));
 }
 
 /// A shred at an occupied index with the same Merkle root but a different leader
@@ -2472,10 +2445,6 @@ fn test_existing_shred_index_with_different_signature(
             "The newly inserted shred should be recognized as already present."
         );
         assert!(
-            shred_insertion_tracker.duplicate_shreds.is_empty(),
-            "No duplicate should be tracked"
-        );
-        assert!(
             !blockstore.has_duplicate_shreds_in_slot(slot),
             "Slot should not be marked as containing duplicates"
         );
@@ -2485,13 +2454,6 @@ fn test_existing_shred_index_with_different_signature(
         insert_result,
         Err(InsertCodingShredError::InvalidShred),
         "The newly inserted shred should be recognized as a duplicate."
-    );
-    assert_eq!(
-        shred_insertion_tracker.duplicate_shreds,
-        vec![PossibleDuplicateShred::PayloadConflict(
-            conflicting_shred.clone(),
-            original_shred.payload().clone(),
-        )]
     );
     let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
     assert_eq!(duplicate_proof.shred1, *original_shred.payload());
@@ -2585,13 +2547,6 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
         Err(InsertCodingShredError::InvalidShred)
     ));
 
-    assert_eq!(
-        shred_insertion_tracker.duplicate_shreds,
-        vec![PossibleDuplicateShred::PayloadConflict(
-            conflicting_shred.clone(),
-            original_shred.payload().clone(),
-        )]
-    );
     let duplicate_proof = blockstore.get_duplicate_slot(slot).unwrap();
     assert_eq!(duplicate_proof.shred1, *original_shred.payload());
     assert_eq!(duplicate_proof.shred2, *conflicting_shred.payload());
@@ -6916,7 +6871,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     let shreds = data_shreds
         .into_iter()
         .map(|shred| (shred, use_alternate_location, block_location, None));
-    let insert_results = blockstore
+    blockstore
         .do_insert_shreds(
             shreds,
             false,
@@ -6926,7 +6881,6 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
-    assert!(insert_results.duplicate_shreds.is_empty());
 
     let slot_meta = blockstore
         .meta_from_location(slot, block_location)
@@ -7014,7 +6968,7 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         .into_iter()
         .take(3)
         .map(|shred| (shred, use_alternate_location, block_location, None));
-    let insert_results = blockstore
+    blockstore
         .do_insert_shreds(
             shreds,
             false,
@@ -7024,7 +6978,6 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
-    assert!(insert_results.duplicate_shreds.is_empty());
 
     assert!(
         blockstore
@@ -7047,7 +7000,7 @@ fn insert_test_block_at_location(
     let shreds = data_shreds
         .iter()
         .map(|shred| (shred.clone(), is_repaired, location, None));
-    let insert_results = blockstore
+    blockstore
         .do_insert_shreds(
             shreds,
             false,
@@ -7057,7 +7010,6 @@ fn insert_test_block_at_location(
             &mut BlockstoreInsertionMetrics::default(),
         )
         .unwrap();
-    assert!(insert_results.duplicate_shreds.is_empty());
 
     let block_id = blockstore
         .get_double_merkle_root(slot, location)
@@ -7198,7 +7150,7 @@ fn test_get_data_shreds_for_slot() {
         let shreds = data_shreds
             .iter()
             .map(|shred| (shred.clone(), is_repaired, location, None));
-        let insert_results = blockstore
+        blockstore
             .do_insert_shreds(
                 shreds,
                 false,
@@ -7208,7 +7160,6 @@ fn test_get_data_shreds_for_slot() {
                 &mut BlockstoreInsertionMetrics::default(),
             )
             .unwrap();
-        assert!(insert_results.duplicate_shreds.is_empty());
         data_shreds
     });
 

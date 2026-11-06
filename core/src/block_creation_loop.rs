@@ -34,7 +34,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::packet::{BytesPacket, Meta, PacketBatch, bytes::Bytes},
     solana_poh::{
-        poh_recorder::{GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS, PohRecorder, PohRecorderError},
+        poh_recorder::{MAX_LEADER_SLOT_RANGE, PohRecorder, PohRecorderError},
         record_channels::RecordReceiver,
     },
     solana_pubkey::Pubkey,
@@ -310,12 +310,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         highest_finalized,
     };
 
-    // Configure PoH before any Alpenglow leader calls `set_bank()`. At this point,
-    // BlockCreationLoop is the sole modifier of poh_recorder.
-    {
-        let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
-        w_poh_recorder.enable_alpenglow();
-    }
     reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
 
     while !ctx.exit.load(Ordering::Relaxed) {
@@ -422,7 +416,7 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         bank.slot(),
         bank,
         Some(ctx.blockstore.as_ref()),
-        GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
+        MAX_LEADER_SLOT_RANGE,
     );
 
     ctx.poh_recorder
@@ -456,7 +450,7 @@ fn refresh_next_leader_slot(ctx: &LeaderContext) {
         search_after_slot,
         &schedule_bank,
         Some(ctx.blockstore.as_ref()),
-        GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
+        MAX_LEADER_SLOT_RANGE,
     );
 
     ctx.poh_recorder
@@ -892,8 +886,7 @@ fn record_and_complete_block(
     };
 
     let max_tick_height = bank.max_tick_height();
-    // Set the tick height for the bank to max_tick_height - 1, so that PohRecorder::flush_cache()
-    // will properly increment the tick_height to max_tick_height.
+    // Leave room for PohRecorder's final Alpenglow tick to complete the bank.
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
@@ -1673,7 +1666,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1684,7 +1677,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
@@ -1815,7 +1807,7 @@ mod tests {
         let leader_schedule_cache = fixed_leader_schedule(my_pubkey, &root_bank);
 
         let exit = Arc::new(AtomicBool::new(false));
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1826,8 +1818,6 @@ mod tests {
             &PohConfig::default(),
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
-
         let (_record_sender, record_receiver) = record_channels(false);
         let (_leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
         let (banking_stage_sender, _banking_stage_receiver) = banking_channels::channel_for_test();
@@ -1903,7 +1893,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -1914,7 +1904,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (_record_sender, record_receiver) = record_channels(false);
@@ -2014,7 +2003,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank,
@@ -2025,7 +2014,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         drop(entry_receiver);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
@@ -2085,7 +2073,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -2096,7 +2084,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (record_sender, record_receiver) = record_channels(false);
@@ -2198,7 +2185,7 @@ mod tests {
 
         let exit = Arc::new(AtomicBool::new(false));
         let poh_config = PohConfig::default();
-        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             root_bank.tick_height(),
             root_bank.last_blockhash(),
             root_bank.clone(),
@@ -2209,7 +2196,6 @@ mod tests {
             &poh_config,
             exit.clone(),
         );
-        poh_recorder.enable_alpenglow();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (record_sender, record_receiver) = record_channels(false);

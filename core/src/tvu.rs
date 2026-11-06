@@ -224,8 +224,6 @@ impl Tvu {
         votor_init: AlpenglowInitializationState,
         reward_aggregates_sender: Sender<RewardInput>,
     ) -> Result<Self, String> {
-        let migration_status = bank_forks.read().unwrap().migration_status();
-
         let TvuSockets {
             repair: repair_socket,
             fetch: fetch_sockets,
@@ -259,7 +257,7 @@ impl Tvu {
             bounded(MAX_IN_FLIGHT_CONSENSUS_EVENTS);
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
         let (certificate_sender, certificate_receiver) = bounded(MAX_CERTIFICATES_FROM_BLOCKSTORE);
-        blockstore.set_certificate_sender(certificate_sender, migration_status.clone());
+        blockstore.set_certificate_sender(certificate_sender);
 
         // Bring up the votor QUIC datagram endpoint.
         let (votor_runtime, votor_rt_handle) = match Handle::try_current() {
@@ -292,7 +290,6 @@ impl Tvu {
             votor_peer_list_sender,
             sharable_banks.clone(),
             votor_peer_overrides,
-            migration_status.clone(),
         );
         let (votor_egress, endpoint) = QuicDatagramEndpoint::spawn(
             &votor_rt_handle,

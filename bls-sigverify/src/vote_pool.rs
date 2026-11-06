@@ -80,9 +80,6 @@ impl SlotEntry {
                     Ok(())
                 }
             }
-            Vote::Genesis(_) => {
-                unreachable!("genesis vote should have been discarded")
-            }
             Vote::Notarize(notar) => {
                 if self.skip[rank] || self.notar_fallback[rank].contains(&notar.block.block_id) {
                     return Err(VotePoolError::Invalid);

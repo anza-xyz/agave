@@ -1,9 +1,7 @@
-#[cfg(test)]
-use smallvec::SmallVec;
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
-        leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
+        execute_and_commit_timings::ExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
@@ -90,7 +88,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
     // A result that indicates whether transactions were successfully
     // committed into the Poh stream.
     pub commit_transactions_result: Result<Vec<CommitTransactionDetails>, PohRecorderError>,
-    pub(crate) execute_and_commit_timings: LeaderExecuteAndCommitTimings,
+    pub(crate) execute_and_commit_timings: ExecuteAndCommitTimings,
     pub(crate) error_counters: TransactionErrorMetrics,
 }
 
@@ -98,8 +96,7 @@ pub struct ExecuteAndCommitTransactionsOutput {
 pub struct LeaderProcessedTransactionCounts {
     // Total number of transactions that were passed as candidates for processing
     pub(crate) attempted_processing_count: u64,
-    // The number of transactions of that were processed. See description of in `ProcessTransactionsSummary`
-    // for possible outcomes of execution.
+    // The number of transactions that were processed.
     pub(crate) processed_count: u64,
     // Total number of the processed transactions that returned success/not
     // an error.
@@ -132,8 +129,7 @@ impl Consumer {
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
-        let pre_results =
-            SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
+        let pre_results = std::iter::repeat_n(Ok(()), txs.len()).collect::<Vec<_>>();
         let check_results = Self::check_transactions_for_scheduling(
             bank,
             txs,
@@ -271,7 +267,7 @@ impl Consumer {
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled =
             !flags.simulate && self.committer.transaction_status_sender_enabled();
-        let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
+        let mut execute_and_commit_timings = ExecuteAndCommitTimings::default();
 
         let mut error_counters = TransactionErrorMetrics::default();
         let mut retryable_transaction_indexes: Vec<_> = batch
@@ -1535,7 +1531,6 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::try_create(
             tx,
             MessageHash::Compute,
-            Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
         )

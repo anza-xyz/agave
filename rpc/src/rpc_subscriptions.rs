@@ -374,25 +374,14 @@ fn filter_block_result_txs(
 }
 
 fn max_complete_slot_for_block_subscription(
-    commitment: CommitmentConfig,
-    alpenglow_enabled: bool,
-    max_complete_transaction_status_slot: &AtomicU64,
     max_complete_and_rooted_transaction_status_slot: &AtomicU64,
 ) -> Slot {
-    // Alpenglow confirmed blocks are finalized too. Only Tower confirmed subscriptions
-    // can use transaction history before it is rooted.
-    if alpenglow_enabled || commitment.is_finalized() {
-        max_complete_and_rooted_transaction_status_slot.load(Ordering::SeqCst)
-    } else {
-        max_complete_transaction_status_slot.load(Ordering::SeqCst)
-    }
+    max_complete_and_rooted_transaction_status_slot.load(Ordering::SeqCst)
 }
 
 struct BlockNotificationContext<'a> {
     bank_forks: &'a RwLock<BankForks>,
     blockstore: &'a Blockstore,
-    alpenglow_enabled: bool,
-    max_complete_transaction_status_slot: &'a AtomicU64,
     max_complete_and_rooted_transaction_status_slot: &'a AtomicU64,
     notifier: &'a RpcNotifier,
 }
@@ -425,9 +414,6 @@ fn notify_block_subscription(
     slots_to_notify.retain(|slot| ancestors.contains(slot));
     slots_to_notify.push(slot);
     let max_transaction_history_slot = max_complete_slot_for_block_subscription(
-        params.commitment,
-        context.alpenglow_enabled,
-        context.max_complete_transaction_status_slot,
         context.max_complete_and_rooted_transaction_status_slot,
     );
     let mut num_notified = 0;
@@ -998,17 +984,9 @@ impl RpcSubscriptions {
                         }
                         NotificationEntry::TransactionHistoryComplete(slot) => {
                             debug!("transaction history complete through slot {slot}");
-                            let alpenglow_enabled = bank_forks
-                                .read()
-                                .unwrap()
-                                .migration_status()
-                                .is_alpenglow_enabled();
                             let block_notification_context = BlockNotificationContext {
                                 bank_forks: &bank_forks,
                                 blockstore: &blockstore,
-                                alpenglow_enabled,
-                                max_complete_transaction_status_slot:
-                                    &max_complete_transaction_status_slot,
                                 max_complete_and_rooted_transaction_status_slot:
                                     &max_complete_and_rooted_transaction_status_slot,
                                 notifier: &notifier,
@@ -1024,16 +1002,14 @@ impl RpcSubscriptions {
                                 &block_notification_context,
                             );
 
-                            if alpenglow_enabled {
-                                let highest_confirmed_slot =
-                                    optimistically_confirmed_bank.read().unwrap().bank.slot();
-                                retry_block_subscriptions(
-                                    subscriptions.gossip_watchers(),
-                                    CommitmentConfig::confirmed(),
-                                    highest_confirmed_slot,
-                                    &block_notification_context,
-                                );
-                            }
+                            let highest_confirmed_slot =
+                                optimistically_confirmed_bank.read().unwrap().bank.slot();
+                            retry_block_subscriptions(
+                                subscriptions.gossip_watchers(),
+                                CommitmentConfig::confirmed(),
+                                highest_confirmed_slot,
+                                &block_notification_context,
+                            );
                         }
                         NotificationEntry::SignaturesReceived((slot, slot_signatures)) => {
                             for slot_signature in &slot_signatures {
@@ -1081,7 +1057,7 @@ impl RpcSubscriptions {
     }
 
     fn notify_watchers(
-        max_complete_transaction_status_slot: Arc<AtomicU64>,
+        _max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         subscriptions: &HashMap<SubscriptionId, Arc<SubscriptionInfo>>,
         bank_forks: &RwLock<BankForks>,
@@ -1107,16 +1083,9 @@ impl RpcSubscriptions {
         let num_signatures_found = AtomicUsize::new(0);
         let num_signatures_notified = AtomicUsize::new(0);
 
-        let alpenglow_enabled = bank_forks
-            .read()
-            .unwrap()
-            .migration_status()
-            .is_alpenglow_enabled();
         let block_notification_context = BlockNotificationContext {
             bank_forks,
             blockstore,
-            alpenglow_enabled,
-            max_complete_transaction_status_slot: &max_complete_transaction_status_slot,
             max_complete_and_rooted_transaction_status_slot:
                 &max_complete_and_rooted_transaction_status_slot,
             notifier,
@@ -1660,13 +1629,6 @@ pub(crate) mod tests {
             1,
         );
         bank_forks.write().unwrap().insert(bank);
-        assert!(
-            bank_forks
-                .read()
-                .unwrap()
-                .migration_status()
-                .is_alpenglow_enabled()
-        );
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let ledger_path = get_tmp_ledger_path_auto_delete!();

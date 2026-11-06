@@ -25,7 +25,6 @@ use {
     solana_runtime::{bank::Bank, bank_forks::SharableBanks, epoch_stakes::BLSPubkeyStakeEntry},
     solana_signer::Signer,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
-    solana_transaction::Transaction,
     std::{
         collections::{HashMap, hash_map::Entry},
         sync::{Arc, RwLock},
@@ -34,7 +33,7 @@ use {
 };
 
 #[derive(Debug)]
-pub enum GenerateVoteTxResult {
+pub enum GenerateBlsVoteMessageResult {
     // The following are transient errors
     // non voting validator, not eligible for refresh
     // until authorized keypair is overridden
@@ -58,35 +57,12 @@ pub enum GenerateVoteTxResult {
     // The vote account associated with given pubkey does not exist
     VoteAccountNotFound(Pubkey),
 
-    // The following are the successful cases
-    // Generated a vote transaction
-    Tx(Transaction),
-    // Generated a VoteMessage
-    Vote(VoteMessage),
+    // Generated a BLS vote message
+    VoteMessage(Box<VoteMessage>),
 }
 
-impl GenerateVoteTxResult {
-    pub fn is_non_voting(&self) -> bool {
-        matches!(self, Self::NonVoting)
-    }
-
-    pub fn is_hot_spare(&self) -> bool {
-        matches!(self, Self::HotSpare)
-    }
-
-    pub fn is_invalid_config(&self) -> bool {
-        match self {
-            Self::NoAuthorizedVoter(_, _) | Self::VoteAccountNotFound(_) => true,
-            Self::NonVoting
-            | Self::HotSpare
-            | Self::WaitForStartupVerification
-            | Self::WaitToVoteSlot(_)
-            | Self::NoRankFound => false,
-            Self::Tx(_) | Self::Vote(_) => false,
-        }
-    }
-
-    pub fn is_transient_error(&self) -> bool {
+impl GenerateBlsVoteMessageResult {
+    fn is_transient_error(&self) -> bool {
         match self {
             Self::NoAuthorizedVoter(_, _) | Self::VoteAccountNotFound(_) => false,
             Self::NonVoting
@@ -94,7 +70,7 @@ impl GenerateVoteTxResult {
             | Self::WaitForStartupVerification
             | Self::WaitToVoteSlot(_)
             | Self::NoRankFound => true,
-            Self::Tx(_) | Self::Vote(_) => false,
+            Self::VoteMessage(_) => false,
         }
     }
 }
@@ -102,16 +78,16 @@ impl GenerateVoteTxResult {
 #[derive(Debug, Error)]
 pub enum VoteError {
     #[error("Unable to generate bls vote message, transient error: {0:?}")]
-    TransientError(Box<GenerateVoteTxResult>),
+    TransientError(Box<GenerateBlsVoteMessageResult>),
     #[error("Unable to generate bls vote message, configuration error: {0:?}")]
-    InvalidConfig(Box<GenerateVoteTxResult>),
+    InvalidConfig(Box<GenerateBlsVoteMessageResult>),
     #[error("Channel \"{0}\" disconnected")]
     ChannelDisconnected(&'static str),
     #[error("Saved vote history error {0}")]
     SavedVoteHistoryError(#[from] VoteHistoryError),
 }
 
-/// Context required to construct vote transactions
+/// Context required to construct BLS vote messages
 pub(crate) struct VotingContext {
     pub(crate) cluster_info: Arc<ClusterInfo>,
     pub(crate) leader_schedule: Arc<LeaderScheduleCache>,
@@ -149,7 +125,7 @@ fn get_or_insert_bls_keypair(
     }
 }
 
-pub fn generate_vote_tx(
+pub fn generate_bls_vote_message(
     vote: Vote,
     bank: &Bank,
     vote_account_pubkey: Pubkey,
@@ -158,17 +134,17 @@ pub fn generate_vote_tx(
     authorized_voter_keypairs: &RwLock<Vec<Arc<Keypair>>>,
     wait_to_vote_slot: Option<u64>,
     derived_bls_keypairs: &mut HashMap<Pubkey, Arc<BLSKeypair>>,
-) -> GenerateVoteTxResult {
+) -> GenerateBlsVoteMessageResult {
     if authorized_voter_keypairs.read().unwrap().is_empty() {
-        return GenerateVoteTxResult::NonVoting;
+        return GenerateBlsVoteMessageResult::NonVoting;
     }
     if bank.get_vote_account(&vote_account_pubkey).is_none() {
-        return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
+        return GenerateBlsVoteMessageResult::VoteAccountNotFound(vote_account_pubkey);
     }
     if let Some(slot) = wait_to_vote_slot
         && vote.slot() < slot
     {
-        return GenerateVoteTxResult::WaitToVoteSlot(slot);
+        return GenerateBlsVoteMessageResult::WaitToVoteSlot(slot);
     }
 
     let rank_map = bank
@@ -176,7 +152,7 @@ pub fn generate_vote_tx(
         .unwrap_or_else(|| panic!("could not find rank map for slot {}", vote.slot()));
 
     let Some(&my_rank) = rank_map.get_rank_for_vote_pubkey(&vote_account_pubkey) else {
-        return GenerateVoteTxResult::NoRankFound;
+        return GenerateBlsVoteMessageResult::NoRankFound;
     };
     let BLSPubkeyStakeEntry {
         vote_account_pubkey: expected_vote_pubkey,
@@ -192,7 +168,7 @@ pub fn generate_vote_tx(
             "Rank-map vote pubkey mismatch: rank={my_rank}; expected={vote_account_pubkey}; \
              got={expected_vote_pubkey}",
         );
-        return GenerateVoteTxResult::VoteAccountNotFound(vote_account_pubkey);
+        return GenerateBlsVoteMessageResult::VoteAccountNotFound(vote_account_pubkey);
     }
     if expected_node_pubkey != &identity_keypair.pubkey() {
         warn!(
@@ -200,7 +176,7 @@ pub fn generate_vote_tx(
              got={}",
             identity_keypair.pubkey(),
         );
-        return GenerateVoteTxResult::HotSpare;
+        return GenerateBlsVoteMessageResult::HotSpare;
     }
 
     let Some(bls_keypair) =
@@ -219,16 +195,16 @@ pub fn generate_vote_tx(
             "No authorized voter keypair matches rank-map BLS key for vote account \
              {vote_account_pubkey}. Unable to vote"
         );
-        return GenerateVoteTxResult::NonVoting;
+        return GenerateBlsVoteMessageResult::NonVoting;
     };
 
     let vote_payload_to_sign = get_vote_payload_to_sign(vote, shred_version);
-    GenerateVoteTxResult::Vote(VoteMessage {
+    GenerateBlsVoteMessageResult::VoteMessage(Box::new(VoteMessage {
         vote,
         signature: bls_keypair.sign(&vote_payload_to_sign).into(),
         rank: my_rank,
         stake: *stake,
-    })
+    }))
 }
 
 /// Creates a vote message from `vote`, respecting `context.wait_to_vote_slot` only if `respect_wait_to_vote` is true
@@ -243,7 +219,7 @@ fn create_vote_message(
     } else {
         None
     };
-    match generate_vote_tx(
+    match generate_bls_vote_message(
         vote,
         &bank,
         context.vote_account_pubkey,
@@ -253,7 +229,7 @@ fn create_vote_message(
         wait_to_vote_slot,
         &mut context.derived_bls_keypairs,
     ) {
-        GenerateVoteTxResult::Vote(vote_msg) => Ok(vote_msg),
+        GenerateBlsVoteMessageResult::VoteMessage(vote_msg) => Ok(*vote_msg),
         e => {
             if e.is_transient_error() {
                 Err(VoteError::TransientError(Box::new(e)))
@@ -574,7 +550,7 @@ mod tests {
         voting_context.authorized_voter_keypairs = Arc::new(std::sync::RwLock::new(vec![]));
         let vote = Vote::new_skip_vote(5);
         assert!(matches!(
-            generate_vote_tx(
+            generate_bls_vote_message(
                 vote,
                 &voting_context.sharable_banks.root(),
                 voting_context.vote_account_pubkey,
@@ -584,7 +560,7 @@ mod tests {
                 voting_context.wait_to_vote_slot,
                 &mut voting_context.derived_bls_keypairs,
             ),
-            GenerateVoteTxResult::NonVoting
+            GenerateBlsVoteMessageResult::NonVoting
         ));
 
         // Recover correct value to vote again
@@ -613,7 +589,7 @@ mod tests {
         let wrong_identity_keypair = Arc::new(Keypair::new());
         let vote = Vote::new_unique_notar(6);
         assert!(matches!(
-            generate_vote_tx(
+            generate_bls_vote_message(
                 vote,
                 &voting_context.sharable_banks.root(),
                 voting_context.vote_account_pubkey,
@@ -623,7 +599,7 @@ mod tests {
                 voting_context.wait_to_vote_slot,
                 &mut voting_context.derived_bls_keypairs,
             ),
-            GenerateVoteTxResult::HotSpare
+            GenerateBlsVoteMessageResult::HotSpare
         ));
     }
 

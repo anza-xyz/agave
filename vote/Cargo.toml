@@ -47,16 +47,13 @@ solana-bls-signatures = { workspace = true, optional = true }
 solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
-solana-hash = { workspace = true, features = ["copy"] }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
 solana-keypair = { workspace = true }
-solana-packet = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-signer = { workspace = true }
-solana-svm-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode"] }
 solana-vote-interface = { workspace = true, features = ["serde", "wincode"] }
 thiserror = { workspace = true }
@@ -68,7 +65,6 @@ bencher = { workspace = true }
 rand = { workspace = true }
 solana-keypair = { workspace = true }
 solana-signer = { workspace = true }
-solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["wincode", "dev-context-only-utils"] }
 solana-vote = { path = ".", features = ["agave-unstable-api"] }
 solana-vote-interface = { workspace = true, features = ["dev-context-only-utils"] }

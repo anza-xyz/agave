@@ -71,12 +71,9 @@ pub(crate) fn calculate_priority_and_cost<Tx: TransactionMeta + SVMStaticMessage
 /// case the caller should leave the packet to downstream stages to reject.
 pub(crate) fn calculate_priority_from_bytes(bank: &Bank, data: &[u8]) -> Option<u64> {
     let view = SanitizedTransactionView::try_new_sanitized(data).ok()?;
-    let runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-        view,
-        MessageHash::Compute,
-        None,
-    )
-    .ok()?;
+    let runtime_tx =
+        RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+            .ok()?;
     let transaction_configuration = runtime_tx
         .transaction_configuration(&bank.feature_set)
         .ok()?;
@@ -174,12 +171,9 @@ mod tests {
         let from_bytes = priority_from(&bank, &bytes);
 
         let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
-        let runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
+        let runtime_tx =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+                .unwrap();
         let transaction_configuration = runtime_tx
             .transaction_configuration(&bank.feature_set)
             .unwrap();

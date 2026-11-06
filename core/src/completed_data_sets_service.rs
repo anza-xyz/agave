@@ -267,7 +267,6 @@ impl CompletedDataSetsService {
                     completed_data_set_starting_shred_index,
                     completed_data_set_ending_shred_index_exclusive,
                     signature,
-                    false, // is_vote
                     tx,
                     loaded_addresses.as_ref(),
                 );
@@ -324,7 +323,7 @@ pub mod test {
             optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
             rpc_subscriptions::RpcSubscriptions,
         },
-        solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache},
+        solana_runtime::{bank::Bank, commitment::BlockCommitmentCache},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
@@ -357,7 +356,6 @@ pub mod test {
             completed_data_set_starting_shred_index: u32,
             completed_data_set_ending_shred_index_exclusive: u32,
             signature: &Signature,
-            _is_vote: bool,
             transaction: &VersionedTransaction,
             loaded_addresses: Option<&LoadedAddresses>,
         ) {
@@ -523,7 +521,8 @@ pub mod test {
     fn test_recv_completed_data_sets_notifies_and_updates_max_slot() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let (_, bank_forks) =
+            Bank::new_for_tests(&GenesisConfig::default()).wrap_with_bank_forks_for_tests();
         let rpc_subscriptions = RpcSubscriptions::new_for_tests_with_blockstore(
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicU64::default()),
@@ -593,7 +592,8 @@ pub mod test {
     fn test_recv_completed_data_sets_notifies_update_parent() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let (_, bank_forks) =
+            Bank::new_for_tests(&GenesisConfig::default()).wrap_with_bank_forks_for_tests();
         let max_slots = Arc::new(MaxSlots::default());
         let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
         let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
@@ -660,7 +660,8 @@ pub mod test {
     fn test_recv_completed_data_sets_notifies_completed_data_set_range_for_multi_shred_batch() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let (_, bank_forks) =
+            Bank::new_for_tests(&GenesisConfig::default()).wrap_with_bank_forks_for_tests();
         let rpc_subscriptions = RpcSubscriptions::new_for_tests_with_blockstore(
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicU64::default()),

@@ -47,8 +47,7 @@ impl TransactionRecorder {
         Self { record_sender }
     }
 
-    /// Hashes `transactions` and sends them to the block creation loop for recording. Waits for
-    /// response up to 1s.
+    /// Hashes `transactions` and queues them for recording by the block creation loop.
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
     pub fn record_transactions(
         &self,

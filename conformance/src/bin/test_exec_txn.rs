@@ -23,6 +23,11 @@ fn exec(input: &PathBuf) -> bool {
         return false;
     };
 
+    if agave_conformance::txn::is_legacy_vote_fixture(&context) {
+        println!("SKIP: {input:?} (retired Tower-era vote instruction)");
+        return true;
+    }
+
     let effects = agave_conformance::txn::execute_txn_proto(&context);
 
     let ok = effects == expected;
