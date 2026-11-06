@@ -101,6 +101,18 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     pub balance_collector: Option<BalanceCollector>,
 }
 
+/// The result of a `replenish_program_cache` call.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+#[derive(Default)]
+struct ReplenishProgramCacheResult {
+    /// Whether a program in the global cache was missed and therefore had to
+    /// be loaded.
+    loaded_missing: bool,
+    /// Whether a loaded program could not be assigned a slot in the global
+    /// cache while limiting program loads, meaning the batch must be aborted.
+    hit_max_limit: bool,
+}
+
 /// Configuration of the recording capabilities for transaction execution
 #[derive(Copy, Clone, Default)]
 pub struct ExecutionRecordingConfig {
@@ -506,21 +518,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // in the transaction loop below.
         let mut program_cache_for_tx_batch = self.builtin_program_cache.read().unwrap().clone();
 
-        if program_cache_for_tx_batch.hit_max_limit {
-            return LoadAndExecuteSanitizedTransactionsOutput {
-                error_metrics,
-                execute_timings,
-                processing_results: (0..sanitized_txs.len())
-                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                    .collect(),
-                // If we abort the batch and balance recording is enabled, no balances should be
-                // collected. If this is a leader thread, no batch will be committed.
-                balance_collector: None,
-            };
-        }
-
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
         let sysvar_cache = self.sysvar_cache();
+
+        let mut loaded_missing = false;
 
         // Validate, execute, and collect results from each transaction in order.
         // Transactions must be executed in order, because transactions
@@ -599,7 +600,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         filter_executable_us,
                     );
 
-                    let ((), program_cache_us) = measure_us!({
+                    let (replenish_result, program_cache_us) = measure_us!(
                         self.replenish_program_cache(
                             &account_loader,
                             missing_programs,
@@ -610,14 +611,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             &mut execute_timings,
                             config.limit_to_load_programs,
                             true, // increment_usage_counter
-                        );
-                    });
+                        )
+                    );
                     execute_timings.saturating_add_in_place(
                         ExecuteTimingType::ProgramCacheUs,
                         program_cache_us,
                     );
 
-                    if program_cache_for_tx_batch.hit_max_limit {
+                    if replenish_result.hit_max_limit {
                         return LoadAndExecuteSanitizedTransactionsOutput {
                             error_metrics,
                             execute_timings,
@@ -629,6 +630,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             balance_collector: None,
                         };
                     }
+                    loaded_missing |= replenish_result.loaded_missing;
 
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
@@ -727,7 +729,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
+        if loaded_missing || program_cache_for_tx_batch.merged_modified() {
             // NOTE: this is a percentage; do not set above 100.
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: Percent = 90;
             self.global_program_cache
@@ -973,11 +975,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings: &mut ExecuteTimings,
         limit_to_load_programs: bool,
         increment_usage_counter: bool,
-    ) {
+    ) -> ReplenishProgramCacheResult {
+        let mut result = ReplenishProgramCacheResult::default();
         if missing_programs.is_empty() {
             // Nothing to load, so skip the global cache and fork graph locks.
             // Program-cache hit/miss counters are unchanged for empty work.
-            return;
+            return result;
         }
         let mut count_hits_and_misses = true;
         loop {
@@ -1013,7 +1016,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
 
             if let Some((key, program)) = program_to_store {
-                program_cache_for_tx_batch.loaded_missing = true;
+                result.loaded_missing = true;
                 let mut global_program_cache = self.global_program_cache.write().unwrap();
                 // Submit our last completed loading task.
                 if global_program_cache.finish_cooperative_loading_task(
@@ -1027,8 +1030,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // cache slot. It is not possible to mock this error for SVM unit
                     // tests purposes.
                     *program_cache_for_tx_batch = ProgramCacheForTxBatch::new(self.slot);
-                    program_cache_for_tx_batch.hit_max_limit = true;
-                    return;
+                    result.hit_max_limit = true;
+                    return result;
                 }
             } else if missing_programs.is_empty() {
                 break;
@@ -1042,6 +1045,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 let _new_cookie = task_waiter.wait(task_cookie);
             }
         }
+        result
     }
 
     /// Similar to replenish_program_cache() but only used in Bank::prepare_program_cache_for_upcoming_feature_set().
@@ -3318,7 +3322,7 @@ mod tests {
                 &mut ExecuteTimings::default(),
                 true,
                 true,
-            )
+            );
         });
         assert_eq!(
             panicked.as_deref(),
@@ -3377,7 +3381,7 @@ mod tests {
                 &mut ExecuteTimings::default(),
                 true,
                 true,
-            )
+            );
         });
 
         match loader {
@@ -3530,7 +3534,7 @@ mod tests {
                 &mut ExecuteTimings::default(),
                 true,
                 true,
-            )
+            );
         });
         assert_eq!(
             panicked.as_deref(),
@@ -3597,7 +3601,7 @@ mod tests {
                 &mut ExecuteTimings::default(),
                 true,
                 true,
-            )
+            );
         });
         assert_eq!(
             panicked.as_deref(),
@@ -3667,7 +3671,7 @@ mod tests {
 
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new(batch_processor.slot);
         let keys = [program_id];
-        batch_processor.replenish_program_cache(
+        let result = batch_processor.replenish_program_cache(
             &account_loader,
             filter_executable_program_accounts(
                 &mock_bank,
@@ -3710,7 +3714,7 @@ mod tests {
             // If the program was already cached as unloaded, we did not waste
             // a load here, and it remains unloaded until effective.
             assert!(slot_versions[0].is_unloaded());
-            assert!(!program_cache_for_tx_batch.loaded_missing);
+            assert!(!result.loaded_missing);
             assert_eq!(global_program_cache.stats.hits.load(Ordering::Relaxed), 1);
             assert_eq!(global_program_cache.stats.misses.load(Ordering::Relaxed), 0);
         } else {
@@ -3722,7 +3726,7 @@ mod tests {
                 slot_versions[0].program,
                 ProgramCacheEntryType::Loaded(_)
             ));
-            assert!(program_cache_for_tx_batch.loaded_missing);
+            assert!(result.loaded_missing);
             assert_eq!(global_program_cache.stats.hits.load(Ordering::Relaxed), 0);
             assert_eq!(global_program_cache.stats.misses.load(Ordering::Relaxed), 1);
         }

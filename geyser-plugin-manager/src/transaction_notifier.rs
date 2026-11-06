@@ -348,7 +348,9 @@ mod tests {
             slot: Slot,
             bank_id: u64,
         ) -> Result<()> {
-            let ReplicaTransactionInfoVersions::V0_0_5(info) = transaction_info;
+            let ReplicaTransactionInfoVersions::V0_0_5(info) = transaction_info else {
+                panic!("expected the payload without the vote flag");
+            };
             self.captured.lock().unwrap().push(format!(
                 "{:?}",
                 (slot, bank_id, info.index, info.transaction_status_meta)

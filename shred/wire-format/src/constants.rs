@@ -44,9 +44,9 @@ pub const CODE_SHREDS: usize = DATA_SHREDS;
 pub const SHARDS: usize = DATA_SHREDS + CODE_SHREDS;
 
 /// One Merkle proof entry: a hash truncated to 20 bytes.
-pub type ProofEntry = [u8; 20];
+pub type MerkleProofEntry = [u8; 20];
 /// Size of one Merkle proof entry.
-pub const SIZE_OF_MERKLE_PROOF_ENTRY: usize = size_of::<ProofEntry>();
+pub const SIZE_OF_MERKLE_PROOF_ENTRY: usize = size_of::<MerkleProofEntry>();
 
 /// The serialized size of `T`, as defined by wincode.
 pub const fn serialized_size_of<T>() -> usize
@@ -316,7 +316,10 @@ const _: () = {
         assert!(s.signature.len() == serialized_size_of::<Signature>());
         assert!(s.headers.len() == serialized_size_of::<(CommonHeader, K::Header)>());
         assert!(s.chained_merkle_root.len() == serialized_size_of::<Hash>());
-        assert!(s.merkle_proof.len() == serialized_size_of::<[ProofEntry; MERKLE_PROOF_ENTRIES]>());
+        assert!(
+            s.merkle_proof.len()
+                == serialized_size_of::<[MerkleProofEntry; MERKLE_PROOF_ENTRIES]>()
+        );
         match s.retransmitter_signature {
             Some(section) => assert!(section.len() == serialized_size_of::<Signature>()),
             None => assert!(!resigned),

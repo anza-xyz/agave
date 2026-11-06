@@ -447,7 +447,7 @@ where
         .write()
         .unwrap()
         .install_scheduler_pool(DefaultSchedulerPool::new_for_verification(
-            None, None, None, None, None,
+            None, None, None, None,
         ));
     let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
     blockstore_processor::set_alpenglow_ticks(
@@ -850,7 +850,7 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
         .write()
         .unwrap()
         .install_scheduler_pool(DefaultSchedulerPool::new_for_verification(
-            None, None, None, None, None,
+            None, None, None, None,
         ));
     let bank0 = bank_forks.read().unwrap().get(0).unwrap();
     let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);

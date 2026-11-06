@@ -58,7 +58,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
     let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
-        None, None, None, None, None,
+        None, None, None, None,
     );
     let pool = pool_raw.clone();
     bank_forks.write().unwrap().install_scheduler_pool(pool);

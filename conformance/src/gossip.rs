@@ -12,7 +12,7 @@ use {
         GossipCrdsValue, GossipDuplicateShred, GossipEffects, GossipEpochSlots,
         GossipIncrementalHash, GossipIpAddr, GossipIpv6Addr, GossipLowestSlot, GossipMsg,
         GossipPing, GossipPong, GossipPruneData, GossipPruneMessage, GossipPullRequest,
-        GossipPullResponse, GossipPushMessage, GossipSnapshotHashes, GossipSocketEntry, GossipVote,
+        GossipPullResponse, GossipPushMessage, GossipSnapshotHashes, GossipSocketEntry,
         gossip_compressed_slots, gossip_crds_data, gossip_ip_addr, gossip_msg,
     },
     solana_gossip::{
@@ -110,16 +110,6 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                     extensions: vec![],
                 }))
             }
-            CrdsData::Vote(idx, vote) => {
-                let tx_bytes =
-                    wincode::serialize(vote.transaction()).expect("vote transaction serialization");
-                Some(gossip_crds_data::Data::Vote(GossipVote {
-                    index: *idx as u32,
-                    from: vote.from().to_bytes().to_vec(),
-                    wallclock: vote.wallclock(),
-                    transaction: tx_bytes,
-                }))
-            }
             CrdsData::LowestSlot(_, ls) => {
                 Some(gossip_crds_data::Data::LowestSlot(GossipLowestSlot {
                     index: 0,
@@ -191,6 +181,7 @@ pub fn gossip_decode_to_effects(input: &[u8]) -> GossipEffects {
                 },
             )),
             CrdsData::LegacyContactInfo(..)
+            | CrdsData::Vote(..)
             | CrdsData::LegacySnapshotHashes(..)
             | CrdsData::AccountsHashes(..)
             | CrdsData::LegacyVersion(..)

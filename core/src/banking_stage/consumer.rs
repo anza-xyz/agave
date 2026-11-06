@@ -1,3 +1,5 @@
+#[cfg(test)]
+use smallvec::SmallVec;
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
@@ -5,7 +7,6 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    smallvec::SmallVec,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -27,7 +28,6 @@ use {
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::{TransactionError, TransactionResult},
-    solana_vote::vote_parser,
     std::num::Saturating,
 };
 
@@ -82,8 +82,7 @@ pub struct ProcessTransactionBatchOutput {
 }
 
 pub struct ExecuteAndCommitTransactionsOutput {
-    // Transactions counts reported to `ConsumeWorkerMetrics` and then
-    // accumulated later for `LeaderSlotMetrics`
+    // Transaction counts reported to `ConsumeWorkerMetrics`.
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
@@ -126,6 +125,7 @@ impl Consumer {
         }
     }
 
+    #[cfg(test)]
     pub fn process_and_record_transactions(
         &self,
         bank: &Bank,
@@ -141,19 +141,7 @@ impl Consumer {
             bank.max_processing_age(),
             &mut error_counters,
         );
-        let check_results = check_results
-            .into_iter()
-            .zip(txs.iter())
-            .map(|(result, tx)| match result {
-                Ok(_) => {
-                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
-                        Err(TransactionError::SanitizeFailure)
-                    } else {
-                        Ok(())
-                    }
-                }
-                Err(err) => Err(err),
-            });
+        let check_results = check_results.into_iter().map(|result| result.map(|_| ()));
 
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
@@ -659,8 +647,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
+        let committer = Committer::new(transaction_status_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
         TestFrame {
@@ -682,8 +669,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }

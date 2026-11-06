@@ -289,7 +289,7 @@ mod tests {
         },
         agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{
-            GeyserPlugin, ReplicaDeshredTransactionInfoVersions,
+            GeyserPlugin, ReplicaDeshredTransactionInfo, ReplicaDeshredTransactionInfoVersions,
             ReplicaDeshredUpdateParentInfoVersions, Result as PluginResult,
         },
         arc_swap::ArcSwap,
@@ -425,7 +425,9 @@ mod tests {
             transaction: ReplicaDeshredTransactionInfoVersions,
             slot: Slot,
         ) -> PluginResult<()> {
-            let ReplicaDeshredTransactionInfoVersions::V0_0_3(transaction) = transaction;
+            let ReplicaDeshredTransactionInfoVersions::V0_0_3(transaction) = transaction else {
+                panic!("expected the payload without the vote flag");
+            };
             self.notifications
                 .lock()
                 .unwrap()
@@ -770,6 +772,30 @@ mod tests {
             vec![(11, 32, 9, parent_block_id)]
         );
         assert!(disabled_update_parents.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "expected the payload without the vote flag")]
+    fn test_deshred_test_plugin_panics_on_legacy_deshred_info_version() {
+        let plugin = DeshredTestPlugin {
+            name: DUMMY_NAME,
+            enabled: true,
+            alt_resolution_enabled: false,
+            notifications: Arc::new(Mutex::new(Vec::new())),
+            update_parents: Arc::new(Mutex::new(Vec::new())),
+        };
+        let transaction = sample_transaction();
+        let deshred_info = ReplicaDeshredTransactionInfo {
+            signature: &transaction.signatures[0],
+            is_vote: false,
+            transaction: &transaction,
+            loaded_addresses: None,
+        };
+
+        let _ = plugin.notify_deshred_transaction(
+            ReplicaDeshredTransactionInfoVersions::V0_0_1(&deshred_info),
+            11,
+        );
     }
 
     #[test]

@@ -1465,6 +1465,11 @@ mod tests {
             rewards: 1_000_000_000,
             points: 1,
         };
+        let reward_epoch_delegated_stakes = reward_epoch_delegated_stakes_for_tests(rewarded_epoch);
+        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
+            migration_epoch: rewarded_epoch - 1,
+            reward_epoch_delegated_stakes: &reward_epoch_delegated_stakes,
+        };
 
         // there are two distinct paths that can hit `delegation_may_need_adjustment()`:
         // * vote account: standard rewards path
@@ -1494,7 +1499,7 @@ mod tests {
                 null_tracer(),
                 None, // new_rate_activation_epoch
                 true, // adjust_delegations_for_rent (SIMD-0392)
-                &AlpenglowEpochType::Tower,
+                &ag_epoch_type,
                 false, // custom_commission_collector
             );
 
@@ -1694,39 +1699,6 @@ mod tests {
         assert!(point_value.is_some());
         assert_eq!(point_value.as_ref().unwrap().rewards, expected_rewards);
         assert_eq!(point_value.as_ref().unwrap().points, 8400000000000);
-    }
-
-    #[test]
-    fn test_rewards_point_calculation_empty() {
-        agave_logger::setup();
-
-        // bank with no rewards to distribute
-        let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
-
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let rewards_metrics: RewardsMetrics = RewardsMetrics::default();
-        let expected_rewards = 100_000_000_000;
-        let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-        let rewarded_epoch = bank.epoch().saturating_sub(1);
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-
-        let point_value = bank.calculate_reward_points_partitioned(
-            &stake_history,
-            &stake_delegations,
-            &cached_vote_accounts,
-            rewarded_epoch,
-            expected_rewards,
-            &AlpenglowEpochType::Tower,
-            &thread_pool,
-            &rewards_metrics,
-        );
-
-        assert!(point_value.is_none());
     }
 
     #[test]

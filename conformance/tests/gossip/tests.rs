@@ -406,41 +406,6 @@ fn test_conformance_pull_request_lowest_slot_rejected() {
     check(&data, false);
 }
 
-// Vote tests
-
-#[test]
-fn test_conformance_vote_index_valid() {
-    let pk = [0xCC; 32];
-    let vote_data = make_vote_crds_data(0, &pk, 1_000_000);
-    let crds_val = make_crds_value_bytes(&[0u8; 64], &vote_data);
-    let data = make_push_message_bytes(&pk, &[crds_val]);
-    check(&data, true);
-
-    let effects = get_effects(&data);
-    let msg = unwrap_msg(&effects);
-    match msg {
-        gossip_msg::Msg::PushMessage(pm) => {
-            match pm.values[0].data.as_ref().unwrap().data.as_ref().unwrap() {
-                gossip_crds_data::Data::Vote(v) => {
-                    assert_eq!(v.index, 0);
-                    assert!(!v.transaction.is_empty());
-                }
-                other => panic!("expected Vote, got {other:?}"),
-            }
-        }
-        other => panic!("expected PushMessage, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_conformance_vote_index_at_max() {
-    let pk = [0xCC; 32];
-    let vote_data = make_vote_crds_data(32, &pk, 1_000_000);
-    let crds_val = make_crds_value_bytes(&[0u8; 64], &vote_data);
-    let data = make_push_message_bytes(&pk, &[crds_val]);
-    check(&data, false);
-}
-
 // DuplicateShred tests
 
 #[test]

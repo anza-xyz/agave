@@ -479,9 +479,12 @@ impl EventHandler {
             }
 
             // We have finalized this block consider it for rooting
-            VotorEvent::Finalized(block, is_fast_finalization) => {
+            VotorEvent::Finalized {
+                block,
+                finalization_type,
+            } => {
                 info!(
-                    "{}: Finalized {block:?} fast: {is_fast_finalization}",
+                    "{}: Finalized {block:?} finalization_type: {finalization_type:?}",
                     local_context.my_pubkey
                 );
                 local_context.finalized_blocks.insert(block);
@@ -1046,7 +1049,7 @@ mod tests {
         super::*,
         crate::{
             commitment::CommitmentAggregationData,
-            event::{LeaderWindowInfo, RepairEventReceiver},
+            event::{FinalizationType, LeaderWindowInfo, RepairEventReceiver},
             slot_clock::SharedAlpenglowSlotClock,
             vote_history_storage::{
                 FileVoteHistoryStorage, SavedVoteHistory, SavedVoteHistoryVersions,
@@ -1429,9 +1432,12 @@ mod tests {
             self.bls_ops.append(&mut new_ops);
         }
 
-        fn send_finalized_event(&mut self, block: Block, is_fast_finalization: bool) {
+        fn send_finalized_event(&mut self, block: Block, finalization_type: FinalizationType) {
             let mut new_ops = EventHandler::handle_event(
-                VotorEvent::Finalized(block, is_fast_finalization),
+                VotorEvent::Finalized {
+                    block,
+                    finalization_type,
+                },
                 &self.timer_manager,
                 &self.shared_context,
                 &mut self.voting_context,
@@ -2075,7 +2081,7 @@ mod tests {
                 slot: 1,
                 block_id: block_id_1,
             },
-            true,
+            FinalizationType::Fast,
         );
         // Listen on drop bank receiver, it should get bank 0
         let dropped_banks = test_context.drop_bank_receiver.try_recv().unwrap();
@@ -2131,7 +2137,7 @@ mod tests {
 
         // Votor picks slot 1 as root, but replay hasn't written the root marker
         // yet, so the commitment cache must not hear about the root.
-        test_context.send_finalized_event(block_1, true);
+        test_context.send_finalized_event(block_1, FinalizationType::Fast);
         assert!(
             !test_context
                 .commitment_receiver
@@ -2156,7 +2162,7 @@ mod tests {
         let expected_hash = Hash::new_unique();
         bank.set_expected_bank_hash(expected_hash);
 
-        test_context.send_finalized_event(Block { slot: 1, block_id }, true);
+        test_context.send_finalized_event(Block { slot: 1, block_id }, FinalizationType::Fast);
     }
 
     #[test]
@@ -2178,7 +2184,7 @@ mod tests {
                 slot: 1,
                 block_id: finalized_block_id,
             },
-            true,
+            FinalizationType::Fast,
         );
     }
 
@@ -2211,7 +2217,7 @@ mod tests {
                 .highest_parent_ready_slot(),
             None
         );
-        test_context.send_finalized_event(block5, true);
+        test_context.send_finalized_event(block5, FinalizationType::Fast);
         test_context.check_parent_ready_slot((5, block4));
         assert_eq!(
             test_context.shared_context.alpenglow_slot_clock.load(),
@@ -2244,7 +2250,7 @@ mod tests {
                 slot: 5,
                 block_id: block_id_5,
             },
-            true,
+            FinalizationType::Fast,
         );
 
         // We should now have parent ready for slot 5
@@ -2265,7 +2271,7 @@ mod tests {
                 slot: 9,
                 block_id: block_id_9,
             },
-            true,
+            FinalizationType::Fast,
         );
 
         test_context.send_block_event(9, bank9);
@@ -2301,7 +2307,7 @@ mod tests {
                 slot: 4,
                 block_id: block_id_4,
             },
-            true,
+            FinalizationType::Fast,
         );
 
         test_context.check_parent_ready_slot((
@@ -2355,7 +2361,7 @@ mod tests {
                 slot: 1,
                 block_id: block_id_1,
             },
-            true,
+            FinalizationType::Fast,
         );
         assert!(test_context.local_context.standstill_slot.is_none());
 
@@ -2531,7 +2537,7 @@ mod tests {
             block_id: rooted_bank.block_id().unwrap(),
         };
         test_context.send_parent_ready_event(effective_root, Block::default());
-        test_context.send_finalized_event(rooted_block, true);
+        test_context.send_finalized_event(rooted_block, FinalizationType::Fast);
         assert_eq!(
             test_context.bank_forks.read().unwrap().root(),
             effective_root
@@ -2665,7 +2671,7 @@ mod tests {
                 slot: 1,
                 block_id: block_id_1,
             },
-            false,
+            FinalizationType::Slow,
         );
         assert!(test_context.local_context.standstill_slot.is_none());
     }

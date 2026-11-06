@@ -438,7 +438,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            alpenglow_epoch_type::AlpenglowEpochType,
+            alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
             bank::{
                 SlotLeader,
                 partitioned_epoch_rewards::{
@@ -1306,8 +1306,23 @@ mod tests {
         reward_info: Option<(u64, Stake)>,
     ) {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
-        // put 1 credit to create rewards
-        vote_state.increment_credits(rewarded_epoch, 1);
+        // This delegation is the vote account's entire stake, so its reward is
+        // the vote account's reward credits. Keep one credit when inflation is
+        // disabled to also exercise advancing credits without paying rewards.
+        vote_state.increment_credits(rewarded_epoch, total_rewards.max(1));
+        let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
+            epoch: rewarded_epoch,
+            delegated_stakes: [(
+                pre_stake.delegation.voter_pubkey,
+                pre_stake.delegation.stake,
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let ag_epoch_type = AlpenglowEpochType::Alpenglow {
+            migration_epoch: rewarded_epoch - 1,
+            reward_epoch_delegated_stakes: &reward_epoch_delegated_stakes,
+        };
         let stake_history: &StakeHistory = &StakeHistory::default();
         let new_rate_activation_epoch = None;
         let adjust_delegations_for_rent = true;
@@ -1320,14 +1335,14 @@ mod tests {
                 rewarded_epoch,
                 point_value: &PointValue {
                     rewards: total_rewards,
-                    points: 1,
+                    points: 0,
                 },
                 stake_history,
                 new_rate_activation_epoch,
                 adjust_delegations_for_rent,
             },
             null_tracer(),
-            &AlpenglowEpochType::Tower,
+            &ag_epoch_type,
             pre_lamports,
             new_minimum_balance,
         );
@@ -1496,9 +1511,7 @@ mod tests {
 
         // Rewards partially cover minimum balance change
         // -> decrease stake
-        // This case is confusing because it pays out 2 lamports in rewards,
-        // so we adjust minimum up so that even with 2 lamports in rewards, the
-        // delegation goes down.
+        // Two lamports of rewards leave only one lamport above the new minimum.
         check_rent_adjusted_stake_delegation(
             rewarded_epoch,
             Stake {
@@ -1510,7 +1523,7 @@ mod tests {
             },
             new_minimum_balance,
             new_minimum_balance + 1,
-            1,
+            2,
             Some((
                 2,
                 Stake {
@@ -1518,7 +1531,7 @@ mod tests {
                         stake: 1,
                         ..Default::default()
                     },
-                    credits_observed: 1,
+                    credits_observed: 2,
                 },
             )),
         );

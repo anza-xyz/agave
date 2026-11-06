@@ -14,6 +14,9 @@ use {
         request_response::RequestResponse,
         result::{Error, RepairVerifyError, Result},
     },
+    agave_shred_wire_format::constants::{
+        MerkleProofEntry, Nonce, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
+    },
     agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::{Receiver, RecvTimeoutError},
     lazy_lru::LruCache,
@@ -35,8 +38,8 @@ use {
     solana_ledger::{
         blockstore_meta::BlockLocation,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, Nonce, SIZE_OF_NONCE,
-            ShredFetchStats, ShredFlags, ShredType, layout::get_merkle_root, merkle_tree,
+            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, ShredFetchStats, ShredFlags,
+            ShredType, layout::get_merkle_root, merkle_tree,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
@@ -87,11 +90,11 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 #[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SchemaRead, SchemaWrite)]
-pub struct FecSetRoot(merkle_tree::MerkleProofEntry);
+pub struct FecSetRoot(MerkleProofEntry);
 
 impl FecSetRoot {
     /// Returns the authenticated bytes of the FEC-set root.
-    pub fn as_bytes(&self) -> &merkle_tree::MerkleProofEntry {
+    pub fn as_bytes(&self) -> &MerkleProofEntry {
         &self.0
     }
 }
@@ -277,9 +280,7 @@ impl RequestResponse for BlockIdRepairType {
 
                 // + 1 here to account for the parent info which is the final leaf of the tree
                 let proof_size = merkle_tree::get_proof_size(*fec_set_count as usize + 1);
-                if parent_proof.len()
-                    != proof_size as usize * merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY
-                {
+                if parent_proof.len() != proof_size as usize * SIZE_OF_MERKLE_PROOF_ENTRY {
                     return false;
                 }
 
@@ -322,9 +323,7 @@ impl RequestResponse for BlockIdRepairType {
                 }
                 // + 1 here to account for the parent info which is the final leaf of the tree.
                 let proof_size = merkle_tree::get_proof_size(*fec_set_count as usize + 1);
-                if fec_set_proof.len()
-                    != proof_size as usize * merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY
-                {
+                if fec_set_proof.len() != proof_size as usize * SIZE_OF_MERKLE_PROOF_ENTRY {
                     return false;
                 }
                 merkle_tree::verify_merkle_proof(
@@ -3061,7 +3060,7 @@ mod tests {
         let shred = new_test_data_shred(slot, index);
         let merkle_root = shred.merkle_root().expect("No more legacy shreds");
         let mut poisoned_merkle_root = merkle_root.to_bytes();
-        poisoned_merkle_root[merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY] ^= 0xff;
+        poisoned_merkle_root[SIZE_OF_MERKLE_PROOF_ENTRY] ^= 0xff;
         let poisoned_merkle_root = Hash::new_from_array(poisoned_merkle_root);
         assert_ne!(poisoned_merkle_root, merkle_root);
         let fec_set_merkle_root = FecSetRoot::from(merkle_root);
@@ -3222,7 +3221,7 @@ mod tests {
         )
         .unwrap()
         .root();
-        let shortened_proof = fec_set_proof[merkle_tree::SIZE_OF_MERKLE_PROOF_ENTRY..].to_vec();
+        let shortened_proof = fec_set_proof[SIZE_OF_MERKLE_PROOF_ENTRY..].to_vec();
 
         // The generic verifier cannot distinguish an internal node from a leaf.
         assert!(

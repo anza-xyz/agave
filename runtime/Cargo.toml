@@ -57,11 +57,13 @@ agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
 agave-math-utils = { workspace = true }
+agave-memory = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-worker-pool = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 arrayref = { workspace = true }

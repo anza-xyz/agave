@@ -209,17 +209,8 @@ impl ProgramCacheEntry {
         }
     }
 
-    pub fn to_unloaded_in_env(&self, environment: ProgramRuntimeEnvironment) -> Option<Self> {
-        match &self.program {
-            ProgramCacheEntryType::Loaded(_)
-            | ProgramCacheEntryType::FailedVerification(_)
-            | ProgramCacheEntryType::Unloaded(_) => {}
-            ProgramCacheEntryType::Closed
-            | ProgramCacheEntryType::DelayVisibility
-            | ProgramCacheEntryType::Builtin(_) => {
-                return None;
-            }
-        }
+    pub fn to_unloaded(&self) -> Option<Self> {
+        let environment = ProgramRuntimeEnvironment::clone(self.program.get_environment()?);
         Some(Self {
             program: ProgramCacheEntryType::Unloaded(environment),
             account_owner: self.account_owner,
@@ -227,12 +218,6 @@ impl ProgramCacheEntry {
             stats: Arc::clone(&self.stats),
             latest_access_slot: AtomicU64::new(self.latest_access_slot.load(Ordering::Relaxed)),
         })
-    }
-
-    pub fn to_unloaded(&self) -> Option<Self> {
-        self.to_unloaded_in_env(ProgramRuntimeEnvironment::clone(
-            self.program.get_environment()?,
-        ))
     }
 
     /// Creates a new built-in program
@@ -333,10 +318,6 @@ impl ProgramCacheEntry {
         let recovery_cost = self.stats.compilation_time_ema.load(Ordering::Relaxed);
         let frequency = self.stats.uses.load(Ordering::Relaxed);
         retention_score(last_access, recovery_cost, frequency)
-    }
-
-    pub fn account_owner(&self) -> Pubkey {
-        self.account_owner.into()
     }
 }
 

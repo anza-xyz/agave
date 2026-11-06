@@ -26,6 +26,16 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
+  `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`
+* Removed deprecated arguments
+  * `--account-shrink-path`
+  * `--accounts-db-access-storages-method`
+  * `--accounts-db-cache-limit-mb`
+  * `--accounts-db-foreground-threads`
+  * `--enable-accounts-disk-index`
+  * `--no-skip-initial-accounts-db-clean`
+
 #### Changes
 
 ### CLI
@@ -94,6 +104,8 @@ Release channels have their own copy of this changelog:
   panicking.
 * Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
   the ledger, and an existing one can be deleted.
+* The TPU vote QUIC server has been removed; the node no longer advertises a `tpu_vote` QUIC
+  address in gossip. Votes are received over UDP `tpu_vote` and gossip.
 
 #### Deprecations
 
@@ -104,6 +116,7 @@ Release channels have their own copy of this changelog:
   Replace `--tpu-max-connections-per-peer N` with
   `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
 * `--require-tower` is deprecated and will be removed in a future release.
+* `--tpu-vote-transaction-receive-threads` is deprecated - it only applied to TowerBFT and is a no-op.
 
 ### CLI
 

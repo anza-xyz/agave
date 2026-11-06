@@ -1,12 +1,26 @@
-#[cfg(feature = "stable-abi")]
-use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
+    solana_account::AccountSharedData,
     solana_accounts_db::accounts_hash::AccountsLtHash,
     solana_clock::Epoch,
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::lt_hash::LtHash,
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_stake_history::StakeHistoryItem,
+    solana_stake_interface::state::Delegation,
     wincode::{SchemaRead, SchemaWrite},
+};
+#[cfg(feature = "stable-abi")]
+use {
+    solana_frozen_abi::{
+        rand::RngCore as FrozenAbiRng,
+        stable_abi::{StableAbi as _, context::SequenceLenMax, sample_collection_sized},
+    },
+    solana_frozen_abi_macro::{StableAbi, StableAbiSample},
+    solana_stake_interface::{
+        stake_flags::StakeFlags,
+        state::{Meta, Stake},
+    },
 };
 
 /// Snapshot serde-safe AccountsLtHash
@@ -55,4 +69,45 @@ impl UnusedRentCollector {
             },
         }
     }
+}
+
+/// Snapshot serde-safe Stakes<Delegation>, which is now unused
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, Clone, Default, SchemaRead, SchemaWrite)]
+pub struct UnusedStakes {
+    #[cfg_attr(
+        feature = "stable-abi",
+        stable_abi_sample(with = "sample_vote_accounts(rng)")
+    )]
+    vote_accounts: Vec<(Pubkey, (/*stake:*/ u64, AccountSharedData))>,
+    #[cfg_attr(
+        feature = "stable-abi",
+        stable_abi_sample(with = "sample_stake_delegations(rng)")
+    )]
+    stake_delegations: Vec<(Pubkey, Delegation)>,
+    unused: u64,
+    epoch: Epoch,
+    stake_history: Vec<StakeHistoryItem>,
+}
+
+#[cfg(feature = "stable-abi")]
+fn sample_vote_accounts(
+    rng: &mut (impl FrozenAbiRng + ?Sized),
+) -> Vec<(Pubkey, (u64, AccountSharedData))> {
+    let vote_accounts = solana_vote::vote_account::VoteAccounts::random(rng);
+    vote_accounts
+        .as_ref()
+        .iter()
+        .map(|(pubkey, (stake, account))| (*pubkey, (*stake, AccountSharedData::from(account))))
+        .collect()
+}
+
+#[cfg(feature = "stable-abi")]
+fn sample_stake_delegations(rng: &mut (impl FrozenAbiRng + ?Sized)) -> Vec<(Pubkey, Delegation)> {
+    let stakes: Vec<(Pubkey, (Meta, Stake, StakeFlags))> =
+        sample_collection_sized(rng, SequenceLenMax(1));
+    stakes
+        .into_iter()
+        .map(|(pubkey, (_, stake, _))| (pubkey, stake.delegation))
+        .collect()
 }

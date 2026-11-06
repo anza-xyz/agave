@@ -152,14 +152,8 @@ rust-version = "1.99.1"
 # Agave binary and package names, grouped by intended audience.
 # Read by scripts/agave-build-lists.sh, which build/install scripts source.
 [workspace.metadata.agave-build-lists]
-dev = [
-    "solana-test-validator",
-]
-end-user = [
-    "agave-install",
-    "solana",
-    "solana-keygen",
-]
+dev = ["solana-test-validator"]
+end-user = ["agave-install", "solana", "solana-keygen"]
 val-op = [
     "agave-validator",
     "agave-watchtower",
@@ -167,15 +161,9 @@ val-op = [
     "solana-genesis",
     "solana-faucet",
 ]
-dcou = [
-    "agave-ledger-tool",
-]
+dcou = ["agave-ledger-tool"]
 # These bins are deprecated and will be removed in a future release
-deprecated = [
-    "solana-stake-accounts",
-    "solana-tokens",
-    "agave-install-init",
-]
+deprecated = ["solana-stake-accounts", "solana-tokens", "agave-install-init"]
 dcou-tainted-packages = [
     "agave-conformance",
     "agave-ledger-tool",
@@ -217,7 +205,7 @@ agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-geyser-plugin-interface = { version = "=8.0.0", git = "https://github.com/anza-xyz/agave-sdk", rev = "6d365701826323f9063e71bb4c15ee4ce857020e" }
+agave-geyser-plugin-interface = { version = "=7.0.0", git = "https://github.com/anza-xyz/agave-sdk", rev = "fc09fa88b1bd9ba11d0c69a8ecc021041c54db6c" }
 agave-io-uring = { path = "io-uring", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-jemalloc = { path = "jemalloc", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -415,7 +403,7 @@ solana-core = { path = "core", version = "=5.0.0-alpha.0", features = ["agave-un
 solana-cost-model = { path = "cost-model", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-cpi = "3.1.0"
 solana-curve25519 = "4.0.1"
-solana-define-syscall = "5.3.0"
+solana-define-syscall = "5.4.0"
 solana-derivation-path = "3.0.0"
 solana-download-utils = { path = "download-utils", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ed25519 = "0.2.4"
@@ -472,7 +460,7 @@ solana-poh-config = "3.1.1"
 solana-poseidon = "5.0.1"
 solana-precompile-error = "3.0.0"
 solana-presigner = "4.0.0"
-solana-program = { version = "5.1.0", default-features = false }
+solana-program = { version = "5.2.0", default-features = false }
 solana-program-binaries = { path = "program-binaries", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.1"
@@ -495,7 +483,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=5.0.0-alpha.0
 solana-runtime = { path = "runtime", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.27.0", default-features = false }
+solana-sbpf = { version = "=0.28.0", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-secp256k1-program = "3.1.1"
 solana-secp256k1-recover = "3.3.1"

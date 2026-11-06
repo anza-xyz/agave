@@ -23,11 +23,12 @@ use {
     agave_jemalloc::group::ArenaGroup,
     agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_xdp::transmitter::XdpSender,
-    crossbeam_channel::{Receiver, bounded},
+    crossbeam_channel::{Receiver, Sender, bounded},
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_net_utils::quic_socket::into_quic_sockets,
+    solana_perf::packet::PacketBatch,
     solana_poh::{
         poh_recorder::{PohRecorder, WORKING_BANK_CHANNEL_CAPACITY, WorkingBankMessage},
         transaction_recorder::TransactionRecorder,
@@ -66,18 +67,6 @@ pub struct TpuSockets {
     pub vote_forwarding_client: UdpSocket,
 }
 
-// Conservatively allow 20 TPS per validator.
-pub const MAX_VOTES_PER_SECOND: u64 = 20;
-
-/// Compatibility-only key updater for the removed TPU vote server.
-struct NoopTpuVoteKeyUpdater;
-
-impl solana_tls_utils::NotifyKeyUpdate for NoopTpuVoteKeyUpdater {
-    fn update_key(&self, _key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-}
-
 /// Size of the channel between streamer and TPU sigverify stage. The values have been selected to
 /// be conservative max of obsersed on mnb during high-load events.
 const TPU_CHANNEL_SIZE: usize = 50_000;
@@ -101,6 +90,9 @@ pub struct Tpu {
     tpu_forwards_quic_t: thread::JoinHandle<()>,
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
+    /// Keeps the vote channel connected so banking stage does not exit when
+    /// there are no TPU vote ingest sockets. Dropped in `join` to let it exit.
+    vote_packet_sender: Sender<PacketBatch>,
 }
 
 impl Tpu {
@@ -241,25 +233,16 @@ impl Tpu {
             Some(scheduler_priority_floor.clone()),
         );
 
-        // Tower replay no longer consumes executed votes. Keep the current BankingStage API
-        // satisfied with a disconnected channel until that legacy parameter is removed.
-        let (replay_vote_sender, replay_vote_receiver) = bounded(0);
-        drop(replay_vote_receiver);
-
         let banking_stage = BankingStage::new_num_threads(
             block_production_method,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
-            // Votes are not ingested. A disconnected receiver would shut down banking stage.
-            crossbeam_channel::never(),
-            crossbeam_channel::never(),
             banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,
             worker_thread_arenas,
             transaction_status_sender,
-            replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
             alpenglow_slot_clock,
@@ -303,15 +286,10 @@ impl Tpu {
                 (entry_receiver, None)
             };
 
-        // Tower replay no longer requests shred retransmission. Use a disconnected receiver so
-        // the legacy broadcast worker exits instead of waiting forever during Tpu::join().
-        let (retransmit_slots_sender, retransmit_slots_receiver) = bounded(0);
-        drop(retransmit_slots_sender);
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
             broadcast_sockets,
             cluster_info.clone(),
             entry_receiver,
-            retransmit_slots_receiver,
             exit,
             blockstore,
             bank_forks,
@@ -324,7 +302,6 @@ impl Tpu {
         let mut key_notifiers = key_notifiers.write().unwrap();
         key_notifiers.add(KeyUpdaterType::Tpu, key_updater);
         key_notifiers.add(KeyUpdaterType::TpuForwards, forwards_key_updater);
-        key_notifiers.add(KeyUpdaterType::TpuVote, Arc::new(NoopTpuVoteKeyUpdater));
         key_notifiers.add(KeyUpdaterType::Forward, client_updater);
 
         Self {
@@ -337,10 +314,12 @@ impl Tpu {
             tpu_forwards_quic_t,
             tpu_entry_notifier,
             staked_nodes_updater_service,
+            vote_packet_sender,
         }
     }
 
     pub fn join(self) -> thread::Result<()> {
+        drop(self.vote_packet_sender);
         let results = vec![
             self.fetch_stage.join(),
             self.sigverify_stage.join(),
