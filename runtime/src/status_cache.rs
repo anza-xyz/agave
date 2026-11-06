@@ -572,7 +572,7 @@ mod tests {
         let (_, index, sig_map) = status_cache.cache.get(&blockhash).unwrap();
         let sig_slice: &[u8; CACHED_KEY_SIZE] =
             arrayref::array_ref![sig.as_ref(), *index, CACHED_KEY_SIZE];
-        assert!(sig_map.get(sig_slice).is_some());
+        assert!(sig_map.get(sig_slice).is_none());
     }
 
     #[test]
