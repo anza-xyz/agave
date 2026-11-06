@@ -14,10 +14,11 @@ use {
     solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
     solana_message::VersionedMessage,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{ParsePubkeyError, Pubkey},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     std::{error::Error, fs::File, rc::Rc, str::FromStr},
+    thiserror::Error,
 };
 
 pub trait SendSubCommands {
@@ -84,18 +85,49 @@ struct JsonAccountMeta {
     is_writable: bool,
 }
 
+#[derive(Debug, Error)]
+enum JsonInstructionParseError {
+    #[error("invalid programId '{program_id}': {source}")]
+    InvalidProgramId {
+        program_id: String,
+        #[source]
+        source: ParsePubkeyError,
+    },
+    #[error("invalid pubkey '{pubkey}' for account at index {index}: {source}")]
+    InvalidAccountPubkey {
+        index: usize,
+        pubkey: String,
+        #[source]
+        source: ParsePubkeyError,
+    },
+}
+
 impl TryFrom<JsonInstruction> for Instruction {
-    type Error = solana_pubkey::ParsePubkeyError;
+    type Error = JsonInstructionParseError;
 
     fn try_from(instruction: JsonInstruction) -> Result<Self, Self::Error> {
+        let program_id = Pubkey::from_str(&instruction.program_id).map_err(|source| {
+            JsonInstructionParseError::InvalidProgramId {
+                program_id: instruction.program_id,
+                source,
+            }
+        })?;
         Ok(Self {
-            program_id: Pubkey::from_str(&instruction.program_id)?,
+            program_id,
             accounts: instruction
                 .accounts
                 .into_iter()
-                .map(|account| {
+                .enumerate()
+                .map(|(index, account)| {
+                    let pubkey = Pubkey::from_str(&account.pubkey).map_err(|source| {
+                        JsonInstructionParseError::InvalidAccountPubkey {
+                            index,
+                            pubkey: account.pubkey,
+                            source,
+                        }
+                    })?;
                     Ok(AccountMeta {
-                        pubkey: Pubkey::from_str(&account.pubkey)?,
+                        pubkey,
                         is_signer: account.is_signer,
                         is_writable: account.is_writable,
                     })
@@ -106,11 +138,15 @@ impl TryFrom<JsonInstruction> for Instruction {
     }
 }
 
-fn read_message_file(message_file: &str) -> Result<JsonMessage, Box<dyn Error>> {
-    let file = File::open(message_file)
-        .map_err(|err| format!("Unable to open message file '{message_file}': {err}"))?;
-    serde_json::from_reader(file)
-        .map_err(|err| format!("Unable to parse message file '{message_file}': {err}").into())
+fn read_message_file(message_file: &str) -> Result<JsonMessage, CliError> {
+    let file = File::open(message_file).map_err(|source| CliError::UnableToOpenFile {
+        path: message_file.to_string(),
+        source,
+    })?;
+    serde_json::from_reader(file).map_err(|source| CliError::BadTransactionMessageJson {
+        path: message_file.to_string(),
+        source,
+    })
 }
 
 fn build_message(
@@ -163,9 +199,31 @@ pub async fn process_send(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::clap_app::get_clap_app, solana_keypair::Keypair, solana_signer::Signer,
-        tempfile::tempdir,
+        super::*,
+        crate::clap_app::get_clap_app,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        std::io::Write,
+        tempfile::{NamedTempFile, tempdir},
     };
+
+    #[test]
+    fn read_message_file_reports_open_and_schema_errors() {
+        let directory = tempdir().unwrap();
+        let missing_file = directory.path().join("missing.json");
+        assert!(matches!(
+            read_message_file(missing_file.to_str().unwrap()),
+            Err(CliError::UnableToOpenFile { path, .. }) if path == missing_file.to_string_lossy()
+        ));
+
+        let mut malformed_file = NamedTempFile::new().unwrap();
+        malformed_file.write_all(br#"{"instructions":{}}"#).unwrap();
+        assert!(matches!(
+            read_message_file(malformed_file.path().to_str().unwrap()),
+            Err(CliError::BadTransactionMessageJson { path, .. })
+                if path == malformed_file.path().to_string_lossy()
+        ));
+    }
 
     #[test]
     fn parse_send_uses_default_signer() {

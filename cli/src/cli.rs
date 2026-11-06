@@ -521,6 +521,18 @@ impl CliCommandInfo {
 pub enum CliError {
     #[error("Bad parameter: {0}")]
     BadParameter(String),
+    #[error("Unable to open file '{path}': {source}")]
+    UnableToOpenFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Bad JSON schema file for transaction message '{path}': {source}")]
+    BadTransactionMessageJson {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error(transparent)]
     ClientError(#[from] ClientError),
     #[error("Command not recognized: {0}")]
@@ -1797,9 +1809,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 Ok("Signer is valid".to_string())
             }
         }
-        CliCommand::Send { message_file } => {
-            process_send(&rpc_client, config, message_file).await
-        }
+        CliCommand::Send { message_file } => process_send(&rpc_client, config, message_file).await,
         CliCommand::ShowAccount {
             pubkey,
             output_file,
