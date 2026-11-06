@@ -254,6 +254,7 @@ impl From<StoredTransactionStatusMeta> for TransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size: None,
         }
     }
 }
@@ -275,6 +276,7 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
             return_data,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size: _,
         } = value;
 
         if !loaded_addresses.is_empty() {

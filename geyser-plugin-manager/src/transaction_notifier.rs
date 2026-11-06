@@ -70,6 +70,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             return_data,
             compute_units_consumed,
             cost_units,
+            loaded_accounts_data_size: _,
         } = transaction_status_meta;
 
         // Scratch storage owned by this call; only slices into it cross the
@@ -441,6 +442,7 @@ mod tests {
                 data: vec![1, 2, 3],
             }),
             compute_units_consumed: Some(42),
+            loaded_accounts_data_size: Some(4096),
             cost_units: Some(7),
         };
         let transaction = VersionedTransaction::default();
@@ -532,6 +534,7 @@ mod tests {
             },
             return_data: None,
             compute_units_consumed: None,
+            loaded_accounts_data_size: None,
             cost_units: None,
         };
         notifier.notify_transaction(
