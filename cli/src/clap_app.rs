@@ -1,7 +1,7 @@
 use {
     crate::{
         address_lookup_table::AddressLookupTableSubCommands, cli::*, cluster_query::*, feature::*,
-        inflation::*, nonce::*, program::*, stake::*, validator_info::*, vote::*, wallet::*,
+        inflation::*, nonce::*, program::*, send::*, stake::*, validator_info::*, vote::*, wallet::*,
     },
     clap::{App, AppSettings, Arg, ArgGroup, SubCommand},
     solana_clap_utils::{self, hidden_unless_forced, input_validators::*, keypair::*},
@@ -146,6 +146,7 @@ pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> A
         .inflation_subcommands()
         .nonce_subcommands()
         .program_subcommands()
+        .send_subcommands()
         .address_lookup_table_subcommands()
         .stake_subcommands()
         .validator_info_subcommands()
