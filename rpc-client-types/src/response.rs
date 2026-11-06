@@ -374,21 +374,6 @@ pub struct RpcIdentity {
     pub identity: String,
 }
 
-/// A legacy TowerBFT vote notification payload.
-///
-/// These notifications are no longer produced. This type is retained for API
-/// compatibility until the next major release.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RpcVote {
-    /// Vote account address, as base-58 encoded string
-    pub vote_pubkey: String,
-    pub slots: Vec<Slot>,
-    pub hash: String,
-    pub timestamp: Option<UnixTimestamp>,
-    pub signature: String,
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVatActiveSetRankMap {

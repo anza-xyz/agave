@@ -114,7 +114,8 @@ fn load_program_elf(program_name: &str) -> Vec<u8> {
 }
 
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
-fn default_program_cache() -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+fn default_program_cache() -> solana_program_runtime::program_cache::tx_batch::ProgramCacheForTxBatch
+{
     new_program_cache_with_builtins(/* slot */ 1)
 }
 
@@ -122,7 +123,7 @@ fn default_program_cache_with_program(
     program_id: &Pubkey,
     program_elf: &[u8],
     feature_set: &SVMFeatureSet,
-) -> solana_program_runtime::loaded_programs::ProgramCacheForTxBatch {
+) -> solana_program_runtime::program_cache::tx_batch::ProgramCacheForTxBatch {
     let mut program_cache = default_program_cache();
     add_program_to_program_cache(
         &mut program_cache,

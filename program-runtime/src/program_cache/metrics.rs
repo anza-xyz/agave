@@ -1,7 +1,7 @@
 #[cfg(feature = "metrics")]
 use solana_svm_timings::ExecuteDetailsTimings;
 use {
-    crate::loaded_programs::ForkGraph,
+    crate::program_cache::fork_graph::ForkGraph,
     log::{debug, log_enabled, trace},
     solana_pubkey::Pubkey,
     std::{
@@ -268,11 +268,11 @@ impl LoadProgramMetrics {
     }
 }
 
-impl<FG: ForkGraph> crate::loaded_programs::ProgramCache<FG> {
+impl<FG: ForkGraph> crate::program_cache::global::ProgramCache<FG> {
     /// Log per-entry statistics for each entry in the global cache.
     #[cfg(feature = "dev-context-only-utils")]
     pub fn output_entry_stats(&self) {
-        use {crate::program_cache_entry::ProgramCacheEntryType, std::fmt::Write};
+        use {crate::program_cache::entry::ProgramCacheEntryType, std::fmt::Write};
         // The entry stats can become very verbose after some runtime. Rather than dumping them
         // to the log, we'd rather maintain a continuously updated file instead...
         static ENTRY_STAT_PATH: std::sync::LazyLock<Option<std::ffi::OsString>> =

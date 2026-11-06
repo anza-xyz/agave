@@ -55,7 +55,6 @@ wincode = { workspace = true }
 agave-feature-set = { path = "../../feature-set", features = ["agave-unstable-api"] }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
-assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }

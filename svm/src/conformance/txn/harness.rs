@@ -19,7 +19,7 @@ use {
     solana_instructions_sysvar::check_id as check_instructions_sysvar_id,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
-        loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache,
+        program_cache::tx_batch::ProgramCacheForTxBatch, sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,

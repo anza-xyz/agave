@@ -5367,9 +5367,7 @@ fn test_load_account_and_shrink_race() {
 
     // The original accessor must keep the old storage alive and readable.
     assert_eq!(
-        accessor
-            .check_and_get_loaded_account_shared_data(NO_LOAD_FILTER)
-            .unwrap(),
+        accessor.get_account_shared_data_if(NO_LOAD_FILTER).unwrap(),
         account
     );
 }

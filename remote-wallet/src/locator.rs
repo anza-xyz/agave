@@ -171,7 +171,7 @@ impl Locator {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, assert_matches::assert_matches};
+    use {super::*, std::assert_matches};
 
     #[test]
     fn test_manufacturer() {

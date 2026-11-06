@@ -6,6 +6,7 @@ use {
 
 mod commands;
 mod github;
+mod release_bucket;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Build tasks", version)]
@@ -43,6 +44,10 @@ enum Commands {
     ConformanceTable(commands::conformance_table::CommandArgs),
     #[command(about = "Check the workspace against a release profile")]
     ReleaseCheck(commands::release_check::CommandArgs),
+    #[command(about = "Publish the install script for this tag or edge build")]
+    PublishInstaller(commands::publish_installer::CommandArgs),
+    #[command(about = "Point the stable and beta release channels at their latest tags")]
+    SyncReleaseChannels(commands::sync_release_channels::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -109,6 +114,12 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::ReleaseCheck(args) => {
             commands::release_check::run(args)?;
+        }
+        Commands::PublishInstaller(args) => {
+            commands::publish_installer::run(args).await?;
+        }
+        Commands::SyncReleaseChannels(args) => {
+            commands::sync_release_channels::run(args).await?;
         }
     }
 

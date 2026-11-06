@@ -1,6 +1,9 @@
 //! Memory translation utilities.
 
-use {solana_sbpf::memory_region::MemoryMapping, solana_transaction_context::vm_slice::VmSlice};
+use {
+    crate::abi::ABI, solana_sbpf::memory_region::MemoryMapping,
+    solana_transaction_context::vm_slice::VmSlice,
+};
 
 /// Error types for memory translation operations.
 #[derive(Debug, thiserror::Error, PartialEq, Eq, Clone)]
@@ -26,7 +29,7 @@ macro_rules! translate_inner {
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_type_inner {
-    ($memory_mapping:expr, AccessType::Store, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+    ($memory_mapping:expr, AccessType::Store, $vm_addr:expr, $T:ty, $abi:expr $(,)?) => {{
         let host_addr = $crate::translate_inner!(
             $memory_mapping,
             map,
@@ -35,13 +38,13 @@ macro_rules! translate_type_inner {
             size_of::<$T>() as u64
         )?;
         let ptr = host_addr.ptr_mut().cast::<$T>();
-        if $check_aligned && !ptr.is_aligned() {
+        if $abi == $crate::abi::ABI::V1 && !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
             Ok(unsafe { ptr.as_mut_unchecked() })
         }
     }};
-    ($memory_mapping:expr, AccessType::Load, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+    ($memory_mapping:expr, AccessType::Load, $vm_addr:expr, $T:ty, $abi:expr $(,)?) => {{
         let host_addr = $crate::translate_inner!(
             $memory_mapping,
             map,
@@ -50,7 +53,7 @@ macro_rules! translate_type_inner {
             size_of::<$T>() as u64
         )?;
         let ptr = host_addr.ptr().cast::<$T>();
-        if $check_aligned && !ptr.is_aligned() {
+        if $abi == $crate::abi::ABI::V1 && !ptr.is_aligned() {
             Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
         } else {
             Ok(unsafe { ptr.as_ref_unchecked() })
@@ -61,7 +64,7 @@ macro_rules! translate_type_inner {
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_slice_inner {
-    ($memory_mapping:expr, AccessType::Store, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+    ($memory_mapping:expr, AccessType::Store, $vm_addr:expr, $len:expr, $T:ty, $abi:expr $(,)?) => {{
         if $len == 0 {
             Ok(std::ptr::slice_from_raw_parts_mut(
                 std::ptr::dangling_mut::<$T>(),
@@ -80,7 +83,10 @@ macro_rules! translate_slice_inner {
                     total_size
                 ) {
                     Err(e) => Err(e),
-                    Ok(host_buf) if $check_aligned && !host_buf.ptr().cast::<$T>().is_aligned() => {
+                    Ok(host_buf)
+                        if $abi == $crate::abi::ABI::V1
+                            && !host_buf.ptr().cast::<$T>().is_aligned() =>
+                    {
                         Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
                     }
                     Ok(host_buf) => Ok(std::ptr::slice_from_raw_parts_mut(
@@ -91,7 +97,7 @@ macro_rules! translate_slice_inner {
             }
         }
     }};
-    ($memory_mapping:expr, AccessType::Load, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
+    ($memory_mapping:expr, AccessType::Load, $vm_addr:expr, $len:expr, $T:ty, $abi:expr $(,)?) => {{
         if $len == 0 {
             Ok(std::ptr::slice_from_raw_parts(
                 std::ptr::dangling_mut::<$T>(),
@@ -110,7 +116,10 @@ macro_rules! translate_slice_inner {
                     total_size
                 ) {
                     Err(e) => Err(e),
-                    Ok(host_buf) if $check_aligned && !host_buf.ptr().cast::<$T>().is_aligned() => {
+                    Ok(host_buf)
+                        if $abi == $crate::abi::ABI::V1
+                            && !host_buf.ptr().cast::<$T>().is_aligned() =>
+                    {
                         Err($crate::memory::MemoryTranslationError::UnalignedPointer.into())
                     }
                     Ok(host_buf) => Ok(std::ptr::slice_from_raw_parts(
@@ -126,31 +135,25 @@ macro_rules! translate_slice_inner {
 pub fn translate_type<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
-    check_aligned: bool,
+    abi: ABI,
 ) -> Result<&'a T, Box<dyn std::error::Error>> {
-    translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
+    translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, abi)
 }
 
 pub fn translate_slice<T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
-    check_aligned: bool,
+    abi: ABI,
 ) -> Result<&[T], Box<dyn std::error::Error>> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Load,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
+    translate_slice_inner!(memory_mapping, AccessType::Load, vm_addr, len, T, abi).map(
+        |value| unsafe {
+            // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
+            // This is producing a shared/read-only slice to the memory, so the uniqueness invariants
+            // aren't relevant.
+            &*value
+        },
     )
-    .map(|value| unsafe {
-        // SAFETY: `translate_slice_inner` is guaranteed to return a dereferenceable memory region.
-        // This is producing a shared/read-only slice to the memory, so the uniqueness invariants
-        // aren't relevant.
-        &*value
-    })
 }
 
 /// CPI-specific version with intentionally different lifetime signature.
@@ -158,9 +161,9 @@ pub fn translate_slice<T>(
 pub fn translate_type_mut_for_cpi<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
-    check_aligned: bool,
+    abi: ABI,
 ) -> Result<&'a mut T, Box<dyn std::error::Error>> {
-    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
+    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, abi)
 }
 
 /// CPI-specific version with intentionally different lifetime signature.
@@ -176,26 +179,75 @@ pub unsafe fn translate_slice_mut_for_cpi<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
     len: u64,
-    check_aligned: bool,
+    abi: ABI,
 ) -> Result<&'a mut [T], Box<dyn std::error::Error>> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
+    translate_slice_inner!(memory_mapping, AccessType::Store, vm_addr, len, T, abi).map(
+        |p| unsafe {
+            // SAFETY: the invariants for producing mutable references delegated to the callers.
+            &mut *p
+        },
     )
-    .map(|p| unsafe {
-        // SAFETY: the invariants for producing mutable references delegated to the callers.
-        &mut *p
-    })
 }
 
 pub fn translate_vm_slice<'a, T>(
     slice: &VmSlice<T>,
     memory_mapping: &'a MemoryMapping,
-    check_aligned: bool,
+    abi: ABI,
 ) -> Result<&'a [T], Box<dyn std::error::Error>> {
-    translate_slice::<T>(memory_mapping, slice.ptr(), slice.len(), check_aligned)
+    translate_slice::<T>(memory_mapping, slice.ptr(), slice.len(), abi)
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        solana_sbpf::{
+            aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, memory_region::MemoryRegion,
+            program::SBPFVersion, vm::Config,
+        },
+        test_case::test_case,
+    };
+
+    const VM_ADDR: u64 = 0x100000000;
+
+    #[test_case(ABI::V0, true; "abi_v0_allows_unaligned")]
+    #[test_case(ABI::V1, false; "abi_v1_rejects_unaligned")]
+    fn test_translate_unaligned_pointer(abi: ABI, is_allowed: bool) {
+        let mut memory = AlignedMemory::<HOST_ALIGN>::zero_filled(32);
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let regions = vec![MemoryRegion::new(&mut memory, VM_ADDR)];
+        let mapping = unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+        let unaligned = VM_ADDR + 1;
+
+        let results = [
+            translate_slice::<u64>(&mapping, unaligned, 1, abi).map(|_| ()),
+            unsafe { translate_slice_mut_for_cpi::<u64>(&mapping, unaligned, 1, abi) }.map(|_| ()),
+        ];
+        for result in results {
+            assert_eq!(result.is_ok(), is_allowed);
+        }
+
+        // Aligned pointers translate under every ABI.
+        assert!(translate_type::<u64>(&mapping, VM_ADDR, abi).is_ok());
+        assert!(translate_type_mut_for_cpi::<u64>(&mapping, VM_ADDR, abi).is_ok());
+        assert!(translate_slice::<u64>(&mapping, VM_ADDR, 1, abi).is_ok());
+    }
+
+    #[test]
+    fn test_translate_type_rejects_unaligned_pointer_abi_v1() {
+        let mut memory = AlignedMemory::<HOST_ALIGN>::zero_filled(32);
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let regions = vec![MemoryRegion::new(&mut memory, VM_ADDR)];
+        let mapping = unsafe { MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap() };
+        let unaligned = VM_ADDR + 1;
+
+        assert!(translate_type::<u64>(&mapping, unaligned, ABI::V1).is_err());
+        assert!(translate_type_mut_for_cpi::<u64>(&mapping, unaligned, ABI::V1).is_err());
+    }
 }

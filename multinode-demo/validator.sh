@@ -8,7 +8,6 @@ source "$here"/common.sh
 
 args=(
   --max-genesis-archive-unpacked-size 1073741824
-  --no-poh-speed-test
   --no-os-network-limits-test
   --no-xdp
 )

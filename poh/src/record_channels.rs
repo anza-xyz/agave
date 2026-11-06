@@ -10,14 +10,13 @@ use std::sync::{
 };
 use {
     crate::poh_recorder::Record,
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, bounded},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
     solana_runtime::bank::BankId,
-    std::time::Duration,
 };
 
 /// Create a channel pair for communicating [`Record`]s.
 /// Transaction processing threads (workers/vote thread) send records, and
-/// PohService receives them.
+/// the block creation loop receives them.
 ///
 /// The receiver can shutdown the channel, preventing any further sends,
 /// and can restart the channel for a new bank id, re-enabling sends.
@@ -26,7 +25,7 @@ use {
 ///
 /// The channel has a bounded capacity based on the maximum number of allowed
 /// insertions at a given time. This is for guaranteeing that once shutdown the
-/// service can always process all sent records correctly without dropping any
+/// receiver can always process all sent records correctly without dropping any
 /// i.e. once sent records can be guaranteed to be recorded.
 pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, RecordReceiver) {
     const CAPACITY: usize = BankIdAllowedInsertions::MAX_ALLOWED_INSERTIONS as usize;
@@ -71,8 +70,8 @@ pub enum RecordSenderError {
     Disconnected,
 }
 
-/// A sender for sending [`Record`]s to PohService.
-/// The sender does not wait for service to pick up the records, and will return
+/// A sender for sending [`Record`]s to the block creation loop.
+/// The sender does not wait for the block creation loop to pick up the records, and will return
 /// immediately if the channel is full, shutdown, or if the bank id has changed.
 #[derive(Clone, Debug)]
 pub struct RecordSender {
@@ -85,11 +84,6 @@ pub struct RecordSender {
 }
 
 impl RecordSender {
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.sender.is_empty()
-    }
-
     pub fn try_send(&self, record: Record) -> Result<Option<usize>, RecordSenderError> {
         let num_transactions = record.transactions.len();
         assert!(num_transactions > 0);
@@ -163,7 +157,7 @@ impl RecordSender {
     }
 }
 
-/// A receiver for receiving [`Record`]s in PohService.
+/// A receiver for receiving [`Record`]s in the block creation loop.
 /// The receiver can shutdown the channel, preventing any further sends,
 /// and can restart the channel for a new bank id, re-enabling sends.
 pub struct RecordReceiver {
@@ -184,15 +178,6 @@ impl RecordReceiver {
     /// After receiving from this, you must call `on_received_record` manually.
     pub fn inner(&self) -> &Receiver<Record> {
         &self.receiver
-    }
-
-    /// Returns true if the channel should be shutdown.
-    pub fn should_shutdown(&self, remaining_hashes_in_slot: u64, ticks_per_slot: u64) -> bool {
-        // This channel must guarantee that all sent records are recorded.
-        // Each record consumes one hash in the PoH stream,
-        // each tick also consumes at least one hash in the PoH stream.
-        // As a conservative estimate, we assume no ticks have been recorded.
-        remaining_hashes_in_slot.saturating_sub(ticks_per_slot) <= self.capacity
     }
 
     /// Shutdown the channel immediately.
@@ -260,8 +245,8 @@ impl RecordReceiver {
     /// Try to receive a record from the channel.
     ///
     /// If a sender has already reserved capacity for this bank, do not report
-    /// `Empty` until that sender either enqueues its record or fails. PoH uses
-    /// this to avoid hashing/ticking past a record that was already admitted.
+    /// `Empty` until that sender either enqueues its record or fails. The block creation loop uses
+    /// this to avoid completing a block before processing a record that was already admitted.
     pub fn try_recv(&self) -> Result<Record, TryRecvError> {
         loop {
             match self.receiver.try_recv() {
@@ -293,13 +278,6 @@ impl RecordReceiver {
                 Err(e) => return Err(e),
             }
         }
-    }
-
-    /// Receive a record from the channel, waiting up to `duration`.
-    pub fn recv_timeout(&self, duration: Duration) -> Result<Record, RecvTimeoutError> {
-        let record = self.receiver.recv_timeout(duration)?;
-        self.on_received_record();
-        Ok(record)
     }
 
     /// Notify that a record has been received.

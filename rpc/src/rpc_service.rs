@@ -509,6 +509,7 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
+    pub max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub rpc_tpu_client_args: RpcTpuClientArgs<'a>,
 }
@@ -579,6 +580,7 @@ impl JsonRpcService {
             tpu_sender,
             client,
             config.max_complete_transaction_status_slot,
+            config.max_complete_and_rooted_transaction_status_slot,
             config.prioritization_fee_cache,
             runtime,
         )?;
@@ -607,6 +609,7 @@ impl JsonRpcService {
         tpu_sender: TpuSender,
         client: TpuClient,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
+        max_complete_and_rooted_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
@@ -656,7 +659,7 @@ impl JsonRpcService {
                                 runtime.clone(),
                                 bigtable_ledger_storage.clone(),
                                 blockstore.clone(),
-                                max_complete_transaction_status_slot.clone(),
+                                max_complete_and_rooted_transaction_status_slot.clone(),
                                 ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
                             )))
@@ -697,6 +700,7 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
+            max_complete_and_rooted_transaction_status_slot,
             prioritization_fee_cache,
             Arc::clone(&runtime),
         );
@@ -1215,6 +1219,7 @@ mod tests {
             Arc::new(LeaderScheduleCache::default()),
             tpu_sender,
             client,
+            Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Some(Arc::new(PrioritizationFeeCache::default())),
             runtime,

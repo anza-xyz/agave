@@ -185,23 +185,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::UpdateCommission(commission) => {
-            let sysvar_cache = invoke_context.environment_config.sysvar_cache();
-
-            // Disable the commission update rule after the "delay commission
-            // update" feature is activated because it imposes a minimum delay
-            // of one full epoch before the new commission rate takes effect.
-            let disable_commission_update_rule =
-                invoke_context.get_feature_set().delay_commission_updates;
-
-            vote_state::update_commission(
-                &mut me,
-                target_version,
-                commission,
-                &signers,
-                sysvar_cache.get_epoch_schedule()?.as_ref(),
-                sysvar_cache.get_clock()?.as_ref(),
-                disable_commission_update_rule,
-            )
+            vote_state::update_commission(&mut me, target_version, commission, &signers)
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
             if should_reject_legacy_vote_instructions(invoke_context) {
@@ -344,23 +328,14 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateCommissionBps {
             commission_bps,
             kind,
-        } => {
-            // SIMD-0291: Commission Rate in Basis Points
-            // Requires SIMD-0185: Vote State V4
-            // Requires SIMD-0249: Delay Commission Updates
-            let feature_set = invoke_context.get_feature_set();
-            if !feature_set.delay_commission_updates {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-            vote_state::update_commission_bps(
-                &mut me,
-                target_version,
-                commission_bps,
-                kind,
-                &signers,
-                feature_set.block_revenue_sharing,
-            )
-        }
+        } => vote_state::update_commission_bps(
+            &mut me,
+            target_version,
+            commission_bps,
+            kind,
+            &signers,
+            invoke_context.get_feature_set().block_revenue_sharing,
+        ),
         VoteInstruction::UpdateCommissionCollector(kind) => {
             // SIMD-0232: Custom Commission Collector Account
             // Requires SIMD-0185: Vote State V4
@@ -424,7 +399,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            program_cache_entry::ProgramCacheEntry,
+            program_cache::entry::ProgramCacheEntry,
             solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,

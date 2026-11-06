@@ -20,18 +20,12 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLog {
             .max(len);
         invoke_context.consume_checked(cost)?;
 
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        translate_string_and_do(
-            memory_mapping,
-            addr,
-            len,
-            check_aligned,
-            &mut |string: &str| {
-                stable_log::program_log(&invoke_context.get_log_collector(), string);
-                Ok(0)
-            },
-        )?;
+        translate_string_and_do(memory_mapping, addr, len, abi, &mut |string: &str| {
+            stable_log::program_log(&invoke_context.get_log_collector(), string);
+            Ok(0)
+        })?;
         Ok(0)
     }
 }
@@ -98,9 +92,9 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogPubkey {
         let cost = invoke_context.get_execution_cost().log_pubkey_units;
         invoke_context.consume_checked(cost)?;
 
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let pubkey = translate_type::<Pubkey>(memory_mapping, pubkey_addr, check_aligned)?;
+        let pubkey = translate_type::<Pubkey>(memory_mapping, pubkey_addr, abi)?;
         stable_log::program_log(&invoke_context.get_log_collector(), &pubkey.to_string());
         Ok(0)
     }
@@ -122,10 +116,9 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogData {
 
         invoke_context.consume_checked(execution_cost.syscall_base_cost)?;
 
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let untranslated_fields =
-            translate_slice::<VmSlice<u8>>(memory_mapping, addr, len, check_aligned)?;
+        let untranslated_fields = translate_slice::<VmSlice<u8>>(memory_mapping, addr, len, abi)?;
 
         let cost = execution_cost
             .syscall_base_cost
@@ -139,11 +132,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallLogData {
         let mut fields = Vec::with_capacity(untranslated_fields.len());
 
         for untranslated_field in untranslated_fields {
-            fields.push(translate_vm_slice(
-                untranslated_field,
-                memory_mapping,
-                check_aligned,
-            )?);
+            fields.push(translate_vm_slice(untranslated_field, memory_mapping, abi)?);
         }
 
         let log_collector = invoke_context.get_log_collector();

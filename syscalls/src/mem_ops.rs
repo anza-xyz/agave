@@ -77,10 +77,10 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemcmp {
         _arg5: u64,
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-        let s1 = translate_slice::<u8>(memory_mapping, s1_addr, n, check_aligned)?;
-        let s2 = translate_slice::<u8>(memory_mapping, s2_addr, n, check_aligned)?;
+        let s1 = translate_slice::<u8>(memory_mapping, s1_addr, n, abi)?;
+        let s2 = translate_slice::<u8>(memory_mapping, s2_addr, n, abi)?;
 
         debug_assert_eq!(s1.len(), n as usize);
         debug_assert_eq!(s2.len(), n as usize);
@@ -92,7 +92,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemcmp {
 
         translate_mut!(
             invoke_context,
-            check_aligned,
+            abi,
             let cmp_result_ref_mut: (&mut std::mem::MaybeUninit<i32>) = map(cmp_result_addr)?;
         );
         cmp_result_ref_mut.write(result);
@@ -116,10 +116,10 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallMemset {
     ) -> Result<u64, Error> {
         mem_op_consume(invoke_context, n)?;
 
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         translate_mut!(
             invoke_context,
-            check_aligned,
+            abi,
             let s: (&mut [MaybeUninit<u8>]) = map(dst_addr, n)?;
         );
         s.fill(MaybeUninit::new(c as u8));
@@ -133,7 +133,7 @@ fn memmove(
     src_addr: u64,
     n: u64,
 ) -> Result<u64, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     // In a rare exception to the rule we manually translate addresses to a raw pointer rather than
     // using `translate_mut!` because the src and dst memory regions may overlap for this syscall.
     touch_slice_mut::<MaybeUninit<u8>>(invoke_context, dst_addr, n)?;
@@ -144,9 +144,9 @@ fn memmove(
         dst_addr,
         n,
         MaybeUninit<u8>,
-        check_aligned,
+        abi,
     )?;
-    let src_ptr = translate_slice::<u8>(memory_mapping, src_addr, n, check_aligned)?.as_ptr();
+    let src_ptr = translate_slice::<u8>(memory_mapping, src_addr, n, abi)?.as_ptr();
     unsafe { std::ptr::copy(src_ptr.cast(), slice as *mut MaybeUninit<u8>, n as usize) };
     Ok(0)
 }

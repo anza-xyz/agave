@@ -1,15 +1,17 @@
 //! Program helpers: builtins, keyed accounts, and program cache.
 
 #[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
+use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
 use {
     crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+            tx_batch::ProgramCacheForTxBatch,
+        },
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
