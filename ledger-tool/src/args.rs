@@ -2,7 +2,11 @@ use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{Arg, ArgMatches, value_t, value_t_or_exit, values_t, values_t_or_exit},
     log::*,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_account::ReadableAccount,
+    solana_account_decoder::{
+        UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
+        parse_account_data::AccountAdditionalDataV3,
+    },
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::AccountsFileProvider,
@@ -17,12 +21,14 @@ use {
         input_parsers::pubkeys_of,
         input_validators::{is_parsable, is_pow2},
     },
-    solana_cli_output::CliAccountNewConfig,
+    solana_cli_output::CliAccount,
     solana_clock::Slot,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+    solana_pubkey::Pubkey,
+    solana_rpc_client_api::response::RpcKeyedAccount,
     solana_runtime::runtime_config::RuntimeConfig,
     std::{
         collections::HashSet,
@@ -419,6 +425,50 @@ pub fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
         Some(values_t_or_exit!(matches, name, Slot))
     } else {
         None
+    }
+}
+
+pub(crate) struct CliAccountNewConfig {
+    pub data_encoding: UiAccountEncoding,
+    pub additional_data: Option<AccountAdditionalDataV3>,
+    pub data_slice_config: Option<UiDataSliceConfig>,
+    pub use_lamports_unit: bool,
+}
+
+impl Default for CliAccountNewConfig {
+    fn default() -> Self {
+        Self {
+            data_encoding: UiAccountEncoding::Base64,
+            additional_data: None,
+            data_slice_config: None,
+            use_lamports_unit: false,
+        }
+    }
+}
+
+pub fn cli_account_with_config<T: ReadableAccount>(
+    address: &Pubkey,
+    account: &T,
+    config: &CliAccountNewConfig,
+) -> CliAccount {
+    let CliAccountNewConfig {
+        data_encoding,
+        additional_data,
+        data_slice_config,
+        use_lamports_unit,
+    } = *config;
+    CliAccount {
+        keyed_account: RpcKeyedAccount {
+            pubkey: address.to_string(),
+            account: encode_ui_account(
+                address,
+                account,
+                data_encoding,
+                additional_data,
+                data_slice_config,
+            ),
+        },
+        use_lamports_unit,
     }
 }
 
