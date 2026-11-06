@@ -117,6 +117,7 @@ pub(crate) struct SlotMetrics {
     pub(super) slot_delay_us: u64,
     pub(super) replay_is_behind_us: u64,
     pub(super) reward_certs_blocked_us: WelfordStats,
+    pub(super) reward_certs_skipped: u64,
     pub(super) vote_accounts_update_stats: Option<VoteAccountUpdateStats>,
 }
 
@@ -131,6 +132,7 @@ impl SlotMetrics {
             slot_delay_us: 0,
             replay_is_behind_us: 0,
             reward_certs_blocked_us: WelfordStats::default(),
+            reward_certs_skipped: 0,
             vote_accounts_update_stats: None,
         }
     }
@@ -145,6 +147,7 @@ impl SlotMetrics {
             slot_delay_us,
             replay_is_behind_us,
             reward_certs_blocked_us,
+            reward_certs_skipped,
             vote_accounts_update_stats,
         } = self;
         datapoint_info!(
@@ -156,8 +159,9 @@ impl SlotMetrics {
             ("already_have_bank_count", already_have_bank_count, i64),
             ("slot_delay_us", slot_delay_us, i64),
             ("replay_is_behind_us", replay_is_behind_us, i64),
-            ("reward_certs_blocked", reward_certs_blocked_us.count(), i64),
+            ("reward_certs_blocked_cnt", reward_certs_blocked_us.count(), i64),
             ("reward_certs_blocked_us", reward_certs_blocked_us.mean::<u64>(), Option<i64>),
+            ("reward_certs_skipped", reward_certs_skipped, i64),
             ("vote_accounts_update_us", vote_accounts_update_stats.as_ref().map(|s| s.update_us), Option<i64>),
             ("vote_accounts_updated", vote_accounts_update_stats.as_ref().map(|s| s.vote_accounts_updated), Option<i64>),
         );

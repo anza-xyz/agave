@@ -3,12 +3,16 @@ use {
         SlotMetrics,
         rewards::msg_types::{RewardRequest, RewardRequestToken, RewardRespSucc},
     },
-    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded},
+    crossbeam_channel::{
+        Receiver, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError, TrySendError, bounded,
+    },
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    std::time::Instant,
+    std::time::{Duration, Instant},
 };
+
+const MAX_WAIT_TIME: Duration = Duration::from_millis(100);
 
 /// Struct to handle requests to build rewards certs and receive the produced certs.
 pub(crate) struct CertsRequestor {
@@ -27,12 +31,14 @@ impl CertsRequestor {
     }
 
     /// Sends a message requesting a reward cert to be built.
+    ///
+    /// If the channel is full, waits up to `MAX_WAIT_TIME` for it to become available.
     pub(crate) fn request_reward_certs(
         &self,
         stats: &mut SlotMetrics,
         my_pubkey: Pubkey,
         bank_slot: Slot,
-    ) -> Result<RewardRequestToken, ()> {
+    ) -> Result<Option<RewardRequestToken>, ()> {
         let (reply_sender, reply_receiver) = bounded(1);
         let request = RewardRequest {
             bank_slot,
@@ -44,54 +50,78 @@ impl CertsRequestor {
             Err(TrySendError::Full(request)) => {
                 warn!(
                     "{my_pubkey} sending request to build reward cert for bank_slot={bank_slot} \
-                     failed, channel is full"
+                     failed, channel is full. waiting until channel has space."
                 );
                 let measure = Measure::start("blocking send");
-                if self.req_sender.send(request).is_err() {
-                    return Err(());
-                }
+                let res = self.req_sender.send_timeout(request, MAX_WAIT_TIME);
                 stats
                     .reward_certs_blocked_us
                     .add_sample(measure.end_as_us());
+                match res {
+                    Ok(()) => {}
+                    Err(SendTimeoutError::Disconnected(_)) => return Err(()),
+                    Err(SendTimeoutError::Timeout(_)) => {
+                        stats.reward_certs_skipped += 1;
+                        warn!(
+                            "{my_pubkey}: sending request to build reward certs for \
+                             bank_slot={bank_slot} took too long. skipping."
+                        );
+                        return Ok(None);
+                    }
+                }
             }
             Err(TrySendError::Disconnected(_)) => return Err(()),
         }
-        Ok(RewardRequestToken {
+        Ok(Some(RewardRequestToken {
             reply_receiver,
             bank_slot,
-        })
+        }))
     }
 
     /// Receives a response for an earlier request to build reward certs.
+    ///
+    /// If the cert is not ready, waits up to `MAX_WAIT_TIME` for it to become ready.
     pub(crate) fn recv_reward_certs(
         &self,
         stats: &mut SlotMetrics,
         my_pubkey: Pubkey,
-        token: RewardRequestToken,
-    ) -> Result<RewardRespSucc, ()> {
+        token: Option<RewardRequestToken>,
+    ) -> Result<Option<RewardRespSucc>, ()> {
+        let Some(token) = token else {
+            return Ok(None);
+        };
         let resp = match token.reply_receiver.try_recv() {
             Ok(resp) => resp,
             Err(TryRecvError::Disconnected) => return Err(()),
             Err(TryRecvError::Empty) => {
                 warn!(
-                    "{my_pubkey}: blocking wait for reward response in bank_slot={}",
+                    "{my_pubkey}: reward certificate in bank_slot={} not ready yet. blocking",
                     token.bank_slot
                 );
                 let measure = Measure::start("blocking recv");
-                let Ok(resp) = token.reply_receiver.recv() else {
-                    return Err(());
-                };
+                let res = token.reply_receiver.recv_timeout(MAX_WAIT_TIME);
                 stats
                     .reward_certs_blocked_us
                     .add_sample(measure.end_as_us());
-                resp
+                match res {
+                    Ok(resp) => resp,
+                    Err(RecvTimeoutError::Timeout) => {
+                        stats.reward_certs_skipped += 1;
+                        warn!(
+                            "{my_pubkey}: waiting too long for reward cert to become ready. \
+                             skipping."
+                        );
+                        return Ok(None);
+                    }
+                    Err(RecvTimeoutError::Disconnected) => return Err(()),
+                }
             }
         };
         match resp.result {
-            Ok(res) => Ok(res),
+            Ok(res) => Ok(Some(res)),
             Err(err) => {
                 error!("{my_pubkey} building reward cert failed with {err:?}");
-                Ok(RewardRespSucc::default())
+                Ok(None)
             }
         }
     }
@@ -128,6 +158,7 @@ mod tests {
             .unwrap();
         let resp = handler
             .recv_reward_certs(&mut slot_metrics, my_pubkey, request)
+            .unwrap()
             .unwrap();
         assert!(resp.skip.is_none());
         assert!(resp.notar.is_none());

@@ -643,23 +643,15 @@ fn produce_intra_window_slot(
 
 /// Asks the rewards service to build the reward certs for `slot`'s footer.
 ///
-/// Call this before waiting for the parent. That wait can use up most of the slot's budget, and
-/// the footer doesn't wait for the reply, so requesting afterwards can leave the rewards service
-/// no time to answer.
+/// Call this before waiting for the parent to parallelize waiting for parent with building certs.
 fn request_reward_certs(
     ctx: &LeaderContext,
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
-) -> Result<RewardRequestToken, StartLeaderError> {
-    match ctx
-        .reward_certs_requestor
+) -> Result<Option<RewardRequestToken>, StartLeaderError> {
+    ctx.reward_certs_requestor
         .request_reward_certs(slot_metrics, ctx.my_pubkey, slot)
-    {
-        Ok(r) => Ok(r),
-        Err(()) => Err(StartLeaderError::PohRecorder(
-            PohRecorderError::ChannelDisconnected,
-        )),
-    }
+        .map_err(|()| StartLeaderError::PohRecorder(PohRecorderError::ChannelDisconnected))
 }
 
 fn produce_slot(
@@ -667,7 +659,7 @@ fn produce_slot(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     optimistic_parent: Option<Block>,
-    reward_cert_request: RewardRequestToken,
+    reward_cert_token: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     working_bank: Arc<Bank>,
 ) -> Result<(), StartLeaderError> {
@@ -684,7 +676,7 @@ fn produce_slot(
         slot_metrics,
         slot,
         optimistic_parent,
-        reward_cert_request,
+        reward_cert_token,
         block_timer,
         timeout,
     ) {
@@ -756,7 +748,7 @@ fn record_and_complete_block(
     slot_metrics: &mut SlotMetrics,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
-    reward_cert_request: RewardRequestToken,
+    reward_cert_token: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
@@ -870,6 +862,12 @@ fn record_and_complete_block(
         bank.slot()
     );
 
+    // This call can do a blocking receive so do it before grabing the locks below.
+    let reward_resp = ctx
+        .reward_certs_requestor
+        .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_token)
+        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+
     // Root advancement can retire and purge this Bank concurrently with block completion. Hold
     // execution token through remaining mutations.
     let Some(_completion_guard) = bank.try_enter_transaction_execution() else {
@@ -884,17 +882,18 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
-        let reward_certs = ctx
-            .reward_certs_requestor
-            .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_request)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
-        let RewardRespSucc {
-            skip,
-            notar,
-            validators,
-        } = reward_certs;
-        let reward_cert =
-            ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
+        let (reward_cert, skip, notar) = match reward_resp {
+            Some(RewardRespSucc {
+                skip,
+                notar,
+                validators,
+            }) => (
+                ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?,
+                skip,
+                notar,
+            ),
+            None => (None, None, None),
+        };
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
