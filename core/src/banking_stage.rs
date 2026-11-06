@@ -33,7 +33,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-        transaction_execution::TransactionStatusSender, vote_sender_types::ReplayVoteSender,
+        transaction_execution::TransactionStatusSender,
     },
     solana_time_utils::AtomicInterval,
     std::{
@@ -357,7 +357,6 @@ impl BankingStage {
         scheduler_config: SchedulerConfig,
         worker_thread_arenas: Option<Arc<ArenaGroup>>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
         alpenglow_slot_clock: SharedAlpenglowSlotClock,
@@ -365,11 +364,7 @@ impl BankingStage {
         filter_keys: Arc<HashSet<Pubkey>>,
         priority_floor: Arc<SchedulerPriorityFloor>,
     ) -> BankingStageHandle {
-        let committer = Committer::new(
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-        );
+        let committer = Committer::new(transaction_status_sender, prioritization_fee_cache);
 
         // Setup the manager thread state.
         let banking_shutdown_signal = CancellationToken::new();
@@ -934,7 +929,6 @@ mod tests {
         agave_banking_stage_ingress_types::{
             to_banking_packet_batch, to_single_banking_packet_batch,
         },
-        crossbeam_channel::bounded,
         solana_entry::{
             entry::{self, EntrySlice},
             recorder_message::RecorderMessage,
@@ -994,7 +988,6 @@ mod tests {
             poh_service,
             _entry_receiever,
         ) = create_test_recorder(bank, blockstore, None, None);
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -1010,7 +1003,6 @@ mod tests {
             },
             None,
             None,
-            replay_vote_sender,
             None,
             bank_forks,
             SharedAlpenglowSlotClock::default(),
@@ -1057,7 +1049,6 @@ mod tests {
             poh_service,
             entry_receiver,
         ) = create_test_recorder(bank, blockstore, None, None);
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -1073,7 +1064,6 @@ mod tests {
             },
             None,
             None,
-            replay_vote_sender,
             None,
             bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             SharedAlpenglowSlotClock::default(),
@@ -1200,7 +1190,6 @@ mod tests {
                 .expect("Expected to be able to open database ledger"),
         );
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
         let entry_receiver = {
             // start a banking_stage to eat verified receiver
             let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -1226,7 +1215,6 @@ mod tests {
                 },
                 None,
                 None,
-                replay_vote_sender,
                 None,
                 bank_forks,
                 SharedAlpenglowSlotClock::default(),

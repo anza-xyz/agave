@@ -233,11 +233,6 @@ impl Tpu {
             Some(scheduler_priority_floor.clone()),
         );
 
-        // Tower replay no longer consumes executed votes. Keep the current BankingStage API
-        // satisfied with a disconnected channel until that legacy parameter is removed.
-        let (replay_vote_sender, replay_vote_receiver) = bounded(0);
-        drop(replay_vote_receiver);
-
         let banking_stage = BankingStage::new_num_threads(
             block_production_method,
             poh_recorder.clone(),
@@ -251,7 +246,6 @@ impl Tpu {
             block_production_scheduler_config,
             worker_thread_arenas,
             transaction_status_sender,
-            replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
             alpenglow_slot_clock,

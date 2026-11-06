@@ -19,7 +19,7 @@
 //
 // CrdsData variant indices:
 //   0 = LegacyContactInfo    (deprecated)
-//   1 = Vote(u8, Vote)
+//   1 = Vote                 (deprecated; former payload was u8 + Vote)
 //   2 = LowestSlot(u8, LowestSlot)
 //   3 = LegacySnapshotHashes (deprecated)
 //   4 = AccountsHashes       (deprecated)
@@ -192,26 +192,6 @@ pub(crate) fn make_crds_filter_bytes() -> Vec<u8> {
     let filter = CrdsFilter::new_rand(5_697, 128);
     assert_eq!(filter.get_mask_bits(), 6);
     wincode::serialize(&filter).unwrap()
-}
-
-/// Build a Vote CrdsData (variant 1).
-/// The inner Transaction is complex; we construct and serialize via Rust objects.
-pub(crate) fn make_vote_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
-    use {
-        solana_gossip::crds_data::{CrdsData, Vote as CrdsVote},
-        solana_keypair::Keypair,
-        solana_signer::Signer,
-        solana_vote_program::{vote_instruction, vote_state::Vote},
-    };
-    let keypair = Keypair::new_from_array(*from);
-    let vote = Vote::new(vec![1], solana_hash::Hash::default());
-    let vote_ix = vote_instruction::vote(&keypair.pubkey(), &keypair.pubkey(), vote);
-    let mut vote_tx =
-        solana_transaction::Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-    vote_tx.partial_sign(&[&keypair], solana_hash::Hash::default());
-    let crds_vote = CrdsVote::new(solana_pubkey::Pubkey::from(*from), vote_tx, wallclock)
-        .expect("valid vote tx");
-    wincode::serialize(&CrdsData::Vote(index, crds_vote)).unwrap()
 }
 
 /// Build a DuplicateShred CrdsData (variant 9).

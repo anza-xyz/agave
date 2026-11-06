@@ -538,7 +538,6 @@ mod tests {
             committer::Committer,
             tests::{create_slow_genesis_config, sanitize_transactions},
         },
-        crossbeam_channel::bounded,
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_poh::record_channels::record_channels,
         solana_svm::account_loader::CheckedTransactionDetails,
@@ -631,8 +630,7 @@ mod tests {
         let recorder = solana_poh::transaction_recorder::TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
 
         // Create and process a simple transfer transaction

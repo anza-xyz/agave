@@ -41,13 +41,13 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::ContactInfo(_) => true,
         // Unstaked nodes can still serve snapshots.
         CrdsData::SnapshotHashes(_) => true,
-        CrdsData::DuplicateShred(_, _) | CrdsData::EpochSlots(_, _) | CrdsData::Vote(_, _) => false,
+        CrdsData::DuplicateShred(_, _) | CrdsData::EpochSlots(_, _) => false,
         CrdsData::LowestSlot(0, _) => match direction {
             Ingress => retain_if_staked(),
             EgressPush | EgressPullResponse => false,
         },
         // Fully deprecated messages
-        CrdsData::AccountsHashes(_) => false,
+        CrdsData::AccountsHashes(_) | CrdsData::Vote(_) => false,
         CrdsData::LegacyContactInfo(_) => false,
         CrdsData::LegacySnapshotHashes(_) => false,
         CrdsData::LegacyVersion(_) => false,

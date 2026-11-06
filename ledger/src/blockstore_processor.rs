@@ -57,7 +57,6 @@ use {
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusSender,
             TransactionStatusSenderError,
         },
-        vote_sender_types::{ReplayVoteMessage, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_shred_version::compute_shred_version,
@@ -601,23 +600,11 @@ fn confirm_full_slot(
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
     entry_notification_sender: Option<&EntryNotifierSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.run_verification;
-    let slot = bank.slot();
-    let bank_id = bank.bank_id();
-    defer! {
-        if let Some(replay_vote_sender) = replay_vote_sender {
-            let _ = replay_vote_sender.send(ReplayVoteMessage::BankComplete {
-                replay_bank_id: bank_id,
-                replay_slot: slot,
-            });
-        }
-    }
-
     confirm_slot(
         blockstore,
         bank,
@@ -627,7 +614,6 @@ fn confirm_full_slot(
         progress,
         skip_verification,
         entry_notification_sender,
-        replay_vote_sender,
         None,
         opts.allow_dead_slots,
         migration_status,
@@ -1107,47 +1093,24 @@ struct SignaturesVerificationJob {
     signatures: Arc<VerificationBatch<UnverifiedSignatures<Bytes>>>,
     range: Range<usize>,
     slot: Slot,
-    bank_id: BankId,
     result_sender: Sender<AsyncVerificationResult>,
-    replay_vote_sender: Option<ReplayVoteSender>,
 }
 
 impl SignaturesVerificationJob {
     fn run(self) {
         let Self {
             signatures,
-            range,
+            mut range,
             slot,
-            bank_id,
             result_sender,
-            replay_vote_sender,
         } = self;
-        let verified = range
-            .clone()
-            .all(|index| signatures.data.verify_signatures(index));
+        let verified = range.all(|index| signatures.data.verify_signatures(index));
         let elapsed_us = signatures.finish_job();
         let error = (!verified).then_some(BlockstoreProcessorError::InvalidTransaction(
             TransactionError::SignatureFailure,
         ));
         if let Some(err) = &error {
             warn!("Ledger transaction signature verification failed at slot {slot}: {err}");
-            if let Some(replay_vote_sender) = &replay_vote_sender {
-                let _ = replay_vote_sender.send(ReplayVoteMessage::InvalidBank {
-                    replay_bank_id: bank_id,
-                    replay_slot: slot,
-                });
-            }
-        } else if let Some(replay_vote_sender) = &replay_vote_sender {
-            let message_hashes = range
-                .filter_map(|index| signatures.data.vote_transaction_message_hash(index))
-                .collect::<Vec<_>>();
-            if !message_hashes.is_empty() {
-                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
-                    replay_bank_id: bank_id,
-                    replay_slot: slot,
-                    message_hashes,
-                });
-            }
         }
         let _ = result_sender.send(AsyncVerificationResult::Signatures {
             signatures,
@@ -1264,8 +1227,6 @@ impl AsyncVerificationProgress {
         worker_pool: &ReplayVerificationWorkerPool,
         signatures: UnverifiedSignatures<Bytes>,
         slot: Slot,
-        bank_id: BankId,
-        replay_vote_sender: Option<ReplayVoteSender>,
     ) -> result::Result<(), BlockstoreProcessorError> {
         let item_count = signatures.len();
         if item_count == 0 {
@@ -1281,9 +1242,7 @@ impl AsyncVerificationProgress {
                     signatures,
                     range,
                     slot,
-                    bank_id,
                     result_sender: sender.clone(),
-                    replay_vote_sender: replay_vote_sender.clone(),
                 })
             },
         )
@@ -1423,7 +1382,6 @@ pub fn confirm_slot(
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
     entry_notification_sender: Option<&EntryNotifierSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
     allow_dead_slots: bool,
     migration_status: &MigrationStatus,
@@ -1509,7 +1467,6 @@ pub fn confirm_slot(
                     progress,
                     skip_verification,
                     entry_notification_sender,
-                    replay_vote_sender,
                     migration_status,
                 )?;
             }
@@ -1585,7 +1542,6 @@ fn confirm_slot_entries(
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
     entry_notification_sender: Option<&EntryNotifierSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
@@ -1745,27 +1701,13 @@ fn confirm_slot_entries(
             )?;
     }
 
-    if skip_verification {
-        if let Some(replay_vote_sender) = replay_vote_sender {
-            let message_hashes = unverified_signatures.vote_transaction_message_hashes();
-            if !message_hashes.is_empty() {
-                let _ = replay_vote_sender.send(ReplayVoteMessage::Verified {
-                    replay_bank_id: bank_id,
-                    replay_slot: slot,
-                    message_hashes,
-                });
-            }
-        }
-    } else {
-        let replay_vote_sender = replay_vote_sender.cloned();
+    if !skip_verification {
         progress
             .async_verification(replay_verification_worker_pool)
             .spawn_signature_verification(
                 replay_verification_worker_pool,
                 unverified_signatures,
                 slot,
-                bank_id,
-                replay_vote_sender,
             )?;
     }
 
@@ -1813,7 +1755,6 @@ fn process_bank_0(
         opts,
         &mut progress,
         entry_notification_sender,
-        None,
         &mut ExecuteTimings::default(),
         migration_status,
     )
@@ -2153,7 +2094,6 @@ fn load_frozen_forks(
                 &mut progress,
                 transaction_status_sender,
                 entry_notification_sender,
-                None,
                 timing,
                 &migration_status,
             ) {
@@ -2463,7 +2403,6 @@ pub fn process_single_slot(
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
     migration_status: &MigrationStatus,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -2497,7 +2436,6 @@ pub fn process_single_slot(
         opts,
         progress,
         entry_notification_sender,
-        replay_vote_sender,
         timing,
         migration_status,
     )
@@ -2619,7 +2557,7 @@ pub mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            bank::{BankIdGenerator, bank_hash_details::SlotDetails},
+            bank::bank_hash_details::SlotDetails,
             genesis_utils::{
                 self, ValidatorVoteKeypairs, create_genesis_config_with_tower_leader,
                 create_genesis_config_with_tower_vote_accounts,
@@ -2731,7 +2669,7 @@ pub mod tests {
         )
         .unwrap();
         bank_forks.write().unwrap().install_scheduler_pool(
-            DefaultSchedulerPool::new_for_verification(None, None, None, None, None),
+            DefaultSchedulerPool::new_for_verification(None, None, None, None),
         );
 
         let leader_schedule_cache =
@@ -2806,7 +2744,7 @@ pub mod tests {
         bank: &Arc<Bank>,
         entries: Vec<Entry>,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None);
         process_entries_with_pool_for_tests(&pool, bank, entries)
     }
 
@@ -4561,7 +4499,6 @@ pub mod tests {
             &opts,
             &mut ConfirmationProgress::new(bank0_last_blockhash),
             None,
-            None,
             &mut ExecuteTimings::default(),
             &MigrationStatus::default(),
         )
@@ -4740,99 +4677,6 @@ pub mod tests {
                 assert!(parent_bank.is_frozen());
             }
         }
-    }
-
-    #[test]
-    fn test_replay_vote_sender() {
-        let validator_keypairs: Vec<_> =
-            (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_vote_accounts(
-                1_000_000_000,
-                &validator_keypairs,
-                vec![100; validator_keypairs.len()],
-            );
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        bank0.freeze();
-
-        let bank1_child = Bank::new_from_parent(bank0.clone(), SlotLeader::new_unique(), 1);
-        let bank1 = bank_forks
-            .write()
-            .unwrap()
-            .insert(bank1_child)
-            .clone_without_scheduler();
-
-        // The new blockhash is going to be the hash of the last tick in the block
-        let bank_1_blockhash = bank1.last_blockhash();
-
-        // Create an transaction that references the new blockhash, should still
-        // be able to find the blockhash if we process transactions all in the same
-        // batch
-        let mut expected_successful_voter_pubkeys = BTreeSet::new();
-        let vote_txs: Vec<_> = validator_keypairs
-            .iter()
-            .enumerate()
-            .map(|(i, validator_keypairs)| {
-                let tower_sync = TowerSync::new_from_slots(vec![0], bank0.hash(), None);
-                if i % 3 == 0 {
-                    // These votes are correct
-                    expected_successful_voter_pubkeys
-                        .insert(validator_keypairs.vote_keypair.pubkey());
-                    vote_transaction::new_tower_sync_transaction(
-                        tower_sync,
-                        bank_1_blockhash,
-                        &validator_keypairs.node_keypair,
-                        &validator_keypairs.vote_keypair,
-                        &validator_keypairs.vote_keypair,
-                        None,
-                    )
-                } else if i % 3 == 1 {
-                    // These have the wrong authorized voter
-                    vote_transaction::new_tower_sync_transaction(
-                        tower_sync,
-                        bank_1_blockhash,
-                        &validator_keypairs.node_keypair,
-                        &validator_keypairs.vote_keypair,
-                        &Keypair::new(),
-                        None,
-                    )
-                } else {
-                    // These have an invalid vote for non-existent bank 2
-                    vote_transaction::new_tower_sync_transaction(
-                        TowerSync::from(vec![(bank1.slot() + 1, 1)]),
-                        bank_1_blockhash,
-                        &validator_keypairs.node_keypair,
-                        &validator_keypairs.vote_keypair,
-                        &validator_keypairs.vote_keypair,
-                        None,
-                    )
-                }
-            })
-            .collect();
-        let entry = next_entry(&bank_1_blockhash, 1, vote_txs);
-        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-        let pool = DefaultSchedulerPool::new_for_verification(
-            None,
-            None,
-            None,
-            Some(replay_vote_sender),
-            None,
-        );
-        let _ = process_entries_with_pool_for_tests(&pool, &bank1, vec![entry]);
-        let successes: BTreeSet<Pubkey> = replay_vote_receiver
-            .try_iter()
-            .filter_map(|replay_vote| match replay_vote {
-                ReplayVoteMessage::VerifiedExecuted((vote_pubkey, ..))
-                | ReplayVoteMessage::Executed {
-                    parsed_vote: (vote_pubkey, ..),
-                    ..
-                } => Some(vote_pubkey),
-                ReplayVoteMessage::Verified { .. }
-                | ReplayVoteMessage::InvalidBank { .. }
-                | ReplayVoteMessage::BankComplete { .. } => None,
-            })
-            .collect();
-        assert_eq!(successes, expected_successful_voter_pubkeys);
     }
 
     fn make_slot_with_vote_tx(
@@ -5168,7 +5012,6 @@ pub mod tests {
             progress,
             false,
             None,
-            None,
             &MigrationStatus::default(),
         );
         let (wait_result, _timings) = bank.wait_for_completed_scheduler().unwrap();
@@ -5183,7 +5026,7 @@ pub mod tests {
         slot_full: bool,
         prev_entry_hash: Hash,
     ) -> result::Result<(), BlockstoreProcessorError> {
-        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None);
         let mut progress = ConfirmationProgress::new(prev_entry_hash);
         let result = confirm_slot_entries_with_pool_for_tests(
             &pool,
@@ -5247,7 +5090,6 @@ pub mod tests {
             None,
             None,
             Some(transaction_status_sender),
-            None,
             None,
         );
         let mut progress = ConfirmationProgress::new(genesis_hash);
@@ -5419,7 +5261,6 @@ pub mod tests {
             AsyncVerificationProgress::new(result_channel_capacity),
             AsyncVerificationProgress::new(result_channel_capacity),
         ];
-        let bank_id_generator = BankIdGenerator::default();
 
         // simulate full slots
         for _ in 0..fake_max_fec_sets_per_slot {
@@ -5456,13 +5297,7 @@ pub mod tests {
                 .unwrap()
                 .unverified_signatures;
                 progress
-                    .spawn_signature_verification(
-                        &worker_pool,
-                        unverified_signatures,
-                        slot,
-                        bank_id_generator.next(),
-                        None,
-                    )
+                    .spawn_signature_verification(&worker_pool, unverified_signatures, slot)
                     .unwrap();
             }
         }
@@ -5943,7 +5778,6 @@ pub mod tests {
             false,
             None,
             None,
-            None,
             false,
             &MigrationStatus::default(),
         )
@@ -5978,7 +5812,6 @@ pub mod tests {
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
             Some(&entry_notification_sender),
-            None,
             None,
             false,
             &MigrationStatus::post_migration_status(),
@@ -6050,7 +5883,6 @@ pub mod tests {
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
-            None,
             None,
             None,
             false,

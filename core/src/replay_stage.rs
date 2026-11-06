@@ -1096,7 +1096,6 @@ impl ReplayStage {
             process_active_banks_context
                 .entry_notification_sender
                 .as_ref(),
-            None,
             Some(finalization_cert_sender),
             false,
             process_active_banks_context.migration_status.as_ref(),
