@@ -6943,7 +6943,6 @@ version = "5.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-random",
- "agave-votor-messages",
  "arc-swap",
  "arrayvec",
  "bv",
@@ -6961,10 +6960,8 @@ dependencies = [
  "solana-bloom",
  "solana-clock",
  "solana-ed25519",
- "solana-entry",
  "solana-hash",
  "solana-keypair",
- "solana-ledger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
