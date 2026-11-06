@@ -6788,6 +6788,7 @@ fn test_write_accounts_to_cache_scenarios(
 
     db.store_accounts_unfrozen((slot, batch.as_slice()), BankId::new(slot), &ancestors);
 
+
     // Verify results
     let loaded = db.do_load_for_tests(&ancestors, &key);
     match expected_lamports {
