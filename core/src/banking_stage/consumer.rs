@@ -1,3 +1,5 @@
+#[cfg(test)]
+use smallvec::SmallVec;
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
@@ -5,7 +7,6 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    smallvec::SmallVec,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -81,8 +82,7 @@ pub struct ProcessTransactionBatchOutput {
 }
 
 pub struct ExecuteAndCommitTransactionsOutput {
-    // Transactions counts reported to `ConsumeWorkerMetrics` and then
-    // accumulated later for `LeaderSlotMetrics`
+    // Transaction counts reported to `ConsumeWorkerMetrics`.
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
@@ -125,6 +125,7 @@ impl Consumer {
         }
     }
 
+    #[cfg(test)]
     pub fn process_and_record_transactions(
         &self,
         bank: &Bank,
