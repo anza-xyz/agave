@@ -83,26 +83,25 @@ impl ProgramCacheForTxBatch {
         std::mem::take(&mut self.modified_entries)
     }
 
-    pub fn find(&self, key: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
+    pub fn find(&self, key: &Pubkey) -> Option<TxBatchCacheEntry> {
         // First lookup the cache of the programs modified by the current
         // transaction. If not found, lookup the cache of the programs that
         // are loaded for the transaction batch.
         self.modified_entries
             .get(key)
             .or_else(|| self.entries.get(key))
-            .map(|entry| {
-                if entry.is_implicit_delay_visibility_tombstone(self.slot) {
+            .map(|entry| TxBatchCacheEntry {
+                program: if entry.is_implicit_delay_visibility_tombstone(self.slot) {
                     // Found a program entry on the current fork, but it's not effective
                     // yet. It indicates that the program has delayed visibility. Return
                     // the tombstone to reflect that.
-                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
-                        entry.deployment_slot,
-                        entry.account_owner,
-                        Arc::clone(&entry.stats),
-                    ))
+                    TxBatchCacheEntryType::DelayVisibility
                 } else {
-                    entry.clone()
-                }
+                    TxBatchCacheEntryType::from(&entry.program)
+                },
+                account_owner: entry.account_owner,
+                deployment_slot: entry.deployment_slot,
+                stats: Arc::clone(&entry.stats),
             })
     }
 

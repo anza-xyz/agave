@@ -70,9 +70,9 @@ pub enum ProgramCacheEntryType {
     /// Verified program.
     ///
     /// It may or may not be JIT compiled.
-    Loaded(Executable<InvokeContext<'static, 'static>>),
+    Loaded(Arc<Executable<InvokeContext<'static, 'static>>>),
     /// A built-in program which is not stored on-chain but backed into and distributed with the validator
-    Builtin(BuiltinProgram<InvokeContext<'static, 'static>>),
+    Builtin(Arc<BuiltinProgram<InvokeContext<'static, 'static>>>),
 }
 
 impl std::fmt::Debug for ProgramCacheEntryType {
@@ -189,7 +189,7 @@ impl ProgramCacheEntry {
         Ok(Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
-            program: ProgramCacheEntryType::Loaded(executable),
+            program: ProgramCacheEntryType::Loaded(Arc::new(executable)),
             stats: entry_stats.into(),
             latest_access_slot: AtomicU64::new(0),
         })
@@ -227,7 +227,7 @@ impl ProgramCacheEntry {
         Self {
             deployment_slot: 0, // Deployment slot is always zero
             account_owner: ProgramCacheEntryOwner::NativeLoader,
-            program: ProgramCacheEntryType::Builtin(program),
+            program: ProgramCacheEntryType::Builtin(Arc::new(program)),
             stats: Arc::default(),
             latest_access_slot: AtomicU64::new(0),
         }
@@ -364,7 +364,7 @@ pub(crate) fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEn
         .read_to_end(&mut elf)
         .unwrap();
     let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
-    ProgramCacheEntryType::Loaded(executable)
+    ProgramCacheEntryType::Loaded(Arc::new(executable))
 }
 
 #[cfg(test)]

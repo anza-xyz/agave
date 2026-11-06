@@ -540,8 +540,8 @@ pub(crate) mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             program_cache::{
-                entry::{ProgramCacheEntry, ProgramCacheEntryType},
-                owner::ProgramCacheEntryOwner,
+                entry::ProgramCacheEntry, owner::ProgramCacheEntryOwner,
+                tx_batch::TxBatchCacheEntryType,
             },
             solana_sbpf::{self, program::BuiltinFunctionDefinition, vm::ContextObject},
         },
@@ -858,10 +858,10 @@ pub(crate) mod tests {
 
             match expected_entry {
                 ExpectedCacheEntry::DelayVisibility => {
-                    assert_matches!(target_entry.program, ProgramCacheEntryType::DelayVisibility);
+                    assert_matches!(target_entry.program, TxBatchCacheEntryType::DelayVisibility);
                 }
                 ExpectedCacheEntry::Loaded => {
-                    assert_matches!(target_entry.program, ProgramCacheEntryType::Loaded(..));
+                    assert_matches!(target_entry.program, TxBatchCacheEntryType::Loaded(..));
 
                     // The target program entry should have the environment of
                     // the new epoch.

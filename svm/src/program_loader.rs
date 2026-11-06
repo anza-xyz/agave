@@ -1232,7 +1232,7 @@ mod tests {
             loaded_programs_for_tx_batch.replenish(
                 loader_ids[i],
                 Arc::new(ProgramCacheEntry {
-                    program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+                    program: ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
                     account_owner: ProgramCacheEntryOwner::NativeLoader,
                     deployment_slot: 0,
                     stats: Arc::default(),

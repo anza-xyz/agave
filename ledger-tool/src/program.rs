@@ -300,7 +300,8 @@ fn load_program<'a>(
         );
         match result {
             Ok(loaded_program) => match loaded_program.program {
-                ProgramCacheEntryType::Loaded(program) => Ok(program),
+                ProgramCacheEntryType::Loaded(program) => Arc::try_unwrap(program)
+                    .map_err(|_| "Loaded executable is unexpectedly shared".to_owned()),
                 _ => unreachable!(),
             },
             Err(err) => Err(format!("Loading executable failed: {err:?}")),

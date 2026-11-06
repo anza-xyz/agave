@@ -16,8 +16,8 @@ use {
         deploy_program,
         invoke_context::InvokeContext,
         program_cache::{
-            entry::{ProgramCacheEntry, ProgramCacheEntryType},
-            owner::ProgramCacheEntryOwner,
+            entry::ProgramCacheEntry, owner::ProgramCacheEntryOwner,
+            tx_batch::TxBatchCacheEntryType,
         },
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
@@ -168,13 +168,15 @@ pub(crate) fn process_instruction_inner<'a>(
     invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
     match &executor.program {
-        ProgramCacheEntryType::FailedVerification(_)
-        | ProgramCacheEntryType::Closed
-        | ProgramCacheEntryType::DelayVisibility => {
+        TxBatchCacheEntryType::FailedVerification
+        | TxBatchCacheEntryType::Closed
+        | TxBatchCacheEntryType::DelayVisibility => {
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
         }
-        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context, &executor),
+        TxBatchCacheEntryType::Loaded(executable) => {
+            execute(executable, invoke_context, &executor.stats)
+        }
         _ => Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -1214,7 +1216,10 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
         solana_program_runtime::{
-            program_cache::{env::ProgramRuntimeEnvironment, metrics::ProgramStatistics},
+            program_cache::{
+                entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironment,
+                metrics::ProgramStatistics,
+            },
             vm::calculate_heap_cost,
             with_mock_invoke_context,
         },

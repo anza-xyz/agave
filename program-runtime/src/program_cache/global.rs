@@ -652,7 +652,7 @@ mod tests {
             },
             metrics::ProgramStatistics,
             owner::ProgramCacheEntryOwner,
-            tx_batch::ProgramCacheForTxBatch,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntryType},
         },
         solana_clock::Slot,
         solana_pubkey::Pubkey,
@@ -677,7 +677,7 @@ mod tests {
     }
 
     fn new_builtin_entry(_env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
-        ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock())
+        ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock()))
     }
 
     fn new_failed_verification_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEntryType {
@@ -713,7 +713,7 @@ mod tests {
 
     fn new_test_builtin_entry(deployment_slot: Slot) -> Arc<ProgramCacheEntry> {
         Arc::new(ProgramCacheEntry {
-            program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            program: ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
             account_owner: ProgramCacheEntryOwner::NativeLoader,
             deployment_slot,
             stats: Arc::default(),
@@ -1073,7 +1073,7 @@ mod tests {
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             new_loaded_entry(get_mock_program_runtime_environment()),
-            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
         ),
         (false, true)
     )]
@@ -1340,7 +1340,7 @@ mod tests {
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
             new_loaded_entry(get_mock_program_runtime_environment()),
-            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
         )
     )]
     #[test_matrix(
@@ -1349,7 +1349,7 @@ mod tests {
             ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
             new_loaded_entry(get_mock_program_runtime_environment()),
-            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
         )
     )]
     #[test_matrix(
@@ -1357,11 +1357,11 @@ mod tests {
         (
             ProgramCacheEntryType::Closed,
             ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment()),
-            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
         )
     )]
     #[test_matrix(
-        (ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),),
+        (ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),),
         (
             ProgramCacheEntryType::FailedVerification(get_mock_program_runtime_environment()),
             ProgramCacheEntryType::Closed,
@@ -1412,8 +1412,8 @@ mod tests {
         ProgramCacheEntryType::Unloaded(get_mock_program_runtime_environment())
     )]
     #[test_case(
-        ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
-        ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock())
+        ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
+        ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock()))
     )]
     fn test_assign_program_success(old: ProgramCacheEntryType, new: ProgramCacheEntryType) {
         let mut cache = ProgramCache::<TestForkGraph>::new(0);
@@ -2498,7 +2498,7 @@ mod tests {
         let tombstone = extracted
             .find(&program4)
             .expect("Failed to find the tombstone");
-        assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
+        assert_matches!(tombstone.program, TxBatchCacheEntryType::DelayVisibility);
         assert_eq!(tombstone.deployment_slot, 15);
 
         // Testing the same fork above, but current slot is now 18 (equal to effective slot of program4).
@@ -2531,7 +2531,7 @@ mod tests {
         let tombstone = extracted
             .find(&program2)
             .expect("Failed to find the tombstone");
-        assert_matches!(tombstone.program, ProgramCacheEntryType::DelayVisibility);
+        assert_matches!(tombstone.program, TxBatchCacheEntryType::DelayVisibility);
         assert_eq!(tombstone.deployment_slot, 11);
         assert!(match_slot(&extracted, &program4, 5, 11));
 
@@ -3842,7 +3842,7 @@ mod tests {
         let env = get_mock_program_runtime_environment();
         for program_cache_entry_type in [
             ProgramCacheEntryType::Closed,
-            ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
+            ProgramCacheEntryType::Builtin(Arc::new(BuiltinProgram::new_mock())),
         ] {
             let entry = Arc::new(ProgramCacheEntry {
                 program: program_cache_entry_type,

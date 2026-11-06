@@ -16,9 +16,8 @@ use {
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         memory_context::{MemoryContext, MemoryContexts},
         program_cache::{
-            entry::ProgramCacheEntryType,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
-            tx_batch::ProgramCacheForTxBatch,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntryType},
         },
         stable_log,
         sysvar_cache::SysvarCache,
@@ -659,7 +658,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
-            ProgramCacheEntryType::Builtin(program) => program
+            TxBatchCacheEntryType::Builtin(program) => program
                 .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
                 .map(|(_name, (function, _codegen))| function),
@@ -851,7 +850,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             let Some(entry) = self.program_cache_for_tx_batch.find(program_id) else {
                 continue;
             };
-            let ProgramCacheEntryType::Loaded(ref executable) = entry.program else {
+            let TxBatchCacheEntryType::Loaded(ref executable) = entry.program else {
                 continue;
             };
             callback(instruction_context, executable, register_trace.as_slice());
