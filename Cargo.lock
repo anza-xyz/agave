@@ -8728,7 +8728,6 @@ dependencies = [
  "solana-clock",
  "solana-ed25519",
  "solana-entry",
- "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-gossip",
