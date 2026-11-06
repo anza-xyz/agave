@@ -1583,12 +1583,14 @@ impl Blockstore {
 
     /// Rebuilds the whole erasure batch of `erasure_set` from the shreds
     /// available in blockstore, applying filters to them.
+    /// The rebuilt batch must yield `merkle_root`.
     /// Note: that we do not do recovery on the Alternate shred columns
     fn rebuild_erasure_batch(
         &self,
         index: &Index,
         erasure_set: ErasureSetId,
         erasure_meta: Option<&ErasureMeta>,
+        merkle_root: Hash,
         prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
     ) -> std::result::Result<ErasureBatch, shred::Error> {
@@ -1596,7 +1598,7 @@ impl Blockstore {
         let code = erasure_meta.into_iter().flat_map(|erasure_meta| {
             self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds)
         });
-        shred_recovery_ctx.rebuild_erasure_batch(data.chain(code))
+        shred_recovery_ctx.rebuild_erasure_batch(data.chain(code), merkle_root)
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -1826,6 +1828,7 @@ impl Blockstore {
     fn try_shred_recovery(
         &self,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+        merkle_root_metas: &HashMap<(BlockLocation, ErasureSetId), WorkingEntry<MerkleRootMeta>>,
         index_working_set: &HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
@@ -1872,18 +1875,34 @@ impl Blockstore {
                     num_inserted,
                     shred_recovery_ctx.is_stricter_shred_validation_active(erasure_set.slot()),
                 );
-                (actions.recover_missing_data_shreds || actions.run_fec_checks).then_some((
-                    erasure_set,
-                    erasure_meta,
-                    index,
-                    actions,
-                ))
+                if !(actions.recover_missing_data_shreds || actions.run_fec_checks) {
+                    return None;
+                }
+                // Missing only if this batch touched the set solely at an
+                // Alternate location. Its stored shreds are then unchanged, so
+                // retrying a failed recovery would fail again.
+                let Some(merkle_root_meta) =
+                    merkle_root_metas.get(&(BlockLocation::Original, erasure_set))
+                else {
+                    debug_assert!(
+                        !actions.run_fec_checks,
+                        "inserting a shred at the original location loads or creates the merkle \
+                         root meta of its set"
+                    );
+                    return None;
+                };
+                // The rebuilt batch must match the root which the block id commits to.
+                let merkle_root = merkle_root_meta
+                    .as_ref()
+                    .merkle_root()
+                    .expect("merkle root meta is created from a merkle shred");
+                Some((erasure_set, erasure_meta, merkle_root, index, actions))
             })
             .collect_vec();
 
         let num_to_recover = erasure_sets_to_rebuild
             .iter()
-            .filter(|(_, _, _, actions)| actions.recover_missing_data_shreds)
+            .filter(|(_, _, _, _, actions)| actions.recover_missing_data_shreds)
             .count();
         // At least DATA_SHREDS_PER_FEC_BLOCK shreds are received, so at most as
         // many are recovered per FEC set.
@@ -1892,12 +1911,13 @@ impl Blockstore {
         let mut recovered_data_shreds =
             Vec::with_capacity(num_to_recover * DATA_SHREDS_PER_FEC_BLOCK);
         let mut slots_failing_checks = HashSet::new();
-        for (erasure_set, erasure_meta, index, actions) in erasure_sets_to_rebuild {
+        for (erasure_set, erasure_meta, merkle_root, index, actions) in erasure_sets_to_rebuild {
             let should_check = actions.run_fec_checks;
             let batch = match self.rebuild_erasure_batch(
                 index,
                 erasure_set,
                 erasure_meta,
+                merkle_root,
                 prev_inserted_shreds,
                 shred_recovery_ctx,
             ) {
@@ -1978,6 +1998,7 @@ impl Blockstore {
         let (recovered_shreds, recovered_data_shreds, slots_failing_checks) = self
             .try_shred_recovery(
                 &shred_insertion_tracker.erasure_metas,
+                &shred_insertion_tracker.merkle_root_metas,
                 &shred_insertion_tracker.index_working_set,
                 &shred_insertion_tracker.just_inserted_shreds,
                 shred_recovery_context,
