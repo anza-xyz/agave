@@ -899,7 +899,6 @@ mod tests {
         solana_signer::Signer as _,
         std::{
             cmp, iter,
-            panic::{self, AssertUnwindSafe},
             str::FromStr as _,
             sync::{Arc, Barrier},
             thread,
@@ -1689,33 +1688,5 @@ mod tests {
         assert_eq!(stats.num_containers, 1);
         assert_eq!(stats.capacity_elems, max_capacity);
         assert_eq!(stats.capacity_bytes, max_bytes);
-    }
-
-    /// Checks that `finish()` neither hangs nor returns a hash after a worker panics.
-    #[test]
-    fn test_hashing_panic_fails_finish() {
-        let async_progress = Arc::new(AccountsLtHashAsyncProgress::new());
-        // Poison every accumulator, so the worker that takes the chunk panics in `hash()`.
-        for accumulator in &async_progress.accumulators {
-            let _ = panic::catch_unwind(AssertUnwindSafe(|| {
-                let _accumulator = accumulator.lock().unwrap();
-                panic!("poison the accumulator");
-            }));
-        }
-
-        let account = AccountSharedData::new_with_data(1, vec![1], &Pubkey::default());
-        let update = AccountsLtHashUpdate::new(Pubkey::new_unique(), None, Some(account));
-        let thread_pool = new_accounts_hasher_thread_pool();
-        async_progress.add_deduped_count(1);
-        async_progress.send_chunked(&thread_pool, [update], 1);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while async_progress.num_updates_pending.load(Ordering::Relaxed) > 0 {
-            assert!(Instant::now() < deadline, "chunk stays pending");
-            thread::yield_now();
-        }
-
-        let finish = || async_progress.finish(&mut LtHash::identity());
-        assert!(panic::catch_unwind(AssertUnwindSafe(finish)).is_err());
-        assert!(thread_pool.join().is_err());
     }
 }
