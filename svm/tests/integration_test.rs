@@ -2731,15 +2731,6 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
         }
     }
 
-    // Set the final expected source state.
-    if statuses.iter().all(|success| !*success) {
-        test_entry
-            .final_accounts
-            .get_mut(&source)
-            .unwrap()
-            .set_rent_epoch(0);
-    }
-
     // Set the final expected destination state.
     if statuses.iter().any(|success| *success) {
         assert!(

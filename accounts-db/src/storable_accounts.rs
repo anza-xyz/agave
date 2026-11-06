@@ -585,7 +585,7 @@ mod tests {
                             Arc::new(Vec::default()),
                             Pubkey::default(),
                             false,
-                            0,
+                            u64::MAX,
                         );
 
                         raw.push((pk, account.clone(), starting_slot % max_slots));
@@ -695,7 +695,7 @@ mod tests {
                     Arc::new(Vec::default()),
                     Pubkey::default(),
                     false,
-                    0,
+                    u64::MAX,
                 );
                 raw.push((pk, account.clone()));
             }

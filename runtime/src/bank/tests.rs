@@ -5666,7 +5666,7 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "Frj3kc8QfCipZJssD4Bp1m4YkhBv5Ps2u72YUQY4TjGB",
+                "6iDjBhShETA9i9Y87awoci3zW44S7vDHiezqWRW8TLtk",
             );
         }
 
@@ -5674,14 +5674,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "8LtbxAW7FG3s6kVBTRUNswhcqhryNLiv8qEeqeBLSPqv",
+                "3GxcN9XSVKfcLLWrCPCt4r344zE5WQuu5RUa2pusf5aW",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "52ETLNaAvEorMWrbVjt2JRyrLcxyHpEYHvZpC2iYEMU6",
+                "6mswQESK3xesWuUVVMt8A6pPNqDhxj2CW5u4Y57uHUri",
             );
             break;
         }
@@ -5993,7 +5993,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "9SUJkRfnpArjH12UabHAxvnuG7Em1KmTppfVrKYUuZYe",
+        "9Z7dedWFsaEKp5MoK3igSc6NeP7QEzZWH2QET95Hns3x",
     );
 }
 
