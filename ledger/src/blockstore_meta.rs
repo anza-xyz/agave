@@ -2,12 +2,9 @@ use {
     crate::{
         bit_vec::{BitVec, BitVecRef},
         blockstore::ParentInfo,
-        shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
-            merkle_tree::get_proof_size,
-        },
+        shred::{self, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType, merkle_tree::get_proof_size},
     },
-    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
+    agave_shred_wire_format::constants::{DATA_SHREDS_PER_FEC_BLOCK, SIZE_OF_MERKLE_PROOF_ENTRY},
     bitflags::bitflags,
     smallvec::SmallVec,
     solana_clock::{Slot, UnixTimestamp},

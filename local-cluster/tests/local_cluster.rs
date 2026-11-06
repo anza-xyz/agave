@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     agave_snapshots::{
         SnapshotArchiveKind, SnapshotInterval, paths as snapshot_paths,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
@@ -28,10 +29,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore,
         blockstore_options::{AccessType, BlockstoreOptions},
-        shred::{
-            DATA_SHREDS_PER_FEC_BLOCK,
-            filter::{TurbineMode, TurbineModeKind},
-        },
+        shred::filter::{TurbineMode, TurbineModeKind},
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_local_cluster::{
