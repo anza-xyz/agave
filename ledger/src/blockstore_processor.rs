@@ -2868,7 +2868,7 @@ pub mod tests {
         let replacement_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), slot);
         replacement_bank.store_account(
             &replacement_key,
-            &AccountSharedData::new(1, 0, &Pubkey::new_unique()),
+            &AccountSharedData::empty(1, &Pubkey::new_unique()),
         );
         assert_eq!(replacement_bank.get_balance(&replacement_key), 1);
         let replacement_bank = bank_forks.write().unwrap().insert(replacement_bank);
@@ -6202,7 +6202,7 @@ pub mod tests {
             1,
         ));
         first_alpenglow_bank
-            .store_account(&first_alpenglow_key, &AccountSharedData::new(1, 0, &owner));
+            .store_account(&first_alpenglow_key, &AccountSharedData::empty(1, &owner));
         assert!(
             first_alpenglow_bank
                 .get_account(&first_alpenglow_key)
@@ -6212,7 +6212,7 @@ pub mod tests {
             BankWithScheduler::new_without_scheduler(first_alpenglow_bank.clone());
 
         let pending_bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 2);
-        pending_bank.store_account(&pending_key, &AccountSharedData::new(1, 0, &owner));
+        pending_bank.store_account(&pending_key, &AccountSharedData::empty(1, &owner));
         assert!(pending_bank.get_account(&pending_key).is_some());
 
         let pending_meta = blockstore.meta(2).unwrap().unwrap();

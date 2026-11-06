@@ -6921,7 +6921,7 @@ pub mod tests {
 
         let new_program_id = Pubkey::new_unique();
         let new_program_account_key = Pubkey::new_unique();
-        let new_program_account = AccountSharedData::new(42, 0, &new_program_id);
+        let new_program_account = AccountSharedData::empty(42, &new_program_id);
         bank.store_account(&new_program_account_key, &new_program_account);
 
         let request = create_test_request(

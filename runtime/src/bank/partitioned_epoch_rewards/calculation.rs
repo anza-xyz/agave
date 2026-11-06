@@ -4128,9 +4128,8 @@ mod tests {
             // system account with lamports, success
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
+                Some(AccountSharedData::empty(
                     LAMPORTS_PER_SOL,
-                    0,
                     &solana_sdk_ids::system_program::id(),
                 )),
                 true,
@@ -4142,9 +4141,8 @@ mod tests {
             // non-rent-exempt system account with 1 lamport, success with relaxed checks
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
+                Some(AccountSharedData::empty(
                     1,
-                    0,
                     &solana_sdk_ids::system_program::id(),
                 )),
                 true,
@@ -4152,9 +4150,8 @@ mod tests {
             // invalid owner, no commission
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
+                Some(AccountSharedData::empty(
                     LAMPORTS_PER_SOL,
-                    0,
                     &Pubkey::new_unique(),
                 )),
                 false,
@@ -4360,7 +4357,7 @@ mod tests {
         let invalid_collector = Pubkey::new_unique();
         bank.store_account(
             &invalid_collector,
-            &AccountSharedData::new(LAMPORTS_PER_SOL, 0, &Pubkey::new_unique()),
+            &AccountSharedData::empty(LAMPORTS_PER_SOL, &Pubkey::new_unique()),
         );
 
         // Point the vote account at the invalid collector and advance to the reward

@@ -62,7 +62,7 @@ impl FeeDistribution {
 }
 
 pub(crate) fn default_system_account() -> AccountSharedData {
-    AccountSharedData::new(0, 0, &system_program::id())
+    AccountSharedData::empty(0, &system_program::id())
 }
 
 fn report_deposit_error(slot: u64, destination: &Pubkey, deposit: u64, err: DepositFeeError) {
@@ -485,7 +485,7 @@ pub mod tests {
                 Scenario::InvalidOwner => {
                     // ensure that account owner is invalid and fee distribution will fail
                     let account =
-                        AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
+                        AccountSharedData::empty(min_rent_exempt_balance, &Pubkey::new_unique());
                     bank.store_account(&collector_id, &account);
                 }
                 Scenario::VoteAccount => {
@@ -497,7 +497,7 @@ pub mod tests {
                 }
                 Scenario::NonDefault | Scenario::Normal => {
                     let account =
-                        AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
+                        AccountSharedData::empty(min_rent_exempt_balance, &system_program::id());
                     bank.store_account(&collector_id, &account);
                 }
             }
@@ -581,7 +581,7 @@ pub mod tests {
             let mut bank = Bank::new_for_tests(&genesis.genesis_config);
             bank.feature_set = Arc::new(FeatureSet::all_enabled());
 
-            let pre_collector_account = AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
+            let pre_collector_account = AccountSharedData::empty(min_rent_exempt_balance, &system_program::id());
             bank.store_account(&collector_id, &pre_collector_account);
 
             let burn = bank.deposit_or_burn_fee(total_fee);

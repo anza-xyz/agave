@@ -486,7 +486,7 @@ pub(crate) fn create_validator(
         stake_lamports,
     );
 
-    let node_account = AccountSharedData::new(node_lamports, 0, &system_program::id());
+    let node_account = AccountSharedData::empty(node_lamports, &system_program::id());
 
     vec![
         (vote_pubkey, vote_account),
@@ -529,7 +529,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 
     initial_accounts.push((
         *mint_pubkey,
-        AccountSharedData::new(mint_lamports, 0, &system_program::id()),
+        AccountSharedData::empty(mint_lamports, &system_program::id()),
     ));
     let mut validator_accounts = create_validator(
         &rent,
