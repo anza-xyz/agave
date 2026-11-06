@@ -1754,6 +1754,8 @@ impl JsonRpcRequestProcessor {
     }
 
     pub async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
+        self.check_if_transaction_history_enabled()?;
+
         if slot == 0 {
             return Ok(Some(self.genesis_creation_time()));
         }
@@ -9117,7 +9119,7 @@ pub mod tests {
 
     #[test]
     fn test_get_block_time() {
-        let rpc = RpcHandler::start();
+        let mut rpc = RpcHandler::start();
         rpc.add_roots_to_blockstore(vec![1, 2, 3, 4, 5, 6, 7]);
 
         rpc.block_commitment_cache
@@ -9175,6 +9177,15 @@ pub mod tests {
         let expected = (
             JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
             String::from("Block not available for slot 12345"),
+        );
+        assert_eq!(response, expected);
+
+        rpc.meta.config.enable_rpc_transaction_history = false;
+        let request = create_test_request("getBlockTime", Some(json!([2u64])));
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
+            String::from("Transaction history is not available from this node"),
         );
         assert_eq!(response, expected);
     }
