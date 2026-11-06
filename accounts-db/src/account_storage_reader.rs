@@ -387,7 +387,7 @@ mod tests {
         let accounts: Vec<_> = (0..total_accounts)
             .map(|index| {
                 if tombstone_indexes.contains(&index) {
-                    AccountSharedData::new(0, 0, &Pubkey::default())
+                    AccountSharedData::empty(0, &Pubkey::default())
                 } else {
                     AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default())
                 }

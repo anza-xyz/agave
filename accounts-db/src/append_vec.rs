@@ -2362,7 +2362,7 @@ mod tests {
         let accounts: Box<_> = iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 0, &Pubkey::default()),
+                AccountSharedData::empty(1, &Pubkey::default()),
             )
         })
         .take(num_accounts)
