@@ -5,7 +5,6 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         contact_info::ContactInfo,
-        duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
         restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
     },
@@ -71,7 +70,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RejectNonzeroU8 {
     feature = "stable-abi",
     derive(StableAbi),
     frozen_abi(
-        abi_digest = "8xtXp6zcdy4CUu2fpyEcKTWSDrq4KvGLRcBTv73ojnL7",
+        abi_digest = "HJcL4rDSrnr77fFDVaUMC4yGvdCvdCTuR72Wfbktme7R",
         abi_serializer = ["wincode"],
         test_roundtrip = "eq_and_wire",
     )
@@ -98,7 +97,8 @@ pub enum CrdsData {
     Version(Deprecated), // Deprecated
     #[allow(private_interfaces)]
     NodeInstance(Deprecated), // Deprecated
-    DuplicateShred(DuplicateShredIndex, DuplicateShred),
+    #[allow(private_interfaces)]
+    DuplicateShred(Deprecated), // Deprecated
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
     RestartLastVotedForkSlots(RestartLastVotedForkSlots), // Deprecated
@@ -120,13 +120,6 @@ impl Sanitize for CrdsData {
                 }
                 val.sanitize()
             }
-            CrdsData::DuplicateShred(ix, shred) => {
-                if *ix >= MAX_DUPLICATE_SHREDS {
-                    Err(SanitizeError::ValueOutOfBounds)
-                } else {
-                    shred.sanitize()
-                }
-            }
             CrdsData::SnapshotHashes(val) => val.sanitize(),
             CrdsData::ContactInfo(node) => node.sanitize(),
             CrdsData::RestartLastVotedForkSlots(slots) => slots.sanitize(),
@@ -138,6 +131,7 @@ impl Sanitize for CrdsData {
             | CrdsData::LegacyContactInfo(_)
             | CrdsData::LegacyVersion(_)
             | CrdsData::NodeInstance(_)
+            | CrdsData::DuplicateShred(_)
             | CrdsData::Version(_) => Err(SanitizeError::InvalidValue),
         }
     }
@@ -175,7 +169,6 @@ impl CrdsData {
         match self {
             CrdsData::LowestSlot(_, obj) => obj.wallclock,
             CrdsData::EpochSlots(_, p) => p.wallclock,
-            CrdsData::DuplicateShred(_, shred) => shred.wallclock,
             CrdsData::SnapshotHashes(hash) => hash.wallclock,
             CrdsData::ContactInfo(node) => node.wallclock(),
             CrdsData::RestartLastVotedForkSlots(slots) => slots.wallclock,
@@ -187,6 +180,7 @@ impl CrdsData {
             | CrdsData::LegacyContactInfo(_)
             | CrdsData::LegacyVersion(_)
             | CrdsData::NodeInstance(_)
+            | CrdsData::DuplicateShred(_)
             | CrdsData::Version(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
@@ -195,7 +189,6 @@ impl CrdsData {
         match &self {
             CrdsData::LowestSlot(_, slots) => slots.from,
             CrdsData::EpochSlots(_, p) => p.from,
-            CrdsData::DuplicateShred(_, shred) => shred.from,
             CrdsData::SnapshotHashes(hash) => hash.from,
             CrdsData::ContactInfo(node) => *node.pubkey(),
             CrdsData::RestartLastVotedForkSlots(slots) => slots.from,
@@ -207,6 +200,7 @@ impl CrdsData {
             | CrdsData::LegacyContactInfo(_)
             | CrdsData::LegacyVersion(_)
             | CrdsData::NodeInstance(_)
+            | CrdsData::DuplicateShred(_)
             | CrdsData::Version(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
@@ -225,7 +219,7 @@ impl CrdsData {
             Self::LegacyVersion(_) => true,
             Self::Version(_) => true,
             Self::NodeInstance(_) => true,
-            Self::DuplicateShred(..) => false,
+            Self::DuplicateShred(_) => true,
             Self::SnapshotHashes(_) => false,
             Self::ContactInfo(_) => false,
             Self::RestartLastVotedForkSlots(_) => true,
@@ -394,13 +388,12 @@ impl solana_frozen_abi::rand::distr::Distribution<CrdsData>
 {
     fn sample<R: solana_frozen_abi::rand::Rng + ?Sized>(&self, rng: &mut R) -> CrdsData {
         use solana_frozen_abi::stable_abi::StableAbi;
-        match rng.random_range(0..7u8) {
+        match rng.random_range(0..6u8) {
             0 => CrdsData::LowestSlot(0, <LowestSlot as StableAbi>::random(rng)),
             1 => CrdsData::EpochSlots(rng.random(), <EpochSlots as StableAbi>::random(rng)),
-            2 => CrdsData::DuplicateShred(rng.random(), <DuplicateShred as StableAbi>::random(rng)),
-            3 => CrdsData::SnapshotHashes(<SnapshotHashes as StableAbi>::random(rng)),
-            4 => CrdsData::ContactInfo(<ContactInfo as StableAbi>::random(rng)),
-            5 => CrdsData::RestartLastVotedForkSlots(
+            2 => CrdsData::SnapshotHashes(<SnapshotHashes as StableAbi>::random(rng)),
+            3 => CrdsData::ContactInfo(<ContactInfo as StableAbi>::random(rng)),
+            4 => CrdsData::RestartLastVotedForkSlots(
                 <RestartLastVotedForkSlots as StableAbi>::random(rng),
             ),
             _ => CrdsData::RestartHeaviestFork(<RestartHeaviestFork as StableAbi>::random(rng)),
@@ -459,6 +452,7 @@ mod test {
         let deprecated_values = [
             CrdsData::Vote(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::DuplicateShred(Deprecated {}),
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::LegacyContactInfo(Deprecated {}),
