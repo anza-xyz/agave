@@ -663,7 +663,6 @@ mod tests {
         )
         .unwrap();
         program.set_executable(true);
-        program.set_rent_epoch(u64::MAX);
 
         let elf = load_program(name);
         let metadata_size = UpgradeableLoaderState::size_of_programdata_metadata();
@@ -678,7 +677,6 @@ mod tests {
         )
         .unwrap();
         program_data.data_as_mut_slice()[metadata_size..].copy_from_slice(&elf);
-        program_data.set_rent_epoch(u64::MAX);
 
         [
             (program_account, program),
