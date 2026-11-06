@@ -1,6 +1,6 @@
 use {
-    crate::{ancestors::Ancestors, bank_id::BankId},
-    dashmap::{DashMap, mapref::entry::Entry},
+    crate::{accounts_cache_index::AccountsCacheIndex, ancestors::Ancestors, bank_id::BankId},
+    dashmap::DashMap,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
@@ -181,62 +181,6 @@ impl CachedAccount {
     }
 }
 
-/// Maps each pubkey to (max_bank_id, ref_count) where max_bank_id is the highest bank id that has
-/// written the pubkey into the cache, and ref_count is the number of SlotCache entries that
-/// currently hold the pubkey. max_bank_id may be stale after a removal; callers must handle a
-/// look-up miss on max_bank_id by falling back to scanning all slots in the cache (see load_latest)
-#[derive(Debug, Default)]
-struct AccountsCacheIndex {
-    entries: DashMap<Pubkey, (BankId, u32), ahash::RandomState>,
-    // The number of unique pubkeys in the index, for reporting purposes. This is to avoid having to
-    // lock each shard of the entries dashmap to count unique keys on demand
-    num_unique_pubkeys: AtomicU64,
-}
-
-impl AccountsCacheIndex {
-    /// Inserts an entry into the index. If the entry is already present, increase the ref count
-    fn insert(&self, pubkey: &Pubkey, bank_id: BankId) {
-        self.entries
-            .entry(*pubkey)
-            .and_modify(|(stored_bank_id, ref_count)| {
-                *stored_bank_id = bank_id.max(*stored_bank_id);
-                *ref_count += 1;
-            })
-            .or_insert_with(|| {
-                self.num_unique_pubkeys.fetch_add(1, Ordering::Relaxed);
-                (bank_id, 1)
-            });
-    }
-
-    /// Decrement the reference count for each pubkey in `pubkeys`. Removes an entry entirely if
-    /// the count reaches zero. `max_bank_id` is not updated; it will become stale if the removed
-    /// bank is the highest. Returns a vec of pubkeys removed from the index.
-    fn remove(&self, pubkeys: impl IntoIterator<Item = Pubkey>) -> Vec<Pubkey> {
-        let mut removed_pubkeys = Vec::new();
-        for pubkey in pubkeys {
-            let Entry::Occupied(mut occupied_entry) = self.entries.entry(pubkey) else {
-                // If this has happened the index is corrupted
-                panic!("pubkey {pubkey} not found in cache index during remove");
-            };
-            let (_, ref_count) = occupied_entry.get_mut();
-            *ref_count -= 1;
-            if *ref_count == 0 {
-                occupied_entry.remove_entry();
-                self.num_unique_pubkeys.fetch_sub(1, Ordering::Relaxed);
-                removed_pubkeys.push(pubkey);
-            }
-        }
-        removed_pubkeys
-    }
-
-    /// Returns the highest bank id that stored `pubkey` in the cache, or `None` if the pubkey is
-    /// not present in the cache. That bank's slot cache may since have been flushed or purged, so
-    /// this is only an upper bound on the banks whose slot caches hold `pubkey`
-    fn max_bank_id_for_pubkey(&self, pubkey: &Pubkey) -> Option<BankId> {
-        self.entries.get(pubkey).map(|entry| entry.0)
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct AccountsCache {
     cache: DashMap<BankId, Arc<SlotCache>, BuildNoHashHasher<BankId>>,
@@ -282,11 +226,7 @@ impl AccountsCache {
                 self.total_accounts_count.load(Ordering::Relaxed),
                 i64
             ),
-            (
-                "num_unique_pubkeys",
-                self.index.num_unique_pubkeys.load(Ordering::Relaxed),
-                i64
-            ),
+            ("num_unique_pubkeys", self.index.num_unique_pubkeys(), i64),
         );
     }
 
@@ -449,18 +389,12 @@ impl AccountsCache {
     }
 
     pub fn contains_pubkey(&self, pubkey: &Pubkey) -> bool {
-        self.index.entries.contains_key(pubkey)
+        self.index.contains(pubkey)
     }
 
     /// Returns a vector of all pubkeys currently in the cache index.
-    /// In iterator is not returned as the dashmap shards would be readlocked for the duration
-    /// of the iterator
     pub(crate) fn cached_pubkeys(&self) -> Vec<Pubkey> {
-        self.index
-            .entries
-            .iter()
-            .map(|entry| *entry.key())
-            .collect()
+        self.index.pubkeys()
     }
 
     pub fn num_slots(&self) -> usize {
@@ -596,7 +530,7 @@ mod tests {
         let cache = AccountsCache::default();
         let pk = Pubkey::new_unique();
 
-        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 0);
+        assert_eq!(cache.index.num_unique_pubkeys(), 0);
 
         // Store pubkey into 3 different slots
         cache.store(
@@ -605,7 +539,7 @@ mod tests {
             &pk,
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
-        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.index.num_unique_pubkeys(), 1);
         cache.store(
             5,
             BankId::new(5),
@@ -619,7 +553,7 @@ mod tests {
             AccountSharedData::new(3, 0, &Pubkey::default()),
         );
         // Same pubkey across 3 slots — still only 1 unique pubkey
-        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.index.num_unique_pubkeys(), 1);
 
         // Remove and drop slot 1 — entry should still exist (count goes from 3 to 2)
         let removed = cache.remove_bank(BankId::new(1));
@@ -629,7 +563,7 @@ mod tests {
             cache.index.max_bank_id_for_pubkey(&pk),
             Some(BankId::new(5))
         );
-        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.index.num_unique_pubkeys(), 1);
 
         // Remove and drop slot 5 — entry should still exist (count goes from 2 to 1)
         // max_bank_id stays stale at 5 because the index doesn't scan for a new max on removal
@@ -637,14 +571,14 @@ mod tests {
         assert!(removed.is_some());
         drop(removed);
         assert!(cache.index.max_bank_id_for_pubkey(&pk).is_some());
-        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 1);
+        assert_eq!(cache.index.num_unique_pubkeys(), 1);
 
         // Remove and drop slot 3 — last reference gone, entry removed
         let removed = cache.remove_bank(BankId::new(3));
         assert!(removed.is_some());
         drop(removed);
         assert!(cache.index.max_bank_id_for_pubkey(&pk).is_none());
-        assert_eq!(cache.index.num_unique_pubkeys.load(Ordering::Relaxed), 0);
+        assert_eq!(cache.index.num_unique_pubkeys(), 0);
     }
 
     #[test]

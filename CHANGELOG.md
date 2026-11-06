@@ -38,6 +38,10 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Added the opt-in `bbtree-accounts-cache-poc` feature and a side-by-side write-cache index
+  benchmark. This remains experimental and must not be used in production while
+  [bbtree issue #26](https://github.com/XiangpengHao/bbtree/issues/26) is unresolved.
+
 ### CLI
 
 #### Breaking

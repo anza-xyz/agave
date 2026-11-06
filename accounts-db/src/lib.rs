@@ -8,6 +8,10 @@ pub mod account_storage_entry;
 pub mod account_storage_reader;
 pub mod accounts;
 mod accounts_cache;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod accounts_cache_index;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod accounts_cache_index;
 pub mod accounts_db;
 pub mod accounts_file;
 pub mod accounts_hash;

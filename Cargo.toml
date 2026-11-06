@@ -253,6 +253,7 @@ atomic-wait = "1.1.0"
 aya = "0.14"
 aya-ebpf = "0.2.1"
 base64 = "0.23.1"
+bbtree = "0.2.0"
 bencher = "0.1.5"
 bincode = "1.3.3"
 bip39 = { version = "2.2.2", features = ["all-languages"] }
