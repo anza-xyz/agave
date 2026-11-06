@@ -24,6 +24,7 @@ use {
             merkle::{ErasureBatch, FecSetViolation},
             merkle_tree::{MerkleTree, get_proof_size},
         },
+        sigverify_shreds::VerifiedShred,
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
@@ -2473,17 +2474,25 @@ impl Blockstore {
     {
         let mut pinnable_slice = self.new_pinnable_slice();
         let mut write_batch = self.get_write_batch();
-        self.insert_shreds_at_location_handle_duplicate(
+        let InsertResults {
+            completed_data_set_infos,
+            duplicate_shreds,
+        } = self.do_insert_shreds(
             shreds
                 .into_iter()
                 .map(|(shred, is_repaired)| (shred, is_repaired, BlockLocation::Original, None)),
             is_trusted,
-            shred_recovery_context,
+            Some(shred_recovery_context),
             &mut pinnable_slice,
             &mut write_batch,
-            handle_duplicate,
             metrics,
-        )
+        )?;
+
+        for shred in duplicate_shreds {
+            handle_duplicate(shred);
+        }
+
+        Ok(completed_data_set_infos)
     }
 
     /// Inserts `shreds` into the column specified by  the `BlockLocation`.
@@ -2494,15 +2503,7 @@ impl Blockstore {
     /// The pinnable slice and write batch can be reused across calls.
     pub fn insert_shreds_at_location_handle_duplicate<'db, F>(
         &'db self,
-        shreds: impl IntoIterator<
-            Item = (
-                Shred,
-                /*is_repaired:*/ bool,
-                BlockLocation,
-                /*precomputed_merkle_root:*/ Option<Hash>,
-            ),
-            IntoIter: ExactSizeIterator,
-        >,
+        shreds: impl IntoIterator<Item = VerifiedShred, IntoIter: ExactSizeIterator>,
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
         pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -2517,7 +2518,14 @@ impl Blockstore {
             completed_data_set_infos,
             duplicate_shreds,
         } = self.do_insert_shreds(
-            shreds,
+            shreds.into_iter().map(
+                |VerifiedShred {
+                     shred,
+                     is_repaired,
+                     location,
+                     merkle_root,
+                 }| (shred, is_repaired, location, Some(merkle_root)),
+            ),
             is_trusted,
             Some(shred_recovery_context),
             pinnable_slice,
