@@ -1506,8 +1506,9 @@ mod tests {
             )),
         );
 
-        // Rewards partially cover minimum balance change, but leave no lamports available for
-        // delegation, so the stake is deactivated.
+        // Rewards partially cover minimum balance change
+        // -> decrease stake
+        // Two lamports of rewards leave only one lamport above the new minimum.
         check_rent_adjusted_stake_delegation(
             rewarded_epoch,
             Stake {
@@ -1521,11 +1522,10 @@ mod tests {
             new_minimum_balance + 1,
             2,
             Some((
-                1,
+                2,
                 Stake {
                     delegation: Delegation {
-                        stake: 0,
-                        deactivation_epoch: rewarded_epoch,
+                        stake: 1,
                         ..Default::default()
                     },
                     credits_observed: 2,

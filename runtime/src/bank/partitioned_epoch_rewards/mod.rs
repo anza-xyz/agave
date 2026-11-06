@@ -1622,8 +1622,8 @@ mod tests {
             previous_bank = partition_bank;
         }
 
-        // Zero-lamport stake rewards in the first Alpenglow epoch are not recorded.
-        assert_eq!(total_staking_rewards, 0);
+        // All rewards are recorded.
+        assert_eq!(total_staking_rewards, num_rewards);
         let bank = Bank::new_from_parent(
             previous_bank,
             SlotLeader::default(),
