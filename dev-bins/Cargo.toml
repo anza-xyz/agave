@@ -92,7 +92,7 @@ solana-gossip = { path = "../gossip", version = "=5.0.0-alpha.0", features = ["a
 solana-hash = "4.5.0"
 solana-inflation = "3.1.1"
 solana-instruction = "4.0.0"
-solana-keypair = "4.0.0"
+solana-keypair = "4.0.1"
 solana-lattice-hash = { path = "../lattice-hash", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-leader-schedule = { path = "../leader-schedule", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-ledger = { path = "../ledger", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
