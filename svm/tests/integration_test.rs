@@ -451,16 +451,14 @@ impl SvmTestEntry {
     // add a new rent-exempt account that is created by the transaction
     // inserts it only into the post account map
     pub fn create_expected_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
-        let mut account = account.clone();
-        account.set_rent_epoch(u64::MAX);
+        let account = account.clone();
 
         assert!(self.final_accounts.insert(pubkey, account).is_none());
     }
 
     // edit an existing account to reflect changes you expect the transaction to make to it
     pub fn update_expected_account_data(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
-        let mut account = account.clone();
-        account.set_rent_epoch(u64::MAX);
+        let account = account.clone();
 
         assert!(self.final_accounts.insert(pubkey, account).is_some());
     }
@@ -876,7 +874,6 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
-        fee_payer_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(fee_payer, fee_payer_data);
@@ -884,7 +881,6 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 
         let mut sender_data = AccountSharedData::default();
         sender_data.set_lamports(base_amount);
-        sender_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(sender, &sender_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(sender, sender_data);
@@ -892,7 +888,6 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
 
         let mut recipient_data = AccountSharedData::default();
         recipient_data.set_lamports(base_amount);
-        recipient_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(recipient, &recipient_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(recipient, recipient_data);
@@ -1019,7 +1014,6 @@ fn simple_transfer(
         let mut source_data = AccountSharedData::default();
 
         source_data.set_lamports(transfer_amount - 1);
-        source_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(source, &source_data);
         if drop_on_failure {
             test_entry.final_accounts.insert(source, source_data);
@@ -1137,7 +1131,6 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         if !fake_fee_payer && !fee_paying_nonce {
             let mut fee_payer_data = AccountSharedData::default();
             fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
-            fee_payer_data.set_rent_epoch(u64::MAX);
             test_entry.add_initial_account(fee_payer, &fee_payer_data);
         } else if rent_paying_nonce {
             assert!(fee_paying_nonce);
@@ -1150,13 +1143,12 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         let nonce_initial_hash = DurableNonce::from_blockhash(&Hash::new_unique());
         let nonce_data =
             nonce::state::Data::new(fee_payer, nonce_initial_hash, LAMPORTS_PER_SIGNATURE);
-        let mut nonce_account = AccountSharedData::new_data(
+        let nonce_account = AccountSharedData::new_data(
             nonce_balance,
             &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
             &system_program::id(),
         )
         .unwrap();
-        nonce_account.set_rent_epoch(u64::MAX);
         let nonce_info = NonceInfo::new(nonce_pubkey, nonce_account.clone());
 
         if !(fake_fee_payer && fee_paying_nonce) {
@@ -1575,13 +1567,12 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
     let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
     let initial_nonce_data =
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
-    let mut initial_nonce_account = AccountSharedData::new_data(
+    let initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
         &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
         &system_program::id(),
     )
     .unwrap();
-    initial_nonce_account.set_rent_epoch(u64::MAX);
     let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
     let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
@@ -1922,7 +1913,6 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         test_entry.final_accounts.remove(&nonce_pubkey);
 
         let mut fake_nonce_account = initial_nonce_account.clone();
-        fake_nonce_account.set_rent_epoch(u64::MAX);
         fake_nonce_account.set_owner(Pubkey::new_unique());
         test_entry.add_initial_account(nonce_pubkey, &fake_nonce_account);
 
@@ -2268,13 +2258,12 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
         let initial_nonce_data =
             nonce::state::Data::new(dealloc_fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
-        let mut initial_nonce_account = AccountSharedData::new_data(
+        let initial_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
             &nonce::versions::Versions::new(nonce::state::State::Initialized(initial_nonce_data)),
             &system_program::id(),
         )
         .unwrap();
-        initial_nonce_account.set_rent_epoch(u64::MAX);
         let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
 
         let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
@@ -2467,7 +2456,6 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
         let fee_payer = fee_payer_keypair.pubkey();
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
-        fee_payer_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
         let target = Pubkey::new_unique();
@@ -2501,7 +2489,6 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
         let fee_payer = fee_payer_keypair.pubkey();
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
-        fee_payer_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
         let target = Pubkey::new_unique();
@@ -2531,7 +2518,6 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
         let fee_payer = fee_payer_keypair.pubkey();
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
-        fee_payer_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
         let target = Pubkey::new_unique();
@@ -2558,7 +2544,6 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
         let fee_payer = fee_payer_keypair.pubkey();
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
-        fee_payer_data.set_rent_epoch(u64::MAX);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
         let target_keypair = Keypair::new();
@@ -2705,7 +2690,6 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
                 destination_data
                     .checked_add_lamports(transfer_amount)
                     .unwrap();
-                destination_data.set_rent_epoch(u64::MAX);
 
                 test_entry.push_transaction_with_status(
                     system_transaction::transfer(
@@ -3350,9 +3334,8 @@ fn fee_only_loaded_transaction_data_size() {
     let fee_payer = fee_payer_keypair.pubkey();
     let loaded_fee_payer_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32;
 
-    let mut fee_payer_data =
+    let fee_payer_data =
         AccountSharedData::new_with_data(LAMPORTS_PER_SOL, Vec::new(), &Pubkey::default());
-    fee_payer_data.set_rent_epoch(u64::MAX);
 
     common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
@@ -3363,12 +3346,11 @@ fn fee_only_loaded_transaction_data_size() {
         let base_size = 2_usize.pow(i);
 
         let pubkey = Pubkey::new_unique();
-        let mut account_data = AccountSharedData::new_with_data(
+        let account_data = AccountSharedData::new_with_data(
             LAMPORTS_PER_SOL,
             vec![0; base_size],
             &Pubkey::default(),
         );
-        account_data.set_rent_epoch(u64::MAX);
 
         common_test_entry.add_initial_account(pubkey, &account_data);
         loaded_account_sizes.push((pubkey, base_size + TRANSACTION_ACCOUNT_BASE_SIZE));

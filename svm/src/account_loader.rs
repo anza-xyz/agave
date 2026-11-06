@@ -680,8 +680,7 @@ fn load_transaction_account<CB: AccountLoadCallback>(
         }
         Ok(loaded_account)
     } else {
-        let mut default_account = AccountSharedData::default();
-        default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        let default_account = AccountSharedData::default();
         Ok(LoadedTransactionAccount {
             loaded_size: default_account.data().len(),
             account: default_account,
@@ -2054,8 +2053,7 @@ mod tests {
 
         let expected_loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        let account_data = AccountSharedData::default();
         assert_eq!(
             vec![
                 (key2.pubkey(), fee_payer_account),
@@ -2218,8 +2216,7 @@ mod tests {
 
         let loaded_accounts_data_size = TRANSACTION_ACCOUNT_BASE_SIZE as u32 * 2;
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        let account_data = AccountSharedData::default();
 
         let TransactionLoadResult::Loaded(loaded_transaction) = load_result else {
             panic!("transaction loading failed");
@@ -2400,7 +2397,6 @@ mod tests {
     fn test_account_loader_wrappers() {
         let fee_payer = Pubkey::new_unique();
         let mut fee_payer_account = AccountSharedData::default();
-        fee_payer_account.set_rent_epoch(u64::MAX);
         fee_payer_account.set_lamports(5000);
 
         let mut mock_bank = TestCallbacks::default();

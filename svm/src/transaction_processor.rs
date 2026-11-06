@@ -3055,7 +3055,6 @@ mod tests {
 
             let post_validation_fee_payer_account = {
                 let mut account = fee_payer_account.clone();
-                account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 account.set_lamports(min_balance);
                 account
             };
