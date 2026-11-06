@@ -63,7 +63,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "AkRqWQPiVAxNdHUSojq3apD4PEe7T3h7FUmzLwJAPdp3",
+        abi_digest = "31iA8eT7Y2AVmZuELtfE8DVnGhTNm2hAfvYJXdLBV1DB",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -330,7 +330,6 @@ pub(crate) mod tests {
                 tests::{new_rand_fec_set_index, new_rand_shred},
             },
             epoch_slots::EpochSlots,
-            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::Rng,
         solana_clock::Slot,
@@ -593,10 +592,8 @@ pub(crate) mod tests {
                 &Pubkey::new_unique(),
                 timestamp(),
             )),
-            CrdsData::RestartLastVotedForkSlots(RestartLastVotedForkSlots::new_rand(
-                &mut rng, None,
-            )),
-            CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
+            CrdsData::RestartLastVotedForkSlots(Deprecated {}),
+            CrdsData::RestartHeaviestFork(Deprecated {}),
         ];
 
         for (discriminant, data) in variants.into_iter().enumerate() {

@@ -105,7 +105,7 @@ pub enum GossipRoute<'a> {
     PushMessage(/*from:*/ &'a Pubkey),
 }
 
-type CrdsCountsArray = [usize; 14];
+type CrdsCountsArray = [usize; 12];
 
 #[derive(Default)]
 pub(crate) struct CrdsDataStats {
@@ -856,6 +856,7 @@ impl CrdsDataStats {
     }
 
     fn ordinal(entry: &VersionedCrdsValue) -> usize {
+        // Update CrdsCountsArray if new items are added here.
         match entry.value.data() {
             CrdsData::LegacyContactInfo(_) => 0,
             CrdsData::Vote(_) => 1,
@@ -869,9 +870,9 @@ impl CrdsDataStats {
             CrdsData::DuplicateShred(_, _) => 9,
             CrdsData::SnapshotHashes(_) => 10,
             CrdsData::ContactInfo(_) => 11,
-            CrdsData::RestartLastVotedForkSlots(_) => 12,
-            CrdsData::RestartHeaviestFork(_) => 13,
-            // Update CrdsCountsArray if new items are added here.
+            CrdsData::RestartLastVotedForkSlots(_) | CrdsData::RestartHeaviestFork(_) => {
+                unreachable!("deprecated CrdsData variant")
+            }
         }
     }
 }
@@ -903,7 +904,6 @@ mod tests {
         crate::{
             crds_data::{Deprecated, LowestSlot, SnapshotHashes, new_rand_timestamp},
             crds_gossip_pull::CRDS_GOSSIP_PURGE_DURATION,
-            restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         itertools::Itertools,
         rand::{Rng, rng},
@@ -1867,8 +1867,6 @@ mod tests {
     #[test]
     fn test_filter_bitmask_excludes_deprecated() {
         let mut crds = Crds::default();
-        let mut rng = rng();
-
         // Insert a non-deprecated value; it must appear in filter_bitmask results.
         let ci = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
             &solana_pubkey::new_rand(),
@@ -1888,6 +1886,8 @@ mod tests {
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
+            CrdsData::RestartLastVotedForkSlots(Deprecated {}),
+            CrdsData::RestartHeaviestFork(Deprecated {}),
             CrdsData::LowestSlot(
                 1,
                 LowestSlot::new(solana_pubkey::new_rand(), 0, timestamp()),
@@ -1897,29 +1897,7 @@ mod tests {
             assert!(CrdsValue::new_unsigned(data).sanitize().is_err());
         }
 
-        // These deprecated types pass sanitize() and have valid labels, so
-        // they can arrive over the wire and be inserted. filter_bitmask()
-        // must exclude them.
-        crds.insert(
-            CrdsValue::new_unsigned(CrdsData::RestartLastVotedForkSlots(
-                RestartLastVotedForkSlots::new_rand(&mut rng, Some(solana_pubkey::new_rand())),
-            )),
-            timestamp(),
-            GossipRoute::LocalMessage,
-        )
-        .unwrap();
-        crds.insert(
-            CrdsValue::new_unsigned(CrdsData::RestartHeaviestFork(
-                RestartHeaviestFork::new_rand(&mut rng, Some(solana_pubkey::new_rand())),
-            )),
-            timestamp(),
-            GossipRoute::LocalMessage,
-        )
-        .unwrap();
-
-        // All 3 values were inserted, but the 2 deprecated ones must not appear
-        // in filter_bitmask results.
-        assert_eq!(crds.table.len(), 3);
+        assert_eq!(crds.table.len(), 1);
         assert!(
             crds.filter_bitmask(0, 0)
                 .all(|e| !e.value.data().is_deprecated())
