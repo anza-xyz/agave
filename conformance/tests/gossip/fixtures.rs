@@ -192,26 +192,6 @@ fn generate_gossip_fixtures() {
         );
     }
 
-    // DuplicateShred
-    {
-        let ds = make_duplicate_shred_crds_data(0, &pk, 1_000_000, 42, 0, 0, 3, 0, &[0xDE; 32]);
-        let val = make_crds_value_bytes(&sig, &ds);
-        write_fixture(
-            &dir,
-            "duplicate_shred_valid",
-            &make_push_message_bytes(&pk, &[val]),
-        );
-    }
-    {
-        let ds = make_duplicate_shred_crds_data(0, &pk, 1_000_000, 42, 99, 0xAB, 3, 0, &[0xDE; 32]);
-        let val = make_crds_value_bytes(&sig, &ds);
-        write_fixture(
-            &dir,
-            "duplicate_shred_deprecated_fields_zeroed",
-            &make_push_message_bytes(&pk, &[val]),
-        );
-    }
-
     // Deserialization edge cases
     write_fixture(&dir, "empty_input", &[]);
     write_fixture(

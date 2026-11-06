@@ -6,7 +6,6 @@ use {
     crate::{
         contact_info::ContactInfo,
         crds_data::{CrdsData, EpochSlotsIndex},
-        duplicate_shred::DuplicateShredIndex,
         epoch_slots::EpochSlots,
         sigverify_cache::SigVerifyCache,
     },
@@ -30,7 +29,7 @@ use {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "4U411EAsZdn5bzvATgB75uuv61quNyLNcgVGY2amMVap",
+        abi_digest = "6TwiYyMKH1BBjZUw52QM1Je8a3e8JeHKkXvbiaWNhtAN",
         abi_serializer = ["wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.
@@ -88,7 +87,6 @@ impl Signable for CrdsValue {
 pub enum CrdsValueLabel {
     LowestSlot(Pubkey),
     EpochSlots(EpochSlotsIndex, Pubkey),
-    DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
     RestartLastVotedForkSlots(Pubkey),
@@ -100,7 +98,6 @@ impl CrdsValueLabel {
         match self {
             CrdsValueLabel::LowestSlot(p) => *p,
             CrdsValueLabel::EpochSlots(_, p) => *p,
-            CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
             CrdsValueLabel::RestartLastVotedForkSlots(p) => *p,
@@ -212,7 +209,6 @@ impl CrdsValue {
         match self.data {
             CrdsData::LowestSlot(_, _) => CrdsValueLabel::LowestSlot(pubkey),
             CrdsData::EpochSlots(ix, _) => CrdsValueLabel::EpochSlots(ix, pubkey),
-            CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
             CrdsData::RestartLastVotedForkSlots(_) => {
@@ -226,7 +222,8 @@ impl CrdsValue {
             | CrdsData::AccountsHashes(_)
             | CrdsData::LegacyVersion(_)
             | CrdsData::Version(_)
-            | CrdsData::NodeInstance(_) => unreachable!("deprecated CrdsData variant"),
+            | CrdsData::NodeInstance(_)
+            | CrdsData::DuplicateShred(_) => unreachable!("deprecated CrdsData variant"),
         }
     }
 

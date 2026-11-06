@@ -41,7 +41,7 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::ContactInfo(_) => true,
         // Unstaked nodes can still serve snapshots.
         CrdsData::SnapshotHashes(_) => true,
-        CrdsData::DuplicateShred(_, _) | CrdsData::EpochSlots(_, _) => false,
+        CrdsData::EpochSlots(_, _) => false,
         CrdsData::LowestSlot(0, _) => match direction {
             Ingress => retain_if_staked(),
             EgressPush | EgressPullResponse => false,
@@ -53,6 +53,7 @@ pub(crate) fn should_retain_crds_value(
         CrdsData::LegacyVersion(_) => false,
         CrdsData::LowestSlot(1.., _) => false,
         CrdsData::NodeInstance(_) => false,
+        CrdsData::DuplicateShred(_) => false,
         CrdsData::RestartHeaviestFork(_) | CrdsData::RestartLastVotedForkSlots(_) => {
             match direction {
                 Ingress => true,
