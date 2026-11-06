@@ -148,7 +148,10 @@ fn add_mixed_accounts(
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), owner)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], owner),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
