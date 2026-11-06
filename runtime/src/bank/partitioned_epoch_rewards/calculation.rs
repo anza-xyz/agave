@@ -1968,9 +1968,9 @@ mod tests {
                     &identity.pubkey(),
                     &Clock::default(),
                 );
-                let mut account = solana_account::AccountSharedData::new(
+                let mut account = solana_account::AccountSharedData::new_with_data(
                     *balance,
-                    VoteStateV4::size_of(),
+                    vec![0; VoteStateV4::size_of()],
                     &solana_vote_program::id(),
                 );
                 account
@@ -4637,9 +4637,9 @@ mod tests {
                 &Clock::default(),
             );
             vote_state.pending_delegator_rewards = pending_delegator_rewards;
-            let mut account = solana_account::AccountSharedData::new(
+            let mut account = solana_account::AccountSharedData::new_with_data(
                 1_000_000_000,
-                VoteStateV4::size_of(),
+                vec![0; VoteStateV4::size_of()],
                 &solana_vote_program::id(),
             );
             account
