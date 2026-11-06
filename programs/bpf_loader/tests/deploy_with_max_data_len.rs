@@ -66,7 +66,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
             .unwrap()
             .copy_from_slice(elf);
-        let programdata_account = AccountSharedData::new(0, 0, &system_program::id());
+        let programdata_account = AccountSharedData::empty(0, &system_program::id());
         let program_account = AccountSharedData::new_data_with_space(
             min_program_balance,
             &UpgradeableLoaderState::Uninitialized,
@@ -74,9 +74,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             &bpf_loader_upgradeable::id(),
         )
         .unwrap();
-        let payer_account = AccountSharedData::new(
+        let payer_account = AccountSharedData::empty(
             min_programdata_balance.saturating_add(1),
-            0,
             &system_program::id(),
         );
         let rent_account = create_sysvar_account(&rent);
@@ -84,8 +83,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             slot: SLOT,
             ..Clock::default()
         });
-        let system_program_account = AccountSharedData::new(0, 0, &native_loader::id());
-        let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let system_program_account = AccountSharedData::empty(0, &native_loader::id());
+        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (*payer_address, payer_account),
             (programdata_address, programdata_account),

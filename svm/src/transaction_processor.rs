@@ -2710,7 +2710,7 @@ mod tests {
             MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details);
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = AccountSharedData::new(fee_payer_balance, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(fee_payer_balance, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mut mock_bank = MockBankCallback {
@@ -2766,7 +2766,7 @@ mod tests {
         let rent = Rent::default();
         let min_balance = rent.minimum_balance(0);
         let starting_balance = min_balance + transaction_fee - 1;
-        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(starting_balance, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mut mock_bank = MockBankCallback {
@@ -2818,7 +2818,7 @@ mod tests {
             MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details);
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = AccountSharedData::new(fee_payer_balance, 0, &Pubkey::new_unique());
+        let fee_payer_account = AccountSharedData::empty(fee_payer_balance, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mut mock_bank = MockBankCallback {

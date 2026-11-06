@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_new_fee_payer_only() {
         let fee_payer_address = Pubkey::new_unique();
-        let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(100, &Pubkey::default());
         let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
 
         let rent_epoch_updated_fee_payer_account = {
@@ -231,7 +231,7 @@ mod tests {
         .unwrap();
 
         let fee_payer_address = Pubkey::new_unique();
-        let fee_payer_account = AccountSharedData::new(44, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(44, &Pubkey::default());
 
         let rent_epoch_updated_fee_payer_account = {
             let mut account = fee_payer_account.clone();

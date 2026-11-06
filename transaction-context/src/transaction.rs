@@ -903,8 +903,7 @@ mod tests {
         );
 
         // Now with the wrong data length.
-        let account =
-            AccountSharedData::new(rent_exempt_lamports, 0, &solana_sdk_ids::sysvar::id());
+        let account = AccountSharedData::empty(rent_exempt_lamports, &solana_sdk_ids::sysvar::id());
         assert_eq!(
             build_transaction_context(account).push(true),
             Err(InstructionError::AccountDataTooSmall),
