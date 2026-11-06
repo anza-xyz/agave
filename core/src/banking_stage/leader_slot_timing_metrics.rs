@@ -9,7 +9,7 @@ pub struct LeaderExecuteAndCommitTimings {
     pub freeze_lock_us: u64,
     pub record_us: u64,
     pub commit_us: u64,
-    pub find_and_send_votes_us: u64,
+    pub post_commit_us: u64,
     pub record_transactions_timings: RecordTransactionsTimings,
     pub execute_timings: ExecuteTimings,
 }
@@ -20,7 +20,7 @@ impl LeaderExecuteAndCommitTimings {
         self.freeze_lock_us += other.freeze_lock_us;
         self.record_us += other.record_us;
         self.commit_us += other.commit_us;
-        self.find_and_send_votes_us += other.find_and_send_votes_us;
+        self.post_commit_us += other.post_commit_us;
         self.record_transactions_timings
             .accumulate(&other.record_transactions_timings);
         self.execute_timings.accumulate(&other.execute_timings);
@@ -34,11 +34,7 @@ impl LeaderExecuteAndCommitTimings {
             ("freeze_lock_us", self.freeze_lock_us as i64, i64),
             ("record_us", self.record_us as i64, i64),
             ("commit_us", self.commit_us as i64, i64),
-            (
-                "find_and_send_votes_us",
-                self.find_and_send_votes_us as i64,
-                i64
-            ),
+            ("post_commit_us", self.post_commit_us as i64, i64),
         );
 
         datapoint_info!(

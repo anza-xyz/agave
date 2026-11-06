@@ -8,7 +8,7 @@ use {
             vote_pool::{VotePoolError, VotePools},
         },
         consensus_pool_service::{PoolMessage, PoolVote},
-        event::VotorEvent,
+        event::{FinalizationType, VotorEvent},
     },
     agave_bls_sigverify::generated_cert_types::GeneratedCertTypes,
     agave_votor_messages::{
@@ -159,9 +159,12 @@ impl ConsensusPool {
                     .add_new_notar_fallback_or_stronger(block, events);
 
                 if let Some(finalize_cert) = self.get_finalize_cert(block.slot) {
-                    // It's fine to set FastFinalization to false here, because
+                    // It's fine to set FastFinalization to Slow here, because
                     // we will report correctly as long as we have FastFinalization cert.
-                    events.push(VotorEvent::Finalized(block, false));
+                    events.push(VotorEvent::Finalized {
+                        block,
+                        finalization_type: FinalizationType::Slow,
+                    });
                     if self
                         .highest_finalized_slot()
                         .is_none_or(|s| s < FinalizedSlot::Slow(block.slot))
@@ -185,7 +188,10 @@ impl ConsensusPool {
             CertificateType::Finalize(slot) => {
                 if let Some(notarize_cert) = self.get_notarize_cert(slot) {
                     let block = notarize_cert.block;
-                    events.push(VotorEvent::Finalized(block, false));
+                    events.push(VotorEvent::Finalized {
+                        block,
+                        finalization_type: FinalizationType::Slow,
+                    });
                     if self
                         .highest_finalized_slot()
                         .is_none_or(|s| s < FinalizedSlot::Slow(slot))
@@ -207,7 +213,10 @@ impl ConsensusPool {
                 }
             }
             CertificateType::FinalizeFast(block) => {
-                events.push(VotorEvent::Finalized(block, true));
+                events.push(VotorEvent::Finalized {
+                    block,
+                    finalization_type: FinalizationType::Fast,
+                });
                 self.parent_ready_tracker
                     .add_new_notar_fallback_or_stronger(block, events);
                 if self

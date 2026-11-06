@@ -1114,7 +1114,6 @@ impl Validator {
             config.unified_scheduler_handler_threads,
             config.runtime_config.log_messages_bytes_limit,
             transaction_status_sender.clone(),
-            None,
             prioritization_fee_cache.clone(),
             execution_arenas.clone(),
         );
