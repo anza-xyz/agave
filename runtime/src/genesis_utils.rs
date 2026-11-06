@@ -685,13 +685,8 @@ pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> 
     let data = vec![0; epoch_rewards::SIZE];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
-    let account = AccountSharedData::create_from_existing_shared_data(
-        lamports,
-        Arc::new(data),
-        sysvar::id(),
-        false,
-        u64::MAX,
-    );
+    let account =
+        AccountSharedData::new_with_shared_data(lamports, Arc::new(data), &sysvar::id(), false);
 
     genesis_config.add_account(epoch_rewards::id(), account);
 

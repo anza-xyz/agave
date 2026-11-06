@@ -582,13 +582,7 @@ mod tests {
     }
 
     fn account(lamports: u64, data: Vec<u8>, owner: Pubkey, executable: bool) -> AccountSharedData {
-        AccountSharedData::create_from_existing_shared_data(
-            lamports,
-            Arc::new(data),
-            owner,
-            executable,
-            u64::MAX,
-        )
+        AccountSharedData::new_with_shared_data(lamports, Arc::new(data), &owner, executable)
     }
 
     fn empty_account(lamports: u64) -> AccountSharedData {
