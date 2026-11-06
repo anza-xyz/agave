@@ -8703,7 +8703,6 @@ dependencies = [
  "bytes",
  "criterion",
  "crossbeam-channel",
- "flate2",
  "indexmap 2.14.2",
  "itertools 0.15.0",
  "lazy-lru",
