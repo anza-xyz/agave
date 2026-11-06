@@ -6471,6 +6471,7 @@ fn test_vat_burn_slot_params() {
             ClusterType::Development,
             FeatureSet::default(),
         );
+        set_legacy_slot_params(&mut genesis_config);
         if let Some(feature_id) = slot_time_feature_id {
             activate_feature(&mut genesis_config, feature_id);
         }

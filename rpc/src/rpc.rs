@@ -6340,7 +6340,11 @@ pub mod tests {
             .set_highest_super_majority_root(260);
 
         let num_partitions = 3;
-        let blockhash = Hash::default(); // the test doesn't fill a real parent blockhash
+        let epoch_boundary_block = rpc
+            .blockstore
+            .get_complete_block(first_slot_of_epoch, true)
+            .unwrap();
+        let blockhash = Hash::from_str(&epoch_boundary_block.previous_blockhash).unwrap();
         let hasher = EpochRewardsHasher::new(num_partitions, &blockhash);
         let mut all_partition_rewards = [vec![], vec![], vec![]];
         let stake_only_partition = hasher
