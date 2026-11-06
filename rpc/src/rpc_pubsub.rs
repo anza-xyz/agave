@@ -656,6 +656,12 @@ mod tests {
             .process_transaction(tx)?;
         let commitment_slots = CommitmentSlots {
             slot: current_slot,
+            bank_id: bank_forks
+                .read()
+                .unwrap()
+                .get(current_slot)
+                .unwrap()
+                .bank_id(),
             ..CommitmentSlots::default()
         };
         subscriptions.notify_subscribers(commitment_slots);
@@ -1292,6 +1298,7 @@ mod tests {
             root: 1,
             highest_confirmed_slot: 1,
             highest_super_majority_root: 1,
+            ..CommitmentSlots::default()
         };
         subscriptions.notify_subscribers(commitment_slots);
         let expected = json!({
