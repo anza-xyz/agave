@@ -566,6 +566,7 @@ mod tests {
         // Put the block into blockstore.
         let bank = bank_forks.read().unwrap().get(bank_slot).unwrap();
         blockstore.insert_shreds_for_bank(bank);
+        blockstore.set_roots([bank_slot].iter()).unwrap();
 
         // Trigger the block update.
         subscriptions.notify_subscribers(CommitmentSlots {

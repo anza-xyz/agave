@@ -405,10 +405,6 @@ fn notify_block_subscription(
     slot: Slot,
     context: &BlockNotificationContext,
 ) -> usize {
-    let Some(bank) = context.bank_forks.read().unwrap().get(slot) else {
-        return 0;
-    };
-
     // Block subscriptions store the next slot awaiting notification so later notifications can
     // fill gaps left by transient errors.
     let mut last_unnotified_slot = subscription.last_notified_slot.write().unwrap();
@@ -420,10 +416,29 @@ fn notify_block_subscription(
         *last_unnotified_slot = slot;
     }
 
-    let mut slots_to_notify: Vec<_> = (*last_unnotified_slot..slot).collect();
-    let ancestors = bank.proper_ancestors_set();
-    slots_to_notify.retain(|slot| ancestors.contains(slot));
-    slots_to_notify.push(slot);
+    let slots_to_notify: Vec<_> = if context.alpenglow_enabled || params.commitment.is_finalized() {
+        // BankForks may prune rooted ancestors before transaction history catches up.
+        let rooted_slots = match context
+            .blockstore
+            .rooted_slot_iterator(*last_unnotified_slot)
+        {
+            Ok(rooted_slots) => rooted_slots,
+            Err(err) => {
+                error!("failed to iterate rooted slots for block subscription: {err}");
+                return 0;
+            }
+        };
+        rooted_slots.take_while(|root| *root <= slot).collect()
+    } else {
+        let Some(bank) = context.bank_forks.read().unwrap().get(slot) else {
+            return 0;
+        };
+        let mut slots_to_notify: Vec<_> = (*last_unnotified_slot..slot).collect();
+        let ancestors = bank.proper_ancestors_set();
+        slots_to_notify.retain(|slot| ancestors.contains(slot));
+        slots_to_notify.push(slot);
+        slots_to_notify
+    };
     let max_transaction_history_slot = max_complete_slot_for_block_subscription(
         params.commitment,
         context.alpenglow_enabled,
@@ -1335,7 +1350,9 @@ pub(crate) mod tests {
         serial_test::serial,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_ledger::{
+            blockstore_processor::fill_blockstore_slot_with_ticks, get_tmp_ledger_path_auto_delete,
+        },
         solana_message::Message,
         solana_rpc_client_api::config::{
             RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
@@ -2022,6 +2039,155 @@ pub(crate) mod tests {
         subscriptions.notify_gossip_subscribers(slot);
         let should_err = receiver.recv_timeout(Duration::from_millis(300));
         assert!(should_err.is_err());
+
+        rpc.slot_unsubscribe(sub_id).unwrap();
+        subscriptions
+            .control
+            .assert_unsubscribed(&SubscriptionParams::Block(params));
+    }
+
+    #[test]
+    #[serial]
+    fn test_finalized_block_subscribe_retries_pruned_roots() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let mut parent_bank = bank_forks.read().unwrap().root_bank();
+        const INTERMEDIATE_ROOT: Slot = 4;
+        const LAST_SLOT: Slot = 6;
+        for slot in 1..=INTERMEDIATE_ROOT {
+            let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
+            bank.freeze();
+            parent_bank = bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler();
+        }
+
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let mut last_entry_hash = Hash::default();
+        for slot in 1..=LAST_SLOT {
+            last_entry_hash = fill_blockstore_slot_with_ticks(
+                &blockstore,
+                genesis_config.ticks_per_slot,
+                slot,
+                slot - 1,
+                last_entry_hash,
+            );
+        }
+        let rooted_slots: Vec<_> = (1..=LAST_SLOT).collect();
+        blockstore.set_roots(rooted_slots.iter()).unwrap();
+
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let block_commitment_cache = Arc::new(RwLock::new(
+            BlockCommitmentCache::new_for_tests_with_slots(1, 1),
+        ));
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests_with_blockstore(
+            exit,
+            max_complete_transaction_status_slot.clone(),
+            blockstore.clone(),
+            bank_forks.clone(),
+            block_commitment_cache.clone(),
+            optimistically_confirmed_bank,
+        ));
+        let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&subscriptions);
+        let config = RpcBlockSubscribeConfig {
+            commitment: Some(CommitmentConfig::finalized()),
+            encoding: Some(UiTransactionEncoding::Json),
+            transaction_details: Some(TransactionDetails::Signatures),
+            show_rewards: None,
+            max_supported_transaction_version: None,
+        };
+        let params = BlockSubscriptionParams {
+            kind: BlockSubscriptionKind::All,
+            commitment: config.commitment.unwrap(),
+            encoding: config.encoding.unwrap(),
+            transaction_details: config.transaction_details.unwrap(),
+            show_rewards: config.show_rewards.unwrap_or_default(),
+            max_supported_transaction_version: config.max_supported_transaction_version,
+        };
+        let sub_id = rpc
+            .block_subscribe(RpcBlockSubscribeFilter::All, Some(config))
+            .unwrap();
+        subscriptions
+            .control
+            .assert_subscribed(&SubscriptionParams::Block(params.clone()));
+
+        subscriptions.notify_subscribers(CommitmentSlots {
+            slot: 1,
+            root: 1,
+            highest_confirmed_slot: 1,
+            highest_super_majority_root: 1,
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(300)).is_err());
+
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(INTERMEDIATE_ROOT, None, Some(INTERMEDIATE_ROOT));
+        parent_bank = bank_forks.read().unwrap().root_bank();
+        for slot in INTERMEDIATE_ROOT + 1..=LAST_SLOT {
+            let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), slot);
+            bank.freeze();
+            parent_bank = bank_forks
+                .write()
+                .unwrap()
+                .insert(bank)
+                .clone_without_scheduler();
+        }
+        bank_forks
+            .write()
+            .unwrap()
+            .set_root(LAST_SLOT, None, Some(LAST_SLOT));
+        assert!(
+            !bank_forks
+                .read()
+                .unwrap()
+                .get(LAST_SLOT)
+                .unwrap()
+                .proper_ancestors_set()
+                .contains(&1)
+        );
+        assert_eq!(
+            blockstore
+                .rooted_slot_iterator(1)
+                .unwrap()
+                .take_while(|slot| *slot <= LAST_SLOT)
+                .collect::<Vec<_>>(),
+            rooted_slots,
+        );
+
+        block_commitment_cache
+            .write()
+            .unwrap()
+            .set_all_slots(LAST_SLOT, LAST_SLOT);
+        subscriptions.notify_subscribers(CommitmentSlots {
+            slot: LAST_SLOT,
+            root: LAST_SLOT,
+            highest_confirmed_slot: LAST_SLOT,
+            highest_super_majority_root: LAST_SLOT,
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(300)).is_err());
+
+        max_complete_transaction_status_slot.store(LAST_SLOT, Ordering::SeqCst);
+        subscriptions.notify_transaction_history_complete(LAST_SLOT);
+
+        let mut notified_slots = Vec::new();
+        while notified_slots.len() < rooted_slots.len()
+            && let Ok(response) = receiver.recv_timeout(Duration::from_millis(300))
+        {
+            let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+            notified_slots.push(
+                response["params"]["result"]["context"]["slot"]
+                    .as_u64()
+                    .unwrap(),
+            );
+        }
+        assert_eq!(notified_slots, rooted_slots);
 
         rpc.slot_unsubscribe(sub_id).unwrap();
         subscriptions
