@@ -4,16 +4,14 @@ use {
         ConnectionCache as BackendConnectionCache, ConnectionManager, ConnectionPool,
         NewConnectionConfig,
     },
-    solana_message::Message,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_signer::signers::Signers,
     solana_tpu_client::{
         nonblocking::tpu_client::{Result, TpuClient as BackendTpuClient},
         tpu_client::TpuClientConfig,
     },
     solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_transaction_error::{TransactionError, TransportResult},
+    solana_transaction_error::TransportResult,
     std::sync::Arc,
 };
 
@@ -126,21 +124,6 @@ where
             )
             .await?,
         })
-    }
-
-    #[deprecated(
-        since = "4.3.0",
-        note = "prefer send_and_confirm_transactions_in_parallel_v3"
-    )]
-    pub async fn send_and_confirm_messages_with_spinner<T: Signers + ?Sized>(
-        &self,
-        messages: &[Message],
-        signers: &T,
-    ) -> Result<Vec<Option<TransactionError>>> {
-        #[allow(deprecated)]
-        self.tpu_client
-            .send_and_confirm_messages_with_spinner(messages, signers)
-            .await
     }
 
     pub fn rpc_client(&self) -> &RpcClient {
