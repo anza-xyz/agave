@@ -16,7 +16,10 @@ use {
     solana_instruction_error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_rent::Rent,
-    solana_sbpf::memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
+    solana_sbpf::{
+        memory_region::{AccessType, AccessViolationHandler, MemoryRegion},
+        vm::ContextObject,
+    },
     std::{borrow::Cow, cell::Cell, rc::Rc},
 };
 use {
@@ -682,7 +685,8 @@ impl<'ix_data> TransactionContext<'ix_data> {
     ) -> AccessViolationHandler {
         let accounts = Rc::clone(&self.accounts);
         Box::new(
-            move |region: &mut MemoryRegion,
+            move |_context_object: &mut dyn ContextObject,
+                  region: &mut MemoryRegion,
                   address_space_reserved_for_account: u64,
                   access_type: AccessType,
                   vm_addr: u64,

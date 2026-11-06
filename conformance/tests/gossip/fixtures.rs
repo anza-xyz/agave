@@ -152,13 +152,6 @@ fn generate_gossip_fixtures() {
         );
     }
 
-    // Vote
-    {
-        let vote = make_vote_crds_data(0, &pk, 1_000_000);
-        let val = make_crds_value_bytes(&sig, &vote);
-        write_fixture(&dir, "vote_valid", &make_push_message_bytes(&pk, &[val]));
-    }
-
     // CrdsData edge cases
     {
         let es = make_epoch_slots_crds_data(255, &pk, 1_000_000);

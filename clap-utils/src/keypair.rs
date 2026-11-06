@@ -1116,11 +1116,11 @@ mod tests {
     use {
         super::*,
         crate::offline::OfflineArgs,
-        assert_matches::assert_matches,
         clap::{App, Arg, value_t_or_exit},
         solana_keypair::write_keypair_file,
         solana_remote_wallet::{locator::Manufacturer, remote_wallet::initialize_wallet_manager},
         solana_system_interface::instruction::transfer,
+        std::assert_matches,
         tempfile::{NamedTempFile, TempDir},
     };
 

@@ -5,12 +5,10 @@ use {
     solana_measure::measure_us,
     solana_runtime::{
         bank::{Bank, ProcessedTransactionCounts},
-        bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
         transaction_execution::TransactionStatusSender,
-        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
@@ -36,19 +34,16 @@ pub enum CommitTransactionDetails {
 #[derive(Clone)]
 pub struct Committer {
     transaction_status_sender: Option<TransactionStatusSender>,
-    replay_vote_sender: ReplayVoteSender,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
 }
 
 impl Committer {
     pub fn new(
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: ReplayVoteSender,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Self {
         Self {
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
         }
     }
@@ -77,14 +72,7 @@ impl Committer {
 
         let commit_transaction_statuses = Self::transaction_details(&commit_results);
 
-        let ((), find_and_send_votes_us) = measure_us!({
-            bank_utils::find_and_send_votes(
-                batch.sanitized_transactions(),
-                &commit_results,
-                Some(&self.replay_vote_sender),
-                ReplayVoteSendType::VerifiedExecuted,
-            );
-
+        let ((), post_commit_us) = measure_us!({
             if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
                 let fee_paying_transactions = commit_results
                     .iter()
@@ -101,7 +89,7 @@ impl Committer {
                 starting_transaction_index,
             );
         });
-        execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
+        execute_and_commit_timings.post_commit_us = post_commit_us;
         (commit_time_us, commit_transaction_statuses)
     }
 

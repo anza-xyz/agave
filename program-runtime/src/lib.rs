@@ -3,17 +3,15 @@
 #![deny(clippy::indexing_slicing)]
 
 pub use solana_sbpf;
+pub mod abi;
 pub mod cpi;
 pub mod deploy;
 pub mod execution_budget;
 pub mod invoke_context;
-pub mod loaded_programs;
-pub mod loading_task;
 pub mod mem_pool;
 pub mod memory;
 pub mod memory_context;
-pub mod program_cache_entry;
-pub mod program_metrics;
+pub mod program_cache;
 pub mod serialization;
 pub mod stable_log;
 pub mod sysvar_cache;

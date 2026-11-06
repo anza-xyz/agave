@@ -921,6 +921,31 @@ impl LedgerStorage {
             u32, /*slot index*/
         )>,
     > {
+        self.get_confirmed_signatures_for_address_with_highest_slot(
+            address,
+            before_signature,
+            until_signature,
+            Slot::MAX,
+            limit,
+        )
+        .await
+    }
+
+    /// Get confirmed signatures no newer than `highest_slot` for the provided address, in
+    /// descending ledger order.
+    pub async fn get_confirmed_signatures_for_address_with_highest_slot(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        highest_slot: Slot,
+        limit: usize,
+    ) -> Result<
+        Vec<(
+            ConfirmedTransactionStatusWithSignature,
+            u32, /*slot index*/
+        )>,
+    > {
         trace!("LedgerStorage::get_confirmed_signatures_for_address request received: {address:?}");
         let mut bigtable = self.connection.client();
 
@@ -941,6 +966,11 @@ impl LedgerStorage {
                 (slot, index)
             }
         };
+        let (first_slot, before_transaction_index) = if first_slot > highest_slot {
+            (highest_slot, u32::MAX)
+        } else {
+            (first_slot, before_transaction_index)
+        };
 
         // Figure out where to end listing from based on `until_signature`
         let (last_slot, until_transaction_index) = match until_signature {
@@ -958,6 +988,10 @@ impl LedgerStorage {
                 (slot, index)
             }
         };
+
+        if first_slot < last_slot {
+            return Ok(vec![]);
+        }
 
         let mut infos = vec![];
 

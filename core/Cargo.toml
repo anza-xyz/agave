@@ -40,7 +40,6 @@ stable-abi = [
     "solana-pubkey/stable-abi",
     "solana-runtime/stable-abi",
     "solana-signature/stable-abi",
-    "solana-vote/stable-abi",
     "solana-vote-program/stable-abi",
 ]
 
@@ -57,6 +56,7 @@ agave-math-utils = { workspace = true }
 agave-scheduler-bindings = { workspace = true }
 agave-scheduler-handshake = { workspace = true }
 agave-scheduling-utils = { workspace = true }
+agave-shred-wire-format = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor = { workspace = true }
@@ -75,7 +75,6 @@ chrono = { workspace = true, features = ["default", "serde"] }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 futures = { workspace = true }
-histogram = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
 libc = { workspace = true }
@@ -99,11 +98,9 @@ solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-cluster-type = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-entry = { workspace = true }
@@ -160,7 +157,6 @@ solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
-solana-tpu-client = { workspace = true }
 solana-tpu-client-next = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
@@ -170,7 +166,6 @@ solana-unified-scheduler-logic = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
-solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
@@ -197,7 +192,6 @@ criterion = { workspace = true }
 serial_test = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-bpf-loader-program = { path = "../programs/bpf_loader", default-features = false, features = ["agave-unstable-api", "svm-internal"] }
-solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-compute-budget = { path = "../compute-budget", features = ["agave-unstable-api"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { path = "../programs/compute-budget", features = ["agave-unstable-api"] }
@@ -216,7 +210,6 @@ solana-rpc = { path = "../rpc", features = ["agave-unstable-api", "dev-context-o
 solana-signer-store = { workspace = true }
 solana-system-program = { path = "../programs/system", features = ["agave-unstable-api"] }
 solana-unified-scheduler-pool = { path = "../unified-scheduler-pool", features = ["agave-unstable-api", "dev-context-only-utils"] }
-solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 spl-memo-interface = { workspace = true }
 static_assertions = { workspace = true }
@@ -224,10 +217,6 @@ test-case = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
-
-[[bench]]
-name = "consensus"
-harness = false
 
 [[bench]]
 name = "sigverify_stage"
