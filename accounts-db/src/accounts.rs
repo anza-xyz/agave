@@ -691,12 +691,11 @@ mod tests {
                 meta: LookupTableMeta::default(),
                 addresses: Cow::Owned(table_addresses.clone()),
             };
-            AccountSharedData::create_from_existing_shared_data(
+            AccountSharedData::new_with_shared_data(
                 1,
                 Arc::new(table_state.serialize_for_tests().unwrap()),
-                address_lookup_table::program::id(),
+                &address_lookup_table::program::id(),
                 false,
-                0,
             )
         };
         accounts.store_for_tests(0, &table_key, &table_account);
