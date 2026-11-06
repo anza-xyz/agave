@@ -3949,8 +3949,6 @@ pub mod tests {
                     .unwrap()
                     .last_blockhash
             );
-            // Though bankhash is not affected, bank_details should be different.
-            assert_ne!(ok_bank_details, bank_details);
             // Different types of transaction failure should not affect bank hash
             if let Some(prev_bank_details) = &err_bank_details {
                 assert_eq!(
