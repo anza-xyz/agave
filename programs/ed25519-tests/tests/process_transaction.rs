@@ -1,8 +1,9 @@
 use {
-    assert_matches::assert_matches, solana_ed25519_program::new_ed25519_instruction_with_signature,
+    solana_ed25519_program::new_ed25519_instruction_with_signature,
     solana_instruction_error::InstructionError, solana_keypair::Keypair,
     solana_precompile_error::PrecompileError, solana_program_test::*, solana_signer::Signer,
     solana_transaction::Transaction, solana_transaction_error::TransactionError,
+    std::assert_matches,
 };
 
 #[tokio::test]

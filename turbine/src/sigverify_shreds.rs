@@ -1,4 +1,5 @@
 use {
+    agave_shred_wire_format::constants::Nonce,
     agave_worker_pool::{ResultRecvError, ResultWorkerPool, TrySendError, WorkerPoolConfig},
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::Itertools,
@@ -54,7 +55,7 @@ enum ShredSigverifyError {
     SendError,
 }
 
-pub type RepairNonceLocationLookup = dyn Fn(shred::Nonce) -> Option<BlockLocation> + Send + Sync;
+pub type RepairNonceLocationLookup = dyn Fn(Nonce) -> Option<BlockLocation> + Send + Sync;
 
 #[derive(Default)]
 struct WorkerStats {

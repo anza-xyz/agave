@@ -51,17 +51,9 @@ pub enum SubscriptionParams {
     Slot,
     SlotsUpdates,
     Root,
-    /// Deprecated TowerBFT compatibility subscription. No notifications are produced.
-    #[deprecated(
-        since = "4.5.0",
-        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
-                be removed in the next major release"
-    )]
-    Vote,
 }
 
 impl SubscriptionParams {
-    #[allow(deprecated)]
     fn method(&self) -> &'static str {
         match self {
             SubscriptionParams::Account(_) => "accountNotification",
@@ -72,11 +64,9 @@ impl SubscriptionParams {
             SubscriptionParams::SlotsUpdates => "slotsUpdatesNotification",
             SubscriptionParams::Block(_) => "blockNotification",
             SubscriptionParams::Root => "rootNotification",
-            SubscriptionParams::Vote => "voteNotification",
         }
     }
 
-    #[allow(deprecated)]
     fn commitment(&self) -> Option<CommitmentConfig> {
         match self {
             SubscriptionParams::Account(params) => Some(params.commitment),
@@ -86,12 +76,10 @@ impl SubscriptionParams {
             SubscriptionParams::Block(params) => Some(params.commitment),
             SubscriptionParams::Slot
             | SubscriptionParams::SlotsUpdates
-            | SubscriptionParams::Root
-            | SubscriptionParams::Vote => None,
+            | SubscriptionParams::Root => None,
         }
     }
 
-    #[allow(deprecated)]
     fn is_commitment_watcher(&self) -> bool {
         let commitment = match self {
             SubscriptionParams::Account(params) => &params.commitment,
@@ -101,13 +89,11 @@ impl SubscriptionParams {
             SubscriptionParams::Signature(params) => &params.commitment,
             SubscriptionParams::Root
             | SubscriptionParams::Slot
-            | SubscriptionParams::SlotsUpdates
-            | SubscriptionParams::Vote => return false,
+            | SubscriptionParams::SlotsUpdates => return false,
         };
         !commitment.is_confirmed()
     }
 
-    #[allow(deprecated)]
     fn is_gossip_watcher(&self) -> bool {
         let commitment = match self {
             SubscriptionParams::Account(params) => &params.commitment,
@@ -117,8 +103,7 @@ impl SubscriptionParams {
             SubscriptionParams::Signature(params) => &params.commitment,
             SubscriptionParams::Root
             | SubscriptionParams::Slot
-            | SubscriptionParams::SlotsUpdates
-            | SubscriptionParams::Vote => return false,
+            | SubscriptionParams::SlotsUpdates => return false,
         };
         commitment.is_confirmed()
     }
@@ -164,7 +149,6 @@ pub struct LogsSubscriptionParams {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LogsSubscriptionKind {
     All,
-    AllWithVotes,
     Single(Pubkey),
 }
 
@@ -333,7 +317,7 @@ impl SubscriptionControl {
         self.0.subscriptions.iter().any(|item| {
             if let SubscriptionParams::Logs(params) = item.key() {
                 let subscribed_pubkey = match &params.kind {
-                    LogsSubscriptionKind::All | LogsSubscriptionKind::AllWithVotes => None,
+                    LogsSubscriptionKind::All => None,
                     LogsSubscriptionKind::Single(pubkey) => Some(pubkey),
                 };
                 subscribed_pubkey == pubkey
@@ -391,7 +375,6 @@ pub enum Error {
 
 struct LogsSubscriptionsIndex {
     all_count: usize,
-    all_with_votes_count: usize,
     single_count: HashMap<Pubkey, usize>,
 
     bank_forks: Arc<RwLock<BankForks>>,
@@ -401,7 +384,6 @@ impl LogsSubscriptionsIndex {
     fn add(&mut self, params: &LogsSubscriptionParams) {
         match params.kind {
             LogsSubscriptionKind::All => self.all_count += 1,
-            LogsSubscriptionKind::AllWithVotes => self.all_with_votes_count += 1,
             LogsSubscriptionKind::Single(key) => {
                 *self.single_count.entry(key).or_default() += 1;
             }
@@ -412,7 +394,6 @@ impl LogsSubscriptionsIndex {
     fn remove(&mut self, params: &LogsSubscriptionParams) {
         match params.kind {
             LogsSubscriptionKind::All => self.all_count -= 1,
-            LogsSubscriptionKind::AllWithVotes => self.all_with_votes_count -= 1,
             LogsSubscriptionKind::Single(key) => match self.single_count.entry(key) {
                 Entry::Occupied(mut entry) => {
                     *entry.get_mut() -= 1;
@@ -428,12 +409,7 @@ impl LogsSubscriptionsIndex {
 
     fn update_config(&self) {
         let mentioned_addresses = self.single_count.keys().copied().collect();
-        let config = if self.all_with_votes_count > 0 {
-            TransactionLogCollectorConfig {
-                filter: TransactionLogCollectorFilter::AllWithVotes,
-                mentioned_addresses,
-            }
-        } else if self.all_count > 0 {
+        let config = if self.all_count > 0 {
             TransactionLogCollectorConfig {
                 filter: TransactionLogCollectorFilter::All,
                 mentioned_addresses,
@@ -472,7 +448,6 @@ impl SubscriptionsTracker {
         SubscriptionsTracker {
             logs_subscriptions_index: LogsSubscriptionsIndex {
                 all_count: 0,
-                all_with_votes_count: 0,
                 single_count: HashMap::new(),
                 bank_forks,
             },
@@ -865,7 +840,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn subscription_indexes() {
         fn counts(tracker: &SubscriptionsTracker) -> (usize, usize, usize, usize) {
             (
@@ -916,13 +890,6 @@ mod tests {
         tracker.subscribe(signature_params.clone(), 3.into(), || 0);
         assert_eq!(counts(&tracker), (1, 1, 0, 0));
         tracker.unsubscribe(signature_params, 3.into());
-        assert_eq!(counts(&tracker), (0, 0, 0, 0));
-
-        // Deprecated vote subscriptions retain a token for unsubscribe
-        // compatibility, but are deliberately absent from all notification indexes.
-        tracker.subscribe(SubscriptionParams::Vote, 4.into(), || 0);
-        assert_eq!(counts(&tracker), (0, 0, 0, 0));
-        tracker.unsubscribe(SubscriptionParams::Vote, 4.into());
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
     }
 }

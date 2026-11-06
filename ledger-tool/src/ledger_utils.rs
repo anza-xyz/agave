@@ -30,7 +30,9 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
-    solana_rpc::transaction_status_service::TransactionStatusService,
+    solana_rpc::transaction_status_service::{
+        TransactionStatusService, TransactionStatusServiceConfig,
+    },
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
@@ -311,11 +313,16 @@ pub fn load_and_process_ledger(
             let transaction_status_service = TransactionStatusService::new(
                 transaction_status_receiver,
                 Arc::default(),
-                enable_rpc_transaction_history,
-                transaction_notifier,
+                Arc::default(),
                 write_blockstore.clone(),
-                arg_matches.is_present("enable_extended_tx_metadata_storage"),
-                None,
+                TransactionStatusServiceConfig {
+                    enable_rpc_transaction_history,
+                    transaction_notifier,
+                    enable_extended_tx_metadata_storage: arg_matches
+                        .is_present("enable_extended_tx_metadata_storage"),
+                    dependency_tracker: None,
+                    transaction_history_notification_sender: None,
+                },
                 exit.clone(),
                 None,
             );
@@ -402,14 +409,12 @@ pub fn load_and_process_ledger(
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     match block_verification_method {
         BlockVerificationMethod::UnifiedScheduler => {
-            let no_replay_vote_sender = None;
             let no_prioritization_fee_cache = None;
 
             let scheduler_pool = DefaultSchedulerPool::new(
                 unified_scheduler_handler_threads,
                 process_options.runtime_config.log_messages_bytes_limit,
                 transaction_status_sender.clone(),
-                no_replay_vote_sender,
                 no_prioritization_fee_cache,
                 None,
             );

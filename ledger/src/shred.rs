@@ -56,11 +56,10 @@ use rand::Rng;
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     self::traits::{Shred as _, ShredData as _},
-    crate::shred::{merkle_tree::MerkleProofEntry, payload::PayloadMutGuard},
+    crate::shred::payload::PayloadMutGuard,
     agave_shred_wire_format::{
-        constants as wire_format_consts,
+        constants::{self as wire_format_consts, MerkleProofEntry},
         error::ParseError,
-        kind::{Code, Data, ShredLayout as _},
     },
     bitflags::bitflags,
     bytes::BufMut,
@@ -111,14 +110,6 @@ pub mod wire;
 pub mod layout {
     pub use super::wire::*;
 }
-
-pub use agave_shred_wire_format::constants::{Nonce, SIZE_OF_NONCE};
-
-/// `test_shred_constants` cross-checks these against this crate's own header structs.
-const SIZE_OF_COMMON_SHRED_HEADER: usize = wire_format_consts::OFFSET_OF_KIND_HEADER;
-const SIZE_OF_CODING_SHRED_HEADERS: usize = Code::SIZE_OF_HEADERS;
-pub const SIZE_OF_DATA_SHRED_HEADERS: usize = Data::SIZE_OF_HEADERS;
-const SIZE_OF_SIGNATURE: usize = wire_format_consts::SIZE_OF_SIGNATURE;
 
 // Every erasure batch is a fixed 32:32 set of data and coding shreds.
 pub const DATA_SHREDS_PER_FEC_BLOCK: usize = wire_format_consts::DATA_SHREDS;
@@ -413,7 +404,7 @@ struct DataShredHeader {
     #[wincode(with = "PodShredFlags")]
     flags: ShredFlags,
     /// Number of bytes in the payload taken by the headers plus the entry data,
-    /// i.e. `SIZE_OF_DATA_SHRED_HEADERS + <num bytes of entry data>`.
+    /// i.e. `Data::SIZE_OF_HEADERS + <num bytes of entry data>`.
     ///
     /// A slot's entries are serialized into one long byte stream, which is then
     /// cut into contiguous chunks, one per data shred. Each chunk is written
@@ -421,14 +412,14 @@ struct DataShredHeader {
     /// resigned)` bytes of the payload that follow the headers. The buffer is
     /// fixed-size but a chunk need not fill it, so `size` records where the
     /// chunk stops and the zero padding begins. `data()` returns exactly
-    /// `payload[SIZE_OF_DATA_SHRED_HEADERS..size]`.
+    /// `payload[Data::SIZE_OF_HEADERS..size]`.
     ///
     /// Note this is an offset from the start of the payload, not a length: it
     /// includes the header bytes, which is why it is never below
-    /// `SIZE_OF_DATA_SHRED_HEADERS`. That lower bound is a shred carrying no
+    /// `Data::SIZE_OF_HEADERS`. That lower bound is a shred carrying no
     /// entry data at all, which is emitted to pad a short erasure batch out to
     /// [`DATA_SHREDS_PER_FEC_BLOCK`] shreds. The upper bound is
-    /// `SIZE_OF_DATA_SHRED_HEADERS + capacity`; outside that range `data()`
+    /// `Data::SIZE_OF_HEADERS + capacity`; outside that range `data()`
     /// fails with [`Error::InvalidDataSize`]. Padding past `size` is erasure
     /// coded along with the rest of the buffer.
     size: u16,
@@ -992,13 +983,12 @@ pub(crate) fn make_merkle_shreds_for_tests<R: Rng>(
 
 #[cfg(test)]
 mod tests {
-    pub(super) use agave_shred_wire_format::constants::{
-        OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS as OFFSET_OF_SHRED_FLAGS,
-        OFFSET_OF_INDEX as OFFSET_OF_SHRED_INDEX, OFFSET_OF_NUM_DATA_SHREDS as OFFSET_OF_NUM_DATA,
-        OFFSET_OF_VARIANT as OFFSET_OF_SHRED_VARIANT,
-    };
     use {
         super::*,
+        agave_shred_wire_format::{
+            constants::{OFFSET_OF_KIND_HEADER, SIZE_OF_SIGNATURE},
+            kind::{Code, Data, ShredLayout as _},
+        },
         rand_chacha::{ChaChaRng, rand_core::SeedableRng},
         solana_keypair::keypair_from_seed,
         solana_perf::packet::BytesPacket,
@@ -1034,15 +1024,15 @@ mod tests {
             position: u16::MAX,
         };
         assert_eq!(
-            SIZE_OF_COMMON_SHRED_HEADER,
+            OFFSET_OF_KIND_HEADER,
             wincode::serialized_size(&common_header).unwrap() as usize
         );
         assert_eq!(
-            SIZE_OF_CODING_SHRED_HEADERS - SIZE_OF_COMMON_SHRED_HEADER,
+            Code::SIZE_OF_HEADERS - OFFSET_OF_KIND_HEADER,
             wincode::serialized_size(&coding_shred_header).unwrap() as usize
         );
         assert_eq!(
-            SIZE_OF_DATA_SHRED_HEADERS - SIZE_OF_COMMON_SHRED_HEADER,
+            Data::SIZE_OF_HEADERS - OFFSET_OF_KIND_HEADER,
             wincode::serialized_size(&data_shred_header).unwrap() as usize
         );
         let data_shred_header_with_size = DataShredHeader {
@@ -1050,7 +1040,7 @@ mod tests {
             ..data_shred_header
         };
         assert_eq!(
-            SIZE_OF_DATA_SHRED_HEADERS - SIZE_OF_COMMON_SHRED_HEADER,
+            Data::SIZE_OF_HEADERS - OFFSET_OF_KIND_HEADER,
             wincode::serialized_size(&data_shred_header_with_size).unwrap() as usize
         );
         assert_eq!(

@@ -15,7 +15,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
-    solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
+    solana_program_runtime::program_cache::fork_graph::{BlockRelation, ForkGraph},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::{BTreeSet, HashMap, HashSet, hash_map::Entry},
@@ -540,9 +540,9 @@ impl BankForks {
         )
     }
 
-    pub fn prune_program_cache(&self, root: Slot) {
+    pub fn root_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(self);
+            root_bank.root_program_cache(self);
         }
     }
 
@@ -790,7 +790,6 @@ mod tests {
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
             wire::{WireBlockCertMessage, WireCertSignature},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{Account, AccountSharedData},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -806,7 +805,7 @@ mod tests {
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
-        std::{fmt::Debug, thread, time::Duration},
+        std::{assert_matches, fmt::Debug, thread, time::Duration},
     };
 
     struct BlockingScheduler {

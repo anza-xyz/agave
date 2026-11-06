@@ -32,6 +32,7 @@ dev-context-only-utils = [
     "dep:solana-stake-interface",
     "dep:solana-vote-program",
     "solana-account/wincode",
+    "solana-runtime-transaction/dev-context-only-utils",
     "solana-transaction/dev-context-only-utils",
 ]
 stable-abi = [
@@ -78,6 +79,7 @@ solana-nonce = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
+solana-runtime-transaction = { workspace = true }
 solana-signer = { workspace = true, optional = true }
 solana-slot-hashes = { workspace = true }
 solana-stake-interface = { workspace = true, optional = true, features = ["serde", "wincode"] }
@@ -102,6 +104,7 @@ rand_chacha = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true, features = ["rand"] }

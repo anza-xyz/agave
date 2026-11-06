@@ -35,7 +35,6 @@ use {
     agave_reserved_account_keys::ReservedAccount,
     agave_snapshots::snapshot_config::SnapshotConfig,
     ahash::AHashMap,
-    assert_matches::assert_matches,
     bytes::Bytes,
     crossbeam_channel::{TrySendError, bounded},
     dashmap::DashMap,
@@ -98,7 +97,7 @@ use {
     solana_program_runtime::{
         declare_process_instruction,
         execution_budget::{self, MAX_COMPUTE_UNIT_LIMIT},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::entry::ProgramCacheEntry,
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
@@ -149,6 +148,7 @@ use {
     },
     spl_generic_token::token,
     std::{
+        assert_matches,
         collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
         io::Cursor,
@@ -5993,7 +5993,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "4hiMjx9RM2d7TbEBuN6nVzREWjjKjFDn4Za5v45H1XzL",
+        "9SUJkRfnpArjH12UabHAxvnuG7Em1KmTppfVrKYUuZYe",
     );
 }
 
@@ -8906,6 +8906,57 @@ fn test_vote_epoch_panic() {
         SlotLeader::new_unique(),
         genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
     );
+}
+
+#[test]
+fn test_collect_transaction_logs_ignores_vote_classification() {
+    let sender = Keypair::new();
+    let recipient = Pubkey::new_unique();
+    let execution_details = TransactionExecutionDetails {
+        status: Ok(()),
+        log_messages: Some(vec!["transaction log".to_string()]),
+        inner_instructions: None,
+        return_data: None,
+        executed_units: 0,
+        accounts_deltas: Some(AccountsDeltas {
+            accounts_resize_delta: 0,
+            accounts_uninitialized_size: 0,
+        }),
+    };
+
+    for is_simple_vote in [false, true] {
+        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
+            system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
+            solana_transaction::sanitized::MessageHash::Compute,
+            Some(is_simple_vote),
+            solana_message::SimpleAddressLoader::Disabled,
+            &HashSet::new(),
+        )
+        .unwrap();
+        let mut config = TransactionLogCollectorConfig {
+            filter: TransactionLogCollectorFilter::All,
+            mentioned_addresses: HashSet::new(),
+        };
+        let (logs, mentions) =
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+        assert_eq!(logs.signature, *transaction.signature());
+        assert_eq!(logs.log_messages, vec!["transaction log"]);
+        assert!(mentions.is_empty());
+
+        config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
+        assert!(
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
+        );
+        config.mentioned_addresses.insert(recipient);
+        let (_, mentions) =
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+        assert_eq!(mentions, vec![recipient]);
+
+        config.filter = TransactionLogCollectorFilter::None;
+        assert!(
+            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
+        );
+    }
 }
 
 #[test]

@@ -19,7 +19,7 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, mock_compile_message},
-        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        program_cache::env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,

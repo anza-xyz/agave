@@ -1,12 +1,10 @@
 use {
     crate::{
         bank::{Bank, BankId, TransactionBalancesSet},
-        bank_utils,
         dependency_tracker::DependencyTracker,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_balances::compile_collected_balances,
         transaction_batch::TransactionBatch,
-        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     log::{trace, warn},
     solana_clock::Slot,
@@ -25,7 +23,6 @@ use {
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     solana_transaction_error::TransactionResult,
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
@@ -52,6 +49,10 @@ pub struct TransactionStatusBatch {
 pub enum TransactionStatusMessage {
     Batch((TransactionStatusBatch, Option<WorkSequence>)),
     Freeze(Arc<Bank>),
+    Rooted {
+        slot: Slot,
+        bank_id: BankId,
+    },
     PurgeTransactionHistory {
         slot: Slot,
         source: TransactionHistoryPurgeSource,
@@ -95,7 +96,7 @@ impl TransactionHistoryPurgeSource {
     }
 }
 
-pub struct TransactionBatchWithIndexes<'a, 'b, Tx: SVMMessage> {
+pub struct TransactionBatchWithIndexes<'a, 'b, Tx: TransactionWithMeta> {
     pub batch: TransactionBatch<'a, 'b, Tx>,
     pub transaction_indexes: Vec<usize>,
 }
@@ -104,8 +105,6 @@ pub fn execute_batch<'a>(
     batch: &'a TransactionBatchWithIndexes<impl TransactionWithMeta>,
     bank: &'a Arc<Bank>,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
-    replay_vote_sender: Option<&'a ReplayVoteSender>,
-    replay_vote_send_type: ReplayVoteSendType,
     timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: Option<&'a PrioritizationFeeCache>,
@@ -140,13 +139,6 @@ pub fn execute_batch<'a>(
     timings.saturating_add_in_place(
         ExecuteTimingType::CheckBlockLimitsUs,
         check_block_costs_elapsed.as_us(),
-    );
-
-    bank_utils::find_and_send_votes(
-        batch.sanitized_transactions(),
-        &commit_results,
-        replay_vote_sender,
-        replay_vote_send_type,
     );
 
     if let Some(prioritization_fee_cache) = prioritization_fee_cache {
@@ -221,7 +213,7 @@ fn get_transaction_costs<Tx: TransactionWithMeta>(
     Ok(tx_costs)
 }
 
-fn get_first_error<T, Tx: SVMTransaction>(
+fn get_first_error<T, Tx: TransactionWithMeta>(
     batch: &TransactionBatch<Tx>,
     commit_results: &[TransactionResult<T>],
 ) -> TransactionResult<()> {
@@ -231,7 +223,7 @@ fn get_first_error<T, Tx: SVMTransaction>(
 }
 
 // Includes transaction signature for unit-testing
-fn do_get_first_error<T, Tx: SVMTransaction>(
+fn do_get_first_error<T, Tx: TransactionWithMeta>(
     batch: &TransactionBatch<Tx>,
     results: &[TransactionResult<T>],
 ) -> Option<(TransactionResult<()>, Signature)> {
@@ -308,6 +300,16 @@ impl TransactionStatusSender {
         {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
+        }
+    }
+
+    pub fn send_transaction_status_rooted_message(&self, bank: &Arc<Bank>) {
+        if let Err(e) = self.sender.send(TransactionStatusMessage::Rooted {
+            slot: bank.slot(),
+            bank_id: bank.bank_id(),
+        }) {
+            let slot = bank.slot();
+            warn!("Slot {slot} transaction_status send rooted message failed: {e:?}");
         }
     }
 
@@ -535,8 +537,6 @@ mod tests {
                 sender,
                 dependency_tracker: None,
             }),
-            None,
-            ReplayVoteSendType::VerifiedExecuted,
             &mut timing,
             None,
             None,

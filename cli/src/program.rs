@@ -125,6 +125,7 @@ pub enum ProgramCliCommand {
         max_sign_attempts: usize,
         auto_extend: bool,
         use_rpc: bool,
+        generate_ephemeral_program_id: bool,
         skip_feature_verification: bool,
     },
     Upgrade {
@@ -250,11 +251,21 @@ impl ProgramSubCommands for App<'_, '_> {
                             Arg::with_name("program_id")
                                 .long("program-id")
                                 .value_name("PROGRAM_ID"),
-                            "Executable program; must be a signer for initial deploys, can be an \
-                             address for upgrades [default: address of keypair at \
-                             /path/to/program-keypair.json if present, otherwise a random \
-                             address]."
+                            "Executable program. For initial deployments, this must be a signer \
+                             unless `--generate-ephemeral-program-id` was passed. For upgrades, \
+                             can be an address or path to a keypair, but is not required to sign."
                         ))
+                        .arg(
+                            Arg::with_name("generate_ephemeral_program_id")
+                                .long("generate-ephemeral-program-id")
+                                .takes_value(false)
+                                .conflicts_with("program_id")
+                                .help(
+                                    "Generates an ephemeral in-memory program keypair during \
+                                     initial program deploys. Use when --program-id is not \
+                                     provided and no keypair exists at the default location.",
+                                ),
+                        )
                         .arg(
                             Arg::with_name("final")
                                 .long("final")
@@ -782,6 +793,8 @@ pub fn parse_program_subcommand(
                     max_sign_attempts,
                     use_rpc: matches.is_present("use_rpc"),
                     auto_extend,
+                    generate_ephemeral_program_id: matches
+                        .is_present("generate_ephemeral_program_id"),
                     skip_feature_verification: skip_feature_verify,
                 }),
                 signers: signer_info.signers,
@@ -1086,6 +1099,7 @@ pub async fn process_program_subcommand(
             max_sign_attempts,
             auto_extend,
             use_rpc,
+            generate_ephemeral_program_id,
             skip_feature_verification,
         } => {
             process_program_deploy(
@@ -1105,6 +1119,7 @@ pub async fn process_program_subcommand(
                 *max_sign_attempts,
                 *auto_extend,
                 *use_rpc,
+                *generate_ephemeral_program_id,
                 *skip_feature_verification,
             )
             .await
@@ -1281,22 +1296,32 @@ pub async fn process_program_subcommand(
     }
 }
 
-fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
-    if let Some(program_location) = program_location {
-        let mut keypair_file = PathBuf::new();
-        keypair_file.push(program_location);
-        let mut filename = keypair_file.file_stem().unwrap().to_os_string();
-        filename.push("-keypair");
-        keypair_file.set_file_name(filename);
-        keypair_file.set_extension("json");
-        if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
-            keypair
-        } else {
-            Keypair::new()
-        }
-    } else {
-        Keypair::new()
-    }
+fn get_default_program_keypair(program_location: &Option<String>) -> Result<Keypair, CliError> {
+    let Some(program_location) = program_location else {
+        return Err(CliError::BadParameter(
+            "Keypair could not be found because program location was not provided. Either provide \
+             a program location or use either one of --program-id <ADDRESS>, --program-id \
+             <KEYPAIR_JSON>, or --generate-ephemeral-program-id"
+                .to_string(),
+        ));
+    };
+    let mut keypair_file = PathBuf::from(program_location);
+    let Some(mut filename) = keypair_file.file_stem().map(|stem| stem.to_os_string()) else {
+        return Err(CliError::BadParameter(
+            "Invalid program location".to_string(),
+        ));
+    };
+    filename.push("-keypair");
+    keypair_file.set_file_name(filename);
+    keypair_file.set_extension("json");
+
+    read_keypair_file(&keypair_file).map_err(|err| {
+        CliError::BadParameter(format!(
+            "Program id keypair not found at {}: {err}. Use either one of --program-id <ADDRESS>, \
+             --program-id <KEYPAIR_JSON>, or --generate-ephemeral-program-id",
+            keypair_file.display()
+        ))
+    })
 }
 
 /// Deploy program using upgradeable loader. It also can process program upgrades
@@ -1318,6 +1343,7 @@ async fn process_program_deploy(
     max_sign_attempts: usize,
     auto_extend: bool,
     use_rpc: bool,
+    generate_ephemeral_program_id: bool,
     skip_feature_verification: bool,
 ) -> ProcessResult {
     let fee_payer_signer = config.signers[fee_payer_signer_index];
@@ -1336,12 +1362,17 @@ async fn process_program_deploy(
         )
     };
 
-    let default_program_keypair = get_default_program_keypair(program_location);
+    let default_program_keypair;
     let (program_signer, program_pubkey) = if let Some(i) = program_signer_index {
         (Some(config.signers[i]), config.signers[i].pubkey())
     } else if let Some(program_pubkey) = program_pubkey {
         (None, program_pubkey)
     } else {
+        default_program_keypair = if generate_ephemeral_program_id {
+            Keypair::new()
+        } else {
+            get_default_program_keypair(program_location)?
+        };
         (
             Some(&default_program_keypair as &dyn Signer),
             default_program_keypair.pubkey(),
@@ -3519,6 +3550,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3551,6 +3583,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3585,6 +3618,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![
@@ -3621,6 +3655,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3656,6 +3691,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![
@@ -3694,6 +3730,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![
@@ -3728,6 +3765,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3760,6 +3798,7 @@ mod tests {
                     max_sign_attempts: 1,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3791,6 +3830,7 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: true,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: false,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
@@ -3822,10 +3862,43 @@ mod tests {
                     max_sign_attempts: 5,
                     auto_extend: true,
                     use_rpc: false,
+                    generate_ephemeral_program_id: false,
                     skip_feature_verification: true,
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
             }
+        );
+
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "deploy",
+            "/Users/test/program.so",
+            "--generate-ephemeral-program-id",
+        ]);
+        let command_info = parse_command(&test_command, &default_signer, &mut None).unwrap();
+        assert!(matches!(
+            command_info.command,
+            CliCommand::Program(ProgramCliCommand::Deploy {
+                generate_ephemeral_program_id: true,
+                program_pubkey: None,
+                program_signer_index: None,
+                ..
+            })
+        ));
+
+        assert!(
+            test_commands
+                .get_matches_from_safe(vec![
+                    "test",
+                    "program",
+                    "deploy",
+                    "/Users/test/program.so",
+                    "--generate-ephemeral-program-id",
+                    "--program-id",
+                    &Pubkey::new_unique().to_string(),
+                ])
+                .is_err()
         );
     }
 
@@ -4649,7 +4722,7 @@ mod tests {
         std::fs::copy(pathbuf, program_location.as_os_str()).unwrap();
         write_keypair_file(&program_pubkey, program_keypair_location).unwrap();
 
-        let config = CliConfig {
+        let mut config = CliConfig {
             rpc_client: Some(Arc::new(RpcClient::new_mock("".to_string()))),
             command: CliCommand::Program(ProgramCliCommand::Deploy {
                 program_location: Some(program_location.to_str().unwrap().to_string()),
@@ -4666,6 +4739,7 @@ mod tests {
                 max_sign_attempts: 5,
                 auto_extend: true,
                 use_rpc: false,
+                generate_ephemeral_program_id: false,
                 skip_feature_verification: true,
             }),
             signers: vec![&default_keypair],
@@ -4687,6 +4761,61 @@ mod tests {
             program_id.parse::<Pubkey>().unwrap(),
             program_pubkey.pubkey()
         );
+
+        let CliCommand::Program(ProgramCliCommand::Deploy {
+            generate_ephemeral_program_id,
+            ..
+        }) = &mut config.command
+        else {
+            unreachable!();
+        };
+        *generate_ephemeral_program_id = true;
+
+        let result = process_command(&config).await;
+        let json: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        let ephemeral_program_id = json
+            .as_object()
+            .unwrap()
+            .get("programId")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .parse::<Pubkey>()
+            .unwrap();
+        assert_ne!(ephemeral_program_id, program_pubkey.pubkey());
+    }
+
+    #[tokio::test]
+    async fn test_cli_missing_default_program_keypair() {
+        let default_keypair = Keypair::new();
+        let program_location = format!("{}.so", make_tmp_path("missing-program-keypair"));
+        let config = CliConfig {
+            rpc_client: Some(Arc::new(RpcClient::new_mock("".to_string()))),
+            command: CliCommand::Program(ProgramCliCommand::Deploy {
+                program_location: Some(program_location),
+                fee_payer_signer_index: 0,
+                buffer_signer_index: None,
+                buffer_pubkey: None,
+                program_signer_index: None,
+                program_pubkey: None,
+                upgrade_authority_signer_index: 0,
+                is_final: false,
+                max_len: None,
+                skip_fee_check: false,
+                compute_unit_price: None,
+                max_sign_attempts: 5,
+                auto_extend: true,
+                use_rpc: false,
+                generate_ephemeral_program_id: false,
+                skip_feature_verification: true,
+            }),
+            signers: vec![&default_keypair],
+            ..CliConfig::default()
+        };
+
+        let err = process_command(&config).await.unwrap_err().to_string();
+        assert!(err.contains("Program id keypair not found"), "{err}");
+        assert!(err.contains("--generate-ephemeral-program-id"), "{err}");
     }
 
     #[test]

@@ -203,7 +203,7 @@ pub(crate) mod external {
         arrayvec::ArrayVec,
         solana_accounts_db::account_locks::TransactionAccountLockLimits,
         solana_cost_model::cost_model::CostModel,
-        solana_runtime::bank::Bank,
+        solana_runtime::{bank::Bank, bank_forks::SharableBanks},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         std::num::NonZeroUsize,
     };
@@ -222,6 +222,7 @@ pub(crate) mod external {
         allocator: rts_alloc::Allocator,
 
         shared_leader_state: SharedLeaderState,
+        sharable_banks: SharableBanks,
         metrics: Arc<ConsumeWorkerMetrics>,
     }
 
@@ -240,12 +241,14 @@ pub(crate) mod external {
             transaction_consumer: Consumer,
             allocator: rts_alloc::Allocator,
             shared_leader_state: SharedLeaderState,
+            sharable_banks: SharableBanks,
         ) -> Self {
             Self {
                 exit,
                 transaction_consumer,
                 allocator,
                 shared_leader_state,
+                sharable_banks,
                 metrics: Arc::new(ConsumeWorkerMetrics::new()),
             }
         }
@@ -389,8 +392,16 @@ pub(crate) mod external {
                     &self.allocator,
                 )
             };
-            let (translation_results, transactions, max_ages) =
-                Self::translate_transaction_batch(&batch, bank);
+            let (translation_results, transactions, max_ages) = Self::translate_transaction_batch(
+                &batch,
+                bank,
+                !self
+                    .sharable_banks
+                    .root()
+                    .feature_set
+                    .snapshot()
+                    .loaderv3_programdata_size_floor,
+            );
 
             // Enforce all or nothing on translation_results.
             let execution_flags = ExecutionFlags {
@@ -568,6 +579,7 @@ pub(crate) mod external {
         fn translate_transaction_batch(
             batch: &TransactionPtrBatch,
             bank: &Bank,
+            enable_implicit_read_locks: bool,
         ) -> (
             ArrayVec<Result<(), PacketHandlingError>, MAX_TRANSACTIONS_PER_MESSAGE>,
             ArrayVec<Tx, MAX_TRANSACTIONS_PER_MESSAGE>,
@@ -583,6 +595,7 @@ pub(crate) mod external {
                     transaction_ptr,
                     bank,
                     transaction_account_lock_limits,
+                    enable_implicit_read_locks,
                 ) {
                     Ok((tx, max_age)) => {
                         transactions.push(tx);
@@ -600,18 +613,23 @@ pub(crate) mod external {
             transaction_ptr: TransactionPtr,
             bank: &Bank,
             transaction_account_lock_limits: TransactionAccountLockLimits,
+            enable_implicit_read_locks: bool,
         ) -> Result<(Tx, MaxAge), PacketHandlingError> {
-            translate_to_runtime_view(transaction_ptr, bank, transaction_account_lock_limits).map(
-                |(view, deactivation_slot)| {
-                    (
-                        view,
-                        MaxAge {
-                            sanitized_epoch: bank.epoch(),
-                            alt_invalidation_slot: deactivation_slot,
-                        },
-                    )
-                },
+            translate_to_runtime_view(
+                transaction_ptr,
+                bank,
+                transaction_account_lock_limits,
+                enable_implicit_read_locks,
             )
+            .map(|(view, deactivation_slot)| {
+                (
+                    view,
+                    MaxAge {
+                        sanitized_epoch: bank.epoch(),
+                        alt_invalidation_slot: deactivation_slot,
+                    },
+                )
+            })
         }
 
         /// Returns `true` if a message is valid and can be processed.
@@ -746,7 +764,7 @@ pub(crate) mod external {
                 transaction_recorder::TransactionRecorder,
             },
             solana_pubkey::Pubkey,
-            solana_runtime::{bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver},
+            solana_runtime::bank_forks::BankForks,
             solana_signer::Signer,
             solana_system_transaction::transfer,
             solana_transaction::TransactionError,
@@ -766,8 +784,7 @@ pub(crate) mod external {
             mint_keypair: Keypair,
             genesis_config: GenesisConfig,
             bank: Arc<Bank>,
-            _bank_forks: Arc<RwLock<BankForks>>,
-            _replay_vote_receiver: ReplayVoteReceiver,
+            bank_forks: Arc<RwLock<BankForks>>,
             record_receiver: RecordReceiver,
             allocator: rts_alloc::Allocator,
             pack_to_worker: shaq::spsc::Producer<PackToExecutionWorkerMessage>,
@@ -945,8 +962,7 @@ pub(crate) mod external {
 
             let (record_sender, record_receiver) = record_channels(false);
             let recorder = TransactionRecorder::new(record_sender);
-            let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-            let committer = Committer::new(None, replay_vote_sender, None);
+            let committer = Committer::new(None, None);
             let consumer = Consumer::new(committer, recorder, None);
             let shared_leader_state = SharedLeaderState::new(0, None, None);
             let exit = Arc::new(AtomicBool::new(false));
@@ -956,14 +972,14 @@ pub(crate) mod external {
                 consumer,
                 agave_worker.allocator,
                 shared_leader_state.clone(),
+                bank_forks.read().unwrap().sharable_banks(),
             );
 
             ExternalTestFrame {
                 mint_keypair,
                 genesis_config,
                 bank,
-                _bank_forks: bank_forks,
-                _replay_vote_receiver: replay_vote_receiver,
+                bank_forks,
                 record_receiver,
                 allocator: client_session.allocator,
                 pack_to_worker: client_worker.pack_to_worker,
@@ -1037,6 +1053,7 @@ pub(crate) mod external {
                         &simple_tx[..],
                         &bank,
                         bank.get_transaction_account_lock_limits(),
+                        !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
                     )
                     .ok()
                     .unwrap()
@@ -1143,6 +1160,7 @@ pub(crate) mod external {
                 &simple_tx[..],
                 &bank,
                 bank.get_transaction_account_lock_limits(),
+                !bank.feature_set.snapshot().loaderv3_programdata_size_floor,
             )
             .ok()
             .unwrap()
@@ -1509,16 +1527,16 @@ pub(crate) mod external {
             let agave_session = test_frame.simulate_workers.pop().unwrap();
             let client_session = test_frame.client_simulate_workers.take().unwrap();
             let (record_sender, _record_receiver) = record_channels(false);
-            let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
             let mut worker = ExternalWorker::new(
                 Arc::new(AtomicBool::new(false)),
                 Consumer::new(
-                    Committer::new(None, replay_vote_sender, None),
+                    Committer::new(None, None),
                     TransactionRecorder::new(record_sender),
                     None,
                 ),
                 agave_session.allocator,
                 test_frame.shared_leader_state.clone(),
+                test_frame.bank_forks.read().unwrap().sharable_banks(),
             );
 
             client_session
@@ -1566,16 +1584,16 @@ pub(crate) mod external {
             let (response_sender, response_receiver) = shaq::mpmc::pair(1).unwrap();
             let make_worker = || {
                 let (record_sender, _record_receiver) = record_channels(false);
-                let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
                 ExternalWorker::new(
                     Arc::new(AtomicBool::new(false)),
                     Consumer::new(
-                        Committer::new(None, replay_vote_sender, None),
+                        Committer::new(None, None),
                         TransactionRecorder::new(record_sender),
                         None,
                     ),
                     rts_alloc::Allocator::join_from_existing(&test_frame.allocator).unwrap(),
                     test_frame.shared_leader_state.clone(),
+                    test_frame.bank_forks.read().unwrap().sharable_banks(),
                 )
             };
             let mut first_worker = make_worker();
@@ -1917,7 +1935,7 @@ impl ConsumeWorkerMetrics {
             freeze_lock_us,
             record_us,
             commit_us,
-            find_and_send_votes_us,
+            post_commit_us,
             ..
         }: &LeaderExecuteAndCommitTimings,
     ) {
@@ -1940,8 +1958,8 @@ impl ConsumeWorkerMetrics {
             .commit_us
             .fetch_add(*commit_us, Ordering::Relaxed);
         self.timing_metrics
-            .find_and_send_votes_us
-            .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
+            .post_commit_us
+            .fetch_add(*post_commit_us, Ordering::Relaxed);
         self.timing_metrics
             .num_batches_processed
             .fetch_add(1, Ordering::Relaxed);
@@ -2124,7 +2142,7 @@ struct ConsumeWorkerTimingMetrics {
     freeze_lock_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
-    find_and_send_votes_us: AtomicU64,
+    post_commit_us: AtomicU64,
     num_batches_processed: AtomicU64,
 }
 
@@ -2166,8 +2184,8 @@ impl ConsumeWorkerTimingMetrics {
             ("record_us", self.record_us.swap(0, Ordering::Relaxed), i64),
             ("commit_us", self.commit_us.swap(0, Ordering::Relaxed), i64),
             (
-                "find_and_send_votes_us",
-                self.find_and_send_votes_us.swap(0, Ordering::Relaxed),
+                "post_commit_us",
+                self.post_commit_us.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
@@ -2344,9 +2362,7 @@ mod tests {
             transaction_recorder::TransactionRecorder,
         },
         solana_pubkey::Pubkey,
-        solana_runtime::{
-            bank::Bank, bank_forks::BankForks, vote_sender_types::ReplayVoteReceiver,
-        },
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
@@ -2370,7 +2386,6 @@ mod tests {
         genesis_config: GenesisConfig,
         bank: Arc<Bank>,
         _bank_forks: Arc<RwLock<BankForks>>,
-        _replay_vote_receiver: ReplayVoteReceiver,
         record_receiver: RecordReceiver,
         shared_leader_state: SharedLeaderState,
 
@@ -2399,8 +2414,7 @@ mod tests {
         let (record_sender, record_receiver) = record_channels(false);
         let recorder = TransactionRecorder::new(record_sender);
 
-        let (replay_vote_sender, replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
         let shared_leader_state = SharedLeaderState::new(0, None, None);
 
@@ -2420,7 +2434,6 @@ mod tests {
                 genesis_config,
                 bank,
                 _bank_forks: bank_forks,
-                _replay_vote_receiver: replay_vote_receiver,
                 record_receiver,
                 shared_leader_state,
                 consume_sender,

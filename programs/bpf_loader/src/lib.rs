@@ -15,7 +15,10 @@ use {
     solana_program_runtime::{
         deploy_program,
         invoke_context::InvokeContext,
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_cache::{
+            entry::{ProgramCacheEntry, ProgramCacheEntryType},
+            owner::ProgramCacheEntryOwner,
+        },
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
     },
@@ -1139,11 +1142,11 @@ fn common_close_account(
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
 mod test_utils {
     #[cfg(all(feature = "svm-internal", feature = "metrics"))]
-    use solana_program_runtime::program_metrics::LoadProgramMetrics;
+    use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
         super::*, solana_account::ReadableAccount,
-        solana_program_runtime::loaded_programs::ProgramRuntimeEnvironment,
+        solana_program_runtime::program_cache::env::ProgramRuntimeEnvironment,
         solana_syscalls::create_program_runtime_environment,
     };
 
@@ -1211,8 +1214,9 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
         solana_program_runtime::{
-            loaded_programs::ProgramRuntimeEnvironment, program_metrics::ProgramStatistics,
-            vm::calculate_heap_cost, with_mock_invoke_context,
+            program_cache::{env::ProgramRuntimeEnvironment, metrics::ProgramStatistics},
+            vm::calculate_heap_cost,
+            with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
         solana_sbpf::program::BuiltinProgram,

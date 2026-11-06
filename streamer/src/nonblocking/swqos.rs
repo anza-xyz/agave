@@ -179,6 +179,29 @@ fn compute_max_allowed_uni_streams_with_rtt(
 }
 
 impl SwQos {
+    fn max_connections_per_peer(&self, peer_type: ConnectionPeerType) -> usize {
+        match peer_type {
+            ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
+            ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
+        }
+    }
+
+    /// Returns true if the peer can open another connection in `connection_table`.
+    /// Should be checked before pruning, so that a peer at its limit cannot evict
+    /// others only to be rejected itself.
+    fn has_connection_capacity(
+        &self,
+        connection_table: &ConnectionTable<ConnectionStreamCounter>,
+        conn_context: &SwQosConnectionContext,
+    ) -> bool {
+        let key =
+            ConnectionTableKey::new(conn_context.remote_address.ip(), conn_context.remote_pubkey);
+        connection_table.has_connection_capacity(
+            &key,
+            self.max_connections_per_peer(conn_context.peer_type()),
+        )
+    }
+
     fn cache_new_connection(
         &self,
         client_connection_tracker: ClientConnectionTracker,
@@ -202,10 +225,7 @@ impl SwQos {
         ));
         let remote_addr = conn_context.remote_address;
 
-        let max_connections_per_peer = match conn_context.peer_type() {
-            ConnectionPeerType::Unstaked => self.config.max_connections_per_unstaked_peer,
-            ConnectionPeerType::Staked(_) => self.config.max_connections_per_staked_peer,
-        };
+        let max_connections_per_peer = self.max_connections_per_peer(conn_context.peer_type());
         if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
             .try_add_connection(
                 ConnectionTableKey::new(remote_addr.ip(), conn_context.remote_pubkey),
@@ -273,6 +293,11 @@ impl SwQos {
         let stats = self.stats.clone();
         if max_connections > 0 {
             let mut connection_table = connection_table.lock().await;
+            // Reject a peer at its limit before pruning, so that it cannot evict another peer.
+            if !self.has_connection_capacity(&connection_table, conn_context) {
+                stats.connection_add_failed.fetch_add(1, Ordering::Relaxed);
+                return Err(ConnectionHandlerError::ConnectionAddError);
+            }
             self.prune_unstaked_connection_table(&mut connection_table, max_connections, stats);
             self.cache_new_connection(
                 client_connection_tracker,
@@ -358,6 +383,15 @@ impl QosController<SwQosConnectionContext> for SwQos {
             match conn_context.peer_type() {
                 ConnectionPeerType::Staked(stake) => {
                     let mut connection_table_l = self.staked_connection_table.lock().await;
+
+                    // Reject a peer at its limit before pruning. Otherwise it could evict
+                    // another peer, or overflow into the unstaked table if pruning fails.
+                    if !self.has_connection_capacity(&connection_table_l, conn_context) {
+                        self.stats
+                            .connection_add_failed
+                            .fetch_add(1, Ordering::Relaxed);
+                        return None;
+                    }
 
                     if connection_table_l.total_size >= self.config.max_staked_connections {
                         let num_pruned =

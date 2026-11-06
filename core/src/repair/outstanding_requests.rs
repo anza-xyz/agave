@@ -1,8 +1,8 @@
 use {
     crate::repair::request_response::RequestResponse,
+    agave_shred_wire_format::constants::Nonce,
     lazy_lru::LruCache,
     rand::{Rng, rng},
-    solana_ledger::shred::Nonce,
 };
 
 pub const DEFAULT_REQUEST_EXPIRATION_MS: u64 = 60_000;

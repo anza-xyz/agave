@@ -12,7 +12,7 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
-    std::{borrow::Cow, collections::HashSet},
+    std::collections::HashSet,
 };
 
 // Shreds in a Merkle FEC set share a signature, while duplicate variants share shred IDs.
@@ -466,11 +466,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
     ) -> Result<()> {
         let (all_shreds, _) = receiver.recv()?;
         blockstore
-            .insert_trusted_shreds(
-                all_shreds.iter().map(Cow::Borrowed),
-                pinnable_slice,
-                write_batch,
-            )
+            .insert_trusted_shreds(all_shreds.iter().cloned(), pinnable_slice, write_batch)
             .expect("Failed to insert shreds in blockstore");
         Ok(())
     }
