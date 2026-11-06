@@ -19,7 +19,7 @@ use {
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
         crds_data::{CrdsData, SnapshotHashes},
-        crds_filter::{GossipFilterDirection, should_retain_crds_value},
+        crds_filter::should_retain_crds_value,
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -1120,9 +1120,7 @@ impl ClusterInfo {
             let _st = ScopedTimer::from(&self.stats.new_push_requests);
             self.flush_push_queue();
             self.gossip
-                .new_push_messages(&self_id, timestamp(), stakes, |value| {
-                    should_retain_crds_value(value, GossipFilterDirection::EgressPush)
-                })
+                .new_push_messages(&self_id, timestamp(), stakes, should_retain_crds_value)
         };
         self.stats
             .push_fanout_num_entries
@@ -1507,7 +1505,7 @@ impl ClusterInfo {
                 &requests,
                 output_size_limit,
                 now,
-                |value| should_retain_crds_value(value, GossipFilterDirection::EgressPullResponse),
+                should_retain_crds_value,
                 |request, scan_entries| {
                     self.try_consume_pull_request_scan_budget(request, scan_entries)
                 },
@@ -1982,9 +1980,7 @@ impl ClusterInfo {
             if let Protocol::PullResponse(_, values) | Protocol::PushMessage(_, values) =
                 &mut protocol
             {
-                values.retain(|value| {
-                    should_retain_crds_value(value, GossipFilterDirection::Ingress)
-                });
+                values.retain(should_retain_crds_value);
                 if values.is_empty() {
                     return None;
                 }
