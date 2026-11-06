@@ -321,7 +321,10 @@ impl<T> AsRef<T> for WorkingEntry<T> {
 }
 
 pub struct InsertResults {
-    completed_data_set_infos: Vec<CompletedDataSetInfo>,
+    pub completed_data_set_infos: Vec<CompletedDataSetInfo>,
+    /// Slots whose first data or coding shred at the `Original` location was committed by this
+    /// insertion, sorted. `Alternate` locations are not reported: those blocks are certified already.
+    pub first_shred_slots: Vec<Slot>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
 }
 
@@ -435,6 +438,8 @@ pub struct Blockstore {
 
 pub struct IndexMetaWorkingSetEntry {
     index: Index,
+    // Whether this location had no data or coding shreds before this batch.
+    was_empty: bool,
     // true only if at least one shred for this Index was inserted since the time this
     // struct was created
     did_insert_occur: bool,
@@ -2219,7 +2224,7 @@ impl Blockstore {
         &self,
         shred_insertion_tracker: &mut ShredInsertionTracker,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<SignalUpdates> {
+    ) -> Result<(SignalUpdates, Vec<Slot>)> {
         let mut start = Measure::start("Commit Working Sets");
         let signal_updates = self.commit_slot_meta_working_set(
             &shred_insertion_tracker.slot_meta_working_set,
@@ -2254,6 +2259,8 @@ impl Blockstore {
             )?;
         }
 
+        // Slots whose Original location had no shreds before this batch.
+        let mut first_shred_slots = Vec::new();
         for (&(location, slot), index_working_set_entry) in
             shred_insertion_tracker.index_working_set.iter()
         {
@@ -2264,12 +2271,16 @@ impl Blockstore {
                     location,
                     &index_working_set_entry.index,
                 )?;
+                if location == BlockLocation::Original && index_working_set_entry.was_empty {
+                    first_shred_slots.push(slot);
+                }
             }
         }
+        first_shred_slots.sort_unstable();
         start.stop();
         metrics.commit_working_sets_elapsed_us += start.as_us();
 
-        Ok(signal_updates)
+        Ok((signal_updates, first_shred_slots))
     }
 
     /// The main helper function that performs the shred insertion logic
@@ -2418,11 +2429,14 @@ impl Blockstore {
         // Compute DoubleMerkleMeta for any newly completed slots so it's committed atomically
         self.compute_double_merkle_meta_for_newly_completed_slots(&mut shred_insertion_tracker)?;
 
-        let SignalUpdates {
-            should_signal,
-            newly_completed_slots_with_last_index,
-            update_parent_signals,
-        } = self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
+        let (
+            SignalUpdates {
+                should_signal,
+                newly_completed_slots_with_last_index,
+                update_parent_signals,
+            },
+            first_shred_slots,
+        ) = self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
@@ -2453,6 +2467,7 @@ impl Blockstore {
 
         Ok(InsertResults {
             completed_data_set_infos: shred_insertion_tracker.newly_completed_data_sets,
+            first_shred_slots,
             duplicate_shreds: shred_insertion_tracker.duplicate_shreds,
         })
     }
@@ -2487,6 +2502,7 @@ impl Blockstore {
             handle_duplicate,
             metrics,
         )
+        .map(|result| result.completed_data_set_infos)
     }
 
     /// Inserts `shreds` into the column specified by  the `BlockLocation`.
@@ -2494,7 +2510,9 @@ impl Blockstore {
     /// Additionally attempts to recover and retransmit recovered shreds (also identifying
     /// and handling duplicate shreds). Broadcast stage should instead call
     /// Blockstore::insert_shreds when inserting own shreds during leader slots.
-    /// The pinnable slice and write batch can be reused across calls.
+    /// The pinnable slice and write batch can be reused across calls. Returns
+    /// completed data sets and slots with a newly populated `Original` location after the batch is
+    /// committed.
     pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
         &'db self,
         shreds: impl IntoIterator<
@@ -2512,14 +2530,11 @@ impl Blockstore {
         write_batch: &mut WriteBatch,
         handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
+    ) -> Result<InsertResults>
     where
         F: Fn(PossibleDuplicateShred),
     {
-        let InsertResults {
-            completed_data_set_infos,
-            duplicate_shreds,
-        } = self.do_insert_shreds(
+        let mut result = self.do_insert_shreds(
             shreds,
             is_trusted,
             Some(shred_recovery_context),
@@ -2528,11 +2543,11 @@ impl Blockstore {
             metrics,
         )?;
 
-        for shred in duplicate_shreds {
+        for shred in result.duplicate_shreds.drain(..) {
             handle_duplicate(shred);
         }
 
-        Ok(completed_data_set_infos)
+        Ok(result)
     }
 
     pub fn add_new_shred_signal(&self, s: Sender<bool>) {
@@ -6338,6 +6353,7 @@ impl Blockstore {
                 }
                 .unwrap_or_else(|| Index::new(slot));
                 let index_entry = IndexMetaWorkingSetEntry {
+                    was_empty: index.data().num_shreds() == 0 && index.coding().num_shreds() == 0,
                     index,
                     did_insert_occur: false,
                 };

@@ -367,7 +367,6 @@ impl Tvu {
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.turbine_xdp_sender,
-            votor_event_sender.clone(),
         );
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
@@ -437,6 +436,7 @@ impl Tvu {
                 tvu_config.shred_version,
                 outstanding_repair_requests,
                 tvu_config.repair_xdp_sender,
+                votor_event_sender.clone(),
             )
         };
 
