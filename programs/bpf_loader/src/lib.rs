@@ -1218,21 +1218,12 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
         solana_program_runtime::{
-            program_cache::{
-                entry::{ProgramCacheEntry, ProgramCacheEntryType},
-                env::ProgramRuntimeEnvironment,
-                metrics::ProgramStatistics,
-            },
-            vm::calculate_heap_cost,
+            program_cache::metrics::ProgramStatistics, vm::calculate_heap_cost,
             with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
-        solana_sbpf::program::BuiltinProgram,
         solana_sdk_ids::sysvar,
-        solana_svm_type_overrides::sync::{
-            Arc,
-            atomic::{AtomicU64, Ordering},
-        },
+        solana_svm_type_overrides::sync::atomic::Ordering,
         solana_sysvar_id::SysvarId,
         std::{assert_matches, fs::File, io::Read},
         test_case::test_case,
@@ -1313,8 +1304,8 @@ mod tests {
         Ok(())
     }
 
-    // Concurrency rationale: these tests construct `ProgramCacheEntry` instances
-    // directly. The struct's `latest_access_slot: AtomicU64` field is defined in
+    // Concurrency rationale: these tests construct `ProgramStatistics` instances
+    // directly. The struct's `AtomicU64` counters are defined in
     // `solana-program-runtime`; under the `shuttle-test` feature
     // `solana-svm-type-overrides` swaps `std::sync::atomic::AtomicU64` for
     // `shuttle::sync::atomic::AtomicU64`, whose Shuttle-backed operations
@@ -1352,21 +1343,19 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let stats = ProgramStatistics {
             uses: 100.into(),
             ..Default::default()
         };
-        let program = ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(env),
+        let program = TxBatchCacheEntry {
+            program: TxBatchCacheEntryType::Unloaded,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 0,
             stats: stats.into(),
-            latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
             .program_cache_for_tx_batch
-            .replenish(program_id, Arc::new(program));
+            .replenish(program_id, program);
         invoke_context
             .program_cache_for_tx_batch
             .set_slot_for_tests(2);
@@ -1403,21 +1392,19 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let stats = ProgramStatistics {
             uses: 100.into(),
             ..Default::default()
         };
-        let program = ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(env),
+        let program = TxBatchCacheEntry {
+            program: TxBatchCacheEntryType::Unloaded,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 0,
             stats: stats.into(),
-            latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
             .program_cache_for_tx_batch
-            .replenish(program_id, Arc::new(program));
+            .replenish(program_id, program);
         invoke_context
             .program_cache_for_tx_batch
             .set_slot_for_tests(2);

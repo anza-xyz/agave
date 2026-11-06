@@ -7,7 +7,7 @@ use {
         loading_task::LoadingTaskWaiter,
         metrics::{EMA_SCALE, ProgramCacheStats},
         owner::ProgramCacheEntryOwner,
-        tx_batch::ProgramCacheForTxBatch,
+        tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntry},
     },
     log::error,
     solana_clock::Slot,
@@ -402,8 +402,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             if increment_usage_counter {
                                 entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                             }
-                            loaded_programs_for_tx_batch
-                                .replenish(*program_to_load.program_id, entry_to_return);
+                            loaded_programs_for_tx_batch.replenish(
+                                *program_to_load.program_id,
+                                TxBatchCacheEntry::from(entry_to_return.as_ref()),
+                            );
                             return false;
                         }
                     }
@@ -652,7 +654,7 @@ mod tests {
             },
             metrics::ProgramStatistics,
             owner::ProgramCacheEntryOwner,
-            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntryType},
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntry, TxBatchCacheEntryType},
         },
         solana_clock::Slot,
         solana_pubkey::Pubkey,
@@ -3514,7 +3516,10 @@ mod tests {
         // Anything already in the batch, such as the builtins it is seeded
         // with.
         let mut extracted = ProgramCacheForTxBatch::new(200);
-        extracted.replenish(Pubkey::new_unique(), new_test_builtin_entry(0));
+        extracted.replenish(
+            Pubkey::new_unique(),
+            TxBatchCacheEntry::from(new_test_builtin_entry(0).as_ref()),
+        );
 
         // One entry is found, and only that one is counted. The entry seeded
         // above is still in the batch, but it was not found by this call.

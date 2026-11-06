@@ -15,10 +15,7 @@
 //! [ProgramCache]: crate::program_cache::global::ProgramCache
 
 pub use entry::{TxBatchCacheEntry, TxBatchCacheEntryType};
-use {
-    crate::program_cache::entry::ProgramCacheEntry, solana_clock::Slot, solana_pubkey::Pubkey,
-    solana_svm_type_overrides::sync::Arc, std::collections::HashMap,
-};
+use {solana_clock::Slot, solana_pubkey::Pubkey, std::collections::HashMap};
 
 mod entry;
 
@@ -67,10 +64,8 @@ impl ProgramCacheForTxBatch {
     /// Refill the cache with a single entry. It's typically called during transaction loading, and
     /// transaction processing (for program management instructions).
     /// It replaces the existing entry (if any) with the provided entry.
-    pub fn replenish(&mut self, key: Pubkey, entry: Arc<ProgramCacheEntry>) {
-        // TODO: These internal converters are only temporary.
-        self.entries
-            .insert(key, TxBatchCacheEntry::from(entry.as_ref()));
+    pub fn replenish(&mut self, key: Pubkey, entry: TxBatchCacheEntry) {
+        self.entries.insert(key, entry);
     }
 
     /// Store an entry in `modified_entries` for a program modified during the
@@ -108,7 +103,7 @@ impl ProgramCacheForTxBatch {
     pub fn merge(&mut self, entries: &HashMap<Pubkey, TxBatchCacheEntry>) {
         entries.iter().for_each(|(key, entry)| {
             self.merged_modified = true;
-            self.entries.insert(*key, entry.clone());
+            self.replenish(*key, entry.clone());
         })
     }
 

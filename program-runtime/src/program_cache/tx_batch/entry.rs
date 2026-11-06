@@ -12,7 +12,9 @@
 //! environments, since the environment is fixed for the lifetime of the batch.
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use crate::program_cache::env::ProgramRuntimeEnvironment;
+use crate::{
+    invoke_context::BuiltinFunctionRegisterer, program_cache::env::ProgramRuntimeEnvironment,
+};
 use {
     crate::{
         invoke_context::InvokeContext,
@@ -141,6 +143,17 @@ impl TxBatchCacheEntry {
 
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 impl TxBatchCacheEntry {
+    pub fn new_builtin(register_fn: BuiltinFunctionRegisterer) -> Self {
+        let mut program = BuiltinProgram::new_builtin();
+        register_fn(&mut program, "entrypoint").unwrap();
+        Self {
+            program: TxBatchCacheEntryType::Builtin(Arc::new(program)),
+            account_owner: ProgramCacheEntryOwner::NativeLoader,
+            deployment_slot: 0, // Deployment slot is always zero
+            stats: Arc::default(),
+        }
+    }
+
     pub fn is_builtin(&self) -> bool {
         matches!(self.program, TxBatchCacheEntryType::Builtin(_))
             && self.deployment_slot == 0

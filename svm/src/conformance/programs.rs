@@ -9,8 +9,9 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
         program_cache::{
-            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
-            tx_batch::ProgramCacheForTxBatch,
+            entry::ProgramCacheEntry,
+            env::ProgramRuntimeEnvironment,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntry},
         },
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
@@ -21,7 +22,7 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_syscalls::create_program_runtime_environment,
-    std::{collections::HashSet, sync::Arc},
+    std::collections::HashSet,
 };
 
 struct SvmBuiltinPrototype {
@@ -113,7 +114,7 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     for builtin in SVM_BUILTINS {
         cache.replenish(
             builtin.program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(builtin.register_fn)),
+            TxBatchCacheEntry::new_builtin(builtin.register_fn),
         );
     }
 
@@ -147,7 +148,7 @@ pub fn add_program_to_program_cache(
     )
     .unwrap();
 
-    cache.replenish(*program_id, Arc::new(entry));
+    cache.replenish(*program_id, TxBatchCacheEntry::from(&entry));
 }
 
 /// Populate a `ProgramCacheForTxBatch` via `load_program_with_pubkey` from any program accounts.
@@ -179,7 +180,7 @@ pub fn fill_program_cache_from_accounts(
                 slot,
                 &mut ExecuteTimings::default(),
             ) {
-                program_cache.replenish(acc.0, loaded_program);
+                program_cache.replenish(acc.0, TxBatchCacheEntry::from(loaded_program.as_ref()));
             }
         }
     }

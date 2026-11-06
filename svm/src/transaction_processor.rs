@@ -49,7 +49,7 @@ use {
             global::{Percent, ProgramCache, ProgramToLoad},
             metrics::ProgramStatistics,
             owner::ProgramCacheEntryOwner,
-            tx_batch::ProgramCacheForTxBatch,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntry},
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -1455,7 +1455,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.builtin_program_cache
             .write()
             .unwrap()
-            .replenish(program_id, entry);
+            .replenish(program_id, TxBatchCacheEntry::from(entry.as_ref()));
     }
 
     /// Remove a builtin-program from this fork.

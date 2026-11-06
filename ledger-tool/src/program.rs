@@ -19,6 +19,7 @@ use {
             entry::{ProgramCacheEntry, ProgramCacheEntryType},
             env::ProgramRuntimeEnvironment,
             metrics::LoadProgramMetrics,
+            tx_batch::TxBatchCacheEntry,
         },
         serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
@@ -485,11 +486,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let mut program_cache_for_tx_batch =
         ProgramCacheForTxBatch::new(bank.slot() + DELAY_VISIBILITY_SLOT_OFFSET);
     for key in cached_account_keys {
-        program_cache_for_tx_batch.replenish(
-            key,
-            bank.load_program(&key, bank.epoch())
-                .expect("Couldn't find program account"),
-        );
+        let program = bank
+            .load_program(&key, bank.epoch())
+            .expect("Couldn't find program account");
+        program_cache_for_tx_batch.replenish(key, TxBatchCacheEntry::from(program.as_ref()));
         debug!("Loaded program {key}");
     }
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
