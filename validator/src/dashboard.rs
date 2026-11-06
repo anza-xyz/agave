@@ -438,6 +438,12 @@ mod tests {
         let mut contact_info =
             serde_json::to_value(admin_rpc_service::AdminRpcContactInfo::from(contact_info))
                 .unwrap();
+        // `tpu_vote` was removed with TowerBFT, but it was part of the frozen
+        // legacy response schema and must remain accepted as an unknown field.
+        contact_info.as_object_mut().unwrap().insert(
+            "tpu_vote".to_string(),
+            serde_json::to_value("127.0.0.1:0".parse::<SocketAddr>().unwrap()).unwrap(),
+        );
         let legacy: LegacyAdminRpcContactInfo =
             serde_json::from_value(contact_info.clone()).unwrap();
         let legacy = serde_json::to_value(legacy).unwrap();
