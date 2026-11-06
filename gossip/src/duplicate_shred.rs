@@ -399,11 +399,12 @@ impl Sanitize for DuplicateShred {
 pub(crate) mod tests {
     use {
         super::*,
+        agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
         rand::Rng,
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_ledger::shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shredder},
+        solana_ledger::shred::{ProcessShredsStats, Shredder},
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction::transfer,

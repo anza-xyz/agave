@@ -15,7 +15,8 @@ use {
         result::{Error, RepairVerifyError, Result},
     },
     agave_shred_wire_format::constants::{
-        MerkleProofEntry, Nonce, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_NONCE,
+        DATA_SHREDS_PER_FEC_BLOCK, MerkleProofEntry, Nonce, SIZE_OF_MERKLE_PROOF_ENTRY,
+        SIZE_OF_NONCE,
     },
     agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -38,8 +39,8 @@ use {
     solana_ledger::{
         blockstore_meta::BlockLocation,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_FEC_SETS_PER_SLOT, ShredFetchStats, ShredFlags,
-            ShredType, layout::get_merkle_root, merkle_tree,
+            self, MAX_FEC_SETS_PER_SLOT, ShredFetchStats, ShredFlags, ShredType,
+            layout::get_merkle_root, merkle_tree,
         },
     },
     solana_net_utils::{SocketAddrSpace, token_bucket::TokenBucket},
