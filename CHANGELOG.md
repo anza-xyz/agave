@@ -157,6 +157,9 @@ Release channels have their own copy of this changelog:
   burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.
   Pass `--allow-vat-withdrawal` to include the VAT reserve in the withdrawable balance; the flag is
   required with `--sign-only`.
+* `agave-ledger-tool program run --trace` now writes instruction traces when agave-ledger-tool
+  is built with the new `sbpf-tracer` feature. Without the feature, `--trace` exits with an error
+  instead of silently writing nothing.
 
 ### Geyser
 
