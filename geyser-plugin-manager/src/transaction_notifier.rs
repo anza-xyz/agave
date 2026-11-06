@@ -2,7 +2,7 @@
 use {
     agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::{
-        geyser_plugin_interface::{ReplicaTransactionInfoV4, ReplicaTransactionInfoVersions},
+        geyser_plugin_interface::{ReplicaTransactionInfoV5, ReplicaTransactionInfoVersions},
         transaction_status_meta as mirror,
     },
     arc_swap::ArcSwap,
@@ -38,7 +38,6 @@ impl TransactionNotifier for TransactionNotifierImpl {
         index: usize,
         signature: &Signature,
         message_hash: &Hash,
-        is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
     ) {
@@ -154,11 +153,10 @@ impl TransactionNotifier for TransactionNotifierImpl {
             cost_units: *cost_units,
         };
 
-        let transaction_log_info = ReplicaTransactionInfoV4 {
+        let transaction_log_info = ReplicaTransactionInfoV5 {
             index,
             message_hash,
             signature,
-            is_vote,
             transaction,
             transaction_status_meta: &transaction_status_meta,
         };
@@ -168,7 +166,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
                 continue;
             }
             match plugin.notify_transaction_for_bank(
-                ReplicaTransactionInfoVersions::V0_0_4(&transaction_log_info),
+                ReplicaTransactionInfoVersions::V0_0_5(&transaction_log_info),
                 slot,
                 bank_id.into(),
             ) {
@@ -350,16 +348,12 @@ mod tests {
             slot: Slot,
             bank_id: u64,
         ) -> Result<()> {
-            let ReplicaTransactionInfoVersions::V0_0_4(info) = transaction_info;
+            let ReplicaTransactionInfoVersions::V0_0_5(info) = transaction_info else {
+                panic!("expected the payload without the vote flag");
+            };
             self.captured.lock().unwrap().push(format!(
                 "{:?}",
-                (
-                    slot,
-                    bank_id,
-                    info.index,
-                    info.is_vote,
-                    info.transaction_status_meta
-                )
+                (slot, bank_id, info.index, info.transaction_status_meta)
             ));
             Ok(())
         }
@@ -451,7 +445,6 @@ mod tests {
             3,
             &Signature::default(),
             &Hash::default(),
-            false,
             &meta,
             &transaction,
         );
@@ -509,7 +502,7 @@ mod tests {
             compute_units_consumed: Some(42),
             cost_units: Some(7),
         };
-        let expected = format!("{:?}", (42u64, 9u64, 3usize, false, &expected_meta));
+        let expected = format!("{:?}", (42u64, 9u64, 3usize, &expected_meta));
 
         assert_eq!(*captured.lock().unwrap(), vec![expected]);
         assert!(ignored.lock().unwrap().is_empty());
@@ -540,7 +533,6 @@ mod tests {
             0,
             &Signature::default(),
             &Hash::default(),
-            true,
             &ok_meta,
             &transaction,
         );
@@ -559,7 +551,7 @@ mod tests {
             compute_units_consumed: None,
             cost_units: None,
         };
-        let expected_ok = format!("{:?}", (43u64, 9u64, 0usize, true, &expected_ok_meta));
+        let expected_ok = format!("{:?}", (43u64, 9u64, 0usize, &expected_ok_meta));
         assert_eq!(*captured.lock().unwrap(), vec![expected_ok]);
     }
 }
