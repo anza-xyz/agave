@@ -141,17 +141,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         (transaction_accounts, instruction_accounts)
     }
 
-    fn corrupt_buffer_elf(transaction_accounts: &mut [(Pubkey, AccountSharedData)]) {
-        transaction_accounts
-            .get_mut(3)
-            .unwrap()
-            .1
-            .data_as_mut_slice()
-            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-            .unwrap()
-            .fill(0xff);
-    }
-
     let process_instruction = |max_data_len: usize,
                                transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
                                instruction_accounts: Vec<AccountMeta>,
@@ -291,8 +280,12 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
 
     // Case: Program account not owned by loader
     //
-    // The buffer ELF is corrupted so that `IncorrectProgramId` proves the
-    // owner check fires before the ELF is loaded and verified.
+    // Unlike `Upgrade`, `DeployWithMaxDataLen` has no explicit owner
+    // check on the program account. Validation passes, and the failure
+    // only surfaces at the end when the handler tries to mutate the
+    // program's state — `set_state` requires the account to be owned by
+    // the currently-executing program, so it trips
+    // `ExternalAccountDataModified`.
     let (mut transaction_accounts, instruction_accounts) = get_accounts(
         &payer_address,
         &buffer_address,
@@ -305,32 +298,32 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         .unwrap()
         .1
         .set_owner(Pubkey::new_unique());
-    corrupt_buffer_elf(&mut transaction_accounts);
     process_instruction(
         elf.len(),
         transaction_accounts,
         instruction_accounts,
-        Err(InstructionError::IncorrectProgramId),
+        Err(InstructionError::ExternalAccountDataModified),
     );
 
     // Case: Program account not writable
     //
-    // The buffer ELF is corrupted so that `InvalidArgument` proves the
-    // writability check fires before the ELF is loaded and verified.
-    let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
+    // `DeployWithMaxDataLen` also lacks an explicit writability check on
+    // the program account, so the failure again surfaces at
+    // `set_state`, this time via the writability guard: a non-writable
+    // account yields `ReadonlyDataModified`.
+    let (transaction_accounts, mut instruction_accounts) = get_accounts(
         &payer_address,
         &buffer_address,
         &upgrade_authority_address,
         &upgrade_authority_address,
         &elf,
     );
-    corrupt_buffer_elf(&mut transaction_accounts);
     instruction_accounts.get_mut(2).unwrap().is_writable = false;
     process_instruction(
         elf.len(),
         transaction_accounts,
         instruction_accounts,
-        Err(InstructionError::InvalidArgument),
+        Err(InstructionError::ReadonlyDataModified),
     );
 
     // Case: Program account already initialized
