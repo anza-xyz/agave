@@ -38,6 +38,7 @@ use {
         SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
     },
     solana_commitment_config::CommitmentConfig,
+    solana_hash::Hash,
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
     solana_keypair::{Keypair, keypair_from_seed, read_keypair_file},
@@ -46,7 +47,7 @@ use {
         instruction::{self as loader_v3_instruction, MINIMUM_EXTEND_PROGRAM_BYTES},
         state::UpgradeableLoaderState,
     },
-    solana_message::VersionedMessage,
+    solana_message::{VersionedMessage, v1::MAX_TRANSACTION_SIZE},
     solana_net_utils::bind_to_unspecified,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
@@ -2598,10 +2599,61 @@ async fn process_extend_program(
         }))
 }
 
+/// Write data bytes the loader accepts per instruction without SIMD-0648:
+/// PACKET_DATA_SIZE minus the tag, offset and length prefix.
+const MAX_WRITE_BYTES: usize = PACKET_DATA_SIZE - 16;
+
+/// Builds write messages for the parts of `program_data` that differ from the buffer.
+#[allow(clippy::too_many_arguments)]
+fn build_write_messages(
+    program_data: &[u8],
+    buffer_program_data: &[u8],
+    buffer_pubkey: &Pubkey,
+    buffer_authority: &Pubkey,
+    fee_payer: &Pubkey,
+    blockhash: Hash,
+    compute_unit_config: &ComputeUnitConfig,
+) -> Vec<VersionedMessage> {
+    let create_msg = |writes: &[(u32, &[u8])]| {
+        let instructions = writes
+            .iter()
+            .map(|(offset, bytes)| {
+                loader_v3_instruction::write(
+                    buffer_pubkey,
+                    buffer_authority,
+                    *offset,
+                    bytes.to_vec(),
+                )
+            })
+            .collect();
+        MessageBuilder::new(instructions)
+            .with_compute_unit_config(compute_unit_config)
+            .with_blockhash(blockhash)
+            .build(fee_payer)
+    };
+
+    // Each write is capped, so pack as many as fit and split the room evenly.
+    let writes_per_message =
+        calculate_max_chunk_size(create_msg(&[(0, &[])])).div_ceil(MAX_WRITE_BYTES);
+    let chunk_size = calculate_max_chunk_size(create_msg(&vec![(0, &[][..]); writes_per_message]))
+        .checked_div(writes_per_message)
+        .unwrap_or_default();
+
+    let writes = program_data
+        .chunks(chunk_size)
+        .zip(0usize..)
+        .filter_map(|(chunk, i)| {
+            let offset = i.saturating_mul(chunk_size);
+            (chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())])
+                .then_some((offset as u32, chunk))
+        })
+        .collect::<Vec<_>>();
+    writes.chunks(writes_per_message).map(create_msg).collect()
+}
+
 pub fn calculate_max_chunk_size(baseline_msg: VersionedMessage) -> usize {
-    // Reserve one byte for growth of the shortvec instruction data length.
-    // The loader limits write instruction data to PACKET_DATA_SIZE for every version.
-    let size_limit = PACKET_DATA_SIZE - 1;
+    // Reserve one byte for growth of the instruction data length encoding.
+    let size_limit = MAX_TRANSACTION_SIZE - 1;
     let tx_size = wincode::serialized_size(&VersionedTransaction {
         signatures: vec![
             Signature::default();
@@ -2666,33 +2718,18 @@ async fn do_process_program_deploy(
         None
     };
 
-    // Create and add write messages
-    let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = loader_v3_instruction::write(
-            buffer_pubkey,
-            &buffer_authority_signer.pubkey(),
-            offset,
-            bytes,
-        );
-
-        let instructions =
-            MessageBuilder::new(vec![instruction]).with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            });
-        instructions
-            .with_blockhash(blockhash)
-            .build(&fee_payer_signer.pubkey())
-    };
-
-    let mut write_messages = vec![];
-    let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
-    for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
-        let offset = i.saturating_mul(chunk_size);
-        if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
-        }
-    }
+    let write_messages = build_write_messages(
+        program_data,
+        &buffer_program_data,
+        buffer_pubkey,
+        &buffer_authority_signer.pubkey(),
+        &fee_payer_signer.pubkey(),
+        blockhash,
+        &ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit,
+        },
+    );
 
     // Create and add final message
     let final_message = {
@@ -2807,33 +2844,18 @@ async fn do_process_write_buffer(
         None
     };
 
-    // Create and add write messages
-    let create_msg = |offset: u32, bytes: Vec<u8>| {
-        let instruction = loader_v3_instruction::write(
-            buffer_pubkey,
-            &buffer_authority_signer.pubkey(),
-            offset,
-            bytes,
-        );
-
-        let instructions =
-            MessageBuilder::new(vec![instruction]).with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            });
-        instructions
-            .with_blockhash(blockhash)
-            .build(&fee_payer_signer.pubkey())
-    };
-
-    let mut write_messages = vec![];
-    let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
-    for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
-        let offset = i.saturating_mul(chunk_size);
-        if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-            write_messages.push(create_msg(offset as u32, chunk.to_vec()));
-        }
-    }
+    let write_messages = build_write_messages(
+        program_data,
+        &buffer_program_data,
+        buffer_pubkey,
+        &buffer_authority_signer.pubkey(),
+        &fee_payer_signer.pubkey(),
+        blockhash,
+        &ComputeUnitConfig {
+            compute_unit_price,
+            compute_unit_limit,
+        },
+    );
 
     if !skip_fee_check {
         check_payer(
@@ -2938,33 +2960,18 @@ async fn do_process_program_upgrade(
                 None
             };
 
-            let buffer_signer_pubkey = buffer_signer.pubkey();
-            let upgrade_authority_pubkey = upgrade_authority.pubkey();
-            let create_msg = |offset: u32, bytes: Vec<u8>| {
-                let instructions = MessageBuilder::new(vec![loader_v3_instruction::write(
-                    &buffer_signer_pubkey,
-                    &upgrade_authority_pubkey,
-                    offset,
-                    bytes,
-                )])
-                .with_compute_unit_config(&ComputeUnitConfig {
+            let write_messages = build_write_messages(
+                program_data,
+                &buffer_program_data,
+                &buffer_signer.pubkey(),
+                &upgrade_authority.pubkey(),
+                &fee_payer_signer.pubkey(),
+                blockhash,
+                &ComputeUnitConfig {
                     compute_unit_price,
                     compute_unit_limit,
-                });
-                instructions
-                    .with_blockhash(blockhash)
-                    .build(&fee_payer_signer.pubkey())
-            };
-
-            // Create and add write messages
-            let mut write_messages = vec![];
-            let chunk_size = calculate_max_chunk_size(create_msg(0, Vec::new()));
-            for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
-                let offset = i.saturating_mul(chunk_size);
-                if chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())] {
-                    write_messages.push(create_msg(offset as u32, chunk.to_vec()));
-                }
-            }
+                },
+            );
 
             (initial_message, write_messages, balance_needed)
         } else {
@@ -3477,29 +3484,54 @@ mod tests {
         },
         serde_json::Value,
         solana_cli_output::OutputFormat,
-        solana_hash::Hash,
         solana_keypair::write_keypair_file,
     };
 
     #[test]
-    fn test_v1_write_chunk_fits_packet() {
-        let payer = Pubkey::new_unique();
-        let buffer = Pubkey::new_unique();
-        let create_message = |bytes| {
-            VersionedMessage::V1(
-                solana_message::v1::Message::try_compile_with_config(
-                    &payer,
-                    &[loader_v3_instruction::write(&buffer, &payer, 0, bytes)],
-                    Hash::default(),
-                    solana_message::v1::TransactionConfig::empty(),
-                )
-                .unwrap(),
+    fn test_build_write_messages() {
+        let program_data = (0..100_000).map(|i| i as u8).collect::<Vec<_>>();
+        let build = |buffer: &[u8]| {
+            build_write_messages(
+                &program_data,
+                buffer,
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                Hash::default(),
+                &ComputeUnitConfig {
+                    compute_unit_price: Some(1),
+                    compute_unit_limit: ComputeUnitLimit::Simulated,
+                },
             )
         };
 
-        let chunk_size = calculate_max_chunk_size(create_message(Vec::new()));
-        let transaction = VersionedTransaction::new_unsigned(create_message(vec![0; chunk_size]));
-        assert!(wincode::serialized_size(&transaction).unwrap() as usize <= PACKET_DATA_SIZE);
+        let mut buffer = vec![0; program_data.len()];
+        let messages = build(&buffer);
+        for message in &messages {
+            assert!(message.instructions().len() <= 4);
+            let transaction = VersionedTransaction {
+                signatures: vec![
+                    Signature::default();
+                    message.header().num_required_signatures as usize
+                ],
+                message: message.clone(),
+            };
+            assert!(
+                wincode::serialized_size(&transaction).unwrap() as usize <= MAX_TRANSACTION_SIZE
+            );
+            for instruction in message.instructions() {
+                assert!(instruction.data.len() <= PACKET_DATA_SIZE);
+                let offset =
+                    u32::from_le_bytes(instruction.data[4..8].try_into().unwrap()) as usize;
+                let bytes = &instruction.data[16..];
+                buffer[offset..offset.saturating_add(bytes.len())].copy_from_slice(bytes);
+            }
+        }
+        assert_eq!(messages[0].instructions().len(), 4);
+        assert_eq!(buffer, program_data);
+
+        // Data already in the buffer is not rewritten.
+        assert!(build(&buffer).is_empty());
     }
 
     fn make_tmp_path(name: &str) -> String {
