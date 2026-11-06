@@ -1,16 +1,28 @@
+//! The batch-local program cache.
+//!
+//! Entries are inserted into this cache while a transaction batch is loaded
+//! and executed. They are either extracted from the global [ProgramCache] or
+//! minted on the fly by the execution pipeline.
+//!
+//! This cache does no eviction, and eviction from the global cache doesn't
+//! affect it. Entries extracted from the global cache share their usage
+//! statistics with it through an `Arc`.
+//!
+//! Entries minted by the execution pipeline, such as deployments or closed
+//! programs, are stored only in this cache and are dropped with it. This cache
+//! is dropped once the transaction batch finishes executing.
+//!
+//! [ProgramCache]: crate::program_cache::global::ProgramCache
+
+pub use entry::{TxBatchCacheEntry, TxBatchCacheEntryType};
 use {
     crate::program_cache::entry::ProgramCacheEntry, solana_clock::Slot, solana_pubkey::Pubkey,
     solana_svm_type_overrides::sync::Arc, std::collections::HashMap,
 };
 
-/// Local view into [ProgramCache] which was extracted for a specific TX batch.
-///
-/// This isolation enables the global [ProgramCache] to continue to evolve (e.g. evictions),
-/// while the TX batch is guaranteed it will continue to find all the programs it requires.
-/// For program management instructions this also buffers them until their transaction succeeds,
-/// at which point they are merged into the batch's own entries.
-///
-/// [ProgramCache]: crate::program_cache::global::ProgramCache
+mod entry;
+
+/// The batch-local program cache.
 #[derive(Clone, Debug, Default)]
 pub struct ProgramCacheForTxBatch {
     /// K: The program ID
@@ -73,8 +85,8 @@ impl ProgramCacheForTxBatch {
 
     pub fn find(&self, key: &Pubkey) -> Option<Arc<ProgramCacheEntry>> {
         // First lookup the cache of the programs modified by the current
-        // transaction. If not found, lookup the cache of the cache of the
-        // programs that are loaded for the transaction batch.
+        // transaction. If not found, lookup the cache of the programs that
+        // are loaded for the transaction batch.
         self.modified_entries
             .get(key)
             .or_else(|| self.entries.get(key))
