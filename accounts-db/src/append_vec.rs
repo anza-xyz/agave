@@ -27,7 +27,7 @@ use {
     },
     log::*,
     meta::{AccountMeta, StoredAccountNoData, StoredMeta},
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
@@ -42,7 +42,7 @@ use {
         range::Range,
         slice,
         sync::{
-            Arc, Mutex, MutexGuard,
+            Mutex, MutexGuard,
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
     },
@@ -624,13 +624,13 @@ impl AppendVec {
             }
             // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
             unsafe { data.set_len(data_len as usize) };
-            AccountSharedData::create_from_existing_shared_data(
-                account_meta.lamports,
-                Arc::new(data),
-                account_meta.owner,
-                account_meta.executable,
-                account_meta.rent_epoch,
-            )
+            AccountSharedData::from(Account {
+                lamports: account_meta.lamports,
+                data,
+                owner: account_meta.owner,
+                executable: account_meta.executable,
+                rent_epoch: account_meta.rent_epoch,
+            })
         }))
     }
 

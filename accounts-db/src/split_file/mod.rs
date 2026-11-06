@@ -31,7 +31,7 @@ use {
             BufferedReader, FileBufRead as _, RequiredLenBufFileRead, RequiredLenBufRead as _,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     std::{
         convert::TryFrom,
@@ -40,7 +40,7 @@ use {
         ops::ControlFlow,
         path::{Path, PathBuf},
         sync::{
-            Arc, Mutex, MutexGuard, OnceLock,
+            Mutex, MutexGuard, OnceLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -429,13 +429,13 @@ impl SplitFile {
                 LoadedData::Inline(data) => data.to_vec(),
                 LoadedData::External(data) => data,
             };
-            AccountSharedData::create_from_existing_shared_data(
-                meta_entry.lamports,
-                Arc::new(data),
-                *meta_entry.owner,
-                meta_entry.is_executable,
-                meta_entry.rent_epoch,
-            )
+            AccountSharedData::from(Account {
+                lamports: meta_entry.lamports,
+                data,
+                owner: *meta_entry.owner,
+                executable: meta_entry.is_executable,
+                rent_epoch: meta_entry.rent_epoch,
+            })
         })
     }
 
