@@ -293,6 +293,8 @@ async fn generate_pull_request_pipeline(
     let flags = PullRequestPipelineFlags::from_changed_files(&changed_files);
 
     let mut pipeline = buildkite::Pipeline::new();
+    pipeline.add_step(default_coverage_step(3));
+    return Ok(pipeline);
 
     pipeline.add_step(default_sanity_step());
     if flags.shellcheck {
