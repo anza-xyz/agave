@@ -378,7 +378,12 @@ pub fn update_rent_exempt_status_for_account(rent: &Rent, account: &mut AccountS
     if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
         && rent.is_exempt(account.lamports(), account.data().len())
     {
-        account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        *account = AccountSharedData::new_with_shared_data(
+            account.lamports(),
+            account.data_clone(),
+            account.owner(),
+            account.executable(),
+        );
     }
 }
 
@@ -2448,12 +2453,11 @@ mod tests {
 
         // arbitrary accounts
         for _ in 0..128 {
-            let account = AccountSharedData::create_from_existing_shared_data(
+            let account = AccountSharedData::new_with_shared_data(
                 1,
                 Arc::new(vec![0; rng.random_range(0..128)]),
-                Pubkey::new_unique(),
+                &Pubkey::new_unique(),
                 rng.random(),
-                u64::MAX,
             );
             mock_bank.accounts_map.insert(Pubkey::new_unique(), account);
         }
@@ -2462,12 +2466,11 @@ mod tests {
         let mut fee_payers = vec![];
         for _ in 0..8 {
             let fee_payer = Pubkey::new_unique();
-            let account = AccountSharedData::create_from_existing_shared_data(
+            let account = AccountSharedData::new_with_shared_data(
                 LAMPORTS_PER_SOL,
                 Arc::new(vec![0; rng.random_range(0..32)]),
-                system_program::id(),
+                &system_program::id(),
                 rng.random(),
-                u64::MAX,
             );
             mock_bank.accounts_map.insert(fee_payer, account);
             fee_payers.push(fee_payer);
@@ -2479,12 +2482,11 @@ mod tests {
         for loader in PROGRAM_OWNERS {
             for _ in 0..16 {
                 let program_id = Pubkey::new_unique();
-                let mut account = AccountSharedData::create_from_existing_shared_data(
+                let mut account = AccountSharedData::new_with_shared_data(
                     1,
                     Arc::new(vec![0; rng.random_range(0..512)]),
-                    *loader,
+                    loader,
                     rng.random(),
-                    u64::MAX,
                 );
 
                 // give half loaderv3 accounts (if they're long enough) a valid programdata
@@ -2497,14 +2499,12 @@ mod tests {
                     let has_programdata = rng.random();
 
                     if has_programdata {
-                        let programdata_account =
-                            AccountSharedData::create_from_existing_shared_data(
-                                1,
-                                Arc::new(vec![0; rng.random_range(0..512)]),
-                                *loader,
-                                rng.random(),
-                                u64::MAX,
-                            );
+                        let programdata_account = AccountSharedData::new_with_shared_data(
+                            1,
+                            Arc::new(vec![0; rng.random_range(0..512)]),
+                            loader,
+                            rng.random(),
+                        );
                         programdata_tracker.insert(
                             program_id,
                             (
