@@ -666,8 +666,7 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
     assert!(blockstore.is_root(1));
     assert!(matches!(
         transaction_status_receiver.try_recv().unwrap(),
-        TransactionStatusMessage::Rooted { slot: 1, bank_id }
-            if bank_id == bank_forks.read().unwrap().root_bank().bank_id()
+        TransactionStatusMessage::Rooted { slot: 1 }
     ));
     assert_eq!(
         votor_commitment_receiver.try_recv().unwrap(),
