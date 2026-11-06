@@ -9,14 +9,15 @@ pub(crate) fn should_retain_crds_value(value: &CrdsValue) -> bool {
         CrdsData::ContactInfo(_) => true,
         // Unstaked nodes can still serve snapshots.
         CrdsData::SnapshotHashes(_) => true,
-        CrdsData::DuplicateShred(_, _) | CrdsData::EpochSlots(_) => false,
         // Fully deprecated messages
         CrdsData::AccountsHashes(_) | CrdsData::Vote(_) => false,
         CrdsData::LegacyContactInfo(_) => false,
         CrdsData::LegacySnapshotHashes(_) => false,
         CrdsData::LegacyVersion(_) => false,
         CrdsData::LowestSlot(_) => false,
+        CrdsData::EpochSlots(_) => false,
         CrdsData::NodeInstance(_) => false,
+        CrdsData::DuplicateShred(_) => false,
         CrdsData::RestartHeaviestFork(_) | CrdsData::RestartLastVotedForkSlots(_) => false,
         CrdsData::Version(_) => false,
     }
