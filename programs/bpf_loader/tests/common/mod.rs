@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use {
-    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode},
+    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode},
     solana_bpf_loader_program::{Entrypoint, test_utils},
-    solana_instruction::AccountMeta,
+    solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_program_runtime::invoke_context::{
         InvokeContext, mock_process_instruction_with_feature_set,
@@ -11,6 +11,10 @@ use {
     solana_pubkey::Pubkey,
     solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::sysvar,
+    solana_svm::conformance::{
+        callback::ConformanceCallback,
+        instr::{context::InstrContext, harness::execute_instr_with_callback},
+    },
     solana_svm_feature_set::SVMFeatureSet,
     solana_sysvar_id::SysvarId,
 };
@@ -76,6 +80,10 @@ where
 // `mock_process_instruction`.
 #[cfg(feature = "shuttle-test")]
 const MOCK_PROCESS_RANDOM_ITERATIONS: usize = 10;
+
+// The conformance harness overflows Shuttle's default task stack.
+#[cfg(feature = "shuttle-test")]
+const CONFORMANCE_HARNESS_SHUTTLE_STACK_SIZE: usize = 1024 * 1024;
 
 /// Wrapper around `mock_process_instruction_with_feature_set` that runs
 /// under `shuttle::check_random` when the `shuttle-test` feature is
@@ -179,6 +187,59 @@ pub fn process_instruction(
             test_utils::load_all_invoked_programs(invoke_context);
         },
     )
+}
+
+/// Run an instruction through the conformance harness, which emits a fixture
+/// when `EMIT_CONFORMANCE_FIXTURES` is set.
+///
+/// `transaction_accounts` must include the loader's program account, as well as
+/// the Clock and Rent sysvars.
+pub fn process_instruction_with_conformance_harness(
+    instruction: Instruction,
+    transaction_accounts: Vec<(Pubkey, Account)>,
+    loader_v3_features: LoaderV3Features,
+    expected_result: Result<(), InstructionError>,
+) -> Vec<(Pubkey, Account)> {
+    let mut feature_set = SVMFeatureSet::all_enabled();
+    setup_features(&mut feature_set, loader_v3_features);
+
+    let context =
+        InstrContext::new_with_default_budget(feature_set, transaction_accounts, instruction);
+
+    #[cfg(feature = "shuttle-test")]
+    let effects = {
+        let result = shuttle::sync::Arc::new(shuttle::sync::Mutex::new(None));
+        let result_for_test = shuttle::sync::Arc::clone(&result);
+        let context = std::sync::Arc::new(context);
+        let mut config = shuttle::Config::new();
+        config.stack_size = CONFORMANCE_HARNESS_SHUTTLE_STACK_SIZE;
+        shuttle::Runner::new(
+            shuttle::scheduler::RandomScheduler::new(MOCK_PROCESS_RANDOM_ITERATIONS),
+            config,
+        )
+        .run(move || {
+            let effects = execute_instr_with_callback(&context, &ConformanceCallback::default());
+            *result_for_test.lock().unwrap() = Some(effects);
+        });
+
+        // Consume the harness cell after Shuttle exits so extraction does
+        // not call `shuttle::sync::Mutex::lock` outside the scheduler.
+        let Ok(mut result) = shuttle::sync::Arc::try_unwrap(result) else {
+            panic!("shuttle test result still has outstanding references")
+        };
+        result
+            .get_mut()
+            .unwrap()
+            .take()
+            .expect("shuttle test did not produce a result")
+    };
+
+    #[cfg(not(feature = "shuttle-test"))]
+    let effects = execute_instr_with_callback(&context, &ConformanceCallback::default());
+
+    assert_eq!(effects.result, expected_result.err());
+
+    effects.resulting_accounts
 }
 
 pub fn truncate_data(account: &mut AccountSharedData, len: usize) {
