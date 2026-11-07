@@ -77,14 +77,14 @@ mod test {
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache).is_some());
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache).is_none());
 
         let leader_slots: SlotPubkeys = HashMap::default();
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache).is_none());
     }
 
     #[test]
