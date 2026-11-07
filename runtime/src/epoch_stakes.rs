@@ -245,12 +245,19 @@ impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
     fn from(epoch_stakes: DeserializableVersionedEpochStakes) -> Self {
         let DeserializableVersionedEpochStakes::Current {
             stakes,
-            total_stake,
+            total_stake: _,
             node_id_to_vote_accounts,
             epoch_authorized_voters,
         } = epoch_stakes;
+        let stakes: EpochStakes = stakes.into();
+        let total_stake: u64 = stakes
+            .vote_accounts()
+            .as_ref()
+            .values()
+            .map(|(stake, _)| *stake)
+            .sum();
         Self::Current {
-            stakes: stakes.into(),
+            stakes,
             total_stake,
             node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
             epoch_authorized_voters: Arc::new(epoch_authorized_voters),
@@ -1005,5 +1012,45 @@ pub(crate) mod tests {
                 .get_delegated_stake(&vote_pubkey),
             delegated_amount,
         );
+    }
+
+    #[test]
+    fn test_deserializable_versioned_epoch_stakes_recomputes_total_stake() {
+        let vote_pubkey = solana_pubkey::new_rand();
+        let node_pubkey = solana_pubkey::new_rand();
+        let authorized_voter = solana_pubkey::new_rand();
+        let delegated_stake = 500;
+
+        let vote_account = create_v4_account_with_authorized(
+            &node_pubkey,
+            &authorized_voter,
+            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
+            &node_pubkey,
+            0,
+            &node_pubkey,
+            0,
+            &node_pubkey,
+            100,
+        );
+        let vote_account = VoteAccount::try_from(vote_account).unwrap();
+        let mut vote_accounts_map = HashMap::new();
+        vote_accounts_map.insert(vote_pubkey, (delegated_stake, vote_account));
+        let vote_accounts = VoteAccounts::from(Arc::new(vote_accounts_map));
+
+        let deserializable = DeserializableVersionedEpochStakes::Current {
+            stakes: DeserializableEpochStakes {
+                vote_accounts,
+                _stake_delegations: Vec::new(),
+                _unused: 0,
+                epoch: 0,
+                stake_history: StakeHistory::default(),
+            },
+            total_stake: 0,
+            node_id_to_vote_accounts: HashMap::new(),
+            epoch_authorized_voters: HashMap::new(),
+        };
+
+        let versioned: VersionedEpochStakes = deserializable.into();
+        assert_eq!(versioned.total_stake(), delegated_stake);
     }
 }
