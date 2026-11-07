@@ -1,8 +1,7 @@
 use {
-    common::{create_sysvar_account, process_instruction},
+    common::{create_sysvar_account, process_conformance_instruction as process_instruction},
     solana_account::{
-        AccountSharedData, ReadableAccount, WritableAccount,
-        state_traits::StateMutWincode as StateMut,
+        Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as StateMut,
     },
     solana_clock::Clock,
     solana_instruction::AccountMeta,
@@ -23,11 +22,11 @@ fn test_bpf_loader_upgradeable_close() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let authority_account = Account::empty(1, &Pubkey::new_unique());
     let recipient_address = Pubkey::new_unique();
-    let recipient_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let recipient_account = Account::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let buffer_account = AccountSharedData::new_data_with_space(
+    let buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
@@ -37,7 +36,7 @@ fn test_bpf_loader_upgradeable_close() {
     )
     .unwrap();
     let uninitialized_address = Pubkey::new_unique();
-    let uninitialized_account = AccountSharedData::new_data_with_space(
+    let uninitialized_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Uninitialized,
         UpgradeableLoaderState::size_of_programdata(0),
@@ -45,7 +44,7 @@ fn test_bpf_loader_upgradeable_close() {
     )
     .unwrap();
     let programdata_address = Pubkey::new_unique();
-    let mut programdata_account = AccountSharedData::new_data_with_space(
+    let mut programdata_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
@@ -56,7 +55,7 @@ fn test_bpf_loader_upgradeable_close() {
     )
     .unwrap();
     let program_address = Pubkey::new_unique();
-    let mut program_account = AccountSharedData::new_data_with_space(
+    let mut program_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Program {
             programdata_address,
@@ -66,10 +65,11 @@ fn test_bpf_loader_upgradeable_close() {
     )
     .unwrap();
     program_account.set_executable(true);
-    let clock_account = create_sysvar_account(&Clock {
+    let clock_account: Account = create_sysvar_account(&Clock {
         slot: 1,
         ..Clock::default()
-    });
+    })
+    .into();
     let transaction_accounts = vec![
         (buffer_address, buffer_account.clone()),
         (recipient_address, recipient_account.clone()),
@@ -103,13 +103,13 @@ fn test_bpf_loader_upgradeable_close() {
         ],
         Ok(()),
     );
-    assert_eq!(0, accounts.first().unwrap().lamports());
-    assert_eq!(2, accounts.get(1).unwrap().lamports());
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    assert_eq!(0, accounts.first().unwrap().1.lamports());
+    assert_eq!(2, accounts.get(1).unwrap().1.lamports());
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(state, UpgradeableLoaderState::Uninitialized);
     assert_eq!(
         UpgradeableLoaderState::size_of_uninitialized(),
-        accounts.first().unwrap().data().len()
+        accounts.first().unwrap().1.data().len()
     );
 
     // Case: close with wrong authority
@@ -140,7 +140,7 @@ fn test_bpf_loader_upgradeable_close() {
         vec![
             (uninitialized_address, uninitialized_account.clone()),
             (recipient_address, recipient_account.clone()),
-            (invalid_authority_address, authority_account.clone()),
+            (authority_address, authority_account.clone()),
         ],
         vec![
             AccountMeta {
@@ -153,13 +153,13 @@ fn test_bpf_loader_upgradeable_close() {
         ],
         Ok(()),
     );
-    assert_eq!(0, accounts.first().unwrap().lamports());
-    assert_eq!(2, accounts.get(1).unwrap().lamports());
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    assert_eq!(0, accounts.first().unwrap().1.lamports());
+    assert_eq!(2, accounts.get(1).unwrap().1.lamports());
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(state, UpgradeableLoaderState::Uninitialized);
     assert_eq!(
         UpgradeableLoaderState::size_of_uninitialized(),
-        accounts.first().unwrap().data().len()
+        accounts.first().unwrap().1.data().len()
     );
 
     // Case: close a program account with a non-writable program account
@@ -217,18 +217,18 @@ fn test_bpf_loader_upgradeable_close() {
         ],
         Ok(()),
     );
-    assert_eq!(0, accounts.first().unwrap().lamports());
-    assert_eq!(2, accounts.get(1).unwrap().lamports());
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    assert_eq!(0, accounts.first().unwrap().1.lamports());
+    assert_eq!(2, accounts.get(1).unwrap().1.lamports());
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(state, UpgradeableLoaderState::Uninitialized);
     assert_eq!(
         UpgradeableLoaderState::size_of_uninitialized(),
-        accounts.first().unwrap().data().len()
+        accounts.first().unwrap().1.data().len()
     );
 
     // Try to invoke closed account
-    programdata_account = accounts.first().unwrap().clone();
-    program_account = accounts.get(3).unwrap().clone();
+    programdata_account = accounts.first().unwrap().1.clone();
+    program_account = accounts.get(3).unwrap().1.clone();
     process_instruction(
         &program_address,
         &[],
@@ -252,11 +252,14 @@ fn test_bpf_loader_upgradeable_close() {
             (programdata_address, programdata_account),
             (program_address, program_account),
             (buffer_address, buffer_account),
-            (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
+            (
+                sysvar::rent::id(),
+                create_sysvar_account(&Rent::default()).into(),
+            ),
             (sysvar::clock::id(), clock_account),
             (
                 system_program::id(),
-                AccountSharedData::empty(0, &system_program::id()),
+                Account::empty(0, &system_program::id()),
             ),
             (authority_address, authority_account),
         ],
