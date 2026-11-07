@@ -14,6 +14,7 @@ use {
     solana_svm::conformance::{
         callback::ConformanceCallback,
         instr::{context::InstrContext, harness::execute_instr_with_callback},
+        programs::keyed_account_for_builtin_pubkey,
     },
     solana_svm_feature_set::SVMFeatureSet,
     solana_sysvar_id::SysvarId,
@@ -205,7 +206,15 @@ pub fn process_instruction_with_conformance_harness(
 
     let context =
         InstrContext::new_with_default_budget(feature_set, transaction_accounts, instruction);
+    execute_context_with_conformance_harness(context, expected_result)
+}
 
+/// Run an `InstrContext` through the conformance harness, which emits a fixture
+/// when `EMIT_CONFORMANCE_FIXTURES` is set.
+pub fn execute_context_with_conformance_harness(
+    context: InstrContext,
+    expected_result: Result<(), InstructionError>,
+) -> Vec<(Pubkey, Account)> {
     #[cfg(feature = "shuttle-test")]
     let effects = {
         let result = shuttle::sync::Arc::new(shuttle::sync::Mutex::new(None));
@@ -240,6 +249,70 @@ pub fn process_instruction_with_conformance_harness(
     assert_eq!(effects.result, expected_result.err());
 
     effects.resulting_accounts
+}
+
+/// Add any accounts the conformance harness requires that the test didn't
+/// provide: the Clock and Rent sysvars, and the invoked builtin's program
+/// account. They go at the end, so the test's account indices still line up.
+pub fn add_required_accounts(accounts: &mut Vec<(Pubkey, Account)>, program_id: &Pubkey) {
+    let required = [
+        Some((
+            sysvar::clock::id(),
+            create_sysvar_account(&solana_clock::Clock {
+                slot: 1,
+                ..solana_clock::Clock::default()
+            })
+            .into(),
+        )),
+        Some((
+            sysvar::rent::id(),
+            create_sysvar_account(&solana_rent::Rent::default()).into(),
+        )),
+        keyed_account_for_builtin_pubkey(program_id),
+    ];
+    for (address, account) in required.into_iter().flatten() {
+        if !accounts.iter().any(|(key, _)| *key == address) {
+            accounts.push((address, account));
+        }
+    }
+}
+
+/// Run an instruction through the conformance harness with all features enabled,
+/// adding any accounts it requires.
+pub fn process_conformance_instruction(
+    program_id: &Pubkey,
+    instruction_data: &[u8],
+    transaction_accounts: Vec<(Pubkey, Account)>,
+    instruction_accounts: Vec<AccountMeta>,
+    expected_result: Result<(), InstructionError>,
+) -> Vec<(Pubkey, Account)> {
+    process_conformance_instruction_with_features(
+        program_id,
+        instruction_data,
+        transaction_accounts,
+        instruction_accounts,
+        LoaderV3Features::all_enabled(),
+        expected_result,
+    )
+}
+
+/// Run an instruction through the conformance harness, adding any accounts it
+/// requires.
+pub fn process_conformance_instruction_with_features(
+    program_id: &Pubkey,
+    instruction_data: &[u8],
+    mut transaction_accounts: Vec<(Pubkey, Account)>,
+    instruction_accounts: Vec<AccountMeta>,
+    loader_v3_features: LoaderV3Features,
+    expected_result: Result<(), InstructionError>,
+) -> Vec<(Pubkey, Account)> {
+    add_required_accounts(&mut transaction_accounts, program_id);
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(*program_id, instruction_data, instruction_accounts),
+        transaction_accounts,
+        loader_v3_features,
+        expected_result,
+    )
 }
 
 pub fn truncate_data(account: &mut AccountSharedData, len: usize) {
