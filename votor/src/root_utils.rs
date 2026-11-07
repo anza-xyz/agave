@@ -145,6 +145,9 @@ pub fn check_and_handle_new_root<CB>(
     blockstore
         .set_roots(rooted_slots.iter())
         .expect("Ledger set roots failed");
+    if let Some(rpc_subscriptions) = rpc_subscriptions {
+        rpc_subscriptions.retain_rooted_banks(&rooted_banks);
+    }
     set_bank_forks_root(
         my_pubkey,
         new_root,
@@ -271,4 +274,109 @@ pub fn set_bank_forks_root<CB>(
     }
     let r_bank_forks = bank_forks.read().unwrap();
     callback(&r_bank_forks);
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crossbeam_channel::unbounded,
+        solana_ledger::get_tmp_ledger_path_auto_delete,
+        solana_rpc::rpc_subscription_tracker::{
+            LogsSubscriptionKind, LogsSubscriptionParams, SubscriptionParams,
+        },
+        solana_runtime::{
+            bank::{Bank, SlotLeader, TransactionLogInfo},
+            commitment::CommitmentSlots,
+            genesis_utils::create_genesis_config_with_leader,
+        },
+        solana_signature::Signature,
+        std::{
+            sync::atomic::AtomicU64,
+            time::{Duration, Instant},
+        },
+    };
+
+    #[test]
+    fn test_rooting_preserves_skipped_pubsub_deltas() {
+        let genesis =
+            create_genesis_config_with_leader(1_000_000, &Pubkey::new_unique(), 1_000_000_000)
+                .genesis_config;
+        let forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis));
+        let root = forks.read().unwrap().root_bank();
+        let leader_schedule = Arc::new(LeaderScheduleCache::new_from_bank(&root));
+        let subscriptions = RpcSubscriptions::default_with_bank_forks(
+            Arc::new(AtomicU64::default()),
+            forks.clone(),
+        );
+        let mut receiver = subscriptions.control().broadcast_receiver();
+        let _token = subscriptions
+            .control()
+            .subscribe(SubscriptionParams::Logs(LogsSubscriptionParams {
+                kind: LogsSubscriptionKind::All,
+                commitment: "finalized".parse().unwrap(),
+            }))
+            .unwrap();
+        let bank1 = Bank::new_from_parent(root, SlotLeader::default(), 1);
+        bank1
+            .transaction_log_collector
+            .write()
+            .unwrap()
+            .logs
+            .push(TransactionLogInfo {
+                signature: Signature::default(),
+                result: Ok(()),
+                log_messages: vec!["retained ancestor".into()],
+            });
+        bank1.freeze();
+        let bank1 = forks
+            .write()
+            .unwrap()
+            .insert(bank1)
+            .clone_without_scheduler();
+        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        bank2.freeze();
+        forks.write().unwrap().insert(bank2);
+        let ledger = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger.path()).unwrap();
+        let (drop_sender, _drop_receiver) = unbounded();
+        check_and_handle_new_root(
+            0,
+            2,
+            None,
+            None,
+            &None,
+            None,
+            &drop_sender,
+            &blockstore,
+            &leader_schedule,
+            &forks,
+            Some(&subscriptions),
+            &Pubkey::new_unique(),
+            |_| {},
+        );
+        assert!(forks.read().unwrap().get(1).is_none());
+        assert!(blockstore.is_root(1));
+        assert!(receiver.try_recv().is_err());
+        subscriptions.notify_subscribers(CommitmentSlots {
+            slot: 2,
+            root: 2,
+            highest_confirmed_slot: 2,
+            highest_super_majority_root: 2,
+        });
+        let start = Instant::now();
+        loop {
+            if let Ok(notification) = receiver.try_recv() {
+                let json = notification.json.upgrade().unwrap();
+                assert!(json.contains("retained ancestor"));
+                assert!(json.contains("\"slot\":1"));
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "missing rooted log notification"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
