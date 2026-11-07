@@ -355,6 +355,79 @@ impl FeatureSet {
             loaderv3_programdata_size_floor: snapshot.loaderv3_programdata_size_floor,
         }
     }
+
+    // WARNING: Lossy conversion
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn from_runtime_features(runtime_features: &SVMFeatureSet) -> Self {
+        macro_rules! from_fields {
+            ($($field:ident),* $(,)?) => {{
+                // These two share their first 8 bytes, which is how conformance
+                // fixtures identify a feature, so leave both inactive.
+                let SVMFeatureSet {
+                    disable_sbpf_v0_execution: _,
+                    reenable_sbpf_v0_execution: _,
+                    $($field),*
+                } = *runtime_features;
+                let mut feature_set = Self::default();
+                $(
+                    if $field {
+                        feature_set.activate(&$field::id(), 0);
+                    }
+                )*
+                feature_set
+            }};
+        }
+        from_fields! {
+            move_precompile_verification_to_svm,
+            virtual_address_space_adjustments,
+            account_data_direct_mapping,
+            enable_bpf_loader_set_authority_checked_ix,
+            deplete_cu_meter_on_vm_failure,
+            blake3_syscall_enabled,
+            disable_fees_sysvar,
+            enable_alt_bn128_compression_syscall,
+            enable_alt_bn128_syscall,
+            enable_big_mod_exp_syscall,
+            enable_get_epoch_stake_syscall,
+            enable_poseidon_syscall,
+            disable_sbpf_v0_v1_v2_deployment,
+            get_sysvar_syscall_enabled,
+            last_restart_slot_sysvar,
+            remaining_compute_units_syscall_enabled,
+            remove_bpf_loader_incorrect_program_id,
+            move_stake_and_move_lamports_ixs,
+            deprecate_legacy_vote_ixs,
+            simplify_alt_bn128_syscall_error_codes,
+            fix_alt_bn128_multiplication_input_length,
+            formalize_loaded_transaction_data_size,
+            disable_zk_elgamal_proof_program,
+            reenable_zk_elgamal_proof_program,
+            raise_cpi_nesting_limit_to_8,
+            increase_cpi_account_info_limit,
+            poseidon_enforce_padding,
+            fix_alt_bn128_pairing_length_check,
+            alt_bn128_little_endian,
+            create_account_allow_prefund,
+            bls_pubkey_management_in_vote_account,
+            enable_alt_bn128_g2_syscalls,
+            custom_commission_collector,
+            block_revenue_sharing,
+            vote_account_initialize_v2,
+            direct_account_pointers_in_program_input,
+            enable_sha512_syscall,
+            relax_post_exec_min_balance_check,
+            relax_fee_payer_constraint,
+            loader_v3_set_program_data_to_elf_length,
+            early_instruction_trace_overflow_detection,
+            unbound_loader_v3_instruction_data,
+            pass_input_metadata_in_vm_r3_r5,
+            secp256r1_syscall_enabled,
+            loader_v3_allow_prefunded_programdata,
+            loader_v3_remove_extend_program,
+            invoke_signed_v2,
+            loaderv3_programdata_size_floor,
+        }
+    }
 }
 
 pub mod deprecate_rewards_sysvar {

@@ -8566,7 +8566,6 @@ name = "solana-svm-conformance"
 version = "5.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
- "agave-precompiles",
  "clap 4.6.1",
  "prost",
  "protosol",
