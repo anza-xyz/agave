@@ -171,7 +171,6 @@ struct RewardState<'a> {
     total_stake: u64,
     /// inflation state at the current bank's epoch.
     epoch_inflation_state: EpochInflationState,
-    migration_epoch: Epoch,
 }
 
 impl<'a> RewardState<'a> {
@@ -203,11 +202,6 @@ impl<'a> RewardState<'a> {
                 .get_epoch_state(current_epoch)
                 .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
         };
-        let migration_epoch =
-            get_migration_epoch(bank).ok_or(RewardStateError::GenesisCertNotFound {
-                reward_slot,
-                bank_slot,
-            })?;
         let reward_slot_timestamp_ns =
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
         Ok(Self {
@@ -220,7 +214,6 @@ impl<'a> RewardState<'a> {
             accounts,
             total_stake,
             epoch_inflation_state,
-            migration_epoch,
         })
     }
 
@@ -266,7 +259,6 @@ impl<'a> RewardState<'a> {
             if let Some(reward) = NonZero::new(reward) {
                 increment_credits(
                     vote_state.handler.epoch_credits_mut(),
-                    self.migration_epoch,
                     self.current_epoch,
                     reward,
                 );
@@ -283,7 +275,6 @@ impl<'a> RewardState<'a> {
         debug_assert_eq!(vote_state.vote_pubkey, self.leader_vote_pubkey);
         increment_credits(
             vote_state.handler.epoch_credits_mut(),
-            self.migration_epoch,
             self.current_epoch,
             leader_reward,
         );
@@ -509,38 +500,20 @@ fn calc_slot_timestamp(bank: &Bank, slot: Slot, block_producer_time_nanos: i64) 
     )
 }
 
-fn get_migration_epoch(bank: &Bank) -> Option<Epoch> {
-    let migration_slot = bank.get_alpenglow_migration_slot()?;
-    let migration_epoch = bank.epoch_schedule.get_epoch(migration_slot);
-    Some(migration_epoch)
-}
-
-fn ensure_marker(epoch_credits: &mut Vec<(Epoch, u64, u64)>) {
-    for elem in epoch_credits.iter().rev() {
-        if elem == &AG_MIGRATION_EPOCH_CREDIT {
-            return;
-        }
-    }
-    epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
-}
-
 fn increment_credits(
     epoch_credits: &mut Vec<(Epoch, u64, u64)>,
-    migration_epoch: Epoch,
     epoch: Epoch,
     new_credits: NonZero<u64>,
 ) {
-    if epoch == migration_epoch {
-        ensure_marker(epoch_credits);
-    }
-
     let Some(entry) = epoch_credits.last_mut() else {
         // no entries, insert a new entry and we are done.
         epoch_credits.push((epoch, new_credits.get(), 0));
         return;
     };
 
-    // Latest element is the marker, start a new entry.
+    // Migration to AG has already happened.  But it could be the case that shortly after migration
+    // a vote account stopped voting and then started voting again later.  So its epoch credits
+    // might still contain some tower credits and the AG migration marker.
     if *entry == AG_MIGRATION_EPOCH_CREDIT {
         // If there was a tower entry before, its final credits forms this entry's initial credits.
         let len = epoch_credits.len();
