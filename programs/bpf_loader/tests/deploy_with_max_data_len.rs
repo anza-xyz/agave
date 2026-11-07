@@ -75,12 +75,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             min_programdata_balance.saturating_add(1),
             &system_program::id(),
         );
-        let rent_account: Account = create_sysvar_account(&rent).into();
+        let rent_account = create_sysvar_account(&rent);
         let clock_account: Account = create_sysvar_account(&Clock {
             slot: SLOT,
             ..Clock::default()
-        })
-        .into();
+        });
         let system_program_account = Account::empty(0, &native_loader::id());
         let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
