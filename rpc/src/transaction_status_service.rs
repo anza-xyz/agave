@@ -25,7 +25,7 @@ use {
         map_inner_instructions,
     },
     std::{
-        collections::HashSet,
+        collections::{BTreeSet, HashSet},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -136,6 +136,38 @@ impl RootedTransactionStatusTracker {
     }
 }
 
+// Work ids are reserved before batches are sent, so parallel senders can enqueue
+// them out of order. Only advance the shared tracker over a completed prefix.
+struct TransactionStatusDependencies {
+    tracker: Arc<DependencyTracker>,
+    next_work_id: u64,
+    completed_out_of_order: BTreeSet<u64>,
+}
+
+impl TransactionStatusDependencies {
+    fn new(tracker: Arc<DependencyTracker>) -> Self {
+        Self {
+            tracker,
+            next_work_id: 1,
+            completed_out_of_order: BTreeSet::new(),
+        }
+    }
+
+    fn mark_processed(&mut self, work_id: u64) {
+        if work_id != self.next_work_id {
+            self.completed_out_of_order.insert(work_id);
+            return;
+        }
+
+        self.next_work_id += 1;
+        while self.completed_out_of_order.remove(&self.next_work_id) {
+            self.next_work_id += 1;
+        }
+        self.tracker
+            .mark_this_and_all_previous_work_processed(self.next_work_id - 1);
+    }
+}
+
 struct Metrics {
     /// The number of transaction status messages received
     num_recv_messages: u64,
@@ -199,6 +231,10 @@ impl TransactionStatusService {
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
                 let mut metrics = Metrics::new();
+                let mut dependency_tracker = config
+                    .dependency_tracker
+                    .clone()
+                    .map(TransactionStatusDependencies::new);
                 let mut rooted_transaction_status_tracker =
                     RootedTransactionStatusTracker::default();
                 info!("{} has started", Self::NAME);
@@ -230,6 +266,7 @@ impl TransactionStatusService {
                         &mut rooted_transaction_status_tracker,
                         &blockstore,
                         &config,
+                        dependency_tracker.as_mut(),
                     ) {
                         Ok(bank_frozen) => {
                             // Only check for metrics submissions when a
@@ -265,6 +302,7 @@ impl TransactionStatusService {
         rooted_transaction_status_tracker: &mut RootedTransactionStatusTracker,
         blockstore: &Blockstore,
         config: &TransactionStatusServiceConfig,
+        dependency_tracker: Option<&mut TransactionStatusDependencies>,
     ) -> Result</*bank_frozen:*/ bool> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
@@ -401,10 +439,10 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = config.dependency_tracker.as_ref()
+                if let Some(dependency_tracker) = dependency_tracker
                     && let Some(work_id) = work_id
                 {
-                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
+                    dependency_tracker.mark_processed(work_id);
                 }
 
                 Ok(false)
@@ -667,6 +705,36 @@ pub(crate) mod tests {
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 2);
         assert!(tracker.frozen_banks.is_empty());
         assert!(tracker.rooted_banks.is_empty());
+    }
+
+    #[test]
+    fn test_transaction_status_dependencies_contiguous_completion() {
+        let tracker = Arc::new(DependencyTracker::default());
+        let mut dependencies = TransactionStatusDependencies::new(tracker.clone());
+        for _ in 0..8 {
+            tracker.declare_work();
+        }
+        assert_eq!(tracker.get_current_processed_work(), None);
+
+        // Leave several gaps, then fill them out of order. Each gap must stop
+        // the shared completion marker even if later work is already done.
+        for (work_id, expected) in [
+            (5, None),
+            (3, None),
+            (1, Some(1)),
+            (7, Some(1)),
+            (2, Some(3)),
+            (6, Some(3)),
+            (4, Some(7)),
+            (8, Some(8)),
+        ] {
+            dependencies.mark_processed(work_id);
+            assert_eq!(
+                tracker.get_current_processed_work(),
+                expected,
+                "after completing work id {work_id}",
+            );
+        }
     }
 
     fn build_test_transaction_legacy() -> Transaction {
