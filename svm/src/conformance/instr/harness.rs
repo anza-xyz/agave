@@ -4,17 +4,15 @@ use {
     super::{context::InstrContext, effects::InstrEffects},
     crate::conformance::{
         callback::DefaultCallback,
+        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
         setup::{
             InvokeContextFields, compute_budget, prepare_invoke_context_fields, program_loader_key,
-            program_runtime_environments,
+            program_runtime_environments, sysvar_cache_from_accounts,
         },
     },
     solana_account::AccountSharedData,
     solana_instruction_error::InstructionError,
-    solana_program_runtime::{
-        invoke_context::InvokeContext, program_cache::tx_batch::ProgramCacheForTxBatch,
-        sysvar_cache::SysvarCache,
-    },
+    solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_timings::ExecuteTimings,
@@ -23,20 +21,14 @@ use {
 
 /// Execute a single instruction against the Solana VM with the default
 /// (no-precompile) callback.
-pub fn execute_instr(
-    input: &InstrContext,
-    program_cache: &mut ProgramCacheForTxBatch,
-    sysvar_cache: &SysvarCache,
-) -> InstrEffects {
-    execute_instr_with_callback(input, &DefaultCallback, program_cache, sysvar_cache)
+pub fn execute_instr(input: &InstrContext) -> InstrEffects {
+    execute_instr_with_callback(input, &DefaultCallback)
 }
 
 /// Execute a single instruction against the Solana VM with a custom callback.
 pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     input: &InstrContext,
     callback: &C,
-    program_cache: &mut ProgramCacheForTxBatch,
-    sysvar_cache: &SysvarCache,
 ) -> InstrEffects {
     let mut compute_units_consumed = 0;
     let mut timings = ExecuteTimings::default();
@@ -44,10 +36,21 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let mut compute_budget = compute_budget(&input.feature_set);
     compute_budget.compute_unit_limit = input.cu_avail; // Clamp budget for execution by cu_avail
 
-    let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
+    let sysvar_cache = sysvar_cache_from_accounts(&input.accounts);
 
+    let loader_key = program_loader_key(&input.accounts, &input.instruction.program_id);
     let program_runtime_environments =
         program_runtime_environments(&input.feature_set, &compute_budget);
+
+    let mut program_cache = {
+        let slot = sysvar_cache.get_clock().unwrap().slot;
+        let environment = program_runtime_environments.get_env_for_deployment();
+
+        let mut cache = new_program_cache_with_builtins(slot);
+        fill_program_cache_from_accounts(&mut cache, environment, &input.accounts, slot);
+
+        cache
+    };
 
     let InvokeContextFields {
         sanitized_message,
@@ -60,7 +63,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         input,
         callback,
         &loader_key,
-        sysvar_cache,
+        &sysvar_cache,
         &compute_budget,
         &program_runtime_environments,
     );
@@ -68,7 +71,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
     let result = {
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
-            program_cache,
+            &mut program_cache,
             environment_config,
             Some(log_collector.clone()),
             execution_budget,
@@ -125,7 +128,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         })
         .collect();
 
-    InstrEffects {
+    let effects = InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
             Some(code)
         } else {
@@ -136,6 +139,51 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         cu_avail,
         return_data,
         logs,
+    };
+
+    #[cfg(feature = "conformance")]
+    emit::emit_fixture_if_requested(input, &effects);
+
+    effects
+}
+
+#[cfg(feature = "conformance")]
+mod emit {
+    use {
+        super::{InstrContext, InstrEffects},
+        crate::conformance::{
+            fd_hash::fd_hash_without_seed, instr::effects::apply_firedancer_transformations,
+        },
+        prost::Message,
+        protosol::protos::{FixtureMetadata, InstrFixture},
+        std::{env, fs, path::Path},
+    };
+
+    pub const EMIT_FIXTURES_ENV_VAR: &str = "EMIT_CONFORMANCE_FIXTURES";
+    pub const INSTR_ENTRYPOINT: &str = "sol_compat_instr_execute_v1";
+
+    pub fn emit_fixture_if_requested(input: &InstrContext, effects: &InstrEffects) {
+        if let Some(directory) = env::var_os(EMIT_FIXTURES_ENV_VAR) {
+            write_fixture(Path::new(&directory), input, effects);
+        }
+    }
+
+    pub fn write_fixture(directory: &Path, input: &InstrContext, effects: &InstrEffects) {
+        let fixture = InstrFixture {
+            metadata: Some(FixtureMetadata {
+                fn_entrypoint: INSTR_ENTRYPOINT.to_string(),
+            }),
+            input: Some(input.into()),
+            output: Some(apply_firedancer_transformations(input, effects)),
+        }
+        .encode_to_vec();
+
+        fs::create_dir_all(directory).expect("failed to create the fixture directory");
+        fs::write(
+            directory.join(format!("instr-{:016x}.fix", fd_hash_without_seed(&fixture))),
+            fixture,
+        )
+        .expect("failed to write the fixture");
     }
 }
 
@@ -143,11 +191,14 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
 mod tests {
     use {
         super::*,
-        crate::conformance::programs::{
-            add_program_to_program_cache, keyed_account_for_system_program,
-            new_program_cache_with_builtins,
+        crate::{
+            conformance::programs::keyed_account_for_system_program,
+            program_loader::test_utils::{
+                loader_v3_program_account, loader_v3_programdata_account,
+            },
         },
         solana_account::Account,
+        solana_clock::Clock,
         solana_instruction::Instruction,
         solana_rent::Rent,
         solana_svm_feature_set::SVMFeatureSet,
@@ -185,20 +236,36 @@ mod tests {
         }
     }
 
-    fn sysvar_cache_with_rent() -> SysvarCache {
-        let mut sysvar_cache = SysvarCache::default();
-        sysvar_cache.fill_missing_entries(|pubkey, callback| {
-            if pubkey == &solana_sdk_ids::sysvar::rent::id() {
-                let rent_data = wincode::serialize(&Rent::default()).unwrap();
-                callback(&rent_data);
-            }
-        });
-        sysvar_cache
+    fn sysvar_account(data: Vec<u8>) -> Account {
+        Account {
+            lamports: 1,
+            data,
+            owner: solana_sdk_ids::sysvar::id(),
+            executable: false,
+            rent_epoch: u64::MAX,
+        }
+    }
+
+    fn sysvar_accounts(slot: u64) -> [(Pubkey, Account); 2] {
+        let clock = Clock {
+            slot,
+            ..Clock::default()
+        };
+        [
+            (
+                solana_sdk_ids::sysvar::clock::id(),
+                sysvar_account(wincode::serialize(&clock).unwrap()),
+            ),
+            (
+                solana_sdk_ids::sysvar::rent::id(),
+                sysvar_account(wincode::serialize(&Rent::default()).unwrap()),
+            ),
+        ]
     }
 
     fn build_system_transfer_context(from: &Pubkey, to: &Pubkey, amount: u64) -> InstrContext {
         let feature_set = SVMFeatureSet::default();
-        let accounts = vec![
+        let mut accounts = vec![
             (
                 *from,
                 system_account_with_lamports(FROM_BASE_LAMPORTS + amount),
@@ -206,6 +273,7 @@ mod tests {
             (*to, system_account_with_lamports(TO_BASE_LAMPORTS)),
             keyed_account_for_system_program(),
         ];
+        accounts.extend(sysvar_accounts(0));
         let instruction = solana_system_interface::instruction::transfer(from, to, amount);
         InstrContext {
             feature_set,
@@ -243,10 +311,8 @@ mod tests {
         let to = Pubkey::new_unique();
         let amount = 1_000;
         let context = build_system_transfer_context(&from, &to, amount);
-        let sysvar_cache = sysvar_cache_with_rent();
-        let mut program_cache = new_program_cache_with_builtins(0);
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
         assert_system_transfer_effects(&effects, &from, &to, amount);
     }
 
@@ -256,13 +322,10 @@ mod tests {
         let to = Pubkey::new_unique();
         let amount = 1_000;
         let context = build_system_transfer_context(&from, &to, amount);
-        let sysvar_cache = sysvar_cache_with_rent();
-        let mut program_cache = new_program_cache_with_builtins(0);
 
         let callback = CountingCallback::default();
 
-        let effects =
-            execute_instr_with_callback(&context, &callback, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr_with_callback(&context, &callback);
         assert_system_transfer_effects(&effects, &from, &to, amount);
     }
 
@@ -271,31 +334,88 @@ mod tests {
     #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id(); "loader_v3")]
     fn test_bpf_noop_program_exec(loader_key: Pubkey) {
         let program_id = Pubkey::new_unique();
-        let program_account = Account {
-            lamports: 1,
-            data: vec![],
-            owner: loader_key,
-            executable: true,
-            rent_epoch: u64::MAX,
+        let mut accounts = if solana_sdk_ids::bpf_loader_upgradeable::check_id(&loader_key) {
+            let (programdata_address, _) =
+                Pubkey::find_program_address(&[program_id.as_ref()], &loader_key);
+            vec![
+                (
+                    program_id,
+                    loader_v3_program_account(programdata_address).into(),
+                ),
+                (
+                    programdata_address,
+                    loader_v3_programdata_account(0, NOOP_ELF).into(),
+                ),
+            ]
+        } else {
+            vec![(
+                program_id,
+                Account {
+                    lamports: 1,
+                    data: NOOP_ELF.to_vec(),
+                    owner: loader_key,
+                    executable: true,
+                    rent_epoch: u64::MAX,
+                },
+            )]
         };
+        // Past slot 0, so that a program deployed at slot 0 is visible.
+        accounts.extend(sysvar_accounts(1));
         let context = InstrContext::new_with_default_budget(
             SVMFeatureSet::default(),
-            vec![(program_id, program_account)],
+            accounts,
             Instruction::new_with_bytes(program_id, &[], vec![]),
         );
-        let sysvar_cache = sysvar_cache_with_rent();
 
-        let mut program_cache = new_program_cache_with_builtins(1);
-        add_program_to_program_cache(
-            &mut program_cache,
-            &program_id,
-            &loader_key,
-            NOOP_ELF,
-            &context.feature_set,
-        );
-
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
         assert_eq!(effects.result, None);
         assert_eq!(effects.custom_err, None);
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn test_written_fixture_replays() {
+        use {
+            super::emit::{INSTR_ENTRYPOINT, write_fixture},
+            crate::conformance::instr::effects::apply_firedancer_transformations,
+            prost::Message,
+            protosol::protos::{InstrContext as ProtoInstrContext, InstrFixture},
+            std::{env, fs},
+        };
+
+        let from = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let context = InstrContext {
+            feature_set: agave_feature_set::FeatureSet::all_enabled().runtime_features(),
+            ..build_system_transfer_context(&from, &to, 1_000)
+        };
+        let effects = execute_instr(&context);
+        assert_eq!(effects.result, None);
+
+        let directory = env::temp_dir().join(format!("instr-fixture-{}", Pubkey::new_unique()));
+        write_fixture(&directory, &context, &effects);
+        let files = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| fs::read(entry.unwrap().path()).unwrap())
+            .collect::<Vec<_>>();
+        fs::remove_dir_all(&directory).unwrap();
+
+        let [file] = files.as_slice() else {
+            panic!("expected one fixture, found {}", files.len());
+        };
+        let fixture = InstrFixture::decode(file.as_slice()).unwrap();
+        assert_eq!(fixture.metadata.unwrap().fn_entrypoint, INSTR_ENTRYPOINT);
+        let input = fixture.input.unwrap();
+        let output = fixture.output.unwrap();
+        assert_eq!(input, ProtoInstrContext::from(&context));
+        assert_eq!(output, apply_firedancer_transformations(&context, &effects));
+
+        // The fixture alone must reproduce the run, including its features.
+        let replayed_context = InstrContext::from(input.clone());
+        assert_eq!(ProtoInstrContext::from(&replayed_context), input);
+        assert_eq!(
+            apply_firedancer_transformations(&replayed_context, &execute_instr(&replayed_context)),
+            output,
+        );
     }
 }

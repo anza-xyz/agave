@@ -1,8 +1,7 @@
 use {
-    common::{LoaderV3Features, process_instruction, process_instruction_with_setup},
+    common::{process_instruction, process_instruction_with_cu_avail},
     rand::Rng,
-    solana_account::{AccountSharedData, WritableAccount},
-    solana_bpf_loader_program::test_utils,
+    solana_account::{Account, WritableAccount},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_pubkey::Pubkey,
@@ -13,13 +12,13 @@ use {
 
 mod common;
 
-fn load_program_account_from_elf(loader_id: &Pubkey, path: &str) -> AccountSharedData {
+fn load_program_account_from_elf(loader_id: &Pubkey, path: &str) -> Account {
     let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
     let rent = Rent::default();
     let mut program_account =
-        AccountSharedData::new_with_data(rent.minimum_balance(elf.len()), elf, loader_id);
+        Account::new_with_data(rent.minimum_balance(elf.len()), elf, loader_id);
     program_account.set_executable(true);
     program_account
 }
@@ -30,7 +29,7 @@ fn test_bpf_loader_invoke_main() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/sbpfv3_return_ok.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::empty(1, &loader_id);
+    let parameter_account = Account::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -80,31 +79,16 @@ fn test_bpf_loader_invoke_main() {
     );
 
     // Case: limited budget
-    process_instruction_with_setup(
+    process_instruction_with_cu_avail(
         &program_id,
         &[],
         vec![(program_id, program_account)],
         Vec::new(),
-        LoaderV3Features::all_enabled(),
+        0,
         Err(InstructionError::ProgramFailedToComplete),
-        |invoke_context| {
-            invoke_context.mock_set_remaining(0);
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 
     // Case: Account not a program
-    process_instruction_with_setup(
-        &program_id,
-        &[],
-        vec![(program_id, parameter_account.clone())],
-        Vec::new(),
-        LoaderV3Features::all_enabled(),
-        Err(InstructionError::UnsupportedProgramId),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
-    );
     process_instruction(
         &program_id,
         &[],
@@ -120,7 +104,7 @@ fn test_bpf_loader_serialize_unaligned() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/noop_unaligned.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::empty(1, &loader_id);
+    let parameter_account = Account::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -158,7 +142,7 @@ fn test_bpf_loader_serialize_aligned() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/noop_aligned.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::empty(1, &loader_id);
+    let parameter_account = Account::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -231,7 +215,7 @@ fn test_fuzz() {
         0..elf_len,
         0..255,
         |bytes: Vec<u8>| {
-            let mut program_account = AccountSharedData::new_with_data(1, bytes, &loader_id);
+            let mut program_account = Account::new_with_data(1, bytes, &loader_id);
             program_account.set_executable(true);
             process_instruction(
                 &program_id,

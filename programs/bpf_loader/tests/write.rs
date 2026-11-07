@@ -1,9 +1,7 @@
 use {
-    common::{LoaderV3Features, process_instruction, process_instruction_with_setup},
-    solana_account::{
-        AccountSharedData, ReadableAccount, state_traits::StateMutWincode as StateMut,
-    },
-    solana_bpf_loader_program::{WRITE_INSTRUCTION_HEADER_LEN, WRITE_INSTRUCTION_TAG, test_utils},
+    common::{LoaderV3Features, process_instruction, process_instruction_with_features},
+    solana_account::{Account, ReadableAccount, state_traits::StateMutWincode as StateMut},
+    solana_bpf_loader_program::{WRITE_INSTRUCTION_HEADER_LEN, WRITE_INSTRUCTION_TAG},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
@@ -20,7 +18,7 @@ mod common;
 fn test_bpf_loader_upgradeable_write() {
     let loader_id = bpf_loader_upgradeable::id();
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account = AccountSharedData::new_with_data(
+    let mut buffer_account = Account::new_with_data(
         1,
         vec![0; UpgradeableLoaderState::size_of_buffer(9)],
         &loader_id,
@@ -70,7 +68,7 @@ fn test_bpf_loader_upgradeable_write() {
         instruction_accounts.clone(),
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -81,6 +79,7 @@ fn test_bpf_loader_upgradeable_write() {
         &accounts
             .first()
             .unwrap()
+            .1
             .data()
             .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
             .unwrap(),
@@ -93,7 +92,7 @@ fn test_bpf_loader_upgradeable_write() {
         bytes: vec![42; 6],
     })
     .unwrap();
-    let mut buffer_account = AccountSharedData::new_data_with_space(
+    let mut buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(buffer_address),
@@ -109,7 +108,7 @@ fn test_bpf_loader_upgradeable_write() {
         instruction_accounts.clone(),
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -120,6 +119,7 @@ fn test_bpf_loader_upgradeable_write() {
         &accounts
             .first()
             .unwrap()
+            .1
             .data()
             .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
             .unwrap(),
@@ -257,7 +257,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     };
     let buffer_address = Pubkey::new_unique();
     let max_bytes = solana_packet::PACKET_DATA_SIZE - WRITE_INSTRUCTION_HEADER_LEN;
-    let buffer_account = AccountSharedData::new_data_with_space(
+    let buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(buffer_address),
@@ -290,20 +290,18 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     };
 
     // Case: Trailing bytes are ignored, only the declared payload is written
-    let accounts = process_instruction_with_setup(
+    let accounts = process_instruction_with_features(
         &loader_id,
         &write(9, 9, 100),
         vec![(buffer_address, buffer_account.clone())],
         instruction_accounts.clone(),
         features,
         Ok(()),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
     let (written, untouched) = accounts
         .first()
         .unwrap()
+        .1
         .data()
         .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
         .unwrap()
@@ -312,20 +310,17 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     assert!(untouched.iter().all(|byte| *byte == 0));
 
     // Case: Largest payload that fits under the legacy limit
-    process_instruction_with_setup(
+    process_instruction_with_features(
         &loader_id,
         &write(max_bytes as u64, max_bytes, 0),
         vec![(buffer_address, buffer_account.clone())],
         instruction_accounts.clone(),
         features,
         Ok(()),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 
     // Case: One byte over the legacy limit; passes with SIMD-0648 feature
-    process_instruction_with_setup(
+    process_instruction_with_features(
         &loader_id,
         &write((max_bytes + 1) as u64, max_bytes + 1, 0),
         vec![(buffer_address, buffer_account.clone())],
@@ -336,15 +331,12 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
         } else {
             Err(InstructionError::InvalidInstructionData)
         },
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 
     // Case: Largest payload the runtime can deliver via CPI; passes with SIMD-0648 feature
     let max_ixn_bytes =
         solana_transaction_context::MAX_INSTRUCTION_DATA_LEN - WRITE_INSTRUCTION_HEADER_LEN;
-    let big_buffer_account = AccountSharedData::new_data_with_space(
+    let big_buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(buffer_address),
@@ -353,7 +345,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
         &loader_id,
     )
     .unwrap();
-    let accounts = process_instruction_with_setup(
+    let accounts = process_instruction_with_features(
         &loader_id,
         &write(max_ixn_bytes as u64, max_ixn_bytes, 0),
         vec![(buffer_address, big_buffer_account)],
@@ -364,15 +356,13 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
         } else {
             Err(InstructionError::InvalidInstructionData)
         },
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
     if unbound_loader_v3_instruction_data {
         assert_eq!(
             accounts
                 .first()
                 .unwrap()
+                .1
                 .data()
                 .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
                 .unwrap(),
@@ -381,33 +371,27 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     }
 
     // Case: Declared length exceeds the bytes present
-    process_instruction_with_setup(
+    process_instruction_with_features(
         &loader_id,
         &write(600, 512, 0),
         vec![(buffer_address, buffer_account.clone())],
         instruction_accounts.clone(),
         features,
         Err(InstructionError::InvalidInstructionData),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 
     // Case: Absurd declared length
-    process_instruction_with_setup(
+    process_instruction_with_features(
         &loader_id,
         &write(u64::MAX, 512, 0),
         vec![(buffer_address, buffer_account.clone())],
         instruction_accounts.clone(),
         features,
         Err(InstructionError::InvalidInstructionData),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 
     // Case: Truncated header
-    process_instruction_with_setup(
+    process_instruction_with_features(
         &loader_id,
         write(0, 0, 0)
             .get(..WRITE_INSTRUCTION_HEADER_LEN - 1)
@@ -416,8 +400,5 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
         instruction_accounts,
         features,
         Err(InstructionError::InvalidInstructionData),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 }

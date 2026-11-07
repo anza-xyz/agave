@@ -68,7 +68,6 @@ use {
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_message::{Message, inner_instruction::InnerInstruction},
-    solana_program_runtime::sysvar_cache::SysvarCache,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -84,10 +83,7 @@ use {
     solana_signer::Signer,
     solana_svm::conformance::{
         instr::{context::InstrContext, harness::execute_instr},
-        programs::{
-            add_program_to_program_cache, keyed_account_for_bpf_loader_program,
-            new_program_cache_with_builtins,
-        },
+        programs::keyed_account_for_bpf_loader_program,
     },
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
@@ -111,28 +107,6 @@ fn load_program_elf(program_name: &str) -> Vec<u8> {
     file.read_to_end(&mut data)
         .unwrap_or_else(|e| panic!("Failed to read file {}: {}", path.display(), e));
     data
-}
-
-#[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
-fn default_program_cache() -> solana_program_runtime::program_cache::tx_batch::ProgramCacheForTxBatch
-{
-    new_program_cache_with_builtins(/* slot */ 1)
-}
-
-fn default_program_cache_with_program(
-    program_id: &Pubkey,
-    program_elf: &[u8],
-    feature_set: &SVMFeatureSet,
-) -> solana_program_runtime::program_cache::tx_batch::ProgramCacheForTxBatch {
-    let mut program_cache = default_program_cache();
-    add_program_to_program_cache(
-        &mut program_cache,
-        program_id,
-        &bpf_loader_upgradeable::id(),
-        program_elf,
-        feature_set,
-    );
-    program_cache
 }
 
 /// Add a number of accounts with mixed sizes and roles.
@@ -172,21 +146,28 @@ fn upgradeable_program_accounts(program_id: &Pubkey, program_elf: &[u8]) -> Vec<
     .into()
 }
 
+/// The sysvars required by the harness. The Clock is past slot 0, so that
+/// programs deployed at slot 0 are visible.
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
-fn default_sysvar_cache() -> SysvarCache {
-    let mut sysvar_cache = SysvarCache::default();
-    sysvar_cache.fill_missing_entries(|pubkey, callback| {
-        if pubkey == &rent::id() {
-            let rent = Rent::default();
-            let rent_data = wincode::serialize(&rent).unwrap();
-            callback(&rent_data);
-        } else if pubkey == &clock::id() {
-            let clock = solana_clock::Clock::default();
-            let clock_data = wincode::serialize(&clock).unwrap();
-            callback(&clock_data);
-        }
-    });
-    sysvar_cache
+fn default_sysvar_accounts() -> [(Pubkey, Account); 2] {
+    [
+        (
+            clock::id(),
+            Account::new_data(
+                1,
+                &solana_clock::Clock {
+                    slot: 1,
+                    ..solana_clock::Clock::default()
+                },
+                &sysvar::id(),
+            )
+            .unwrap(),
+        ),
+        (
+            rent::id(),
+            Account::new_data(1, &Rent::default(), &sysvar::id()).unwrap(),
+        ),
+    ]
 }
 
 #[cfg(any(feature = "sbf_c", feature = "sbf_rust"))]
@@ -373,10 +354,7 @@ fn test_program_sbf_sanity() {
 
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.extend([(pubkey1, Account::default()), (pubkey2, Account::default())]);
-
-        let mut program_cache =
-            default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-        let sysvar_cache = default_sysvar_cache();
+        accounts.extend(default_sysvar_accounts());
 
         let context = InstrContext {
             feature_set,
@@ -385,7 +363,7 @@ fn test_program_sbf_sanity() {
             cu_avail: MAX_COMPUTE_UNIT_LIMIT as u64, // Widen to 1.4 M
         };
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
 
         let result = match effects.result {
             Some(err) => Err(err),
@@ -424,12 +402,12 @@ fn test_program_sbf_loader_deprecated() {
         let feature_set = SVMFeatureSet::all_enabled();
 
         let pubkey = Pubkey::new_unique();
-        let accounts = vec![
+        let mut accounts = vec![
             (
                 program_id,
                 Account {
                     lamports: 1,
-                    data: vec![],
+                    data: program_elf,
                     owner: bpf_loader_deprecated::id(),
                     executable: true,
                     rent_epoch: u64::MAX,
@@ -437,23 +415,14 @@ fn test_program_sbf_loader_deprecated() {
             ),
             (pubkey, Account::default()),
         ];
-
-        let mut program_cache = default_program_cache();
-        add_program_to_program_cache(
-            &mut program_cache,
-            &program_id,
-            &bpf_loader_deprecated::id(),
-            &program_elf,
-            &feature_set,
-        );
-        let sysvar_cache = default_sysvar_cache();
+        accounts.extend(default_sysvar_accounts());
 
         let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction = Instruction::new_with_bytes(program_id, &[255], account_metas);
 
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
 
         assert!(effects.result.is_none());
     }
@@ -531,9 +500,6 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
         (authority_pubkey, Account::default()),
     ];
 
-    let mut program_cache = new_program_cache_with_builtins(0);
-    let sysvar_cache = default_sysvar_cache();
-
     // Build the deploy instruction (DeployWithMaxDataLen only, skip CreateAccount)
     #[allow(deprecated)]
     let instruction = loader_v3_instruction::deploy_with_max_program_len(
@@ -555,7 +521,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
     // in elf inside syscall table. In this case, `sol_alloc_free_` can't be
     // found in syscall table. Hence, the verification fails and the deployment
     // fails.
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert_eq!(effects.result, Some(InstructionError::InvalidAccountData));
 }
@@ -581,9 +547,6 @@ fn test_program_sbf_duplicate_accounts() {
         let program_elf = load_program_elf(program);
         let program_id = Pubkey::new_unique();
         let feature_set = SVMFeatureSet::all_enabled();
-        let mut program_cache =
-            default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-        let sysvar_cache = default_sysvar_cache();
 
         let payer_pubkey = Pubkey::new_unique();
         let payee_pubkey = Pubkey::new_unique();
@@ -596,9 +559,10 @@ fn test_program_sbf_duplicate_accounts() {
             AccountMeta::new(pubkey, false),
             AccountMeta::new(pubkey, false),
         ];
-        let program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        let mut program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        program_accounts.extend(default_sysvar_accounts());
 
-        let mut execute = |data: &[u8]| {
+        let execute = |data: &[u8]| {
             let mut accounts = program_accounts.clone();
             accounts.extend([
                 (payer_pubkey, Account::empty(100, &Pubkey::default())),
@@ -610,7 +574,7 @@ fn test_program_sbf_duplicate_accounts() {
             ]);
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas.clone());
             let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
-            execute_instr(&context, &mut program_cache, &sysvar_cache)
+            execute_instr(&context)
         };
 
         let effects = execute(&[1]);
@@ -651,7 +615,7 @@ fn test_program_sbf_duplicate_accounts() {
             AccountMeta::new_readonly(pubkey, true),
             AccountMeta::new_readonly(program_id, false),
         ];
-        let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+        let mut accounts = program_accounts.clone();
         accounts.extend([
             (payer_pubkey, Account::empty(100, &Pubkey::default())),
             (
@@ -662,7 +626,7 @@ fn test_program_sbf_duplicate_accounts() {
         ]);
         let instruction = Instruction::new_with_bytes(program_id, &[7], account_metas);
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
         assert!(effects.result.is_none());
     }
 }
@@ -694,20 +658,17 @@ fn test_program_sbf_error_handling() {
 
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.push((pubkey1, Account::default()));
-
-        let mut program_cache =
-            default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-        let sysvar_cache = default_sysvar_cache();
+        accounts.extend(default_sysvar_accounts());
 
         // Helper to execute an instruction with the given data byte.
-        let mut execute = |data: &[u8]| {
+        let execute = |data: &[u8]| {
             let account_metas = vec![AccountMeta::new(pubkey1, true)];
             let instruction = Instruction::new_with_bytes(program_id, data, account_metas);
 
             let context =
                 InstrContext::new_with_default_budget(feature_set, accounts.clone(), instruction);
 
-            execute_instr(&context, &mut program_cache, &sysvar_cache)
+            execute_instr(&context)
         };
 
         let effects = execute(&[1]);
@@ -780,10 +741,7 @@ fn test_return_data_and_log_data_syscall() {
         let pubkey = Pubkey::new_unique();
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.push((pubkey, Account::default()));
-
-        let mut program_cache =
-            default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-        let sysvar_cache = default_sysvar_cache();
+        accounts.extend(default_sysvar_accounts());
 
         let account_metas = vec![AccountMeta::new(pubkey, true)];
         let instruction =
@@ -791,7 +749,7 @@ fn test_return_data_and_log_data_syscall() {
 
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
 
         assert!(effects.result.is_none());
 
@@ -1457,23 +1415,7 @@ fn test_program_sbf_program_id_spoofing() {
         (from_pubkey, Account::empty(10, &system_program::id())),
         (to_pubkey, Account::empty(0, &system_program::id())),
     ]);
-
-    let mut program_cache = default_program_cache();
-    add_program_to_program_cache(
-        &mut program_cache,
-        &malicious_swap_pubkey,
-        &bpf_loader_upgradeable::id(),
-        &spoof1_elf,
-        &feature_set,
-    );
-    add_program_to_program_cache(
-        &mut program_cache,
-        &malicious_system_pubkey,
-        &bpf_loader_upgradeable::id(),
-        &spoof1_system_elf,
-        &feature_set,
-    );
-    let sysvar_cache = default_sysvar_cache();
+    accounts.extend(default_sysvar_accounts());
 
     let account_metas = vec![
         AccountMeta::new_readonly(system_program::id(), false),
@@ -1487,7 +1429,7 @@ fn test_program_sbf_program_id_spoofing() {
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert_eq!(
         effects.result,
@@ -1516,23 +1458,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
         &caller2_pubkey,
         &caller_access_elf,
     ));
-
-    let mut program_cache = default_program_cache();
-    add_program_to_program_cache(
-        &mut program_cache,
-        &caller_pubkey,
-        &bpf_loader_upgradeable::id(),
-        &caller_access_elf,
-        &feature_set,
-    );
-    add_program_to_program_cache(
-        &mut program_cache,
-        &caller2_pubkey,
-        &bpf_loader_upgradeable::id(),
-        &caller_access_elf,
-        &feature_set,
-    );
-    let sysvar_cache = default_sysvar_cache();
+    accounts.extend(default_sysvar_accounts());
 
     let account_metas = vec![
         AccountMeta::new_readonly(caller_pubkey, false),
@@ -1542,7 +1468,7 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert_eq!(effects.result, Some(InstructionError::MissingAccount));
 }
@@ -1561,10 +1487,7 @@ fn test_program_sbf_ro_modify() {
     let mut accounts = vec![keyed_account_for_system_program()];
     accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
     accounts.push((test_pubkey, Account::empty(10, &system_program::id())));
-
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
+    accounts.extend(default_sysvar_accounts());
 
     let account_metas = vec![
         AccountMeta::new_readonly(system_program::id(), false),
@@ -1578,7 +1501,7 @@ fn test_program_sbf_ro_modify() {
         let context =
             InstrContext::new_with_default_budget(feature_set, accounts.clone(), instruction);
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
 
         assert_eq!(
             effects.result,
@@ -1598,12 +1521,10 @@ fn test_program_sbf_call_depth() {
     let feature_set = SVMFeatureSet::all_enabled();
     let compute_budget = ComputeBudget::new_with_defaults(false);
 
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
-    let program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
+    let mut program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
+    program_accounts.extend(default_sysvar_accounts());
 
-    let mut execute = |depth: usize| {
+    let execute = |depth: usize| {
         let instruction = Instruction::new_with_wincode(program_id, &depth, vec![]);
 
         let context = InstrContext::new_with_default_budget(
@@ -1612,7 +1533,7 @@ fn test_program_sbf_call_depth() {
             instruction,
         );
 
-        execute_instr(&context, &mut program_cache, &sysvar_cache)
+        execute_instr(&context)
     };
 
     let effects = execute(compute_budget.max_call_depth - 1);
@@ -1632,11 +1553,8 @@ fn test_program_sbf_compute_budget() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let accounts = upgradeable_program_accounts(&program_id, &program_elf);
-
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
+    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+    accounts.extend(default_sysvar_accounts());
 
     let instruction = Instruction::new_with_wincode(program_id, &0, vec![]);
 
@@ -1647,7 +1565,7 @@ fn test_program_sbf_compute_budget() {
         cu_avail: 0,
     };
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert_eq!(
         effects.result,
@@ -1699,19 +1617,16 @@ fn assert_instruction_count() {
     }
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let sysvar_cache = default_sysvar_cache();
 
     println!("\n  {:36} expected actual  diff", "SBF program");
     for (program_name, expected_consumption) in programs.iter() {
         let program_elf = load_program_elf(program_name);
         let program_id = Pubkey::new_unique();
 
-        let mut program_cache =
-            default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-
         let account_pubkey = Pubkey::new_unique();
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.push((account_pubkey, Account::empty(0, &program_id)));
+        accounts.extend(default_sysvar_accounts());
 
         let instruction_accounts = vec![AccountMeta {
             pubkey: account_pubkey,
@@ -1722,7 +1637,7 @@ fn assert_instruction_count() {
 
         let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
 
         let consumption = context.cu_avail.saturating_sub(effects.cu_avail);
         let diff: i64 = consumption as i64 - *expected_consumption as i64;
@@ -1811,16 +1726,13 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
-
     let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
 
     add_mixed_accounts(&mut accounts, &mut account_metas, &program_id, num_accounts);
 
     accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
+    accounts.extend(default_sysvar_accounts());
 
     // The provided instruction data will be set to the return data.
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
@@ -1829,7 +1741,7 @@ fn test_program_sbf_r2_instruction_data_pointer(num_accounts: usize, input_data_
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert!(effects.result.is_none());
     assert_eq!(input_data, effects.return_data);
@@ -2334,33 +2246,22 @@ fn test_program_sbf_disguised_as_sbf_loader() {
             ..SVMFeatureSet::all_enabled()
         };
 
-        let mut program_cache = default_program_cache();
-        add_program_to_program_cache(
-            &mut program_cache,
-            &program_id,
-            &bpf_loader::id(),
-            &program_elf,
-            &feature_set,
-        );
-        let sysvar_cache = default_sysvar_cache();
-
         let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
         let instruction = Instruction::new_with_bytes(bpf_loader::id(), &[1], account_metas);
 
-        let context = InstrContext::new_with_default_budget(
-            feature_set,
-            vec![
-                keyed_account_for_bpf_loader_program(),
-                solana_program_binaries::bpf_loader_program_account(
-                    &program_id,
-                    &program_elf,
-                    &Rent::default(),
-                ),
-            ],
-            instruction,
-        );
+        let mut accounts = vec![
+            keyed_account_for_bpf_loader_program(),
+            solana_program_binaries::bpf_loader_program_account(
+                &program_id,
+                &program_elf,
+                &Rent::default(),
+            ),
+        ];
+        accounts.extend(default_sysvar_accounts());
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
+
+        let effects = execute_instr(&context);
         assert_eq!(effects.result, Some(InstructionError::UnsupportedProgramId));
     }
 }
@@ -2375,17 +2276,6 @@ fn test_program_reads_from_program_account() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache = default_program_cache();
-    add_program_to_program_cache(
-        &mut program_cache,
-        &program_id,
-        &bpf_loader::id(),
-        &program_elf,
-        &feature_set,
-    );
-
-    let sysvar_cache = default_sysvar_cache();
-
     // Loader V2 (bpf_loader) stores the raw ELF in the program account.
     let program_account = Account {
         lamports: 1,
@@ -2398,13 +2288,12 @@ fn test_program_reads_from_program_account() {
     let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
     let instruction = Instruction::new_with_bytes(program_id, &program_elf[..48], account_metas);
 
-    let context = InstrContext::new_with_default_budget(
-        feature_set,
-        vec![(program_id, program_account)],
-        instruction,
-    );
+    let mut accounts = vec![(program_id, program_account)];
+    accounts.extend(default_sysvar_accounts());
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
+
+    let effects = execute_instr(&context);
     assert!(effects.result.is_none());
 }
 
@@ -2417,16 +2306,6 @@ fn test_program_sbf_c_dup() {
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-    let mut program_cache = default_program_cache();
-    add_program_to_program_cache(
-        &mut program_cache,
-        &program_id,
-        &bpf_loader_upgradeable::id(),
-        &program_elf,
-        &feature_set,
-    );
-
-    let sysvar_cache = default_sysvar_cache();
 
     let account_address = Pubkey::new_unique();
     let account =
@@ -2440,9 +2319,10 @@ fn test_program_sbf_c_dup() {
 
     let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
     accounts.push((account_address, account));
+    accounts.extend(default_sysvar_accounts());
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
     assert!(effects.result.is_none());
 }
 
@@ -2622,16 +2502,13 @@ fn test_program_sbf_ro_account_modify() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
-
     let argument_pubkey = Pubkey::new_unique();
     let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
     accounts.push((
         argument_pubkey,
         Account::new_with_data(42, vec![0; 100], &program_id),
     ));
+    accounts.extend(default_sysvar_accounts());
 
     let account_metas = vec![
         AccountMeta::new_readonly(argument_pubkey, false),
@@ -2644,7 +2521,7 @@ fn test_program_sbf_ro_account_modify() {
         let context =
             InstrContext::new_with_default_budget(feature_set, accounts.clone(), instruction);
 
-        let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+        let effects = execute_instr(&context);
 
         assert_eq!(effects.result, Some(InstructionError::ReadonlyDataModified));
     }
@@ -4596,20 +4473,19 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
+    let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
+    accounts.extend(default_sysvar_accounts());
 
     let instruction = Instruction::new_with_bytes(program_id, &[], vec![]);
 
     let context = InstrContext {
         feature_set,
-        accounts: upgradeable_program_accounts(&program_id, &program_elf),
+        accounts,
         instruction,
         cu_avail: 10_000,
     };
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert_eq!(
         effects.result,
@@ -5488,10 +5364,6 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
 
     let feature_set = SVMFeatureSet::all_enabled();
 
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
-
     let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
 
@@ -5504,6 +5376,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
     }
 
     accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
+    accounts.extend(default_sysvar_accounts());
 
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
 
@@ -5511,7 +5384,7 @@ fn test_program_sbf_rust_direct_account_pointers(num_accounts: usize, input_data
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert!(effects.result.is_none());
     // `num_accounts * 2` will be added as return data.
@@ -5534,10 +5407,6 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
     let program_id = Pubkey::new_unique();
 
     let feature_set = SVMFeatureSet::all_enabled();
-
-    let mut program_cache =
-        default_program_cache_with_program(&program_id, &program_elf, &feature_set);
-    let sysvar_cache = default_sysvar_cache();
 
     let mut accounts = Vec::new();
     let mut account_metas = Vec::new();
@@ -5566,6 +5435,7 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
     }
 
     accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
+    accounts.extend(default_sysvar_accounts());
 
     let input_data: Vec<u8> = (0..input_data_len).map(|i| (i % 256) as u8).collect();
 
@@ -5573,7 +5443,7 @@ fn test_program_sbf_rust_input_metadata_r3_r5(num_accounts: usize, input_data_le
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert!(effects.result.is_none());
     // `num_accounts * 2` will be added as return data.
@@ -5593,24 +5463,8 @@ fn test_program_sbf_invoke_signed_v2(is_signer: Option<bool>, request_signers: b
     let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_signed_v2");
     let invoke_signed_v2_program_id = Pubkey::new_unique();
 
-    let mut program_cache = default_program_cache_with_program(
-        &invoke_signed_v2_program_id,
-        &invoke_signed_v2_program,
-        &feature_set,
-    );
-
     let noop_program = load_program_elf("solana_sbf_rust_noop");
     let noop_program_id = Pubkey::new_unique();
-
-    add_program_to_program_cache(
-        &mut program_cache,
-        &noop_program_id,
-        &bpf_loader_upgradeable::id(),
-        &noop_program,
-        &feature_set,
-    );
-
-    let sysvar_cache = default_sysvar_cache();
 
     let mut accounts = Vec::new();
     accounts.extend(upgradeable_program_accounts(
@@ -5621,6 +5475,7 @@ fn test_program_sbf_invoke_signed_v2(is_signer: Option<bool>, request_signers: b
         &noop_program_id,
         &noop_program,
     ));
+    accounts.extend(default_sysvar_accounts());
 
     let mut account_metas = Vec::new();
     account_metas.push(AccountMeta::new_readonly(noop_program_id, false));
@@ -5661,7 +5516,7 @@ fn test_program_sbf_invoke_signed_v2(is_signer: Option<bool>, request_signers: b
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     if request_signers && is_signer != Some(true) {
         assert_eq!(effects.result, Some(InstructionError::PrivilegeEscalation));
@@ -5700,24 +5555,8 @@ fn test_program_sbf_invoke_signed_v2_with_invalid_account_indices() {
     let invoke_signed_v2_program = load_program_elf("solana_sbf_rust_invoke_signed_v2");
     let invoke_signed_v2_program_id = Pubkey::new_unique();
 
-    let mut program_cache = default_program_cache_with_program(
-        &invoke_signed_v2_program_id,
-        &invoke_signed_v2_program,
-        &feature_set,
-    );
-
     let noop_program = load_program_elf("solana_sbf_rust_noop");
     let noop_program_id = Pubkey::new_unique();
-
-    add_program_to_program_cache(
-        &mut program_cache,
-        &noop_program_id,
-        &bpf_loader_upgradeable::id(),
-        &noop_program,
-        &feature_set,
-    );
-
-    let sysvar_cache = default_sysvar_cache();
 
     let mut accounts = Vec::new();
     accounts.extend(upgradeable_program_accounts(
@@ -5728,6 +5567,7 @@ fn test_program_sbf_invoke_signed_v2_with_invalid_account_indices() {
         &noop_program_id,
         &noop_program,
     ));
+    accounts.extend(default_sysvar_accounts());
 
     let mut account_metas = Vec::new();
     account_metas.push(AccountMeta::new_readonly(noop_program_id, false));
@@ -5759,7 +5599,7 @@ fn test_program_sbf_invoke_signed_v2_with_invalid_account_indices() {
 
     let context = InstrContext::new_with_default_budget(feature_set, accounts, instruction);
 
-    let effects = execute_instr(&context, &mut program_cache, &sysvar_cache);
+    let effects = execute_instr(&context);
 
     assert!(effects.result.is_some());
 

@@ -1,77 +1,22 @@
 //! Instruction conformance harness.
 
 use {
-    agave_precompiles::is_precompile,
     prost::Message,
     protosol::protos::{InstrContext as ProtoInstrContext, InstrEffects as ProtoInstrEffects},
     solana_svm::conformance::{
         callback::ConformanceCallback,
-        direct_mapping::direct_mapping_handle_cu_exhaustion,
-        instr::{context::InstrContext, harness::execute_instr_with_callback},
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        setup::{compute_budget, program_runtime_environments, sysvar_cache_from_accounts},
+        instr::{
+            context::InstrContext, effects::apply_firedancer_transformations,
+            harness::execute_instr_with_callback,
+        },
     },
     std::ffi::c_int,
 };
 
 pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let instr_context = InstrContext::from(input);
-
-    // When testing with protobuf, we fill the sysvar cache from input accounts.
-    let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
-
-    // When testing with protobuf, we fill the program cache from input accounts.
-    let mut program_cache = {
-        let slot = sysvar_cache.get_clock().unwrap().slot;
-        let feature_set = &instr_context.feature_set;
-        let compute_budget = compute_budget(feature_set);
-        let environments = program_runtime_environments(feature_set, &compute_budget);
-
-        let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(
-            &mut cache,
-            environments.get_env_for_deployment(),
-            &instr_context.accounts,
-            slot,
-        );
-
-        cache
-    };
-
-    let mut effects = execute_instr_with_callback(
-        &instr_context,
-        &ConformanceCallback::default(),
-        &mut program_cache,
-        &sysvar_cache,
-    );
-
-    // Precompile verification failures surface as `Custom`, but Firedancer
-    // reports a custom error code of 0 for precompiles.
-    if effects.custom_err.is_some()
-        && is_precompile(&instr_context.instruction.program_id, |_| true)
-    {
-        effects.custom_err = Some(0);
-    }
-
-    // TODO: Firedancer's tooling compares resulting account contents even
-    // when execution fails, so the harness must report them. Account
-    // contents are not meaningful on error (partial writes can diverge based
-    // on timing, e.g. with direct mapping or builtins), so once the tooling
-    // supports it, the harness should skip the account comparison on error
-    // entirely, which would also make the CU-exhaustion workaround below
-    // unnecessary.
-    let cu_avail = effects.cu_avail;
-    let has_err = effects.result.is_some();
-    let mut result: ProtoInstrEffects = effects.into();
-
-    direct_mapping_handle_cu_exhaustion(
-        instr_context.feature_set.virtual_address_space_adjustments,
-        cu_avail,
-        has_err,
-        result.modified_accounts.iter_mut(),
-    );
-
-    result
+    let effects = execute_instr_with_callback(&instr_context, &ConformanceCallback::default());
+    apply_firedancer_transformations(&instr_context, &effects)
 }
 
 /// # Safety
