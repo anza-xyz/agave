@@ -228,7 +228,7 @@ agave-worker-pool = { path = "worker-pool", version = "=5.0.0-alpha.0", features
 agave-xdp = { path = "xdp", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-xdp-ebpf = { path = "xdp-ebpf", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 ahash = "0.8.12"
-allocator-api2 = "0.2.16"
+allocator-api2 = "0.4.0"
 anyhow = "1.0.104"
 arbitrary = "1.5.0"
 arc-swap = "1.9.3"
