@@ -71,11 +71,7 @@ TEST_ARGS=(
 # redirecting the stderr altogether on CI, where all tests are run unlike
 # developing.
 cov_test=(cargo test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}")
-if [[ -n $CI ]]; then
-  RUST_LOG="solana=trace,agave=trace,$RUST_LOG" "${cov_test[@]}" 2>/dev/null
-else
-  RUST_LOG="solana=trace,agave=trace,$RUST_LOG" "${cov_test[@]}"
-fi
+RUST_LOG="solana=trace,agave=trace,$RUST_LOG" "${cov_test[@]}"
 
 # Generate test reports
 echo "--- grcov"
