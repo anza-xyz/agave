@@ -496,7 +496,6 @@ mod tests {
             collections::HashSet,
             sync::{Arc, RwLock},
         },
-        test_case::test_case,
     };
 
     impl PartitionedStakeReward {
@@ -622,13 +621,11 @@ mod tests {
     pub(super) fn create_default_reward_bank(
         expected_num_delegations: usize,
         advance_num_slots: u64,
-        is_alpenglow: bool,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         create_reward_bank_with_specific_stakes(
             vec![2_000_000_000; expected_num_delegations],
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
             advance_num_slots,
-            is_alpenglow,
         )
     }
 
@@ -641,7 +638,6 @@ mod tests {
             vec![2_000_000_000; expected_num_delegations],
             stake_account_stores_per_block,
             advance_num_slots,
-            true,
         )
     }
 
@@ -649,7 +645,6 @@ mod tests {
         stakes: Vec<u64>,
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
-        is_alpenglow: bool,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         // Disable slot time reduction features as they will override the custom
         // stores per block provided in this test helper.
@@ -660,15 +655,7 @@ mod tests {
 
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = if is_alpenglow {
-            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes)
-        } else {
-            create_genesis_config_with_tower_vote_accounts(
-                1_000_000_000,
-                &validator_keypairs,
-                stakes,
-            )
-        };
+        } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         deactivate_features(&mut genesis_config, &features_to_deactivate);
 
@@ -1194,9 +1181,8 @@ mod tests {
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_rewards_computation_and_partitioned_distribution_one_block(is_alpenglow: bool) {
+    #[test]
+    fn test_rewards_computation_and_partitioned_distribution_one_block() {
         agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
@@ -1206,7 +1192,7 @@ mod tests {
                 ..
             },
             bank_forks,
-        ) = create_default_reward_bank(100, starting_slot - 1, is_alpenglow);
+        ) = create_default_reward_bank(100, starting_slot - 1);
 
         // simulate block progress
         for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
@@ -1248,7 +1234,7 @@ mod tests {
                 // VAT is transferred to the incinerator at the epoch boundary, so it does not
                 // change capitalization until the bank is frozen. Alpenglow's two epoch metadata
                 // accounts do change capitalization when their balances change, however.
-                let expected_post_cap = if is_alpenglow {
+                let expected_post_cap = {
                     let parent_metadata_lamports = previous_bank
                         .get_balance(&VOTE_REWARD_ACCOUNT_ADDR)
                         .checked_add(RewardEpochDelegatedStakes::account_lamports_for_tests(
@@ -1266,21 +1252,15 @@ mod tests {
                         .unwrap()
                         .checked_add(current_metadata_lamports)
                         .unwrap()
-                } else {
-                    pre_cap
                 };
                 assert_eq!(post_cap, expected_post_cap);
 
                 let incinerator_lamports = curr_bank.get_balance(&incinerator::id());
-                let expected_vat_burn = if is_alpenglow {
-                    RewardEpochDelegatedStakes::get(&curr_bank)
-                        .unwrap()
-                        .delegated_stakes
-                        .len() as u64
-                        * curr_bank.current_slot_params().vat_to_burn_per_epoch()
-                } else {
-                    0
-                };
+                let expected_vat_burn = RewardEpochDelegatedStakes::get(&curr_bank)
+                    .unwrap()
+                    .delegated_stakes
+                    .len() as u64
+                    * curr_bank.current_slot_params().vat_to_burn_per_epoch();
                 assert_eq!(incinerator_lamports, expected_vat_burn);
 
                 // Make a root the bank, which is the first bank in the epoch.
@@ -1566,7 +1546,6 @@ mod tests {
             vec![2_000_000_000; num_rewards],
             stake_account_stores_per_block,
             starting_slot,
-            true,
         );
 
         // Slot before the epoch boundary contains empty rewards (since fees are
