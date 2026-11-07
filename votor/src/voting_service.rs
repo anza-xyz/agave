@@ -1,12 +1,19 @@
 use {
+    crate::{
+        vote_history::{VoteHistory, VoteHistoryError},
+        vote_history_storage::{SavedVoteHistoryVersions, VoteHistoryStorage},
+        voting_service::stats::Stats,
+    },
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
         wire::VersionedWireConsensusMessage,
     },
     bytes::Bytes,
-    crossbeam_channel::{Receiver, RecvTimeoutError},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_measure::measure_us,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         slot_params::slot_time_feature_gates,
         validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -14,12 +21,17 @@ use {
     std::{
         collections::{BTreeMap, HashSet},
         ops::Bound::{Excluded, Included, Unbounded},
-        sync::{Arc, RwLock},
-        thread::{self, Builder, JoinHandle},
+        sync::{
+            Arc, RwLock,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::sync::{mpsc, mpsc::error::TrySendError},
+    tokio::sync::mpsc::{self, error::TrySendError},
 };
+
+mod stats;
 
 /// Max new packets per slot in steady state:
 /// - Notarize + Finalize votes
@@ -67,10 +79,24 @@ const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum BLSOp {
-    PushVote { vote: Arc<VoteMessage> },
-    PushCertificates { certificates: Vec<Arc<Certificate>> },
-    RefreshVotes { votes: Vec<Arc<VoteMessage>> },
-    RefreshCertificates { certificates: Vec<Arc<Certificate>> },
+    LoadVoteHistory {
+        pubkey: Pubkey,
+        reply_sender: Sender<Result<Box<VoteHistory>, VoteHistoryError>>,
+    },
+    PushVote {
+        vote: Arc<VoteMessage>,
+        saved_vote_history: Box<SavedVoteHistoryVersions>,
+    },
+    PushCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
+    RefreshVotes {
+        votes: Vec<Arc<VoteMessage>>,
+        saved_vote_history: Box<SavedVoteHistoryVersions>,
+    },
+    RefreshCertificates {
+        certificates: Vec<Arc<Certificate>>,
+    },
 }
 
 #[derive(Debug)]
@@ -195,166 +221,214 @@ impl StandstillRefreshQueue {
     }
 }
 
-pub struct VotingService {
-    thread_hdl: JoinHandle<()>,
+struct VotingService {
+    exit: Arc<AtomicBool>,
+    bls_receiver: Receiver<BLSOp>,
+    cluster_info: Arc<ClusterInfo>,
+    egress: mpsc::Sender<Bytes>,
+    highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    vote_history_storage: Arc<dyn VoteHistoryStorage>,
+    standstill_queue: StandstillRefreshQueue,
+    stats: Stats,
 }
 
 impl VotingService {
-    pub fn new(
+    fn new(
+        exit: Arc<AtomicBool>,
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
         egress: mpsc::Sender<Bytes>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+        vote_history_storage: Arc<dyn VoteHistoryStorage>,
     ) -> Self {
-        let mut standstill_queue = StandstillRefreshQueue::default();
-        let thread_hdl = Builder::new()
-            .name("solVotorVoteSvc".to_string())
-            .spawn(move || {
-                info!("AlpenglowVotingService has started");
-                loop {
-                    Self::maybe_handle_standstill_queue(
-                        &mut standstill_queue,
-                        highest_finalized.as_ref(),
-                        &cluster_info,
-                        &egress,
-                    );
+        let standstill_queue = StandstillRefreshQueue::default();
+        Self {
+            exit,
+            bls_receiver,
+            cluster_info,
+            egress,
+            highest_finalized,
+            vote_history_storage,
+            standstill_queue,
+            stats: Stats::default(),
+        }
+    }
 
-                    let bls_op = match bls_receiver.recv_timeout(STANDSTILL_REFRESH_INTERVAL) {
-                        Ok(bls_op) => bls_op,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                        Err(RecvTimeoutError::Timeout) => continue,
-                    };
-                    Self::handle_bls_op(&cluster_info, bls_op, &egress, &mut standstill_queue);
-                }
-                info!("AlpenglowVotingService has stopped");
-            })
-            .unwrap();
-        Self { thread_hdl }
+    fn run(mut self) {
+        info!("AlpenglowVotingService has started");
+        while !self.exit.load(Ordering::Relaxed) {
+            self.maybe_handle_standstill_queue();
+
+            let bls_op = match self.bls_receiver.recv_timeout(STANDSTILL_REFRESH_INTERVAL) {
+                Ok(bls_op) => bls_op,
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => continue,
+            };
+            if let Err(e) = self.handle_bls_op(bls_op) {
+                error!(
+                    "storing vote history failed with {e}. Consider using `--wait-to-vote-slot` \
+                     when restarting.",
+                );
+                self.exit.store(true, Ordering::Relaxed);
+            }
+            self.stats.maybe_report();
+        }
+        info!("AlpenglowVotingService has stopped");
     }
 
     /// If more than 1 second has passed, prune and send out messages from the queue.
-    fn maybe_handle_standstill_queue(
-        standstill_queue: &mut StandstillRefreshQueue,
-        highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
-        cluster_info: &ClusterInfo,
-        egress: &mpsc::Sender<Bytes>,
-    ) {
-        if !standstill_queue.should_refresh() {
+    fn maybe_handle_standstill_queue(&mut self) {
+        if !self.standstill_queue.should_refresh() {
             return;
         }
 
-        if standstill_queue.is_empty() {
-            standstill_queue.reset_refresh_timer();
+        if self.standstill_queue.is_empty() {
+            self.standstill_queue.reset_refresh_timer();
             return;
         }
 
         let mut num_sent_messages = 0usize;
 
         let highest_finalized_slot_and_certs = {
-            let highest_finalized = highest_finalized.read().unwrap();
+            let highest_finalized = self.highest_finalized.read().unwrap();
             highest_finalized
                 .as_ref()
                 .map(|hf| (hf.slot(), hf.clone_certificates()))
         };
 
         if let Some((highest_finalized_slot, certificates)) = highest_finalized_slot_and_certs {
-            standstill_queue.prune(highest_finalized_slot.slot());
+            self.standstill_queue.prune(highest_finalized_slot.slot());
 
             // Refresh the latest finalization (either Finalize + Notarize or FastFinalize)
             for certificate in certificates {
                 let message = VersionedWireConsensusMessage::new_from_cert(
                     certificate,
-                    cluster_info.my_shred_version(),
+                    self.cluster_info.my_shred_version(),
                 );
-                Self::broadcast_consensus_message(&message, egress);
+                broadcast_consensus_message(&self.egress, &message);
                 num_sent_messages = num_sent_messages.saturating_add(1);
             }
         }
 
         // Refresh the next messages from the queue while adhering to the budget
         let remaining_budget = STANDSTILL_REFRESH_BATCH_SIZE.saturating_sub(num_sent_messages);
-        standstill_queue.for_next_n_messages(remaining_budget, |message| {
-            Self::broadcast_consensus_message(message, egress);
-        });
+        self.standstill_queue
+            .for_next_n_messages(remaining_budget, |message| {
+                broadcast_consensus_message(&self.egress, message);
+            });
 
-        standstill_queue.reset_refresh_timer();
+        self.standstill_queue.reset_refresh_timer();
     }
 
-    /// Serialize a consensus message and hand it to the endpoint. The
-    /// endpoint fans it out to every connected peer.
-    fn broadcast_consensus_message(
-        message: &VersionedWireConsensusMessage,
-        egress: &mpsc::Sender<Bytes>,
-    ) {
-        let buf = match wincode::serialize(message) {
-            Ok(buf) => Bytes::from(buf),
-            Err(err) => {
-                error!("Failed to serialize alpenglow message: {err:?}");
-                return;
-            }
-        };
-
-        // Drop on full / closed channel: votor consensus tolerates loss, we
-        // never want to backpressure into consensus, but will shout loudly.
-        match egress.try_send(buf) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                error!("alpenglow transport egress channel full; dropping votes/certs!");
-            }
-            Err(TrySendError::Closed(_)) => {
-                // this is intentional - we can tear down the transport before votor.
-                warn!("alpenglow egress channel closed; must be shutting down");
-            }
-        }
-    }
-
-    fn handle_bls_op(
-        cluster_info: &ClusterInfo,
-        bls_op: BLSOp,
-        egress: &mpsc::Sender<Bytes>,
-        standstill_queue: &mut StandstillRefreshQueue,
-    ) {
+    fn handle_bls_op(&mut self, bls_op: BLSOp) -> Result<(), VoteHistoryError> {
         match bls_op {
-            BLSOp::PushVote { vote } => {
+            BLSOp::LoadVoteHistory {
+                pubkey,
+                reply_sender,
+            } => {
+                let _ = reply_sender.send(
+                    VoteHistory::restore(self.vote_history_storage.as_ref(), &pubkey).map(Box::new),
+                );
+            }
+            BLSOp::PushVote {
+                vote,
+                saved_vote_history,
+            } => {
+                let (_, store_us) =
+                    measure_us!(self.vote_history_storage.store(&saved_vote_history)?);
                 let msg = VersionedWireConsensusMessage::new_from_vote(
                     Arc::unwrap_or_clone(vote),
-                    cluster_info.my_shred_version(),
+                    self.cluster_info.my_shred_version(),
                 );
-                Self::broadcast_consensus_message(&msg, egress);
+                broadcast_consensus_message(&self.egress, &msg);
+                self.stats.vote_history_store_us.add_sample(store_us);
             }
             BLSOp::PushCertificates { certificates } => {
                 for certificate in certificates {
                     let msg = VersionedWireConsensusMessage::new_from_cert(
                         Arc::unwrap_or_clone(certificate),
-                        cluster_info.my_shred_version(),
+                        self.cluster_info.my_shred_version(),
                     );
-                    Self::broadcast_consensus_message(&msg, egress);
+                    broadcast_consensus_message(&self.egress, &msg);
                 }
             }
-            BLSOp::RefreshVotes { votes } => {
+            BLSOp::RefreshVotes {
+                votes,
+                saved_vote_history,
+            } => {
+                let (_, store_us) =
+                    measure_us!(self.vote_history_storage.store(&saved_vote_history)?);
                 for vote in votes {
                     let msg = VersionedWireConsensusMessage::new_from_vote(
                         Arc::unwrap_or_clone(vote),
-                        cluster_info.my_shred_version(),
+                        self.cluster_info.my_shred_version(),
                     );
-                    standstill_queue.insert(msg);
+                    self.standstill_queue.insert(msg);
                 }
+                self.stats.vote_history_store_us.add_sample(store_us);
             }
             BLSOp::RefreshCertificates { certificates } => {
                 for certificate in certificates {
                     let message = VersionedWireConsensusMessage::new_from_cert(
                         Arc::unwrap_or_clone(certificate),
-                        cluster_info.my_shred_version(),
+                        self.cluster_info.my_shred_version(),
                     );
-                    standstill_queue.insert(message);
+                    self.standstill_queue.insert(message);
                 }
             }
         }
+        Ok(())
     }
+}
 
-    pub fn join(self) -> thread::Result<()> {
-        self.thread_hdl.join()
+/// Serialize a consensus message and hand it to the endpoint. The
+/// endpoint fans it out to every connected peer.
+fn broadcast_consensus_message(
+    egress: &mpsc::Sender<Bytes>,
+    message: &VersionedWireConsensusMessage,
+) {
+    let buf = match wincode::serialize(message) {
+        Ok(buf) => Bytes::from(buf),
+        Err(err) => {
+            error!("Failed to serialize alpenglow message: {err:?}");
+            return;
+        }
+    };
+
+    // Drop on full / closed channel: votor consensus tolerates loss, we
+    // never want to backpressure into consensus, but will shout loudly.
+    match egress.try_send(buf) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_)) => {
+            error!("alpenglow transport egress channel full; dropping votes/certs!");
+        }
+        Err(TrySendError::Closed(_)) => {
+            // this is intentional - we can tear down the transport before votor.
+            warn!("alpenglow egress channel closed; must be shutting down");
+        }
     }
+}
+
+pub fn start_voting_service(
+    exit: Arc<AtomicBool>,
+    bls_receiver: Receiver<BLSOp>,
+    cluster_info: Arc<ClusterInfo>,
+    egress: mpsc::Sender<Bytes>,
+    highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    vote_history_storage: Arc<dyn VoteHistoryStorage>,
+) -> JoinHandle<()> {
+    let voting_service = VotingService::new(
+        exit,
+        bls_receiver,
+        cluster_info,
+        egress,
+        highest_finalized,
+        vote_history_storage,
+    );
+    Builder::new()
+        .name("solVotorVoteSvc".to_string())
+        .spawn(move || voting_service.run())
+        .unwrap()
 }
 
 #[cfg(test)]
@@ -362,7 +436,11 @@ impl VotingService {
 mod tests {
     use {
         super::*,
-        crate::peer_list_updater::PeerListService,
+        crate::{
+            peer_list_updater::PeerListService,
+            vote_history::VoteHistory,
+            vote_history_storage::{NullVoteHistoryStorage, SavedVoteHistory},
+        },
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
@@ -587,7 +665,7 @@ mod tests {
         egress: mpsc::Sender<Bytes>,
         peer_list: PeerListSender,
     ) -> (
-        VotingService,
+        JoinHandle<()>,
         PeerListService,
         Vec<ValidatorVoteKeypairs>,
         Arc<ClusterInfo>,
@@ -623,11 +701,13 @@ mod tests {
             Arc::new(MigrationStatus::post_migration_status()),
         );
         (
-            VotingService::new(
+            start_voting_service(
+                Arc::new(AtomicBool::new(false)),
                 bls_receiver,
                 cluster_info.clone(),
                 egress,
                 Arc::new(RwLock::new(None)),
+                Arc::new(NullVoteHistoryStorage::default()),
             ),
             peer_list_service,
             validator_keypairs,
@@ -635,7 +715,13 @@ mod tests {
         )
     }
 
-    #[test_case(BLSOp::PushVote { vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)) }, None)]
+    #[test_case(BLSOp::PushVote {
+        vote: Arc::new(test_vote(Vote::new_skip_vote(5), 1, 0)),
+        saved_vote_history: Box::new(SavedVoteHistory::new(
+            &VoteHistory::new(Pubkey::default(), 0),
+            &solana_signer::null_signer::NullSigner::new(&Pubkey::default()),
+        ).unwrap().into()),
+    }, None)]
     #[test_case(BLSOp::PushCertificates {
         certificates: vec![Arc::new(Certificate {
         cert_type: CertificateType::Skip(5),
@@ -649,13 +735,17 @@ mod tests {
     })))]
     #[test_case(BLSOp::RefreshVotes {
         votes: vec![Arc::new(test_vote(Vote::new_skip_vote(6), 1, 0))],
+        saved_vote_history: Box::new(SavedVoteHistory::new(
+            &VoteHistory::new(Pubkey::default(), 0),
+            &solana_signer::null_signer::NullSigner::new(&Pubkey::default()),
+        ).unwrap().into()),
     }, None)]
     fn test_send_message(bls_op: BLSOp, expected_message: Option<ConsensusMessage>) {
         agave_logger::setup();
 
         let expected_message = expected_message.unwrap_or_else(|| match &bls_op {
-            BLSOp::PushVote { vote } => ConsensusMessage::Vote((**vote).clone()),
-            BLSOp::RefreshVotes { votes } => ConsensusMessage::Vote((*votes[0]).clone()),
+            BLSOp::PushVote { vote, .. } => ConsensusMessage::Vote((**vote).clone()),
+            BLSOp::RefreshVotes { votes, .. } => ConsensusMessage::Vote((*votes[0]).clone()),
             _ => panic!("expected message is required for certificate operations"),
         });
 
