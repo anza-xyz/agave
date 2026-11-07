@@ -1,7 +1,9 @@
 use {
-    common::{LoaderV3Features, create_sysvar_account, process_instruction_with_setup},
+    common::{
+        LoaderV3Features, create_sysvar_account, process_instruction_with_conformance_harness,
+    },
     solana_account::{
-        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+        Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
     },
     solana_clock::Clock,
     solana_instruction::Instruction,
@@ -10,12 +12,10 @@ use {
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, extend_program},
         state::UpgradeableLoaderState,
     },
-    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::{bpf_loader_upgradeable::id, native_loader, sysvar},
-    solana_svm_type_overrides::sync::Arc,
+    solana_svm::conformance::programs::keyed_account_for_bpf_loader_upgradeable_program,
     solana_system_interface::{
         MAX_PERMITTED_DATA_LENGTH, error::SystemError, program as system_program,
     },
@@ -27,37 +27,27 @@ mod common;
 
 fn process_instruction(
     loader_v3_features: LoaderV3Features,
-    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+    transaction_accounts: Vec<(Pubkey, Account)>,
     instruction: Instruction,
     expected_result: Result<(), InstructionError>,
-) -> Vec<AccountSharedData> {
-    process_instruction_with_setup(
-        &instruction.program_id,
-        &instruction.data,
+) -> Vec<(Pubkey, Account)> {
+    process_instruction_with_conformance_harness(
+        instruction,
         transaction_accounts,
-        instruction.accounts,
         // SIMD-0685 removes ExtendProgram, which these tests exercise.
         LoaderV3Features {
             remove_extend_program: false,
             ..loader_v3_features
         },
         expected_result,
-        |invoke_context| {
-            invoke_context.program_cache_for_tx_batch.replenish(
-                system_program::id(),
-                Arc::new(ProgramCacheEntry::new_builtin(
-                    solana_system_program::system_processor::Entrypoint::register,
-                )),
-            );
-        },
     )
 }
 
 fn create_upgradeable_loader_account(
     account_state: &UpgradeableLoaderState,
     account_data_len: usize,
-) -> AccountSharedData {
-    AccountSharedData::new_data_with_space(
+) -> Account {
+    Account::new_data_with_space(
         Rent::default().minimum_balance(account_data_len),
         account_state,
         account_data_len,
@@ -66,31 +56,36 @@ fn create_upgradeable_loader_account(
     .expect("state failed to serialize into account data")
 }
 
-fn create_clock_account(slot: u64) -> AccountSharedData {
+fn create_clock_account(slot: u64) -> Account {
     create_sysvar_account(&Clock {
         slot,
         ..Clock::default()
     })
+    .into()
 }
 
 fn get_accounts(
-    program: (Pubkey, AccountSharedData),
-    programdata: (Pubkey, AccountSharedData),
+    program: (Pubkey, Account),
+    programdata: (Pubkey, Account),
     payer_address: &Pubkey,
-) -> Vec<(Pubkey, AccountSharedData)> {
+) -> Vec<(Pubkey, Account)> {
     vec![
         program,
         programdata,
         (
             *payer_address,
-            AccountSharedData::empty(10_000_000_000, &system_program::id()),
+            Account::empty(10_000_000_000, &system_program::id()),
         ),
         (sysvar::clock::id(), create_clock_account(1)),
-        (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
+        (
+            sysvar::rent::id(),
+            create_sysvar_account(&Rent::default()).into(),
+        ),
         (
             system_program::id(),
-            AccountSharedData::empty(0, &native_loader::id()),
+            Account::empty(0, &native_loader::id()),
         ),
+        keyed_account_for_bpf_loader_upgradeable_program(),
     ]
 }
 
@@ -141,7 +136,7 @@ fn test_extend_program() {
         Ok(()),
     );
     assert_eq!(
-        accounts.get(1).unwrap().data().len(),
+        accounts.get(1).unwrap().1.data().len(),
         program_data_len + ADDITIONAL_BYTES as usize
     );
 }
@@ -186,12 +181,10 @@ fn test_failed_extend_twice_in_same_slot() {
         Ok(()),
     );
     assert_eq!(
-        accounts.get(1).unwrap().data().len(),
+        accounts.get(1).unwrap().1.data().len(),
         program_data_len + ADDITIONAL_BYTES as usize
     );
-    for ((_, account), result) in transaction_accounts.iter_mut().zip(accounts) {
-        *account = result;
-    }
+    transaction_accounts = accounts;
 
     // Extending the program in the same slot should fail
     process_instruction(
@@ -356,15 +349,15 @@ fn test_extend_program_with_invalid_payer() {
     transaction_accounts.extend([
         (
             payer_with_sufficient_funds,
-            AccountSharedData::empty(10_000_000_000, &system_program::id()),
+            Account::empty(10_000_000_000, &system_program::id()),
         ),
         (
             payer_with_insufficient_funds,
-            AccountSharedData::empty(rent.minimum_balance(0), &system_program::id()),
+            Account::empty(rent.minimum_balance(0), &system_program::id()),
         ),
         (
             payer_with_invalid_owner,
-            AccountSharedData::empty(10_000_000_000, &id()),
+            Account::empty(10_000_000_000, &id()),
         ),
     ]);
 
@@ -474,7 +467,7 @@ fn test_extend_program_without_payer() {
         Ok(()),
     );
     assert_eq!(
-        accounts.get(1).unwrap().data().len(),
+        accounts.get(1).unwrap().1.data().len(),
         program_data_len + ADDITIONAL_BYTES as usize
     );
 }
@@ -487,7 +480,7 @@ fn test_extend_program_with_invalid_system_program() {
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
     let program_data_len = 100;
-    let transaction_accounts = get_accounts(
+    let mut transaction_accounts = get_accounts(
         (
             program_address,
             create_upgradeable_loader_account(
@@ -517,14 +510,16 @@ fn test_extend_program_with_invalid_system_program() {
     );
 
     // Change system program to an invalid key
+    let invalid_system_program = Pubkey::new_unique();
     {
         let system_program_meta = ix
             .accounts
             .iter_mut()
             .find(|meta| meta.pubkey == system_program::ID)
             .expect("expected to find system program account meta");
-        system_program_meta.pubkey = Pubkey::new_unique();
+        system_program_meta.pubkey = invalid_system_program;
     }
+    transaction_accounts.push((invalid_system_program, Account::default()));
 
     process_instruction(
         LoaderV3Features::all_enabled(),
@@ -695,7 +690,7 @@ fn test_extend_program_with_uninitialized_program_data(with_data: bool) {
         UpgradeableLoaderState::size_of_uninitialized(),
     );
     if !with_data {
-        programdata_account.set_data_from_slice(&[]);
+        programdata_account.data.clear();
     }
     let transaction_accounts = get_accounts(
         (
@@ -907,7 +902,7 @@ fn get_accounts_for_simd_0431_tests(
     upgrade_authority_address: &Pubkey,
     payer_address: &Pubkey,
     programdata_len: usize,
-) -> Vec<(Pubkey, AccountSharedData)> {
+) -> Vec<(Pubkey, Account)> {
     let data = read_noop_elf();
 
     // Set up ProgramData state.
@@ -977,12 +972,10 @@ fn test_extend_program_minimum_size_requirement() {
         );
 
         let expected_new_len = programdata_len + (additional_bytes as usize);
-        assert_eq!(accounts.get(1).unwrap().data().len(), expected_new_len);
+        assert_eq!(accounts.get(1).unwrap().1.data().len(), expected_new_len);
         programdata_len = expected_new_len;
 
-        for ((_, account), result) in transaction_accounts.iter_mut().zip(accounts) {
-            *account = result;
-        }
+        transaction_accounts = accounts;
     }
 }
 
@@ -1027,7 +1020,7 @@ fn test_extend_program_minimum_size_requirement_at_matching_headroom() {
         Ok(()),
     );
     assert_eq!(
-        accounts.get(1).unwrap().data().len(),
+        accounts.get(1).unwrap().1.data().len(),
         programdata_len + (MINIMUM_EXTEND_PROGRAM_BYTES as usize),
     );
 }
@@ -1084,7 +1077,7 @@ fn test_extend_program_near_max_headroom_requirement() {
             Ok(()),
         );
         assert_eq!(
-            accounts.get(1).unwrap().data().len(),
+            accounts.get(1).unwrap().1.data().len(),
             programdata_len + (headroom as usize),
         );
     }
@@ -1093,14 +1086,19 @@ fn test_extend_program_near_max_headroom_requirement() {
 #[test]
 fn test_extend_program_simd_0685() {
     // With SIMD-0685 enabled, the instruction should be rejected.
-    let instruction = extend_program(&Pubkey::new_unique(), None, MINIMUM_EXTEND_PROGRAM_BYTES);
-    process_instruction_with_setup(
-        &instruction.program_id,
-        &instruction.data,
-        Vec::new(),
-        Vec::new(),
+    let mut instruction = extend_program(&Pubkey::new_unique(), None, MINIMUM_EXTEND_PROGRAM_BYTES);
+    instruction.accounts.clear();
+    process_instruction_with_conformance_harness(
+        instruction,
+        vec![
+            (sysvar::clock::id(), create_clock_account(1)),
+            (
+                sysvar::rent::id(),
+                create_sysvar_account(&Rent::default()).into(),
+            ),
+            keyed_account_for_bpf_loader_upgradeable_program(),
+        ],
         LoaderV3Features::all_enabled(),
         Err(InstructionError::InvalidInstructionData),
-        |_invoke_context| {},
     );
 }
