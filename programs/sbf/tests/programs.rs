@@ -1604,7 +1604,7 @@ fn test_program_sbf_call_depth() {
     let program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
 
     let mut execute = |depth: usize| {
-        let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
+        let instruction = Instruction::new_with_wincode(program_id, &depth, vec![]);
 
         let context = InstrContext::new_with_default_budget(
             feature_set,
@@ -1638,7 +1638,7 @@ fn test_program_sbf_compute_budget() {
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
     let sysvar_cache = default_sysvar_cache();
 
-    let instruction = Instruction::new_with_bincode(program_id, &0, vec![]);
+    let instruction = Instruction::new_with_wincode(program_id, &0, vec![]);
 
     let context = InstrContext {
         feature_set,
