@@ -1,7 +1,5 @@
 use {
-    common::{
-        LoaderV3Features, create_sysvar_account, process_conformance_instruction_with_features,
-    },
+    common::{LoaderV3Features, create_sysvar_account, process_instruction_with_features},
     solana_account::{
         Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as StateMut,
     },
@@ -74,12 +72,11 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             min_programdata_balance.saturating_add(1),
             &system_program::id(),
         );
-        let rent_account: Account = create_sysvar_account(&rent).into();
+        let rent_account = create_sysvar_account(&rent);
         let clock_account: Account = create_sysvar_account(&Clock {
             slot: SLOT,
             ..Clock::default()
-        })
-        .into();
+        });
         let system_program_account = Account::empty(0, &native_loader::id());
         let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
@@ -158,7 +155,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
                 max_data_len,
             })
             .unwrap();
-        process_conformance_instruction_with_features(
+        process_instruction_with_features(
             &bpf_loader_upgradeable::id(),
             &instruction_data,
             transaction_accounts,
