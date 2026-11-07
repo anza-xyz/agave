@@ -1,8 +1,6 @@
 use {
-    common::process_instruction,
-    solana_account::{
-        AccountSharedData, WritableAccount, state_traits::StateMutWincode as StateMut,
-    },
+    common::process_conformance_instruction as process_instruction,
+    solana_account::{Account, WritableAccount, state_traits::StateMutWincode as StateMut},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
@@ -21,13 +19,13 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
-    let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_upgrade_authority_address = Pubkey::new_unique();
-    let new_upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
-    let mut programdata_account = AccountSharedData::new_data_with_space(
+    let mut programdata_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::ProgramData {
             slot,
@@ -72,7 +70,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
         ],
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -92,7 +90,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
         vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -105,7 +103,9 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     let mut file = File::open("test_elfs/out/sbpfv0_verifier_err.so").expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    programdata_account.resize(UpgradeableLoaderState::size_of_programdata(elf.len()), 0);
+    programdata_account
+        .data
+        .resize(UpgradeableLoaderState::size_of_programdata(elf.len()), 0);
     programdata_account
         .data_as_mut_slice()
         .get_mut(UpgradeableLoaderState::size_of_programdata_metadata()..)
@@ -209,13 +209,13 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
-    let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_upgrade_authority_address = Pubkey::new_unique();
-    let new_upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
-    let mut programdata_account = AccountSharedData::new_data_with_space(
+    let mut programdata_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::ProgramData {
             slot,
@@ -261,7 +261,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
         Ok(()),
     );
 
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -377,7 +377,10 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
                 invalid_upgrade_authority_address,
                 upgrade_authority_account.clone(),
             ),
-            (new_upgrade_authority_address, new_upgrade_authority_account),
+            (
+                new_upgrade_authority_address,
+                new_upgrade_authority_account.clone(),
+            ),
         ],
         vec![
             programdata_meta.clone(),
@@ -404,6 +407,10 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
+            (
+                new_upgrade_authority_address,
+                new_upgrade_authority_account.clone(),
+            ),
         ],
         vec![
             programdata_meta.clone(),
@@ -425,6 +432,7 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account),
+            (new_upgrade_authority_address, new_upgrade_authority_account),
         ],
         vec![
             programdata_meta,
@@ -441,11 +449,11 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_authority_address = Pubkey::new_unique();
-    let new_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_authority_account = Account::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account = AccountSharedData::new_data_with_space(
+    let mut buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
@@ -483,7 +491,7 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
         vec![buffer_meta.clone(), authority_meta.clone()],
         Err(InstructionError::IncorrectAuthority),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -508,7 +516,7 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
         ],
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -609,11 +617,11 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_authority_address = Pubkey::new_unique();
-    let new_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_authority_account = Account::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account = AccountSharedData::new_data_with_space(
+    let mut buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
@@ -660,7 +668,7 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
         ],
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
