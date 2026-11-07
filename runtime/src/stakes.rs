@@ -1345,7 +1345,7 @@ pub(crate) mod tests {
         // not a stake account, and whacks above entry
         stakes_cache.check_and_store(
             &stake_pubkey,
-            &AccountSharedData::new(1, 0, &stake::program::id()),
+            &AccountSharedData::empty(1, &stake::program::id()),
             None,
             false,
             false,
@@ -1509,7 +1509,7 @@ pub(crate) mod tests {
             &stake::program::id(),
         );
         let other_pubkey = Pubkey::new_unique();
-        let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let other_account = AccountSharedData::empty(1, &Pubkey::default());
         let missing_pubkey = Pubkey::new_unique();
         let accounts = [
             (vote_pubkey, vote_account),
@@ -1565,7 +1565,7 @@ pub(crate) mod tests {
         let wrong_size_account =
             AccountSharedData::new_with_data(1, vec![0; 1], &solana_vote_program::id());
         let other_pubkey = Pubkey::new_unique();
-        let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let other_account = AccountSharedData::empty(1, &Pubkey::default());
         let missing_pubkey = Pubkey::new_unique();
         let accounts = [
             (vote_pubkey, vote_account),

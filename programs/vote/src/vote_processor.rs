@@ -462,7 +462,7 @@ mod tests {
     }
 
     fn create_default_account() -> AccountSharedData {
-        AccountSharedData::new(0, 0, &Pubkey::new_unique())
+        AccountSharedData::empty(0, &Pubkey::new_unique())
     }
 
     #[derive(Clone, Copy, Default)]
@@ -1016,10 +1016,10 @@ mod tests {
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
         let inflation_rewards_collector = solana_pubkey::new_rand();
         let inflation_rewards_collector_account =
-            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(0, &solana_sdk_ids::system_program::id());
         let block_revenue_collector = solana_pubkey::new_rand();
         let block_revenue_collector_account =
-            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(0, &solana_sdk_ids::system_program::id());
         let inflation_rewards_commission_bps = 1_234;
         let block_revenue_commission_bps = 5_678;
         let instruction_data =
@@ -1294,10 +1294,10 @@ mod tests {
         let node_account = AccountSharedData::default();
         let inflation_rewards_collector = solana_pubkey::new_rand();
         let inflation_rewards_collector_account =
-            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(0, &solana_sdk_ids::system_program::id());
         let block_revenue_collector = solana_pubkey::new_rand();
         let block_revenue_collector_account =
-            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(0, &solana_sdk_ids::system_program::id());
         let instruction_with_bad_pop =
             wincode::serialize(&VoteInstruction::InitializeAccountV2(VoteInitV2 {
                 node_pubkey,
@@ -1693,7 +1693,7 @@ mod tests {
         let rent_sysvar_account = create_sysvar_account(&rent);
         let collector_lamports = rent.minimum_balance(0);
         let new_collector_account =
-            AccountSharedData::new(collector_lamports, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(collector_lamports, &solana_sdk_ids::system_program::id());
 
         let transaction_accounts = vec![
             (vote_pubkey, vote_account.clone()),
@@ -2018,7 +2018,7 @@ mod tests {
         let non_system_owner = Pubkey::new_unique();
         let non_system_collector_pubkey = Pubkey::new_unique();
         let non_system_collector_account =
-            AccountSharedData::new(collector_lamports, 0, &non_system_owner);
+            AccountSharedData::empty(collector_lamports, &non_system_owner);
         let mut non_system_transaction_accounts = transaction_accounts.clone();
         non_system_transaction_accounts[1] =
             (non_system_collector_pubkey, non_system_collector_account);
@@ -2058,7 +2058,7 @@ mod tests {
         // Should fail - new collector not rent-exempt.
         let not_rent_exempt_collector_pubkey = Pubkey::new_unique();
         let not_rent_exempt_collector_account =
-            AccountSharedData::new(0, 0, &solana_sdk_ids::system_program::id()); // 0 lamports
+            AccountSharedData::empty(0, &solana_sdk_ids::system_program::id()); // 0 lamports
         let mut not_rent_exempt_transaction_accounts = transaction_accounts.clone();
         not_rent_exempt_transaction_accounts[1] = (
             not_rent_exempt_collector_pubkey,
@@ -3410,9 +3410,8 @@ mod tests {
             block_revenue_commission_bps: 5_678,
         };
 
-        let collector_account = AccountSharedData::new(
+        let collector_account = AccountSharedData::empty(
             rent.minimum_balance(0),
-            0,
             &solana_sdk_ids::system_program::id(),
         );
 
@@ -4836,7 +4835,7 @@ mod tests {
         let source_pubkey = Pubkey::new_unique();
         let source_lamports = 1_000_000;
         let source_account =
-            AccountSharedData::new(source_lamports, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(source_lamports, &solana_sdk_ids::system_program::id());
 
         let deposit_amount = 100_000;
 
@@ -4868,7 +4867,7 @@ mod tests {
             (source_pubkey, source_account.clone()),
             (
                 solana_sdk_ids::system_program::id(),
-                AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
             ),
         ];
 
@@ -4896,7 +4895,7 @@ mod tests {
         let source_pubkey = Pubkey::new_unique();
         let source_lamports = 1_000_000;
         let source_account =
-            AccountSharedData::new(source_lamports, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(source_lamports, &solana_sdk_ids::system_program::id());
 
         let deposit_amount = 100_000;
 
@@ -4928,7 +4927,7 @@ mod tests {
             (source_pubkey, source_account.clone()),
             (
                 solana_sdk_ids::system_program::id(),
-                AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
             ),
         ];
 
@@ -5037,7 +5036,7 @@ mod tests {
         );
 
         // Fail - non-system-owned source account.
-        let non_system_source_account = AccountSharedData::new(1_000_000, 0, &Pubkey::new_unique());
+        let non_system_source_account = AccountSharedData::empty(1_000_000, &Pubkey::new_unique());
         process_instruction_with_cu_check(
             VoteProgramFeatures::all_enabled(),
             &instruction_data,
@@ -5046,7 +5045,7 @@ mod tests {
                 (source_pubkey, non_system_source_account),
                 (
                     solana_sdk_ids::system_program::id(),
-                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                    AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
                 ),
             ],
             instruction_accounts.clone(),
@@ -5062,7 +5061,7 @@ mod tests {
                 (vote_pubkey, vote_account_v4.clone()),
                 (
                     solana_sdk_ids::system_program::id(),
-                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                    AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
                 ),
             ],
             vec![
@@ -5088,7 +5087,7 @@ mod tests {
 
         // Fail - source account has fewer lamports than the deposit.
         let underfunded_source_account =
-            AccountSharedData::new(deposit_amount - 1, 0, &solana_sdk_ids::system_program::id());
+            AccountSharedData::empty(deposit_amount - 1, &solana_sdk_ids::system_program::id());
         process_instruction_with_cu_check(
             VoteProgramFeatures::all_enabled(),
             &instruction_data,
@@ -5097,7 +5096,7 @@ mod tests {
                 (source_pubkey, underfunded_source_account),
                 (
                     solana_sdk_ids::system_program::id(),
-                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                    AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
                 ),
             ],
             instruction_accounts.clone(),
@@ -5130,7 +5129,7 @@ mod tests {
                 (source_pubkey, source_account.clone()),
                 (
                     solana_sdk_ids::system_program::id(),
-                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                    AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
                 ),
             ],
             instruction_accounts.clone(),
@@ -5189,7 +5188,7 @@ mod tests {
                 (source_pubkey, resulting_source_account.clone()),
                 (
                     solana_sdk_ids::system_program::id(),
-                    AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
+                    AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id()),
                 ),
             ],
             instruction_accounts.clone(),
