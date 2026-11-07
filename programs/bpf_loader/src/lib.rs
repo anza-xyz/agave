@@ -16,8 +16,8 @@ use {
         deploy_program,
         invoke_context::InvokeContext,
         program_cache::{
-            entry::{ProgramCacheEntry, ProgramCacheEntryType},
             owner::ProgramCacheEntryOwner,
+            tx_batch::{TxBatchCacheEntry, TxBatchCacheEntryType},
         },
         sysvar_cache::get_sysvar_with_account_check,
         vm::execute,
@@ -27,7 +27,6 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_svm_log_collector::{LogCollector, ic_logger_msg},
     solana_svm_measure::measure::Measure,
-    solana_svm_type_overrides::sync::Arc,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, instruction as system_instruction},
     solana_transaction_context::{IndexOfAccount, instruction::InstructionContext},
     std::{cell::RefCell, rc::Rc},
@@ -168,13 +167,15 @@ pub(crate) fn process_instruction_inner<'a>(
     invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
     match &executor.program {
-        ProgramCacheEntryType::FailedVerification(_)
-        | ProgramCacheEntryType::Closed
-        | ProgramCacheEntryType::DelayVisibility => {
+        TxBatchCacheEntryType::FailedVerification
+        | TxBatchCacheEntryType::Closed
+        | TxBatchCacheEntryType::DelayVisibility => {
             ic_logger_msg!(log_collector, "Program is not deployed");
             Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>)
         }
-        ProgramCacheEntryType::Loaded(executable) => execute(executable, invoke_context, &executor),
+        TxBatchCacheEntryType::Loaded(executable) => {
+            execute(executable, invoke_context, &executor.stats)
+        }
         _ => Err(Box::new(InstructionError::UnsupportedProgramId) as Box<dyn std::error::Error>),
     }
     .map(|_| 0)
@@ -877,10 +878,10 @@ fn process_loader_upgradeable_instruction(
                                 .program_cache_for_tx_batch
                                 .store_modified_entry(
                                     program_key,
-                                    Arc::new(ProgramCacheEntry::new_closed_tombstone(
+                                    TxBatchCacheEntry::new_closed_tombstone(
                                         clock.slot,
                                         ProgramCacheEntryOwner::LoaderV3,
-                                    )),
+                                    ),
                                 );
                         }
                         _ => {
@@ -1145,8 +1146,11 @@ mod test_utils {
     use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
     #[cfg(feature = "svm-internal")]
     use {
-        super::*, solana_account::ReadableAccount,
-        solana_program_runtime::program_cache::env::ProgramRuntimeEnvironment,
+        super::*,
+        solana_account::ReadableAccount,
+        solana_program_runtime::program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+        },
         solana_syscalls::create_program_runtime_environment,
     };
 
@@ -1199,7 +1203,7 @@ mod test_utils {
                 if let Ok(loaded_program) = loaded_program {
                     invoke_context
                         .program_cache_for_tx_batch
-                        .store_modified_entry(*pubkey, Arc::new(loaded_program));
+                        .store_modified_entry(*pubkey, TxBatchCacheEntry::from(&loaded_program));
                 }
             }
         }
@@ -1214,14 +1218,12 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_instruction_error::InstructionError,
         solana_program_runtime::{
-            program_cache::{env::ProgramRuntimeEnvironment, metrics::ProgramStatistics},
-            vm::calculate_heap_cost,
+            program_cache::metrics::ProgramStatistics, vm::calculate_heap_cost,
             with_mock_invoke_context,
         },
         solana_pubkey::Pubkey,
-        solana_sbpf::program::BuiltinProgram,
         solana_sdk_ids::sysvar,
-        solana_svm_type_overrides::sync::atomic::{AtomicU64, Ordering},
+        solana_svm_type_overrides::sync::atomic::Ordering,
         solana_sysvar_id::SysvarId,
         std::{assert_matches, fs::File, io::Read},
         test_case::test_case,
@@ -1302,8 +1304,8 @@ mod tests {
         Ok(())
     }
 
-    // Concurrency rationale: these tests construct `ProgramCacheEntry` instances
-    // directly. The struct's `latest_access_slot: AtomicU64` field is defined in
+    // Concurrency rationale: these tests construct `ProgramStatistics` instances
+    // directly. The struct's `AtomicU64` counters are defined in
     // `solana-program-runtime`; under the `shuttle-test` feature
     // `solana-svm-type-overrides` swaps `std::sync::atomic::AtomicU64` for
     // `shuttle::sync::atomic::AtomicU64`, whose Shuttle-backed operations
@@ -1341,21 +1343,19 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let stats = ProgramStatistics {
             uses: 100.into(),
             ..Default::default()
         };
-        let program = ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(env),
+        let program = TxBatchCacheEntry {
+            program: TxBatchCacheEntryType::Unloaded,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 0,
             stats: stats.into(),
-            latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
             .program_cache_for_tx_batch
-            .replenish(program_id, Arc::new(program));
+            .replenish(program_id, program);
         invoke_context
             .program_cache_for_tx_batch
             .set_slot_for_tests(2);
@@ -1392,21 +1392,19 @@ mod tests {
         )];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let program_id = Pubkey::new_unique();
-        let env = ProgramRuntimeEnvironment::from(BuiltinProgram::new_mock());
         let stats = ProgramStatistics {
             uses: 100.into(),
             ..Default::default()
         };
-        let program = ProgramCacheEntry {
-            program: ProgramCacheEntryType::Unloaded(env),
+        let program = TxBatchCacheEntry {
+            program: TxBatchCacheEntryType::Unloaded,
             account_owner: ProgramCacheEntryOwner::LoaderV2,
             deployment_slot: 0,
             stats: stats.into(),
-            latest_access_slot: AtomicU64::new(0),
         };
         invoke_context
             .program_cache_for_tx_batch
-            .replenish(program_id, Arc::new(program));
+            .replenish(program_id, program);
         invoke_context
             .program_cache_for_tx_batch
             .set_slot_for_tests(2);

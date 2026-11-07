@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::program_cache::entry::ProgramCacheEntry,
+    crate::program_cache::tx_batch::TxBatchCacheEntry,
     qualifier_attr::qualifiers,
     solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_epoch_schedule::EpochSchedule,
@@ -16,9 +16,8 @@ use {
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         memory_context::{MemoryContext, MemoryContexts},
         program_cache::{
-            entry::ProgramCacheEntryType,
             env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
-            tx_batch::ProgramCacheForTxBatch,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntryType},
         },
         stable_log,
         sysvar_cache::SysvarCache,
@@ -659,7 +658,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .find(&builtin_id)
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
-            ProgramCacheEntryType::Builtin(program) => program
+            TxBatchCacheEntryType::Builtin(program) => program
                 .get_function_registry()
                 .lookup_by_key(ENTRYPOINT_KEY)
                 .map(|(_name, (function, _codegen))| function),
@@ -851,7 +850,7 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             let Some(entry) = self.program_cache_for_tx_batch.find(program_id) else {
                 continue;
             };
-            let ProgramCacheEntryType::Loaded(ref executable) = entry.program else {
+            let TxBatchCacheEntryType::Loaded(ref executable) = entry.program else {
                 continue;
             };
             callback(instruction_context, executable, register_trace.as_slice());
@@ -1091,7 +1090,7 @@ pub fn mock_process_instruction_with_feature_set<
         } else {
             program_owner
         },
-        Arc::new(ProgramCacheEntry::new_builtin(builtin)),
+        TxBatchCacheEntry::new_builtin(builtin),
     );
     program_cache_for_tx_batch.set_slot_for_tests(
         invoke_context
@@ -1537,7 +1536,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1595,7 +1594,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             callee_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1682,7 +1681,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             program_key,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -1958,7 +1957,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             TEST_CALLEE_PROGRAM_ID,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
         invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
@@ -2223,7 +2222,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_system_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
         let account_keys = (0..transaction_context.get_number_of_accounts())
             .map(|index| {
@@ -2441,7 +2440,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
         let account_metas = vec![
             AccountMeta::new(
@@ -2668,7 +2667,7 @@ mod tests {
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
             mock_program_id,
-            Arc::new(ProgramCacheEntry::new_builtin(MockBuiltin::register)),
+            TxBatchCacheEntry::new_builtin(MockBuiltin::register),
         );
 
         struct MockCallback {}
