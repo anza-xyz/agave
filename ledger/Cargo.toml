@@ -147,6 +147,10 @@ spl-generic-token = { workspace = true }
 test-case = { workspace = true }
 
 [[bench]]
+name = "blockstore_insert_full_load"
+harness = false
+
+[[bench]]
 name = "make_shreds_from_entries"
 harness = false
 
