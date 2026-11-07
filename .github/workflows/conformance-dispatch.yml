@@ -10,6 +10,7 @@ on:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/conformance-dispatch.yml"
+      - "ci/check-conformance-generated.sh"
       - "ci/download-test-vectors.sh"
       - "ci/test-conformance.sh"
 
@@ -72,3 +73,29 @@ jobs:
           PACKAGE: ${{ matrix.entry.package }}
           BIN: ${{ matrix.entry.bin }}
         run: ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"
+
+  generated:
+    name: check generated fixtures
+    needs: detect
+    if: contains(needs.detect.outputs.entries, '"fixtures_dir":"instr"')
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fetch base commit
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: Install dependencies
+        shell: bash
+        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+      # The checkout is the PR merged into its base, so this compares the
+      # fixtures the PR generates against the base's.
+      - name: Check generated Loader V3 fixtures
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ci/check-conformance-generated.sh "$BASE_SHA"
