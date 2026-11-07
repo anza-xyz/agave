@@ -659,7 +659,6 @@ impl Bank {
         cached_vote_accounts: &CachedVoteAccounts<'_>,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
-        adjust_delegations_for_rent: bool,
         ag_epoch_type: &AlpenglowEpochType,
         custom_commission_collector: bool,
     ) -> Option<InflationRewardWithCommission> {
@@ -690,47 +689,43 @@ impl Bank {
             debug!("could not find vote account {vote_pubkey} in cache");
             // Even if the vote account doesn't exist, there might still be a
             // need to adjust the stake delegation
-            if adjust_delegations_for_rent {
-                let status = stake.delegation.stake_activating_and_deactivating_v2(
-                    rewarded_epoch,
-                    stake_history,
-                    new_rate_activation_epoch,
+            let status = stake.delegation.stake_activating_and_deactivating_v2(
+                rewarded_epoch,
+                stake_history,
+                new_rate_activation_epoch,
+            );
+            if delegation_may_need_adjustment(
+                stake.delegation.stake,
+                stake.delegation.stake,
+                current_lamports,
+                minimum_lamports,
+                status,
+            ) {
+                debug!(
+                    "delegation for stake {stake_pubkey} may be adjusted at distribution, unless \
+                     lamports are transferred before distribution block"
                 );
-                if delegation_may_need_adjustment(
-                    stake.delegation.stake,
-                    stake.delegation.stake,
-                    current_lamports,
-                    minimum_lamports,
-                    status,
-                ) {
-                    debug!(
-                        "delegation for stake {stake_pubkey} may be adjusted at distribution, \
-                         unless lamports are transferred before distribution block"
-                    );
-                    let inflation = InflationReward {
-                        stake,
-                        stake_reward: 0,
-                        commission_bps: (!custom_commission_collector).then_some(0),
-                    };
-                    // Set `is_vote_account` to `false` in order to deliberately
-                    // fail during commission collector checks. This avoids
-                    // creating a reward entry during payout.
-                    let reward_commission = RewardCommission {
-                        commission_bps: (!custom_commission_collector).then_some(0),
-                        commission_lamports: 0,
-                        burned_lamports: 0,
-                        is_vote_account: false,
-                    };
-                    return Some(InflationRewardWithCommission {
-                        inflation,
-                        commission_pubkey: vote_pubkey,
-                        reward_commission,
-                    });
-                } else {
-                    debug!("delegation for stake {stake_pubkey} will not be adjusted");
-                    return None;
-                }
+                let inflation = InflationReward {
+                    stake,
+                    stake_reward: 0,
+                    commission_bps: (!custom_commission_collector).then_some(0),
+                };
+                // Set `is_vote_account` to `false` in order to deliberately
+                // fail during commission collector checks. This avoids
+                // creating a reward entry during payout.
+                let reward_commission = RewardCommission {
+                    commission_bps: (!custom_commission_collector).then_some(0),
+                    commission_lamports: 0,
+                    burned_lamports: 0,
+                    is_vote_account: false,
+                };
+                return Some(InflationRewardWithCommission {
+                    inflation,
+                    commission_pubkey: vote_pubkey,
+                    reward_commission,
+                });
             } else {
+                debug!("delegation for stake {stake_pubkey} will not be adjusted");
                 return None;
             }
         };
@@ -755,7 +750,6 @@ impl Bank {
                 point_value,
                 stake_history,
                 new_rate_activation_epoch,
-                adjust_delegations_for_rent,
             },
             reward_calc_tracer,
             ag_epoch_type,
@@ -812,9 +806,6 @@ impl Bank {
     ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
-        // Name intentionally doesn't match -- "adjust delegations for rent" is
-        // part of relaxing post-exec min balance checks.
-        let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
         let custom_commission_collector = feature_snapshot.custom_commission_collector;
         let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
         let remove_inactive_stakes = feature_snapshot.remove_inactive_stakes;
@@ -869,7 +860,6 @@ impl Bank {
                         &cached_vote_accounts,
                         reward_calc_tracer.as_ref(),
                         new_warmup_cooldown_rate_epoch,
-                        adjust_delegations_for_rent,
                         ag_epoch_type,
                         custom_commission_collector,
                     );
@@ -1150,7 +1140,6 @@ impl Bank {
         let reserved_account_keys = &self.reserved_account_keys;
         let rent = &self.rent_collector().rent;
         let feature_snapshot = self.feature_set.snapshot();
-        let relax_post_exec_min_balance_check = feature_snapshot.relax_post_exec_min_balance_check;
         let custom_commission_collector = feature_snapshot.custom_commission_collector;
         let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
 
@@ -1228,7 +1217,6 @@ impl Bank {
                                     &commission_account,
                                     reserved_account_keys,
                                     rent,
-                                    relax_post_exec_min_balance_check,
                                 ) {
                                     Ok(ExternalCollectorType::SystemAccount) => {}
                                     Ok(ExternalCollectorType::Incinerator) => {
@@ -1498,7 +1486,6 @@ mod tests {
                 &cached_vote_accounts,
                 null_tracer(),
                 None, // new_rate_activation_epoch
-                true, // adjust_delegations_for_rent (SIMD-0392)
                 &ag_epoch_type,
                 false, // custom_commission_collector
             );
@@ -1868,7 +1855,6 @@ mod tests {
                     &commission_account,
                     &bank.reserved_account_keys,
                     &bank.rent_collector().rent,
-                    true,
                 )
                 .is_err()
             {
@@ -2362,7 +2348,6 @@ mod tests {
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let feature_snapshot = bank.feature_set.snapshot();
         assert!(feature_snapshot.remove_inactive_stakes);
-        assert!(feature_snapshot.relax_post_exec_min_balance_check);
 
         // A delegation deactivated in the epoch it was activated in never has
         // effective or activating stake. Its lamports leave no room for the
