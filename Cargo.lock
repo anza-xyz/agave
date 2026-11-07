@@ -8005,7 +8005,6 @@ dependencies = [
  "arc-swap",
  "arrayvec",
  "bencher",
- "bincode",
  "bitvec",
  "bytes",
  "chrono",
