@@ -10,6 +10,7 @@ on:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/conformance-dispatch.yml"
+      - "ci/build-conformance.sh"
       - "ci/download-test-vectors.sh"
       - "ci/test-conformance.sh"
 
@@ -44,9 +45,37 @@ jobs:
             conformance-table --pr-number "$PR_NUMBER")
           echo "entries=$entries" >> "$GITHUB_OUTPUT"
 
+  build:
+    name: build conformance harnesses
+    needs: detect
+    if: needs.detect.outputs.entries != '[]'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install dependencies
+        shell: bash
+        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+      - name: Build harnesses
+        shell: bash
+        env:
+          ENTRIES: ${{ needs.detect.outputs.entries }}
+        run: ci/build-conformance.sh $(jq -r '[.[].package] | unique[]' <<<"$ENTRIES")
+
+      - name: Upload harnesses
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: conformance-harnesses
+          path: |
+            dev-bins/target/release/test_exec_*
+            !dev-bins/target/release/*.d
+          if-no-files-found: error
+          retention-days: 1
+
   run:
     name: ${{ matrix.entry.fixtures_dir }}
-    needs: detect
+    needs: [detect, build]
     if: needs.detect.outputs.entries != '[]'
     runs-on: ubuntu-26.04
     strategy:
@@ -62,13 +91,19 @@ jobs:
         shell: bash
         run: ci/download-test-vectors.sh "$FIXTURES_DIR"
 
-      - name: Install dependencies
-        shell: bash
-        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+      - name: Download harnesses
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: conformance-harnesses
+          path: harnesses
 
       - name: Run ${{ matrix.entry.bin }}
         shell: bash
         env:
           PACKAGE: ${{ matrix.entry.package }}
           BIN: ${{ matrix.entry.bin }}
-        run: ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"
+          PREBUILT_HARNESS_DIR: harnesses
+        run: |
+          # Artifacts don't preserve the executable bit.
+          chmod +x "harnesses/$BIN"
+          ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"
