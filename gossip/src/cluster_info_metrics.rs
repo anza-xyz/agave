@@ -92,8 +92,6 @@ pub struct GossipStats {
     pub(crate) bad_prune_destination: Counter,
     pub(crate) entrypoint2: Counter,
     pub(crate) entrypoint: Counter,
-    pub(crate) epoch_slots_filled: Counter,
-    pub(crate) epoch_slots_lookup: Counter,
     pub(crate) filter_crds_values_dropped_requests: Counter,
     pub(crate) filter_crds_values_dropped_values: Counter,
     pub(crate) filter_pull_response: Counter,
@@ -383,7 +381,6 @@ pub(crate) fn submit_gossip_stats(
             stats.prune_received_cache.clear(),
             i64
         ),
-        ("epoch_slots_lookup", stats.epoch_slots_lookup.clear(), i64),
         ("new_pull_requests", stats.new_pull_requests.clear(), i64),
         (
             "gossip_pull_request_no_budget",
@@ -473,7 +470,6 @@ pub(crate) fn submit_gossip_stats(
             i64
         ),
         ("prune_message_len", stats.prune_message_len.clear(), i64),
-        ("epoch_slots_filled", stats.epoch_slots_filled.clear(), i64),
         (
             "window_request_loopback",
             stats.window_request_loopback.clear(),
