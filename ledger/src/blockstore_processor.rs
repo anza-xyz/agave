@@ -1356,8 +1356,15 @@ impl AsyncVerificationProgress {
             }
         };
 
-        if self.first_error.is_none() {
-            self.first_error = error;
+        match (&self.first_error, error) {
+            (None, Some(err)) => self.first_error = Some(err),
+            (
+                Some(BlockstoreProcessorError::InvalidTransaction(_)),
+                Some(err @ BlockstoreProcessorError::InvalidBlock(_)),
+            ) => {
+                self.first_error = Some(err);
+            }
+            _ => {}
         }
     }
 
@@ -6220,6 +6227,64 @@ pub mod tests {
                 }
             ),
             Err(TransactionError::TooManyAccountLocks)
+        );
+    }
+
+    #[test]
+    fn test_async_verification_deterministic_error_precedence() {
+        let make_poh_result = || AsyncVerificationResult::Poh {
+            entries: Arc::new(VerificationBatch {
+                data: Vec::new(),
+                started: Instant::now(),
+                remaining_jobs: AtomicUsize::new(0),
+            }),
+            elapsed_us: 0,
+            error: Some(BlockstoreProcessorError::InvalidBlock(
+                BlockError::InvalidEntryHash,
+            )),
+        };
+        let make_sig_result = || {
+            let unverified_signatures = entry::validate_and_hash_transactions(
+                entry_views_for_tests(vec![]),
+                0,
+                transaction_hash_verify_thread_pool(),
+                |_: UnsanitizedTransactionView<Bytes>| unreachable!(),
+            )
+            .unwrap()
+            .unverified_signatures;
+            AsyncVerificationResult::Signatures {
+                signatures: Arc::new(VerificationBatch {
+                    data: unverified_signatures,
+                    started: Instant::now(),
+                    remaining_jobs: AtomicUsize::new(0),
+                }),
+                elapsed_us: 0,
+                error: Some(BlockstoreProcessorError::InvalidTransaction(
+                    TransactionError::SignatureFailure,
+                )),
+            }
+        };
+
+        let mut progress = AsyncVerificationProgress::new(2);
+        progress.pending_jobs = 2;
+        progress.sender.send(make_sig_result()).unwrap();
+        progress.sender.send(make_poh_result()).unwrap();
+        assert_matches!(
+            progress.wait_for_all_results(),
+            Err(BlockstoreProcessorError::InvalidBlock(
+                BlockError::InvalidEntryHash
+            ))
+        );
+
+        let mut progress = AsyncVerificationProgress::new(2);
+        progress.pending_jobs = 2;
+        progress.sender.send(make_poh_result()).unwrap();
+        progress.sender.send(make_sig_result()).unwrap();
+        assert_matches!(
+            progress.wait_for_all_results(),
+            Err(BlockstoreProcessorError::InvalidBlock(
+                BlockError::InvalidEntryHash
+            ))
         );
     }
 }
