@@ -296,6 +296,34 @@ pub fn process_conformance_instruction(
     )
 }
 
+/// Run an instruction through the conformance harness with all features enabled
+/// and a limited compute budget, adding any accounts it requires.
+pub fn process_conformance_instruction_with_cu_avail(
+    program_id: &Pubkey,
+    instruction_data: &[u8],
+    mut transaction_accounts: Vec<(Pubkey, Account)>,
+    instruction_accounts: Vec<AccountMeta>,
+    cu_avail: u64,
+    expected_result: Result<(), InstructionError>,
+) -> Vec<(Pubkey, Account)> {
+    add_required_accounts(&mut transaction_accounts, program_id);
+    let mut feature_set = SVMFeatureSet::all_enabled();
+    setup_features(&mut feature_set, LoaderV3Features::all_enabled());
+    execute_context_with_conformance_harness(
+        InstrContext {
+            feature_set,
+            accounts: transaction_accounts,
+            instruction: Instruction::new_with_bytes(
+                *program_id,
+                instruction_data,
+                instruction_accounts,
+            ),
+            cu_avail,
+        },
+        expected_result,
+    )
+}
+
 /// Run an instruction through the conformance harness, adding any accounts it
 /// requires.
 pub fn process_conformance_instruction_with_features(
