@@ -10,7 +10,7 @@ use {
         },
         blockstore_metrics::{
             BlockstoreRocksDbColumnFamilyMetrics, PERF_METRIC_OP_NAME_GET,
-            PERF_METRIC_OP_NAME_MULTI_GET, PERF_METRIC_OP_NAME_PUT,
+            PERF_METRIC_OP_NAME_ITER, PERF_METRIC_OP_NAME_MULTI_GET, PERF_METRIC_OP_NAME_PUT,
             PERF_METRIC_OP_NAME_WRITE_BATCH, PerfSamplingStatus, maybe_enable_rocksdb_perf,
             report_rocksdb_read_perf, report_rocksdb_write_perf,
         },
@@ -20,7 +20,7 @@ use {
     prost::Message,
     rocksdb::{
         self, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision, DB, DBCompressionType,
-        DBIterator, IteratorMode as RocksIteratorMode, LiveFile, Options,
+        DBIterator, IteratorMode as RocksIteratorMode, LiveFile, Options, ReadOptions,
         WriteBatch as RWriteBatch,
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
@@ -33,12 +33,14 @@ use {
         fs,
         marker::PhantomData,
         num::NonZeroUsize,
+        ops::Range,
         path::{Path, PathBuf},
         sync::{
             Arc,
             atomic::{AtomicU64, Ordering},
         },
         thread,
+        time::{Duration, Instant},
     },
     wincode::{
         SchemaRead,
@@ -413,6 +415,15 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
+    fn iterator_cf_opt(
+        &self,
+        cf: &ColumnFamily,
+        read_options: ReadOptions,
+        iterator_mode: RocksIteratorMode,
+    ) -> DBIterator<'_> {
+        self.db.iterator_cf_opt(cf, read_options, iterator_mode)
+    }
+
     #[cfg(test)]
     pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<rocksdb::DBRawIterator<'_>> {
         Ok(self.db.raw_iterator_cf(cf))
@@ -550,30 +561,37 @@ impl AsMut<Self> for WriteBatch {
     }
 }
 
-pub(crate) struct BlockstoreByteReference<'a> {
-    slice: DBPinnableSlice<'a>,
+/// Reports its perf sample on drop, since callers consume it lazily and may stop early.
+pub(crate) struct ColumnScan<'a> {
+    iterator: DBIterator<'a>,
+    perf_sample: Option<Duration>,
+    cf_name: &'static str,
+    column_options: &'a LedgerColumnOptions,
 }
 
-impl<'a> From<DBPinnableSlice<'a>> for BlockstoreByteReference<'a> {
-    #[inline]
-    fn from(slice: DBPinnableSlice<'a>) -> Self {
-        Self { slice }
+impl Iterator for ColumnScan<'_> {
+    type Item = Result<(Box<[u8]>, Box<[u8]>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let start = self.perf_sample.is_some().then(Instant::now);
+        let item = self.iterator.next();
+        if let Some((elapsed, start)) = self.perf_sample.as_mut().zip(start) {
+            *elapsed += start.elapsed();
+        }
+        Some(item?.map_err(BlockstoreError::RocksDb))
     }
 }
 
-impl std::ops::Deref for BlockstoreByteReference<'_> {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        &self.slice
-    }
-}
-
-impl AsRef<[u8]> for BlockstoreByteReference<'_> {
-    #[inline]
-    fn as_ref(&self) -> &[u8] {
-        self
+impl Drop for ColumnScan<'_> {
+    fn drop(&mut self) {
+        if let Some(elapsed) = self.perf_sample {
+            report_rocksdb_read_perf(
+                self.cf_name,
+                PERF_METRIC_OP_NAME_ITER,
+                &elapsed,
+                self.column_options,
+            );
+        }
     }
 }
 
@@ -723,9 +741,9 @@ where
         self.get_slice(index)?.map(DBPinnedT::decode).transpose()
     }
 
-    /// Create a key type suitable for use with multi_get_bytes() and
-    /// multi_get(). Those functions return iterators, so the keys must be
-    /// created with a separate function in order to live long enough
+    /// Create a key type suitable for use with multi_get(). That function
+    /// returns an iterator, so the keys must be created with a separate
+    /// function in order to live long enough
     pub(crate) fn multi_get_keys<I>(&self, keys: I) -> Vec<<C as Column>::Key>
     where
         I: IntoIterator<Item = C::Index>,
@@ -733,33 +751,31 @@ where
         keys.into_iter().map(|index| C::key(&index)).collect()
     }
 
-    pub(crate) fn multi_get_bytes<'a, K>(
-        &'a self,
-        keys: impl IntoIterator<Item = &'a K> + 'a,
-    ) -> impl Iterator<Item = Result<Option<BlockstoreByteReference<'a>>>> + 'a
-    where
-        K: AsRef<[u8]> + 'a + ?Sized,
-    {
+    pub(crate) fn scan_range(
+        &self,
+        range: Range<C::Index>,
+        readahead_size: usize,
+    ) -> ColumnScan<'_> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
-
-        let result = self
-            .backend
-            .multi_get_cf(self.handle(), keys)
-            .map(|out| Ok(out?.map(BlockstoreByteReference::from)));
-
-        if let Some(op_start_instant) = is_perf_enabled {
-            report_rocksdb_read_perf(
-                C::NAME,
-                PERF_METRIC_OP_NAME_MULTI_GET,
-                &op_start_instant.elapsed(),
-                &self.column_options,
-            );
+        let mut read_options = ReadOptions::default();
+        let end_key = C::key(&range.end);
+        read_options.set_iterate_upper_bound(end_key.as_ref());
+        read_options.set_readahead_size(readahead_size);
+        let start_key = C::key(&range.start);
+        let iterator = self.backend.iterator_cf_opt(
+            self.handle(),
+            read_options,
+            RocksIteratorMode::From(start_key.as_ref(), IteratorDirection::Forward),
+        );
+        ColumnScan {
+            iterator,
+            perf_sample: is_perf_enabled.map(|op_start_instant| op_start_instant.elapsed()),
+            cf_name: C::NAME,
+            column_options: &self.column_options,
         }
-
-        result
     }
 
     pub fn iter(
