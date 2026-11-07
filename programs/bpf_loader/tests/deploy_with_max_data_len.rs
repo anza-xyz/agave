@@ -1,10 +1,9 @@
 use {
     common::{
-        LoaderV3Features, create_sysvar_account, process_instruction_with_setup, truncate_data,
+        LoaderV3Features, create_sysvar_account, process_conformance_instruction_with_features,
     },
     solana_account::{
-        AccountSharedData, ReadableAccount, WritableAccount,
-        state_traits::StateMutWincode as StateMut,
+        Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as StateMut,
     },
     solana_clock::Clock,
     solana_instruction::AccountMeta,
@@ -12,12 +11,9 @@ use {
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
-    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::{bpf_loader_upgradeable, native_loader, system_program, sysvar},
-    solana_svm_type_overrides::sync::Arc,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, error::SystemError},
     std::{fs::File, io::Read},
     test_case::test_case,
@@ -42,7 +38,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         buffer_authority: &Pubkey,
         upgrade_authority_address: &Pubkey,
         elf: &[u8],
-    ) -> (Vec<(Pubkey, AccountSharedData)>, Vec<AccountMeta>) {
+    ) -> (Vec<(Pubkey, Account)>, Vec<AccountMeta>) {
         let loader_id = bpf_loader_upgradeable::id();
         let program_address = Pubkey::new_unique();
         let rent = Rent::default();
@@ -52,7 +48,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             1.max(rent.minimum_balance(UpgradeableLoaderState::size_of_programdata(elf.len())));
         let (programdata_address, _) =
             Pubkey::find_program_address(&[program_address.as_ref()], &loader_id);
-        let mut buffer_account = AccountSharedData::new_data_with_space(
+        let mut buffer_account = Account::new_data_with_space(
             1,
             &UpgradeableLoaderState::Buffer {
                 authority_address: Some(*buffer_authority),
@@ -66,25 +62,26 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
             .unwrap()
             .copy_from_slice(elf);
-        let programdata_account = AccountSharedData::empty(0, &system_program::id());
-        let program_account = AccountSharedData::new_data_with_space(
+        let programdata_account = Account::empty(0, &system_program::id());
+        let program_account = Account::new_data_with_space(
             min_program_balance,
             &UpgradeableLoaderState::Uninitialized,
             UpgradeableLoaderState::size_of_program(),
             &bpf_loader_upgradeable::id(),
         )
         .unwrap();
-        let payer_account = AccountSharedData::empty(
+        let payer_account = Account::empty(
             min_programdata_balance.saturating_add(1),
             &system_program::id(),
         );
-        let rent_account = create_sysvar_account(&rent);
-        let clock_account = create_sysvar_account(&Clock {
+        let rent_account: Account = create_sysvar_account(&rent).into();
+        let clock_account: Account = create_sysvar_account(&Clock {
             slot: SLOT,
             ..Clock::default()
-        });
-        let system_program_account = AccountSharedData::empty(0, &native_loader::id());
-        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+        })
+        .into();
+        let system_program_account = Account::empty(0, &native_loader::id());
+        let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (*payer_address, payer_account),
             (programdata_address, programdata_account),
@@ -140,7 +137,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         (transaction_accounts, instruction_accounts)
     }
 
-    fn corrupt_buffer_elf(transaction_accounts: &mut [(Pubkey, AccountSharedData)]) {
+    fn corrupt_buffer_elf(transaction_accounts: &mut [(Pubkey, Account)]) {
         transaction_accounts
             .get_mut(3)
             .unwrap()
@@ -152,16 +149,16 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
     }
 
     let process_instruction = |max_data_len: usize,
-                               transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+                               transaction_accounts: Vec<(Pubkey, Account)>,
                                instruction_accounts: Vec<AccountMeta>,
                                expected_result: Result<(), InstructionError>|
-     -> Vec<AccountSharedData> {
+     -> Vec<(Pubkey, Account)> {
         let instruction_data =
             wincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
                 max_data_len,
             })
             .unwrap();
-        process_instruction_with_setup(
+        process_conformance_instruction_with_features(
             &bpf_loader_upgradeable::id(),
             &instruction_data,
             transaction_accounts,
@@ -171,15 +168,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
                 ..LoaderV3Features::all_enabled()
             },
             expected_result,
-            |invoke_context| {
-                // Register the system program for CPI support.
-                invoke_context.program_cache_for_tx_batch.replenish(
-                    system_program::id(),
-                    Arc::new(ProgramCacheEntry::new_builtin(
-                        solana_system_program::system_processor::Entrypoint::register,
-                    )),
-                );
-            },
         )
     };
 
@@ -200,14 +188,17 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
     );
     let min_programdata_balance =
         Rent::default().minimum_balance(UpgradeableLoaderState::size_of_programdata(elf.len()));
-    assert_eq!(min_programdata_balance, accounts.get(1).unwrap().lamports());
-    assert_eq!(2, accounts.first().unwrap().lamports());
-    assert_eq!(0, accounts.get(3).unwrap().lamports());
+    assert_eq!(
+        min_programdata_balance,
+        accounts.get(1).unwrap().1.lamports()
+    );
+    assert_eq!(2, accounts.first().unwrap().1.lamports());
+    assert_eq!(0, accounts.get(3).unwrap().1.lamports());
     assert_eq!(
         UpgradeableLoaderState::size_of_buffer(0),
-        accounts.get(3).unwrap().data().len()
+        accounts.get(3).unwrap().1.data().len()
     );
-    let state: UpgradeableLoaderState = accounts.get(1).unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.get(1).unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -218,6 +209,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
     for (i, byte) in accounts
         .get(1)
         .unwrap()
+        .1
         .data()
         .get(
             UpgradeableLoaderState::size_of_programdata_metadata()
@@ -229,14 +221,14 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
     {
         assert_eq!(*elf.get(i).unwrap(), *byte);
     }
-    let state: UpgradeableLoaderState = accounts.get(2).unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.get(2).unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Program {
             programdata_address,
         }
     );
-    assert!(accounts.get(2).unwrap().executable());
+    assert!(accounts.get(2).unwrap().1.executable());
 
     // Case: wrong authority
     let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
@@ -363,7 +355,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         &upgrade_authority_address,
         &elf,
     );
-    truncate_data(&mut transaction_accounts.get_mut(2).unwrap().1, 5);
+    transaction_accounts.get_mut(2).unwrap().1.data.truncate(5);
     process_instruction(
         elf.len(),
         transaction_accounts,
@@ -519,7 +511,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         let buffer = &mut transaction_accounts.get_mut(3).unwrap().1;
         buffer.set_owner(Pubkey::new_unique());
         buffer.set_lamports(0);
-        truncate_data(buffer, UpgradeableLoaderState::size_of_buffer(0));
+        buffer
+            .data
+            .truncate(UpgradeableLoaderState::size_of_buffer(0));
     }
     process_instruction(
         elf.len(),
@@ -628,9 +622,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         },
     );
     if allow_prefunded_programdata {
-        assert_eq!(accounts.get(1).unwrap().lamports(), rent_exempt_lamports);
+        assert_eq!(accounts.get(1).unwrap().1.lamports(), rent_exempt_lamports);
         assert_eq!(
-            accounts.first().unwrap().lamports(),
+            accounts.first().unwrap().1.lamports(),
             payer_lamports
                 .saturating_add(buffer_lamports)
                 .saturating_sub(rent_exempt_lamports.saturating_sub(prefunded_lamports)),
@@ -688,9 +682,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         },
     );
     if allow_prefunded_programdata {
-        assert_eq!(accounts.get(1).unwrap().lamports(), rent_exempt_lamports);
+        assert_eq!(accounts.get(1).unwrap().1.lamports(), rent_exempt_lamports);
         assert_eq!(
-            accounts.first().unwrap().lamports(),
+            accounts.first().unwrap().1.lamports(),
             payer_lamports.saturating_add(buffer_lamports),
         );
     }
@@ -723,9 +717,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         },
     );
     if allow_prefunded_programdata {
-        assert_eq!(accounts.get(1).unwrap().lamports(), rent_exempt_lamports);
+        assert_eq!(accounts.get(1).unwrap().1.lamports(), rent_exempt_lamports);
         assert_eq!(
-            accounts.first().unwrap().lamports(),
+            accounts.first().unwrap().1.lamports(),
             payer_lamports.saturating_add(buffer_lamports),
         );
     }
@@ -758,9 +752,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         },
     );
     if allow_prefunded_programdata {
-        assert_eq!(accounts.get(1).unwrap().lamports(), prefunded_lamports);
+        assert_eq!(accounts.get(1).unwrap().1.lamports(), prefunded_lamports);
         assert_eq!(
-            accounts.first().unwrap().lamports(),
+            accounts.first().unwrap().1.lamports(),
             payer_lamports.saturating_add(buffer_lamports),
         );
     }
