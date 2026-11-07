@@ -101,7 +101,7 @@ fn test_sysvar_syscalls() {
     let blockhash = bank.last_blockhash();
 
     for ix_discriminator in 0..4 {
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             program_id,
             &[ix_discriminator],
             vec![
@@ -128,7 +128,7 @@ fn test_sysvar_syscalls() {
 
     // Storing the result of get_sysvar() in the input region is not allowed
     // because of the 16 byte alignment requirement of the EpochRewards sysvar.
-    let instruction = Instruction::new_with_bincode(
+    let instruction = Instruction::new_with_wincode(
         program_id,
         &[4],
         vec![
