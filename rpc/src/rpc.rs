@@ -6635,12 +6635,7 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::new_with_shared_data(
-            42,
-            Arc::new(data.clone()),
-            &Pubkey::default(),
-            false,
-        );
+        let account = AccountSharedData::new_with_data(42, data.clone(), &Pubkey::default());
         bank.store_account(&pubkey, &account);
 
         let request = create_test_request(
@@ -6688,7 +6683,7 @@ pub mod tests {
     fn test_encode_account_does_not_throw_when_slice_larger_than_account() {
         let data = vec![42; 5];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6705,7 +6700,7 @@ pub mod tests {
     fn test_encode_account_throws_when_data_too_large_to_base58_encode() {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let _ = encode_account(&account, &pubkey, UiAccountEncoding::Base58, None).unwrap();
     }
 
@@ -6714,7 +6709,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6732,7 +6727,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6750,7 +6745,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6772,12 +6767,7 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::new_with_shared_data(
-            42,
-            Arc::new(data.clone()),
-            &Pubkey::default(),
-            false,
-        );
+        let account = AccountSharedData::new_with_data(42, data.clone(), &Pubkey::default());
         bank.store_account(&pubkey, &account);
 
         // Test 3 accounts, one empty, one non-existent, and one with data
@@ -7431,11 +7421,10 @@ pub mod tests {
             },
             &mut mint_data,
         );
-        let account = AccountSharedData::new_with_shared_data(
+        let account = AccountSharedData::new_with_data(
             mint_rent_exempt_amount,
-            Arc::new(mint_data.into()),
+            mint_data.into(),
             &spl_token_interface::id(),
-            false,
         );
         bank.store_account(&mint_pubkey, &account);
 
@@ -7458,11 +7447,10 @@ pub mod tests {
             },
             &mut token_account_data,
         );
-        let account = AccountSharedData::new_with_shared_data(
+        let account = AccountSharedData::new_with_data(
             token_account_rent_exempt_amount,
-            Arc::new(token_account_data.into()),
+            token_account_data.into(),
             &spl_token_interface::id(),
-            false,
         );
         bank.store_account(&token_account_pubkey, &account);
 
