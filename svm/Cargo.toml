@@ -38,6 +38,7 @@ conformance = [
     "solana-transaction-error/wincode",
 ]
 dev-context-only-utils = [
+    "agave-feature-set/dev-context-only-utils",
     "dep:agave-feature-set",
     "dep:qualifier_attr",
     "dep:solana-address-lookup-table-interface",

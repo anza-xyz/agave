@@ -128,7 +128,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         })
         .collect();
 
-    InstrEffects {
+    let effects = InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
             Some(code)
         } else {
@@ -139,6 +139,51 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         cu_avail,
         return_data,
         logs,
+    };
+
+    #[cfg(feature = "conformance")]
+    emit::emit_fixture_if_requested(input, &effects);
+
+    effects
+}
+
+#[cfg(feature = "conformance")]
+mod emit {
+    use {
+        super::{InstrContext, InstrEffects},
+        crate::conformance::{
+            fd_hash::fd_hash_without_seed, instr::effects::apply_firedancer_transformations,
+        },
+        prost::Message,
+        protosol::protos::{FixtureMetadata, InstrFixture},
+        std::{env, fs, path::Path},
+    };
+
+    pub const EMIT_FIXTURES_ENV_VAR: &str = "EMIT_CONFORMANCE_FIXTURES";
+    pub const INSTR_ENTRYPOINT: &str = "sol_compat_instr_execute_v1";
+
+    pub fn emit_fixture_if_requested(input: &InstrContext, effects: &InstrEffects) {
+        if let Some(directory) = env::var_os(EMIT_FIXTURES_ENV_VAR) {
+            write_fixture(Path::new(&directory), input, effects);
+        }
+    }
+
+    pub fn write_fixture(directory: &Path, input: &InstrContext, effects: &InstrEffects) {
+        let fixture = InstrFixture {
+            metadata: Some(FixtureMetadata {
+                fn_entrypoint: INSTR_ENTRYPOINT.to_string(),
+            }),
+            input: Some(input.into()),
+            output: Some(apply_firedancer_transformations(input, effects)),
+        }
+        .encode_to_vec();
+
+        fs::create_dir_all(directory).expect("failed to create the fixture directory");
+        fs::write(
+            directory.join(format!("instr-{:016x}.fix", fd_hash_without_seed(&fixture))),
+            fixture,
+        )
+        .expect("failed to write the fixture");
     }
 }
 
@@ -325,5 +370,52 @@ mod tests {
         let effects = execute_instr(&context);
         assert_eq!(effects.result, None);
         assert_eq!(effects.custom_err, None);
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn test_written_fixture_replays() {
+        use {
+            super::emit::{INSTR_ENTRYPOINT, write_fixture},
+            crate::conformance::instr::effects::apply_firedancer_transformations,
+            prost::Message,
+            protosol::protos::{InstrContext as ProtoInstrContext, InstrFixture},
+            std::{env, fs},
+        };
+
+        let from = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let context = InstrContext {
+            feature_set: agave_feature_set::FeatureSet::all_enabled().runtime_features(),
+            ..build_system_transfer_context(&from, &to, 1_000)
+        };
+        let effects = execute_instr(&context);
+        assert_eq!(effects.result, None);
+
+        let directory = env::temp_dir().join(format!("instr-fixture-{}", Pubkey::new_unique()));
+        write_fixture(&directory, &context, &effects);
+        let files = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| fs::read(entry.unwrap().path()).unwrap())
+            .collect::<Vec<_>>();
+        fs::remove_dir_all(&directory).unwrap();
+
+        let [file] = files.as_slice() else {
+            panic!("expected one fixture, found {}", files.len());
+        };
+        let fixture = InstrFixture::decode(file.as_slice()).unwrap();
+        assert_eq!(fixture.metadata.unwrap().fn_entrypoint, INSTR_ENTRYPOINT);
+        let input = fixture.input.unwrap();
+        let output = fixture.output.unwrap();
+        assert_eq!(input, ProtoInstrContext::from(&context));
+        assert_eq!(output, apply_firedancer_transformations(&context, &effects));
+
+        // The fixture alone must reproduce the run, including its features.
+        let replayed_context = InstrContext::from(input.clone());
+        assert_eq!(ProtoInstrContext::from(&replayed_context), input);
+        assert_eq!(
+            apply_firedancer_transformations(&replayed_context, &execute_instr(&replayed_context)),
+            output,
+        );
     }
 }
