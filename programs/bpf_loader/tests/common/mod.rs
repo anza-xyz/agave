@@ -1,15 +1,10 @@
 #![allow(dead_code)]
 
 use {
-    solana_account::{Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode},
-    solana_bpf_loader_program::{Entrypoint, test_utils},
+    solana_account::{Account, state_traits::StateMutWincode as _},
     solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
-    solana_program_runtime::invoke_context::{
-        InvokeContext, mock_process_instruction_with_feature_set,
-    },
     solana_pubkey::Pubkey,
-    solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::sysvar,
     solana_svm::conformance::{
         callback::ConformanceCallback,
@@ -56,7 +51,7 @@ fn setup_features(feature_set: &mut SVMFeatureSet, loader_v3_features: LoaderV3F
     feature_set.loader_v3_remove_extend_program = remove_extend_program;
 }
 
-pub fn create_sysvar_account<T>(value: &T) -> AccountSharedData
+pub fn create_sysvar_account<T>(value: &T) -> Account
 where
     T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
         + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
@@ -71,124 +66,18 @@ where
         id => panic!("unsupported sysvar: {id}"),
     };
     let required_data_len = canonical_data_len.max(serialized_len);
-    AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
+    Account::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
 }
 
-// 10 iterations is intentionally low: `mock_process_instruction` runs on a
-// single thread, so additional `shuttle::check_random` iterations validate
-// only the harness wiring, not concurrent interleavings. Bump this if a
-// future refactor introduces `shuttle::thread::spawn` inside
-// `mock_process_instruction`.
+// 10 iterations is intentionally low: the harness runs on a single thread, so
+// additional `shuttle` iterations validate only the harness wiring, not
+// concurrent interleavings.
 #[cfg(feature = "shuttle-test")]
-const MOCK_PROCESS_RANDOM_ITERATIONS: usize = 10;
+const HARNESS_RANDOM_ITERATIONS: usize = 10;
 
 // The conformance harness overflows Shuttle's default task stack.
 #[cfg(feature = "shuttle-test")]
 const CONFORMANCE_HARNESS_SHUTTLE_STACK_SIZE: usize = 1024 * 1024;
-
-/// Wrapper around `mock_process_instruction_with_feature_set` that runs
-/// under `shuttle::check_random` when the `shuttle-test` feature is
-/// enabled, providing the Shuttle scheduler context required by
-/// `solana-svm-type-overrides`'s shuttle-aware atomic types. With default
-/// features, this is a thin pass-through to the harness with
-/// `Entrypoint::register` and an empty post-adjustment closure.
-///
-/// The harness itself is single-threaded: the only
-/// Shuttle-backed atomic in the access path is
-/// `ProgramCacheEntry::latest_access_slot` (routed to
-/// `shuttle::sync::atomic::AtomicU64` by `solana_svm_type_overrides`), and
-/// it is touched from one Shuttle thread. Iteration-to-iteration variance
-/// under `shuttle::check_random` is solely scheduler bookkeeping noise, so
-/// any iteration's captured result is equivalent. If the harness ever
-/// spawns Shuttle threads internally, this last-write-wins capture must
-/// be re-evaluated.
-///
-/// `setup` is typed as `fn(&mut InvokeContext)` (function pointer, not
-/// `impl Fn`) so it satisfies Shuttle's `Fn + Send + Sync + 'static` bound
-/// when captured by value into the inner closure. Callers must pass
-/// non-capturing closures or `fn` items; capturing closures will produce a
-/// fn-pointer coercion error at the call site.
-pub fn process_instruction_with_setup(
-    program_id: &Pubkey,
-    instruction_data: &[u8],
-    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
-    instruction_accounts: Vec<AccountMeta>,
-    loader_v3_features: LoaderV3Features,
-    expected_result: Result<(), InstructionError>,
-    setup: fn(&mut InvokeContext),
-) -> Vec<AccountSharedData> {
-    let mut feature_set = SVMFeatureSet::all_enabled();
-    setup_features(&mut feature_set, loader_v3_features);
-
-    #[cfg(feature = "shuttle-test")]
-    {
-        let program_id = *program_id;
-        let instruction_data = instruction_data.to_vec();
-        let result = shuttle::sync::Arc::new(shuttle::sync::Mutex::new(None));
-        let result_for_test = shuttle::sync::Arc::clone(&result);
-        shuttle::check_random(
-            move || {
-                let accounts = mock_process_instruction_with_feature_set(
-                    &program_id,
-                    &instruction_data,
-                    transaction_accounts.clone(),
-                    instruction_accounts.clone(),
-                    expected_result.clone(),
-                    Entrypoint::register,
-                    setup,
-                    |_invoke_context| {},
-                    &feature_set,
-                );
-                *result_for_test.lock().unwrap() = Some(accounts);
-            },
-            MOCK_PROCESS_RANDOM_ITERATIONS,
-        );
-
-        // Consume the harness cell after Shuttle exits so extraction does
-        // not call `shuttle::sync::Mutex::lock` outside the scheduler.
-        let Ok(mut result) = shuttle::sync::Arc::try_unwrap(result) else {
-            panic!("shuttle test result still has outstanding references")
-        };
-        result
-            .get_mut()
-            .unwrap()
-            .take()
-            .expect("shuttle test did not produce a result")
-    }
-
-    #[cfg(not(feature = "shuttle-test"))]
-    mock_process_instruction_with_feature_set(
-        program_id,
-        instruction_data,
-        transaction_accounts,
-        instruction_accounts,
-        expected_result,
-        Entrypoint::register,
-        setup,
-        |_invoke_context| {},
-        &feature_set,
-    )
-}
-
-pub fn process_instruction(
-    program_id: &Pubkey,
-    instruction_data: &[u8],
-    transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
-    instruction_accounts: Vec<AccountMeta>,
-    expected_result: Result<(), InstructionError>,
-) -> Vec<AccountSharedData> {
-    process_instruction_with_setup(
-        program_id,
-        instruction_data,
-        transaction_accounts,
-        instruction_accounts,
-        LoaderV3Features::all_enabled(),
-        expected_result,
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
-    )
-}
 
 /// Run an instruction through the conformance harness, which emits a fixture
 /// when `EMIT_CONFORMANCE_FIXTURES` is set.
@@ -223,7 +112,7 @@ pub fn execute_context_with_conformance_harness(
         let mut config = shuttle::Config::new();
         config.stack_size = CONFORMANCE_HARNESS_SHUTTLE_STACK_SIZE;
         shuttle::Runner::new(
-            shuttle::scheduler::RandomScheduler::new(MOCK_PROCESS_RANDOM_ITERATIONS),
+            shuttle::scheduler::RandomScheduler::new(HARNESS_RANDOM_ITERATIONS),
             config,
         )
         .run(move || {
@@ -261,12 +150,11 @@ pub fn add_required_accounts(accounts: &mut Vec<(Pubkey, Account)>, program_id: 
             create_sysvar_account(&solana_clock::Clock {
                 slot: 1,
                 ..solana_clock::Clock::default()
-            })
-            .into(),
+            }),
         )),
         Some((
             sysvar::rent::id(),
-            create_sysvar_account(&solana_rent::Rent::default()).into(),
+            create_sysvar_account(&solana_rent::Rent::default()),
         )),
         keyed_account_for_builtin_pubkey(program_id),
     ];
@@ -279,14 +167,14 @@ pub fn add_required_accounts(accounts: &mut Vec<(Pubkey, Account)>, program_id: 
 
 /// Run an instruction through the conformance harness with all features enabled,
 /// adding any accounts it requires.
-pub fn process_conformance_instruction(
+pub fn process_instruction(
     program_id: &Pubkey,
     instruction_data: &[u8],
     transaction_accounts: Vec<(Pubkey, Account)>,
     instruction_accounts: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
 ) -> Vec<(Pubkey, Account)> {
-    process_conformance_instruction_with_features(
+    process_instruction_with_features(
         program_id,
         instruction_data,
         transaction_accounts,
@@ -298,7 +186,7 @@ pub fn process_conformance_instruction(
 
 /// Run an instruction through the conformance harness with all features enabled
 /// and a limited compute budget, adding any accounts it requires.
-pub fn process_conformance_instruction_with_cu_avail(
+pub fn process_instruction_with_cu_avail(
     program_id: &Pubkey,
     instruction_data: &[u8],
     mut transaction_accounts: Vec<(Pubkey, Account)>,
@@ -326,7 +214,7 @@ pub fn process_conformance_instruction_with_cu_avail(
 
 /// Run an instruction through the conformance harness, adding any accounts it
 /// requires.
-pub fn process_conformance_instruction_with_features(
+pub fn process_instruction_with_features(
     program_id: &Pubkey,
     instruction_data: &[u8],
     mut transaction_accounts: Vec<(Pubkey, Account)>,
@@ -341,10 +229,4 @@ pub fn process_conformance_instruction_with_features(
         loader_v3_features,
         expected_result,
     )
-}
-
-pub fn truncate_data(account: &mut AccountSharedData, len: usize) {
-    let mut data = account.data().to_vec();
-    data.truncate(len);
-    account.set_data_from_slice(&data);
 }

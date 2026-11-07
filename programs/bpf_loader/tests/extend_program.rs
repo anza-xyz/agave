@@ -61,7 +61,6 @@ fn create_clock_account(slot: u64) -> Account {
         slot,
         ..Clock::default()
     })
-    .into()
 }
 
 fn get_accounts(
@@ -77,10 +76,7 @@ fn get_accounts(
             Account::empty(10_000_000_000, &system_program::id()),
         ),
         (sysvar::clock::id(), create_clock_account(1)),
-        (
-            sysvar::rent::id(),
-            create_sysvar_account(&Rent::default()).into(),
-        ),
+        (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
         (
             system_program::id(),
             Account::empty(0, &native_loader::id()),
@@ -1092,10 +1088,7 @@ fn test_extend_program_simd_0685() {
         instruction,
         vec![
             (sysvar::clock::id(), create_clock_account(1)),
-            (
-                sysvar::rent::id(),
-                create_sysvar_account(&Rent::default()).into(),
-            ),
+            (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
             keyed_account_for_bpf_loader_upgradeable_program(),
         ],
         LoaderV3Features::all_enabled(),

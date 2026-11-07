@@ -1,5 +1,5 @@
 use {
-    common::{create_sysvar_account, process_conformance_instruction as process_instruction},
+    common::{create_sysvar_account, process_instruction},
     solana_account::{
         Account, ReadableAccount, WritableAccount, state_traits::StateMutWincode as StateMut,
     },
@@ -68,8 +68,7 @@ fn test_bpf_loader_upgradeable_close() {
     let clock_account: Account = create_sysvar_account(&Clock {
         slot: 1,
         ..Clock::default()
-    })
-    .into();
+    });
     let transaction_accounts = vec![
         (buffer_address, buffer_account.clone()),
         (recipient_address, recipient_account.clone()),
@@ -252,10 +251,7 @@ fn test_bpf_loader_upgradeable_close() {
             (programdata_address, programdata_account),
             (program_address, program_account),
             (buffer_address, buffer_account),
-            (
-                sysvar::rent::id(),
-                create_sysvar_account(&Rent::default()).into(),
-            ),
+            (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
             (sysvar::clock::id(), clock_account),
             (
                 system_program::id(),

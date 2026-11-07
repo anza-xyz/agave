@@ -1,8 +1,5 @@
 use {
-    common::{
-        process_conformance_instruction as process_instruction,
-        process_conformance_instruction_with_cu_avail,
-    },
+    common::{process_instruction, process_instruction_with_cu_avail},
     rand::Rng,
     solana_account::{Account, WritableAccount},
     solana_instruction::AccountMeta,
@@ -82,7 +79,7 @@ fn test_bpf_loader_invoke_main() {
     );
 
     // Case: limited budget
-    process_conformance_instruction_with_cu_avail(
+    process_instruction_with_cu_avail(
         &program_id,
         &[],
         vec![(program_id, program_account)],
