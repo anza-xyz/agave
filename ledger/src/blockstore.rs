@@ -124,6 +124,8 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 /// a latency event rather than the only source of truth. Keep this small enough
 /// that Tower validators do not pay a large idle-memory cost for the channel.
 pub const MAX_UPDATE_PARENT_SIGNALS: usize = 4_096;
+/// Maximum queued first-shred notifications from blockstore insertion to Votor.
+pub const MAX_FIRST_SHRED_SIGNALS: usize = 1_024;
 const GENESIS_BLOCK_MARKER_SHRED_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64;
 // Update parent events are expected to be rare, so a small cache to avoid
 // hitting blockstore should suffice here. The "DoS" attack to cause cache churn
@@ -136,6 +138,10 @@ pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
 
 pub type UpdateParentSender = Sender<UpdateParentSignal>;
 pub type UpdateParentReceiver = Receiver<UpdateParentSignal>;
+
+/// Carries slots whose block location received its first data or coding shred.
+pub type FirstShredSender = Sender<Slot>;
+pub type FirstShredReceiver = Receiver<Slot>;
 type UpdateParentShredParentKey = (BlockLocation, Slot, u32);
 type UpdateParentShredParentCache =
     LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
@@ -144,6 +150,9 @@ struct SignalUpdates {
     should_signal: bool,
     newly_completed_slots_with_last_index: Vec<(u64, u64)>,
     update_parent_signals: Vec<UpdateParentSignal>,
+    /// Slots with a block location that had no shreds before this batch and
+    /// received at least one. Sorted and deduplicated.
+    first_shred_slots: Vec<Slot>,
 }
 
 /// Effects produced while preparing SlotMeta chaining updates.
@@ -426,6 +435,9 @@ pub struct Blockstore {
     /// in small insertion batches.
     update_parent_shred_parent_cache: Mutex<UpdateParentShredParentCache>,
     certificate_forwarder: OnceLock<CertificateForwarder>,
+    /// Set once, before live shred insertion starts. Insertions that happen
+    /// before registration are not reported.
+    first_shred_sender: OnceLock<FirstShredSender>,
     pub lowest_cleanup_slot: RwLock<Slot>,
     // A sender that feeds into the BlockstoreCleanupService request channel
     // to enable manual Blockstore purge requests to be issued
@@ -435,6 +447,8 @@ pub struct Blockstore {
 
 pub struct IndexMetaWorkingSetEntry {
     index: Index,
+    // true if this location had no data or coding shreds when this struct was created
+    was_empty: bool,
     // true only if at least one shred for this Index was inserted since the time this
     // struct was created
     did_insert_occur: bool,
@@ -729,6 +743,19 @@ impl Blockstore {
             .expect("certificate sender already set");
     }
 
+    /// Registers the receiver of first-shred notifications.
+    ///
+    /// After a shred insertion batch commits, Blockstore sends each slot whose
+    /// block location received its first data or coding shred in that batch.
+    /// The send never blocks: if the channel is full, the slot is dropped.
+    ///
+    /// Must be called before live shred insertion starts. Panics if called twice.
+    pub fn set_first_shred_sender(&self, sender: FirstShredSender) {
+        self.first_shred_sender
+            .set(sender)
+            .expect("first shred sender already set");
+    }
+
     /// Opens a Ledger in directory, provides "infinite" window of shreds
     pub fn open(ledger_path: &Path) -> Result<Blockstore> {
         Self::do_open(ledger_path, BlockstoreOptions::default())
@@ -821,6 +848,7 @@ impl Blockstore {
                 UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY,
             )),
             certificate_forwarder: OnceLock::new(),
+            first_shred_sender: OnceLock::new(),
             insert_shreds_lock: Mutex::<()>::default(),
             switch_block_lock: SwitchBlockLock(FairMutex::new(())),
             max_root,
@@ -2221,7 +2249,7 @@ impl Blockstore {
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<SignalUpdates> {
         let mut start = Measure::start("Commit Working Sets");
-        let signal_updates = self.commit_slot_meta_working_set(
+        let mut signal_updates = self.commit_slot_meta_working_set(
             &shred_insertion_tracker.slot_meta_working_set,
             shred_insertion_tracker.write_batch,
         )?;
@@ -2264,8 +2292,14 @@ impl Blockstore {
                     location,
                     &index_working_set_entry.index,
                 )?;
+                if index_working_set_entry.was_empty {
+                    signal_updates.first_shred_slots.push(slot);
+                }
             }
         }
+        // Several locations of the same slot may be populated in one batch.
+        signal_updates.first_shred_slots.sort_unstable();
+        signal_updates.first_shred_slots.dedup();
         start.stop();
         metrics.commit_working_sets_elapsed_us += start.as_us();
 
@@ -2422,6 +2456,7 @@ impl Blockstore {
             should_signal,
             newly_completed_slots_with_last_index,
             update_parent_signals,
+            first_shred_slots,
         } = self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
 
         // Write out the accumulated batch.
@@ -2444,9 +2479,11 @@ impl Blockstore {
             &self.new_shreds_signals.lock().unwrap(),
             &self.completed_slots_senders.lock().unwrap(),
             &self.update_parent_signals.lock().unwrap(),
+            self.first_shred_sender.get(),
             should_signal,
             newly_completed_slots_with_last_index,
             update_parent_signals,
+            first_shred_slots,
         );
 
         metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
@@ -6203,6 +6240,7 @@ impl Blockstore {
             should_signal,
             newly_completed_slots_with_last_index,
             update_parent_signals,
+            first_shred_slots: Vec::new(),
         })
     }
 
@@ -6332,6 +6370,7 @@ impl Blockstore {
                 }
                 .unwrap_or_else(|| Index::new(slot));
                 let index_entry = IndexMetaWorkingSetEntry {
+                    was_empty: index.data().num_shreds() == 0 && index.coding().num_shreds() == 0,
                     index,
                     did_insert_occur: false,
                 };
@@ -6488,9 +6527,11 @@ fn send_signals(
     new_shreds_signals: &[Sender<bool>],
     completed_slots_senders: &[Sender<Vec<u64>>],
     update_parent_senders: &[UpdateParentSender],
+    first_shred_sender: Option<&FirstShredSender>,
     should_signal: bool,
     newly_completed_slots: Vec<(u64, u64)>,
     update_parent_signals: Vec<UpdateParentSignal>,
+    first_shred_slots: Vec<Slot>,
 ) {
     if should_signal {
         for signal in new_shreds_signals {
@@ -6538,6 +6579,27 @@ fn send_signals(
                     ("error", "update_parent channel full", String),
                     ("slot", signal.slot, i64),
                 );
+            }
+        }
+    }
+
+    // Called with `insert_shreds_lock` held, so the send must not block.
+    // A full channel drops the notification.
+    if let Some(sender) = first_shred_sender {
+        for slot in first_shred_slots {
+            match sender.try_send(slot) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    datapoint_error!(
+                        "blockstore_error",
+                        ("error", "first_shred channel full", String),
+                        ("slot", slot, i64),
+                    );
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    trace!("first shred channel is disconnected.");
+                    break;
+                }
             }
         }
     }

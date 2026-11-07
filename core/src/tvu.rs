@@ -45,7 +45,7 @@ use {
     solana_ledger::{
         blockstore::{
             Blockstore, BlockstoreCleanupService, MAX_COMPLETED_SLOTS_IN_CHANNEL,
-            UpdateParentReceiver,
+            MAX_FIRST_SHRED_SIGNALS, UpdateParentReceiver,
         },
         blockstore_options::BlockstoreCleanupStrategy,
         entry_notifier_service::EntryNotifierSender,
@@ -260,6 +260,9 @@ impl Tvu {
         let generated_cert_types = Arc::new(GeneratedCertTypes::default());
         let (certificate_sender, certificate_receiver) = bounded(MAX_CERTIFICATES_FROM_BLOCKSTORE);
         blockstore.set_certificate_sender(certificate_sender, migration_status.clone());
+        // Register before WindowService (below) and BroadcastStage (TPU) start inserting shreds.
+        let (first_shred_sender, first_shred_receiver) = bounded(MAX_FIRST_SHRED_SIGNALS);
+        blockstore.set_first_shred_sender(first_shred_sender);
 
         // Bring up the votor QUIC datagram endpoint.
         let (votor_runtime, votor_rt_handle) = match Handle::try_current() {
@@ -366,7 +369,6 @@ impl Tvu {
             rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.turbine_xdp_sender,
-            votor_event_sender.clone(),
         );
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
@@ -480,6 +482,7 @@ impl Tvu {
             own_reward_aggregates_sender: reward_aggregates_sender.clone(),
             repair_event_sender,
             event_receiver: votor_event_receiver,
+            first_shred_receiver,
             consensus_message_receiver,
             own_votes_receiver,
             footer_certs_receiver,
