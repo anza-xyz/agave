@@ -63,7 +63,6 @@ where
 fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
     let feature_set = invoke_context.get_feature_set();
     feature_set.bls_pubkey_management_in_vote_account
-        && feature_set.custom_commission_collector
         && feature_set.block_revenue_sharing
         && feature_set.vote_account_initialize_v2
 }
@@ -174,15 +173,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateValidatorIdentity => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let node_pubkey = instruction_context.get_key_of_instruction_account(1)?;
-            let custom_collector_enabled =
-                invoke_context.get_feature_set().custom_commission_collector;
-            vote_state::update_validator_identity(
-                &mut me,
-                target_version,
-                node_pubkey,
-                &signers,
-                custom_collector_enabled,
-            )
+            vote_state::update_validator_identity(&mut me, target_version, node_pubkey, &signers)
         }
         VoteInstruction::UpdateCommission(commission) => {
             vote_state::update_commission(&mut me, target_version, commission, &signers)
@@ -337,14 +328,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             invoke_context.get_feature_set().block_revenue_sharing,
         ),
         VoteInstruction::UpdateCommissionCollector(kind) => {
-            // SIMD-0232: Custom Commission Collector Account
-            // Requires SIMD-0185: Vote State V4
-            let custom_collector_enabled =
-                invoke_context.get_feature_set().custom_commission_collector;
-            if !custom_collector_enabled {
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
             instruction_context.check_number_of_instruction_accounts(3)?;
 
             let rent = invoke_context
@@ -468,7 +451,6 @@ mod tests {
     #[derive(Clone, Copy, Default)]
     struct VoteProgramFeatures {
         bls_pubkey_management_in_vote_account: bool,
-        custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
         alpenglow_migration_succeeded: bool,
@@ -478,7 +460,6 @@ mod tests {
         fn all_enabled() -> Self {
             Self {
                 bls_pubkey_management_in_vote_account: true,
-                custom_commission_collector: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
                 alpenglow_migration_succeeded: false,
@@ -513,7 +494,6 @@ mod tests {
     ) -> Vec<AccountSharedData> {
         let VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
             alpenglow_migration_succeeded,
@@ -543,7 +523,6 @@ mod tests {
             },
             &SVMFeatureSet {
                 bls_pubkey_management_in_vote_account,
-                custom_commission_collector,
                 block_revenue_sharing,
                 vote_account_initialize_v2,
                 ..SVMFeatureSet::all_enabled()
@@ -881,12 +860,10 @@ mod tests {
     #[test_matrix(
         [false, true],
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account(
         bls_pubkey_management_in_vote_account: bool,
-        custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
     ) {
@@ -927,7 +904,6 @@ mod tests {
 
         let features = VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
             alpenglow_migration_succeeded: false,
@@ -996,12 +972,10 @@ mod tests {
     #[test_matrix(
         [false, true],
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account_v2(
         bls_pubkey_management_in_vote_account: bool,
-        custom_commission_collector: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
     ) {
@@ -1058,14 +1032,12 @@ mod tests {
 
         let features = VoteProgramFeatures {
             bls_pubkey_management_in_vote_account,
-            custom_commission_collector,
             block_revenue_sharing,
             vote_account_initialize_v2,
             alpenglow_migration_succeeded: false,
         };
 
         let all_v2_features_enabled = bls_pubkey_management_in_vote_account
-            && custom_commission_collector
             && block_revenue_sharing
             && vote_account_initialize_v2;
 
@@ -1354,8 +1326,8 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_vote_update_validator_identity(custom_commission_collector: bool) {
+    #[test]
+    fn test_vote_update_validator_identity() {
         let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
             create_test_account_with_authorized();
 
@@ -1390,10 +1362,7 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            custom_commission_collector,
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::default();
 
         // should fail, node_pubkey didn't sign the transaction
         instruction_accounts[1].is_signer = false;
@@ -1431,18 +1400,10 @@ mod tests {
         );
         let vote_state = deserialize_vote_state_for_test(accounts[0].data(), &vote_pubkey);
         assert_eq!(*vote_state.node_pubkey(), node_pubkey);
-        if custom_commission_collector {
-            // If SIMD-0232 is enabled, block revenue collector should be
-            // unchanged.
-            assert_eq!(
-                vote_state.as_ref_v4().block_revenue_collector,
-                original_block_revenue_collector,
-            );
-        } else {
-            // If SIMD-0232 is disabled, block revenue collector should be
-            // synced with identity.
-            assert_eq!(vote_state.as_ref_v4().block_revenue_collector, node_pubkey);
-        }
+        assert_eq!(
+            vote_state.as_ref_v4().block_revenue_collector,
+            original_block_revenue_collector,
+        );
     }
 
     #[test]
@@ -1681,9 +1642,6 @@ mod tests {
 
     #[test]
     fn test_vote_update_commission_collector() {
-        // Test UpdateCommissionCollector instruction (SIMD-0232).
-        let custom_commission_collector = true;
-
         let (vote_pubkey, _authorized_voter, authorized_withdrawer, vote_account) =
             create_test_account_with_authorized();
 
@@ -1720,10 +1678,7 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            custom_commission_collector,
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::default();
 
         let get_commission_collector = |vote_account: &AccountSharedData, kind: CommissionKind| {
             let vote_state = deserialize_vote_state_for_test(vote_account.data(), &vote_pubkey)
@@ -1912,29 +1867,10 @@ mod tests {
             vote_pubkey
         );
 
-        // Should fail - SIMD-0232 disabled.
         let instruction_data = wincode::serialize(&VoteInstruction::UpdateCommissionCollector(
             CommissionKind::InflationRewards,
         ))
         .unwrap();
-        let accounts = process_instruction(
-            VoteProgramFeatures {
-                custom_commission_collector: false,
-                ..Default::default()
-            },
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Err(InstructionError::InvalidInstructionData),
-        );
-        assert_eq!(
-            get_commission_collector(&accounts[0], CommissionKind::InflationRewards),
-            original_inflation_collector, // Unchanged
-        );
-        assert_eq!(
-            get_commission_collector(&accounts[0], CommissionKind::BlockRevenue),
-            original_block_revenue_collector, // Unchanged
-        );
 
         // Should fail - fewer than 3 account inputs (SIMD-0232).
         let too_few_instruction_accounts = vec![AccountMeta {
@@ -4931,23 +4867,9 @@ mod tests {
             ),
         ];
 
-        // Fail - SIMD-0232: custom_commission_collector disabled.
-        process_instruction(
-            VoteProgramFeatures {
-                custom_commission_collector: false,
-                block_revenue_sharing: true,
-                ..Default::default()
-            },
-            &instruction_data,
-            transaction_accounts.clone(),
-            instruction_accounts.clone(),
-            Err(InstructionError::InvalidInstructionData),
-        );
-
         // Fail - SIMD-0123: block_revenue_sharing disabled.
         process_instruction(
             VoteProgramFeatures {
-                custom_commission_collector: true,
                 block_revenue_sharing: false,
                 ..Default::default()
             },
