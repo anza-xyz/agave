@@ -1,5 +1,5 @@
 use {
-    common::process_conformance_instruction as process_instruction,
+    common::process_instruction,
     solana_account::{Account, WritableAccount, state_traits::StateMutWincode as StateMut},
     solana_instruction::AccountMeta,
     solana_instruction_error::InstructionError,

@@ -1,8 +1,5 @@
 use {
-    common::{
-        LoaderV3Features, process_conformance_instruction as process_instruction,
-        process_conformance_instruction_with_features,
-    },
+    common::{LoaderV3Features, process_instruction, process_instruction_with_features},
     solana_account::{Account, ReadableAccount, state_traits::StateMutWincode as StateMut},
     solana_bpf_loader_program::{WRITE_INSTRUCTION_HEADER_LEN, WRITE_INSTRUCTION_TAG},
     solana_instruction::AccountMeta,
@@ -293,7 +290,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     };
 
     // Case: Trailing bytes are ignored, only the declared payload is written
-    let accounts = process_conformance_instruction_with_features(
+    let accounts = process_instruction_with_features(
         &loader_id,
         &write(9, 9, 100),
         vec![(buffer_address, buffer_account.clone())],
@@ -313,7 +310,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     assert!(untouched.iter().all(|byte| *byte == 0));
 
     // Case: Largest payload that fits under the legacy limit
-    process_conformance_instruction_with_features(
+    process_instruction_with_features(
         &loader_id,
         &write(max_bytes as u64, max_bytes, 0),
         vec![(buffer_address, buffer_account.clone())],
@@ -323,7 +320,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     );
 
     // Case: One byte over the legacy limit; passes with SIMD-0648 feature
-    process_conformance_instruction_with_features(
+    process_instruction_with_features(
         &loader_id,
         &write((max_bytes + 1) as u64, max_bytes + 1, 0),
         vec![(buffer_address, buffer_account.clone())],
@@ -348,7 +345,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
         &loader_id,
     )
     .unwrap();
-    let accounts = process_conformance_instruction_with_features(
+    let accounts = process_instruction_with_features(
         &loader_id,
         &write(max_ixn_bytes as u64, max_ixn_bytes, 0),
         vec![(buffer_address, big_buffer_account)],
@@ -374,7 +371,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     }
 
     // Case: Declared length exceeds the bytes present
-    process_conformance_instruction_with_features(
+    process_instruction_with_features(
         &loader_id,
         &write(600, 512, 0),
         vec![(buffer_address, buffer_account.clone())],
@@ -384,7 +381,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     );
 
     // Case: Absurd declared length
-    process_conformance_instruction_with_features(
+    process_instruction_with_features(
         &loader_id,
         &write(u64::MAX, 512, 0),
         vec![(buffer_address, buffer_account.clone())],
@@ -394,7 +391,7 @@ fn test_bpf_loader_upgradeable_write_parsing(unbound_loader_v3_instruction_data:
     );
 
     // Case: Truncated header
-    process_conformance_instruction_with_features(
+    process_instruction_with_features(
         &loader_id,
         write(0, 0, 0)
             .get(..WRITE_INSTRUCTION_HEADER_LEN - 1)
