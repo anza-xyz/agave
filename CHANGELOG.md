@@ -37,6 +37,10 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `--xdp-zero-copy` now fails at startup with an actionable error when the interface is a bond or
+  its driver does not support AF_XDP zero copy (Linux 6.3+). The `xdp-network-config` metric
+  reports the zero copy mode the kernel actually bound.
+
 ### CLI
 
 #### Breaking

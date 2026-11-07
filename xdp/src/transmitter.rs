@@ -372,6 +372,16 @@ pub enum TransmitterError {
     LoadRoutingTables(#[source] io::Error),
     #[error("failed to start neighbors refresher: {0}")]
     StartNeighborsRefresher(#[source] io::Error),
+    #[error(
+        "{interface} is a bond; XDP zero copy needs a physical member interface, pass one with \
+         --xdp-interface"
+    )]
+    ZeroCopyOnBond { interface: String },
+    #[error(
+        "{interface} (driver {driver}) does not support XDP zero copy; pass --no-xdp-zero-copy to \
+         use copy mode"
+    )]
+    ZeroCopyUnsupported { interface: String, driver: String },
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -434,6 +444,10 @@ impl TransmitterBuilder {
         } else {
             NetworkDevice::new_from_default_route()?
         });
+
+        if zero_copy {
+            check_zero_copy_support(&dev)?;
+        }
 
         let mut tx_loop_config_builder = TxLoopConfigBuilder::new();
         tx_loop_config_builder.zero_copy(zero_copy);
@@ -542,6 +556,21 @@ impl TransmitterBuilder {
             neighbors_monitor_handle,
             route_monitor_handle,
         })
+    }
+
+    /// Whether every AF_XDP socket is bound in zero-copy mode, as reported by the kernel.
+    #[cfg(target_os = "linux")]
+    pub fn zero_copy(&self) -> io::Result<bool> {
+        self.tx_loops
+            .iter()
+            .try_fold(!self.tx_loops.is_empty(), |all, tx_loop| {
+                Ok(all && tx_loop.zero_copy()?)
+            })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn zero_copy(&self) -> io::Result<bool> {
+        Ok(false)
     }
 
     pub fn sender_count(&self) -> usize {
@@ -666,6 +695,27 @@ impl Transmitter {
     }
 }
 
+/// Fails early with an actionable error when zero copy cannot work on `dev`. Kernels without the
+/// netdev netlink family (before 6.3) skip the check and rely on the AF_XDP bind result.
+#[cfg(target_os = "linux")]
+fn check_zero_copy_support(dev: &NetworkDevice) -> Result<(), TransmitterError> {
+    let interface = dev.name().to_string();
+    if std::path::Path::new(&format!("/sys/class/net/{interface}/bonding")).exists() {
+        return Err(TransmitterError::ZeroCopyOnBond { interface });
+    }
+    match crate::netlink::netlink_xsk_zero_copy_supported(dev.if_index()) {
+        Ok(Some(false)) => Err(TransmitterError::ZeroCopyUnsupported {
+            driver: dev.driver().unwrap_or_else(|_| "unknown".to_string()),
+            interface,
+        }),
+        Ok(_) => Ok(()),
+        Err(err) => {
+            log::warn!("failed to query XDP zero copy support for {interface}: {err}");
+            Ok(())
+        }
+    }
+}
+
 /// Returns the IPv4 address of the master interface if the given interface is part of a bond.
 #[cfg(target_os = "linux")]
 pub(crate) fn read_bond_master_ip(interface: &str) -> Result<Option<Ipv4Addr>, InterfaceIpError> {
@@ -770,6 +820,28 @@ mod tests {
         assert!(
             matches!(result, Err(TransmitterError::NoUnreservedCpu)),
             "reserving every allowed CPU for XDP must leave none for the main thread"
+        );
+    }
+
+    #[test]
+    fn test_transmitter_builder_rejects_unsupported_zero_copy() {
+        let dev = NetworkDevice::new("lo").expect("open lo");
+        if crate::netlink::netlink_xsk_zero_copy_supported(dev.if_index())
+            .expect("query netdev xdp features")
+            .is_none()
+        {
+            return; // kernel predates the netdev netlink family
+        }
+        let result = TransmitterBuilder::new(
+            XdpConfig::new(Some("lo"), vec![], true),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(TransmitterError::ZeroCopyUnsupported { ref interface, .. }) if interface == "lo"
+            ),
+            "zero copy on lo must fail before any AF_XDP socket is created"
         );
     }
 

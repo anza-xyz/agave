@@ -275,6 +275,26 @@ impl<U: Umem> Socket<U> {
         Ok((socket, rx))
     }
 
+    /// Whether the kernel bound this socket in zero-copy mode (`XDP_OPTIONS`).
+    pub fn zero_copy(&self) -> io::Result<bool> {
+        // Safety: xdp_options is POD.
+        let mut options: libc::xdp_options = unsafe { mem::zeroed() };
+        let mut optlen = mem::size_of::<libc::xdp_options>() as socklen_t;
+        if unsafe {
+            getsockopt(
+                self.fd.as_raw_fd(),
+                SOL_XDP,
+                libc::XDP_OPTIONS,
+                &mut options as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(options.flags & libc::XDP_OPTIONS_ZEROCOPY != 0)
+    }
+
     pub fn queue(&self) -> &DeviceQueue {
         &self.dev_queue
     }

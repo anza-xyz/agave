@@ -2,13 +2,15 @@
 
 use {
     libc::{
-        AF_INET, AF_INET6, AF_NETLINK, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO, MSG_DONTWAIT,
-        MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_GET_STRICT_CHK, NETLINK_ROUTE,
-        NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP, NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST,
-        NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY, RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY,
-        RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH, RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH,
-        RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK, SOL_SOCKET, nlattr, nlmsgerr, nlmsghdr,
-        recv, send, setsockopt, sockaddr_nl, socket,
+        AF_INET, AF_INET6, AF_NETLINK, CTRL_ATTR_FAMILY_ID, CTRL_ATTR_FAMILY_NAME,
+        CTRL_CMD_GETFAMILY, GENL_ID_CTRL, IFLA_INFO_DATA, IFLA_INFO_KIND, IFLA_LINKINFO,
+        MSG_DONTWAIT, MSG_TRUNC, NDA_DST, NDA_LLADDR, NETLINK_EXT_ACK, NETLINK_GENERIC,
+        NETLINK_GET_STRICT_CHK, NETLINK_ROUTE, NLA_ALIGNTO, NLA_TYPE_MASK, NLM_F_DUMP,
+        NLM_F_DUMP_INTR, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, RTA_DST, RTA_GATEWAY,
+        RTA_IIF, RTA_OIF, RTA_PREFSRC, RTA_PRIORITY, RTA_TABLE, RTM_GETLINK, RTM_GETNEIGH,
+        RTM_GETROUTE, RTM_NEWLINK, RTM_NEWNEIGH, RTM_NEWROUTE, SO_RCVBUF, SOCK_RAW, SOL_NETLINK,
+        SOL_SOCKET, genlmsghdr, nlattr, nlmsgerr, nlmsghdr, recv, send, setsockopt, sockaddr_nl,
+        socket,
     },
     std::{
         collections::HashMap,
@@ -64,8 +66,12 @@ pub struct NetlinkSocket {
 
 impl NetlinkSocket {
     pub(crate) fn open() -> Result<Self, io::Error> {
+        Self::open_protocol(NETLINK_ROUTE)
+    }
+
+    fn open_protocol(protocol: i32) -> Result<Self, io::Error> {
         // Safety: libc wrapper
-        let sock = unsafe { socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE) };
+        let sock = unsafe { socket(AF_NETLINK, SOCK_RAW, protocol) };
         if sock < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -863,6 +869,87 @@ pub fn parse_rtm_newroute(msg: &NetlinkMessage) -> Option<RouteEntry> {
     Some(route)
 }
 
+// Generic netlink netdev family (from include/uapi/linux/netdev.h)
+const NETDEV_CMD_DEV_GET: u8 = 1;
+const NETDEV_A_DEV_IFINDEX: u16 = 1;
+const NETDEV_A_DEV_XDP_FEATURES: u16 = 3;
+// NETDEV_XDP_ACT_XSK from include/net/xdp_sock_drv.h: BASIC | REDIRECT | XSK_ZEROCOPY. The kernel
+// rejects an XDP_ZEROCOPY bind unless all three are set.
+const NETDEV_XDP_ACT_XSK: u64 = 1 | 2 | 8;
+
+#[repr(C)]
+struct GenlRequest {
+    header: nlmsghdr,
+    genl: genlmsghdr,
+}
+
+fn genl_request(family: u16, cmd: u8, attr_type: u16, attr: &[u8]) -> Vec<u8> {
+    // Safety: GenlRequest is POD.
+    let mut req = unsafe { mem::zeroed::<GenlRequest>() };
+    req.header.nlmsg_type = family;
+    req.header.nlmsg_flags = NLM_F_REQUEST as u16;
+    req.header.nlmsg_seq = 1;
+    req.genl.cmd = cmd;
+    req.genl.version = 1;
+    let mut buf = bytes_of(&req).to_vec();
+    let attr_len = NLA_HDR_LEN + attr.len();
+    buf.extend_from_slice(bytes_of(&nlattr {
+        nla_len: attr_len as u16,
+        nla_type: attr_type,
+    }));
+    buf.extend_from_slice(attr);
+    buf.resize(align_to(buf.len(), NLA_ALIGNTO as usize), 0);
+    let len = buf.len() as u32;
+    buf[..4].copy_from_slice(&len.to_ne_bytes());
+    buf
+}
+
+fn genl_reply_attrs(sock: &NetlinkSocket) -> Result<Vec<u8>, io::Error> {
+    let msg = sock
+        .recv()?
+        .into_iter()
+        .next()
+        .ok_or_else(|| io::Error::other("empty generic netlink reply"))?;
+    msg.data
+        .get(mem::size_of::<genlmsghdr>()..)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| io::Error::other("short generic netlink reply"))
+}
+
+/// Reports whether the driver advertises the features an AF_XDP zero-copy bind needs.
+/// Returns `None` when the kernel has no netdev netlink family (before Linux 6.3).
+pub fn netlink_xsk_zero_copy_supported(if_index: u32) -> Result<Option<bool>, io::Error> {
+    let sock = NetlinkSocket::open_protocol(NETLINK_GENERIC)?;
+    sock.send(&genl_request(
+        GENL_ID_CTRL as u16,
+        CTRL_CMD_GETFAMILY as u8,
+        CTRL_ATTR_FAMILY_NAME as u16,
+        b"netdev\0",
+    ))?;
+    let family = match genl_reply_attrs(&sock) {
+        Ok(attrs) => parse_attrs(&attrs)?
+            .get(&(CTRL_ATTR_FAMILY_ID as u16))
+            .and_then(|attr| u16_from_ne_bytes(attr.data))
+            .ok_or_else(|| io::Error::other("netdev family reply has no id"))?,
+        Err(err) if err.raw_os_error() == Some(libc::ENOENT) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+
+    sock.send(&genl_request(
+        family,
+        NETDEV_CMD_DEV_GET,
+        NETDEV_A_DEV_IFINDEX,
+        &if_index.to_ne_bytes(),
+    ))?;
+    let attrs = genl_reply_attrs(&sock)?;
+    let features = parse_attrs(&attrs)?
+        .get(&NETDEV_A_DEV_XDP_FEATURES)
+        .and_then(|attr| attr.data.get(..8)?.try_into().ok())
+        .map(u64::from_ne_bytes)
+        .ok_or_else(|| io::Error::other("netdev reply has no xdp-features"))?;
+    Ok(Some(features & NETDEV_XDP_ACT_XSK == NETDEV_XDP_ACT_XSK))
+}
+
 fn push_nlattr<T>(buf: &mut Vec<u8>, attr_type: u16, value: &T) {
     let attr_len = NLA_HDR_LEN + mem::size_of::<T>();
     let aligned_len = align_to(attr_len, NLA_ALIGNTO as usize);
@@ -883,4 +970,20 @@ fn u32_from_ne_bytes(data: &[u8]) -> Option<u32> {
 fn u16_from_ne_bytes(data: &[u8]) -> Option<u16> {
     let bytes: [u8; 2] = data.get(..2)?.try_into().ok()?;
     Some(u16::from_ne_bytes(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_netlink_xsk_zero_copy_supported_on_loopback() {
+        let if_index = unsafe { libc::if_nametoindex(c"lo".as_ptr()) };
+        // lo has no AF_XDP zero-copy; `None` means the kernel predates the netdev family.
+        assert_ne!(
+            netlink_xsk_zero_copy_supported(if_index).expect("query netdev xdp features"),
+            Some(true)
+        );
+        assert!(netlink_xsk_zero_copy_supported(u32::MAX).is_err());
+    }
 }
