@@ -650,8 +650,8 @@ impl BenchAuthorizeChecked {
         );
         let clock_address = sysvar::clock::id();
         let clock_account = create_sysvar_account(&Clock::default());
-        let authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
-        let new_authorized_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let authorized_account = AccountSharedData::empty(0, &Pubkey::new_unique());
+        let new_authorized_account = AccountSharedData::empty(0, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (vote_pubkey, vote_account),
             (clock_address, clock_account),

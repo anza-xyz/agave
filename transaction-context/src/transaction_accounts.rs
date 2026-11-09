@@ -43,6 +43,21 @@ impl AccountPrivateFields {
     fn payload_len(&self) -> usize {
         self.payload.len()
     }
+
+    #[expect(
+        deprecated,
+        reason = "only the deprecated constructor keeps a loaded `rent_epoch` with a shared \
+                  payload"
+    )]
+    fn into_account_shared_data(self, shared_fields: &AccountSharedFields) -> AccountSharedData {
+        AccountSharedData::create_from_existing_shared_data(
+            shared_fields.lamports,
+            self.payload,
+            shared_fields.owner,
+            self.executable,
+            self.rent_epoch,
+        )
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -452,13 +467,7 @@ impl TransactionAccounts {
                 let private_fields = private_fields_cell.into_inner();
                 (
                     shared_fields.key,
-                    AccountSharedData::create_from_existing_shared_data(
-                        shared_fields.lamports,
-                        private_fields.payload,
-                        shared_fields.owner,
-                        private_fields.executable,
-                        private_fields.rent_epoch,
-                    ),
+                    private_fields.into_account_shared_data(&shared_fields),
                 )
             })
             .collect()
@@ -473,13 +482,7 @@ impl TransactionAccounts {
             .map(|(shared_fields_cell, private_fields_cell)| {
                 let shared_fields = shared_fields_cell.into_inner();
                 let private_fields = private_fields_cell.into_inner();
-                AccountSharedData::create_from_existing_shared_data(
-                    shared_fields.lamports,
-                    private_fields.payload,
-                    shared_fields.owner,
-                    private_fields.executable,
-                    private_fields.rent_epoch,
-                )
+                private_fields.into_account_shared_data(&shared_fields)
             })
             .collect()
     }

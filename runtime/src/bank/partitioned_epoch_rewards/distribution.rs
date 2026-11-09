@@ -261,7 +261,6 @@ impl Bank {
         stakes_cache_accounts: &imbl::HashMap<Pubkey, StakeAccount<Delegation>>,
         partitioned_stake_reward: &PartitionedStakeReward,
         rent: &Rent,
-        adjust_delegations_for_rent: bool,
     ) -> Result<StakeReward, DistributionError> {
         let stake_account = stakes_cache_accounts
             .get(&partitioned_stake_reward.stake_pubkey)
@@ -269,7 +268,7 @@ impl Bank {
             .clone();
 
         let (mut account, stake_state): (AccountSharedData, StakeStateV2) = stake_account.into();
-        let StakeStateV2::Stake(meta, stake, flags) = stake_state else {
+        let StakeStateV2::Stake(meta, _, flags) = stake_state else {
             // StakesCache only stores accounts where StakeStateV2::delegation().is_some()
             unreachable!(
                 "StakesCache entry {:?} failed StakeStateV2 deserialization",
@@ -284,31 +283,19 @@ impl Bank {
             .map_err(|_| DistributionError::ArithmeticOverflow)?;
 
         let mut new_stake = partitioned_stake_reward.inflation.stake;
-        if adjust_delegations_for_rent {
-            let minimum_balance = rent.minimum_balance(account.data().len());
-            // The rewarded epoch is right before the distribution epoch
-            let rewarded_epoch = distribution_epoch.saturating_sub(1);
-            // The entry in `partitioned_stake_reward` contains the rewards,
-            // calculated during the calculation phase
-            let delegation_with_rewards = new_stake.delegation.stake;
-            adjust_delegation_for_rent(
-                &mut new_stake.delegation,
-                rewarded_epoch,
-                delegation_with_rewards,
-                account.lamports(),
-                minimum_balance,
-            );
-        } else {
-            let expected_delegation = stake
-                .delegation
-                .stake
-                .saturating_add(partitioned_stake_reward.inflation.stake_reward);
-            assert_eq!(
-                expected_delegation, new_stake.delegation.stake,
-                "stake reward delegation must be consistent with the updated stake account \
-                 lamport balance"
-            );
-        }
+        let minimum_balance = rent.minimum_balance(account.data().len());
+        // The rewarded epoch is right before the distribution epoch
+        let rewarded_epoch = distribution_epoch.saturating_sub(1);
+        // The entry in `partitioned_stake_reward` contains the rewards,
+        // calculated during the calculation phase
+        let delegation_with_rewards = new_stake.delegation.stake;
+        adjust_delegation_for_rent(
+            &mut new_stake.delegation,
+            rewarded_epoch,
+            delegation_with_rewards,
+            account.lamports(),
+            minimum_balance,
+        );
         account
             .set_state(&StakeStateV2::Stake(meta, new_stake, flags))
             .map_err(|_| DistributionError::UnableToSetState)?;
@@ -350,11 +337,6 @@ impl Bank {
         partition_rewards: &StartBlockHeightAndPartitionedRewards,
         partition_index: u64,
     ) -> DistributionResults {
-        let feature_snapshot = self.feature_set.snapshot();
-        // Name intentionally doesn't match -- "adjust delegations for rent" is
-        // part of relaxing post-exec min balance checks.
-        let adjust_delegations_for_rent = feature_snapshot.relax_post_exec_min_balance_check;
-
         let mut stake_reward_lamports_minted = 0;
         let mut stake_reward_lamports_burned = 0;
         let mut block_reward_lamports_distributed = 0;
@@ -399,7 +381,6 @@ impl Bank {
                 stakes_cache_accounts,
                 partitioned_stake_reward,
                 rent,
-                adjust_delegations_for_rent,
             ) {
                 Ok(stake_reward) => {
                     stake_reward_lamports_minted += stake_reward_amount;
@@ -469,7 +450,6 @@ mod tests {
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state::{self, VoteStateV4, handler::VoteStateHandler},
         std::sync::Arc,
-        test_case::test_case,
     };
 
     #[test]
@@ -790,9 +770,8 @@ mod tests {
         }
     }
 
-    #[test_case(true; "adjust_delegations_for_rent")]
-    #[test_case(false; "no_adjust_delegations_for_rent")]
-    fn test_build_updated_stake_reward(adjust_delegations_for_rent: bool) {
+    #[test]
+    fn test_build_updated_stake_reward() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let (bank, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
@@ -817,11 +796,8 @@ mod tests {
         let new_warmup_cooldown_rate_epoch = bank.new_warmup_cooldown_rate_epoch();
         let mut rent = bank.rent_collector.rent.clone();
         let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
-
         // Adjust rent down, no impact at all
-        if adjust_delegations_for_rent {
-            rent.lamports_per_byte /= 2;
-        }
+        rent.lamports_per_byte /= 2;
 
         let voter_pubkey = Pubkey::new_unique();
         let new_stake = Stake {
@@ -856,7 +832,6 @@ mod tests {
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
                 &rent,
-                adjust_delegations_for_rent,
             )
             .unwrap_err(),
             DistributionError::AccountNotFound
@@ -891,7 +866,6 @@ mod tests {
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
                 &rent,
-                adjust_delegations_for_rent,
             )
             .unwrap_err(),
             DistributionError::ArithmeticOverflow
@@ -956,7 +930,6 @@ mod tests {
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
                 &rent,
-                adjust_delegations_for_rent,
             )
             .unwrap(),
             expected_stake_reward
@@ -1031,7 +1004,6 @@ mod tests {
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
                 &rent,
-                adjust_delegations_for_rent,
             )
             .unwrap(),
             expected_stake_reward
@@ -1325,7 +1297,6 @@ mod tests {
         };
         let stake_history: &StakeHistory = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let adjust_delegations_for_rent = true;
 
         let maybe_rewards = redeem_rewards(
             pre_stake,
@@ -1339,7 +1310,6 @@ mod tests {
                 },
                 stake_history,
                 new_rate_activation_epoch,
-                adjust_delegations_for_rent,
             },
             null_tracer(),
             &ag_epoch_type,

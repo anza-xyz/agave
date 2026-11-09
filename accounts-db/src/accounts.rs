@@ -716,7 +716,7 @@ mod tests {
 
         let invalid_table_key = Pubkey::new_unique();
         let invalid_table_account =
-            AccountSharedData::new(1, 0, &address_lookup_table::program::id());
+            AccountSharedData::empty(1, &address_lookup_table::program::id());
         accounts.store_for_tests(0, &invalid_table_key, &invalid_table_account);
         accounts.add_root_and_flush_write_cache(0);
 
@@ -749,12 +749,11 @@ mod tests {
                 meta: LookupTableMeta::default(),
                 addresses: Cow::Owned(table_addresses.clone()),
             };
-            AccountSharedData::create_from_existing_shared_data(
+            AccountSharedData::new_with_shared_data(
                 1,
                 Arc::new(table_state.serialize_for_tests().unwrap()),
-                address_lookup_table::program::id(),
+                &address_lookup_table::program::id(),
                 false,
-                0,
             )
         };
         accounts.store_for_tests(0, &table_key, &table_account);
@@ -789,13 +788,13 @@ mod tests {
 
         // Load accounts owned by various programs into AccountsDb
         let pubkey0 = solana_pubkey::new_rand();
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
+        let account0 = AccountSharedData::empty(1, &Pubkey::from([2; 32]));
         accounts.store_for_tests(0, &pubkey0, &account0);
         let pubkey1 = solana_pubkey::new_rand();
-        let account1 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
+        let account1 = AccountSharedData::empty(1, &Pubkey::from([2; 32]));
         accounts.store_for_tests(0, &pubkey1, &account1);
         let pubkey2 = solana_pubkey::new_rand();
-        let account2 = AccountSharedData::new(1, 0, &Pubkey::from([3; 32]));
+        let account2 = AccountSharedData::empty(1, &Pubkey::from([3; 32]));
         accounts.store_for_tests(0, &pubkey2, &account2);
         accounts.add_root_and_flush_write_cache(0);
 
@@ -990,10 +989,10 @@ mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
-        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
+        let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1106,9 +1105,9 @@ mod tests {
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1188,10 +1187,10 @@ mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
-        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
+        let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1260,10 +1259,10 @@ mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
-        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
+        let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1346,7 +1345,7 @@ mod tests {
     #[test]
     fn test_accounts_locks_intrabatch_conflicts() {
         let pubkey = Pubkey::new_unique();
-        let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account_data = AccountSharedData::empty(1, &Pubkey::default());
         let accounts_db = Arc::new(AccountsDb::default_for_tests());
         accounts_db.store_for_tests((
             0,
@@ -1423,10 +1422,10 @@ mod tests {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
-        let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let zero_account = AccountSharedData::empty(0, &Pubkey::default());
         for i in 0..2_000 {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(i + 1, 0, &Pubkey::default());
+            let account = AccountSharedData::empty(i + 1, &Pubkey::default());
             accounts.store_for_tests(i, &pubkey, &account);
             accounts.store_for_tests(i, &old_pubkey, &zero_account);
             old_pubkey = pubkey;
@@ -1457,11 +1456,11 @@ mod tests {
         let pubkey2 = keys.pop().unwrap();
         let pubkey1 = keys.pop().unwrap();
         let pubkey0 = keys.pop().unwrap();
-        let account0 = AccountSharedData::new(42, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(42, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey0, &account0);
-        let account1 = AccountSharedData::new(42, 0, &Pubkey::default());
+        let account1 = AccountSharedData::empty(42, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey1, &account1);
-        let account2 = AccountSharedData::new(41, 0, &Pubkey::default());
+        let account2 = AccountSharedData::empty(41, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey2, &account2);
 
         let ancestors = Ancestors::from(vec![0]);

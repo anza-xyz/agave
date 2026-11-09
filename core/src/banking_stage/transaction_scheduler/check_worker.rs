@@ -160,7 +160,7 @@ mod tests {
         let working_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 2);
         working_bank.store_account(
             &mint_keypair.pubkey(),
-            &AccountSharedData::new(0, 0, &system_program::ID),
+            &AccountSharedData::empty(0, &system_program::ID),
         );
         let sharable_banks = {
             let mut forks = bank_forks.write().unwrap();
@@ -993,7 +993,7 @@ pub(crate) mod external {
             let fee_payer_balance = 123_456;
             test_frame.bank.store_account(
                 &fee_payer.pubkey(),
-                &AccountSharedData::new(fee_payer_balance, 0, &system_program::ID),
+                &AccountSharedData::empty(fee_payer_balance, &system_program::ID),
             );
 
             let batch = test_frame.allocate_batch(&[wincode::serialize(&transfer(
@@ -1050,7 +1050,7 @@ pub(crate) mod external {
             let payer = Keypair::new();
             frame.bank.store_account(
                 &payer.pubkey(),
-                &AccountSharedData::new(123_456, 0, &system_program::ID),
+                &AccountSharedData::empty(123_456, &system_program::ID),
             );
             // Duplicate compute-budget instructions pass parsing but fail translation.
             let translation_failure = Transaction::new(

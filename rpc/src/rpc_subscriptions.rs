@@ -1562,7 +1562,7 @@ pub(crate) mod tests {
             let mut parent = forks.read().unwrap().root_bank();
             for slot in 1..=3 {
                 let bank = Bank::new_from_parent(parent, SlotLeader::default(), slot);
-                bank.store_account(&address, &AccountSharedData::new(slot, 0, &owner));
+                bank.store_account(&address, &AccountSharedData::empty(slot, &owner));
                 bank.freeze();
                 parent = forks
                     .write()
@@ -1639,7 +1639,7 @@ pub(crate) mod tests {
             let bank = Bank::new_from_parent(root.clone(), SlotLeader::default(), 1);
             bank.store_account(
                 &address,
-                &AccountSharedData::new(round as u64 + 1, 0, &owner),
+                &AccountSharedData::empty(round as u64 + 1, &owner),
             );
             bank.freeze();
             let bank_id = bank.bank_id();
@@ -1846,7 +1846,7 @@ pub(crate) mod tests {
         for (slot, balance) in [(1, 10), (2, 20), (1, 30)] {
             let parent = forks.read().unwrap().get(0).unwrap();
             let bank = Bank::new_from_parent(parent, SlotLeader::default(), slot);
-            bank.store_account(&address, &AccountSharedData::new(balance, 0, &owner));
+            bank.store_account(&address, &AccountSharedData::empty(balance, &owner));
             bank.freeze();
             forks.write().unwrap().remove(slot);
             forks.write().unwrap().insert(bank);
@@ -1873,7 +1873,7 @@ pub(crate) mod tests {
         for slot in 1..=2 {
             let parent = forks.read().unwrap().get(slot - 1).unwrap();
             let bank = Bank::new_from_parent(parent, SlotLeader::default(), slot);
-            bank.store_account(&address, &AccountSharedData::new(slot, 0, &owner));
+            bank.store_account(&address, &AccountSharedData::empty(slot, &owner));
             bank.freeze();
             forks.write().unwrap().insert(bank);
         }
@@ -1903,7 +1903,7 @@ pub(crate) mod tests {
             let parent = forks.read().unwrap().get(slot - 1).unwrap();
             let bank = Bank::new_from_parent(parent, SlotLeader::default(), slot);
             if slot == 4 {
-                bank.store_account(&address, &AccountSharedData::new(4, 0, &owner));
+                bank.store_account(&address, &AccountSharedData::empty(4, &owner));
             }
             bank.freeze();
             forks.write().unwrap().insert(bank);
@@ -1949,7 +1949,7 @@ pub(crate) mod tests {
             rpc.block_until_processed(&subscriptions);
             let parent = forks.read().unwrap().get(0).unwrap();
             let bank = Bank::new_from_parent(parent, SlotLeader::default(), 1);
-            bank.store_account(&Pubkey::new_unique(), &AccountSharedData::new(1, 0, &owner));
+            bank.store_account(&Pubkey::new_unique(), &AccountSharedData::empty(1, &owner));
             bank.freeze();
             forks.write().unwrap().insert(bank);
             if !expire {
@@ -1975,10 +1975,7 @@ pub(crate) mod tests {
         space: usize,
     }
 
-    fn make_account_result(
-        non_default_account: bool,
-        account_result: AccountResult,
-    ) -> serde_json::Value {
+    fn make_account_result(account_result: AccountResult) -> serde_json::Value {
         json!({
            "jsonrpc": "2.0",
            "method": "accountNotification",
@@ -1990,7 +1987,7 @@ pub(crate) mod tests {
                        "executable": false,
                        "lamports": account_result.lamports,
                        "owner": "11111111111111111111111111111111",
-                       "rentEpoch": if non_default_account {u64::MAX} else {0},
+                       "rentEpoch": u64::MAX,
                        "space": account_result.space,
                     },
                },
@@ -2146,15 +2143,12 @@ pub(crate) mod tests {
             0,
             &system_program::id(),
         );
-        let expected0 = make_account_result(
-            true,
-            AccountResult {
-                lamports: 1,
-                subscription: 0,
-                space: 0,
-                data: "",
-            },
-        );
+        let expected0 = make_account_result(AccountResult {
+            lamports: 1,
+            subscription: 0,
+            space: 0,
+            data: "",
+        });
 
         let tx1 = {
             let instruction =
@@ -2162,15 +2156,12 @@ pub(crate) mod tests {
             let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
             Transaction::new(&[&alice, &mint_keypair], message, blockhash)
         };
-        let expected1 = make_account_result(
-            false,
-            AccountResult {
-                lamports: 0,
-                subscription: 2,
-                space: 0,
-                data: "",
-            },
-        );
+        let expected1 = make_account_result(AccountResult {
+            lamports: 0,
+            subscription: 2,
+            space: 0,
+            data: "",
+        });
 
         let tx2 = system_transaction::create_account(
             &mint_keypair,
@@ -2180,15 +2171,12 @@ pub(crate) mod tests {
             1024,
             &system_program::id(),
         );
-        let expected2 = make_account_result(
-            true,
-            AccountResult {
-                lamports: 1,
-                subscription: 4,
-                space: 1024,
-                data: "error: data too large for bs58 encoding",
-            },
-        );
+        let expected2 = make_account_result(AccountResult {
+            lamports: 1,
+            subscription: 4,
+            space: 1024,
+            data: "error: data too large for bs58 encoding",
+        });
 
         let subscribe_cases = vec![
             (alice.pubkey(), tx0, expected0),

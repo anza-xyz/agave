@@ -307,7 +307,7 @@ mod tests {
             let bank0 = Arc::new(Bank::new_for_tests(&genesis));
             let address = Pubkey::new_unique();
             let owner = Pubkey::new_unique();
-            bank0.store_account(&address, &AccountSharedData::new(10, 0, &owner));
+            bank0.store_account(&address, &AccountSharedData::empty(10, &owner));
             bank0.freeze();
             if flush_before_capture {
                 bank0.squash();
@@ -315,7 +315,7 @@ mod tests {
             }
             let snapshot = NotificationBank::new(bank0.clone());
             let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
-            bank1.store_account(&address, &AccountSharedData::new(20, 0, &owner));
+            bank1.store_account(&address, &AccountSharedData::empty(20, &owner));
             bank1.squash();
             bank1.force_flush_accounts_cache();
             assert_eq!(snapshot.program_accounts(&owner)[0].1.lamports(), 10);

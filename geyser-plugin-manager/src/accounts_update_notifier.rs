@@ -298,7 +298,7 @@ mod tests {
             ],
         ))));
         let notifier = AccountsUpdateNotifierImpl::new(plugin_manager, false);
-        let account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let pubkey = Pubkey::new_unique();
         let bank_id = BankId::new(9);
 
