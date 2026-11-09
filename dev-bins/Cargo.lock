@@ -6930,7 +6930,6 @@ dependencies = [
  "bv",
  "bytes",
  "crossbeam-channel",
- "flate2",
  "indexmap",
  "itertools 0.15.0",
  "lazy-lru",

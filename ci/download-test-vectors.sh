@@ -7,8 +7,8 @@
 
 set -euo pipefail
 
-TEST_VECTORS_COMMIT=0a73bfe28040da825fb88fa79bb132a561cf440f
-TEST_VECTORS_SHA256SUMS=1c35f9af714e4885d1a5d60c47bfacc7ff1b8a1b2006f445b104b4ee06b57872
+TEST_VECTORS_COMMIT=edf867a2ec172c7d2a4718f9fafdea1cd57fa5e2
+TEST_VECTORS_SHA256SUMS=d1af986de97c5cf41ecfcbd7b62922bfff9b7d6385a664b83fc60d0ae24195b5
 
 usage() {
   echo "usage: $0 [--commit <sha>] [<set>...]" >&2
