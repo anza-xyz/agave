@@ -605,7 +605,7 @@ impl AppendVec {
     /// `read_meta_entry_bytes()`: the account, or the read of the rest of its data. Panics if
     /// `bytes` is not aligned, as `MetaEntryBuffer` is, since the meta entry's fields are read in
     /// place.
-    pub(crate) fn account_from_meta_entry<'a>(
+    fn account_from_meta_entry<'a>(
         &self,
         offset: FileOffset,
         bytes: &'a [u8],

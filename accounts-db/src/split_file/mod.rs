@@ -462,7 +462,7 @@ impl SplitFile {
 
     /// Parses the account from `bytes`, as read by `read_meta_entry_bytes()`: the account, or the
     /// read of its data entry from the data file
-    pub fn account_from_meta_entry<'a>(
+    fn account_from_meta_entry<'a>(
         &self,
         bytes: &'a [u8],
     ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
