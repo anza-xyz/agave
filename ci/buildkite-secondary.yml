@@ -30,7 +30,7 @@ steps:
   - wait: ~
     continue_on_failure: true
   - name: "sync release channels"
-    if: build.env("TRIGGERED_BUILDKITE_TAG") != null
+    if: build.env("TRIGGERED_BUILDKITE_TAG") != null && build.env("TRIGGERED_BUILDKITE_TAG") != ""
     command: >-
       cargo xtask sync-release-channels
       --target x86_64-unknown-linux-gnu
