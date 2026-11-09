@@ -5,22 +5,13 @@ use {
     clap::ArgMatches,
     log::info,
     solana_clap_utils::input_parsers::parse_cpu_ranges,
-    solana_net_utils::multihomed_sockets::BindIpAddrs,
 };
 use {clap::Arg, solana_clap_utils::input_validators::validate_cpu_ranges};
 
 #[cfg(target_os = "linux")]
-pub(crate) fn new_config(
-    matches: &ArgMatches,
-    bind_addresses: &BindIpAddrs,
-) -> Result<Option<XdpConfig>, String> {
+pub(crate) fn new_config(matches: &ArgMatches) -> Result<Option<XdpConfig>, String> {
     if matches.is_present("no_xdp") {
         return Ok(None);
-    }
-    if bind_addresses.len() > 1 {
-        return Err(
-            "XDP cannot be used in a multihoming context; pass --no-xdp to disable XDP".to_string(),
-        );
     }
     let xdp_interface = matches.value_of("xdp_interface");
     let xdp_zero_copy = matches.is_present("xdp_zero_copy");
@@ -113,28 +104,14 @@ mod tests {
     use {
         super::*,
         crate::{cli::DefaultArgs, commands::run::args::add_args},
-        std::net::{IpAddr, Ipv4Addr},
     };
-
-    fn build_single_ip_bind() -> BindIpAddrs {
-        BindIpAddrs::new(vec![Ipv4Addr::UNSPECIFIED.into()])
-            .expect("a single unspecified IPv4 bind address should be valid")
-    }
-
-    fn build_multihoming_bind() -> BindIpAddrs {
-        BindIpAddrs::new(vec![
-            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
-            IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
-        ])
-        .expect("two distinct specified IPv4 bind addresses should be valid")
-    }
 
     #[test]
     fn test_no_xdp_flag_disables_xdp() {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let matches = app.get_matches_from(vec!["agave-validator", "--no-xdp"]);
-        let result = new_config(&matches, &build_single_ip_bind());
+        let result = new_config(&matches);
         assert!(
             result
                 .expect("--no-xdp should bypass XDP configuration validation")
@@ -157,7 +134,7 @@ mod tests {
             let matches = app
                 .get_matches_from_safe(args)
                 .expect("valid XDP copy mode selection should be accepted");
-            let config = new_config(&matches, &build_single_ip_bind())
+            let config = new_config(&matches)
                 .expect("explicit XDP core should be valid")
                 .expect("copy mode selection should keep XDP enabled");
             assert_eq!(
@@ -172,22 +149,10 @@ mod tests {
         let default_args = DefaultArgs::default();
         let app = add_args(clap::App::new("agave-validator"), &default_args);
         let matches = app.get_matches_from(vec!["agave-validator", "--xdp-cpu-cores", "5-3"]);
-        let result = new_config(&matches, &build_single_ip_bind());
+        let result = new_config(&matches);
         assert!(
             result.unwrap_err().contains("selects no CPUs"),
             "empty XDP CPU core selection must produce an error"
-        );
-    }
-
-    #[test]
-    fn test_multihoming_is_error() {
-        let default_args = DefaultArgs::default();
-        let app = add_args(clap::App::new("agave-validator"), &default_args);
-        let matches = app.get_matches_from(vec!["agave-validator"]);
-        let result = new_config(&matches, &build_multihoming_bind());
-        assert!(
-            result.unwrap_err().contains("multihoming"),
-            "multihoming context must produce an error"
         );
     }
 }
