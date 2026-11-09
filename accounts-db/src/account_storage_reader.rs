@@ -226,7 +226,7 @@ mod tests {
             rngs::StdRng,
             seq::{IndexedMutRandom as _, IndexedRandom},
         },
-        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_pubkey::Pubkey,
         std::{
             collections::HashMap,
@@ -388,7 +388,7 @@ mod tests {
         let accounts: Vec<_> = (0..total_accounts)
             .map(|index| {
                 if tombstone_indexes.contains(&index) {
-                    AccountSharedData::new(0, 0, &Pubkey::default())
+                    AccountSharedData::empty(0, &Pubkey::default())
                 } else {
                     AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default())
                 }
@@ -694,13 +694,13 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(i, data_len)| {
-                let mut account = AccountSharedData::new_with_data(
-                    100 + i as u64,
-                    vec![i as u8 + 1; data_len],
-                    &Pubkey::new_unique(),
-                );
-                account.set_executable(i == 1);
-                account.set_rent_epoch(42 + i as u64);
+                let account = AccountSharedData::from(Account {
+                    lamports: 100 + i as u64,
+                    data: vec![i as u8 + 1; data_len],
+                    owner: Pubkey::new_unique(),
+                    executable: i == 1,
+                    rent_epoch: 42 + i as u64,
+                });
                 (Pubkey::new_unique(), account)
             })
             .collect();

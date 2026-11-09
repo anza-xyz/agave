@@ -188,7 +188,6 @@ fn svm_concurrent() {
     let read_account = Pubkey::new_unique();
     let mut account_data = AccountSharedData::default();
     account_data.set_data_from_slice(&AMOUNT.to_le_bytes());
-    account_data.set_rent_epoch(u64::MAX);
     account_data.set_lamports(1);
     mock_bank
         .account_shared_data

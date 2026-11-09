@@ -37,7 +37,6 @@ pub(crate) struct CalculationEnvironment<'a> {
     pub(crate) point_value: &'a PointValue,
     pub(crate) stake_history: &'a StakeHistory,
     pub(crate) new_rate_activation_epoch: Option<Epoch>,
-    pub(crate) adjust_delegations_for_rent: bool,
 }
 
 #[derive(Debug)]

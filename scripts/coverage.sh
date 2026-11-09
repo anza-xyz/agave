@@ -70,8 +70,8 @@ TEST_ARGS=(
 # macro code green always. Also, forcibly discard the vast amount of log by
 # redirecting the stderr altogether on CI, where all tests are run unlike
 # developing.
-RUST_LOG="solana=trace,agave=trace,$RUST_LOG" INTERCEPT_OUTPUT=/dev/null "$here/../ci/intercept.sh" \
-  cargo test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}"
+cov_test=(cargo test --target-dir "$here/../target/cov" "${PACKAGES[@]}" -- "${TEST_ARGS[@]}")
+RUST_LOG="solana=trace,agave=trace,$RUST_LOG" "${cov_test[@]}"
 
 # Generate test reports
 echo "--- grcov"

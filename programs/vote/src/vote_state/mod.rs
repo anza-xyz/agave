@@ -1607,7 +1607,7 @@ mod tests {
 
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (vote_pubkey, vote_account)],
             rent.clone(),
@@ -1747,7 +1747,7 @@ mod tests {
 
         // Create a fake TransactionContext with a fake InstructionContext with a single account which is the
         // vote account that was just created
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent,
@@ -1824,7 +1824,7 @@ mod tests {
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent,
@@ -4113,7 +4113,7 @@ mod tests {
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent,
@@ -4198,7 +4198,7 @@ mod tests {
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
 
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), processor_account), (node_pubkey, vote_account)],
             rent,
@@ -4267,7 +4267,7 @@ mod tests {
         assert_eq!(vote_account.owner(), &id());
         assert_eq!(vote_account.data().len(), VoteStateV4::size_of());
 
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![
                 (id(), processor_account),
@@ -4400,12 +4400,12 @@ mod tests {
     #[test]
     fn test_validate_and_resolve_collector_key() {
         let rent = Rent::default();
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let vote_pubkey = solana_pubkey::new_rand();
-        let vote_account = AccountSharedData::new(1, 0, &id());
+        let vote_account = AccountSharedData::empty(1, &id());
         let collector_pubkey = solana_pubkey::new_rand();
         let valid_collector =
-            || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+            || AccountSharedData::empty(rent.minimum_balance(0), &system_program::id());
 
         // Success: VoteAccount variant returns the vote account's key.
         {
@@ -4457,7 +4457,7 @@ mod tests {
             // Imagine the incinerator is temporarily holding funds at the time
             // of the invocation.
             let incinerator_account =
-                AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+                AccountSharedData::empty(rent.minimum_balance(0), &system_program::id());
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -4483,7 +4483,7 @@ mod tests {
         // Fail: Collector account not system-owned.
         {
             let bad_owner =
-                AccountSharedData::new(rent.minimum_balance(0), 0, &solana_pubkey::new_rand());
+                AccountSharedData::empty(rent.minimum_balance(0), &solana_pubkey::new_rand());
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -4508,7 +4508,7 @@ mod tests {
 
         // Fail: Collector account not rent-exempt.
         {
-            let underfunded = AccountSharedData::new(0, 0, &system_program::id());
+            let underfunded = AccountSharedData::empty(0, &system_program::id());
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -4588,13 +4588,12 @@ mod tests {
                 }
             };
 
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
 
         // Create a valid collector account (system-owned, rent-exempt).
         let new_collector = solana_pubkey::new_rand();
         let collector_lamports = rent.minimum_balance(0);
-        let collector_account =
-            AccountSharedData::new(collector_lamports, 0, &system_program::id());
+        let collector_account = AccountSharedData::empty(collector_lamports, &system_program::id());
 
         let original_inflation_collector = vote_pubkey;
         let original_block_revenue_collector = node_pubkey;
@@ -4911,7 +4910,7 @@ mod tests {
             let bad_collector = solana_pubkey::new_rand();
             let non_system_owner = solana_pubkey::new_rand();
             let bad_collector_account =
-                AccountSharedData::new(collector_lamports, 0, &non_system_owner);
+                AccountSharedData::empty(collector_lamports, &non_system_owner);
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -4950,7 +4949,7 @@ mod tests {
         // Should fail - new collector not rent-exempt.
         {
             let bad_collector = solana_pubkey::new_rand();
-            let bad_collector_account = AccountSharedData::new(0, 0, &system_program::id());
+            let bad_collector_account = AccountSharedData::empty(0, &system_program::id());
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account.clone()),
@@ -4990,7 +4989,7 @@ mod tests {
         {
             let bad_collector = solana_pubkey::new_rand();
             let bad_collector_account =
-                AccountSharedData::new(collector_lamports, 0, &system_program::id());
+                AccountSharedData::empty(collector_lamports, &system_program::id());
             let transaction_context = new_transaction_context(
                 vec![
                     (id(), processor_account),
@@ -5031,7 +5030,7 @@ mod tests {
     fn test_initialize_account_v2() {
         let target_version = VoteStateTargetVersion::V4;
         let rent = Rent::default();
-        let processor_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let processor_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
 
         let vote_pubkey = solana_pubkey::new_rand();
         let node_pubkey = solana_pubkey::new_rand();
@@ -5060,7 +5059,7 @@ mod tests {
         let make_uninit_vote_account =
             || AccountSharedData::new_with_data(lamports, vec![0; v4_size], &id());
         let valid_collector_account =
-            || AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id());
+            || AccountSharedData::empty(rent.minimum_balance(0), &system_program::id());
 
         let assert_v4_fields =
             |instruction_context: &InstructionContext,
@@ -5524,7 +5523,7 @@ mod tests {
                 // 1. Not system-owned.
                 test_bad_collector(
                     slot,
-                    AccountSharedData::new(rent.minimum_balance(0), 0, &solana_pubkey::new_rand()),
+                    AccountSharedData::empty(rent.minimum_balance(0), &solana_pubkey::new_rand()),
                     true,
                     InstructionError::InvalidAccountOwner,
                 );
@@ -5532,7 +5531,7 @@ mod tests {
                 // 2. Not rent-exempt.
                 test_bad_collector(
                     slot,
-                    AccountSharedData::new(0, 0, &system_program::id()),
+                    AccountSharedData::empty(0, &system_program::id()),
                     true,
                     InstructionError::InsufficientFunds,
                 );
@@ -5596,7 +5595,7 @@ mod tests {
     ) -> TransactionContext<'static> {
         let rent = Rent::default();
         let recipient = solana_pubkey::new_rand();
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![
                 (id(), program_account),
@@ -5900,7 +5899,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
         let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],
@@ -5999,7 +5998,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
         let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],
@@ -6175,7 +6174,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(buf_size) + 1_000_000;
         let vote_account = AccountSharedData::new_with_data(lamports, vote_account_data, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],
@@ -6211,7 +6210,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],
@@ -6276,7 +6275,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],
@@ -6358,7 +6357,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],
@@ -6411,7 +6410,7 @@ mod tests {
         let rent = Rent::default();
         let lamports = rent.minimum_balance(serialized.len());
         let vote_account = AccountSharedData::new_with_data(lamports, serialized, &id());
-        let program_account = AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id());
+        let program_account = AccountSharedData::empty(0, &solana_sdk_ids::native_loader::id());
         let transaction_context = new_transaction_context(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             vec![InstructionAccount::new(1, false, true)],

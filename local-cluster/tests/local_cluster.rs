@@ -1452,7 +1452,7 @@ fn setup_transfer_scan_threads(
         .map(|k| {
             (
                 k.pubkey(),
-                AccountSharedData::new(1, 0, &system_program::id()),
+                AccountSharedData::empty(1, &system_program::id()),
             )
         })
         .collect();

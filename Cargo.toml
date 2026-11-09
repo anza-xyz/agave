@@ -205,7 +205,7 @@ agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
-agave-geyser-plugin-interface = { version = "=7.0.0", git = "https://github.com/anza-xyz/agave-sdk", rev = "fc09fa88b1bd9ba11d0c69a8ecc021041c54db6c" }
+agave-geyser-plugin-interface = { version = "=7.0.0", git = "https://github.com/anza-xyz/agave-sdk", rev = "3cf9d5c0dc4da480bafbf5991ebf98ed4d49f7b1" }
 agave-io-uring = { path = "io-uring", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-jemalloc = { path = "jemalloc", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
@@ -362,7 +362,7 @@ smallvec = { version = "1.16.4", default-features = false, features = ["union"] 
 smpl_jwt = "0.9.0"
 socket2 = "0.6.5"
 soketto = "0.8"
-solana-account = "5.1.1"
+solana-account = "5.4.0"
 solana-account-decoder = { path = "account-decoder", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-account-info = "3.1.1"
@@ -389,7 +389,7 @@ solana-clap-v3-utils = { path = "clap-v3-utils", version = "=5.0.0-alpha.0", fea
 solana-cli-config = { path = "cli-config", version = "=5.0.0-alpha.0" }
 solana-cli-output = { path = "cli-output", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-client = { path = "client", version = "=5.0.0-alpha.0" }
-solana-client-traits = "6.0.0"
+solana-client-traits = "6.0.1"
 solana-clock = "4.0.0"
 solana-cluster-type = "3.2.1"
 solana-commitment-config = "3.1.1"
@@ -490,7 +490,7 @@ solana-secp256k1-recover = "3.3.1"
 solana-secp256r1 = "0.1.0"
 solana-secp256r1-program = "3.0.0"
 solana-seed-derivable = "3.0.0"
-solana-seed-phrase = "3.0.0"
+solana-seed-phrase = "3.0.1"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-serde = "3.0.0"
 solana-serialize-utils = "4.0.0"
