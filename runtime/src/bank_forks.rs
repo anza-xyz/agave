@@ -927,7 +927,7 @@ mod tests {
         let account_key = Keypair::new().pubkey();
         child_bank.store_account(
             &account_key,
-            &AccountSharedData::new(42, 0, &system_program::ID),
+            &AccountSharedData::empty(42, &system_program::ID),
         );
         assert!(child_bank.get_account(&account_key).is_some());
 

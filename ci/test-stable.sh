@@ -60,7 +60,7 @@ source ci/common/shared-functions.sh
 echo "Executing $testName"
 case $testName in
 test-stable)
-  _ ci/intercept.sh cargo test --jobs "$JOBS" --all --tests --exclude solana-local-cluster ${V:+--verbose} -- --nocapture
+  _ cargo test --jobs "$JOBS" --all --tests --exclude solana-local-cluster ${V:+--verbose}
   ;;
 test-stable-sbf)
   # Clear the C dependency files, if dependency moves these files are not regenerated

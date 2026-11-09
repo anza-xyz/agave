@@ -802,7 +802,7 @@ mod tests {
         vote_account: AccountSharedData,
         rent: Rent,
     ) -> TransactionContext<'static> {
-        let program_account = AccountSharedData::new(0, 0, &native_loader::id());
+        let program_account = AccountSharedData::empty(0, &native_loader::id());
         let mut transaction_context = TransactionContext::new(
             vec![(id(), program_account), (vote_pubkey, vote_account)],
             rent,

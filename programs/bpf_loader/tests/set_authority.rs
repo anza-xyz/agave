@@ -21,9 +21,9 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
-    let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let new_upgrade_authority_address = Pubkey::new_unique();
-    let new_upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let new_upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
@@ -209,9 +209,9 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
-    let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let new_upgrade_authority_address = Pubkey::new_unique();
-    let new_upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let new_upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
@@ -441,9 +441,9 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let new_authority_address = Pubkey::new_unique();
-    let new_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let new_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
     let mut buffer_account = AccountSharedData::new_data_with_space(
         1,
@@ -609,9 +609,9 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let new_authority_address = Pubkey::new_unique();
-    let new_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let new_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
     let mut buffer_account = AccountSharedData::new_data_with_space(
         1,

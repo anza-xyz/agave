@@ -58,7 +58,7 @@ mod bench {
                 ),
                 (
                     authority_address,
-                    AccountSharedData::new(ACCOUNT_BALANCE, 0, &loader_address),
+                    AccountSharedData::empty(ACCOUNT_BALANCE, &loader_address),
                 ),
             ];
 
@@ -124,7 +124,7 @@ mod bench {
                 .unwrap();
             self.transaction_accounts.push((
                 new_authority_address,
-                AccountSharedData::new(ACCOUNT_BALANCE, 0, &self.loader_address),
+                AccountSharedData::empty(ACCOUNT_BALANCE, &self.loader_address),
             ));
             let instruction = if checked {
                 UpgradeableLoaderInstruction::SetAuthorityChecked

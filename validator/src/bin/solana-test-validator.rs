@@ -493,7 +493,7 @@ fn main() {
         .ledger_path(&ledger_path)
         .add_account(
             faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            AccountSharedData::empty(faucet_lamports, &system_program::id()),
         )
         .pubsub_config(pub_sub_config)
         .rpc_port(rpc_port)

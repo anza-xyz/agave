@@ -99,8 +99,6 @@ fn redeem_stake_rewards<'a>(
         ));
     }
 
-    let adjust_delegations_for_rent = calculation_environment.adjust_delegations_for_rent;
-
     let status = stake.delegation.stake_activating_and_deactivating_v2(
         calculation_environment.rewarded_epoch,
         calculation_environment.stake_history,
@@ -131,27 +129,22 @@ fn redeem_stake_rewards<'a>(
     });
 
     let staker_rewards = maybe_rewards.map(|x| x.0).unwrap_or(0);
-    if adjust_delegations_for_rent {
-        let new_delegation_with_rewards = stake.delegation.stake.saturating_add(staker_rewards);
-        let needs_adjustment = delegation_may_need_adjustment(
-            stake.delegation.stake,
-            new_delegation_with_rewards,
-            current_lamports.saturating_add(staker_rewards),
-            minimum_lamports,
-            status,
-        );
-        // If `maybe_rewards.is_some()`, need to drive forward credits, even
-        // if rewards are zero
-        if needs_adjustment || maybe_rewards.is_some() {
-            stake.delegation.stake = new_delegation_with_rewards;
-            let voter_rewards = maybe_rewards.map(|x| x.1).unwrap_or(0);
-            Some((staker_rewards, voter_rewards))
-        } else {
-            None
-        }
+    let new_delegation_with_rewards = stake.delegation.stake.saturating_add(staker_rewards);
+    let needs_adjustment = delegation_may_need_adjustment(
+        stake.delegation.stake,
+        new_delegation_with_rewards,
+        current_lamports.saturating_add(staker_rewards),
+        minimum_lamports,
+        status,
+    );
+    // If `maybe_rewards.is_some()`, need to drive forward credits, even
+    // if rewards are zero
+    if needs_adjustment || maybe_rewards.is_some() {
+        stake.delegation.stake = new_delegation_with_rewards;
+        let voter_rewards = maybe_rewards.map(|x| x.1).unwrap_or(0);
+        Some((staker_rewards, voter_rewards))
     } else {
-        stake.delegation.stake += staker_rewards;
-        maybe_rewards
+        None
     }
 }
 
@@ -432,7 +425,6 @@ mod tests {
         solana_stake_history::StakeHistory,
         solana_stake_interface::state::{Delegation, StakeStateV2},
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
-        test_case::test_matrix,
     };
 
     fn new_stake(
@@ -497,8 +489,8 @@ mod tests {
         }
     }
 
-    #[test_matrix([true, false])]
-    fn test_stake_state_redeem_rewards(adjust_delegations_for_rent: bool) {
+    #[test]
+    fn test_stake_state_redeem_rewards() {
         let mut vote_state = VoteStateHandler::new_v4(VoteStateV4::default());
         // assume stake.stake() is right
         // bootstrap means fully-vested stake at epoch 0
@@ -523,9 +515,7 @@ mod tests {
         let minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
 
         // Adjust rent down, no impact
-        if adjust_delegations_for_rent {
-            rent.lamports_per_byte /= 2;
-        }
+        rent.lamports_per_byte /= 2;
         let new_minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
 
         // this one can't collect now, credits_observed == vote_state.credits()
@@ -547,7 +537,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -578,7 +567,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -603,7 +591,6 @@ mod tests {
 
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let adjust_delegations_for_rent = true;
 
         let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
         let (_, ag_total_stake_multiplier, _) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
@@ -631,7 +618,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -665,7 +651,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -697,7 +682,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -732,7 +716,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -766,7 +749,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -799,7 +781,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -835,7 +816,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -861,7 +841,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes,),
@@ -894,7 +873,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes,),
@@ -927,7 +905,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes,),
@@ -1029,7 +1006,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes,),
@@ -1063,7 +1039,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &make_ag_epoch_type_for_test(&reward_epoch_delegated_stakes),
@@ -1086,8 +1061,6 @@ mod tests {
         );
         let stake_history = &StakeHistory::default();
         let new_rate_activation_epoch = None;
-        let adjust_delegations_for_rent = true;
-
         let reward_epoch_delegated_stakes = get_reward_epoch_delegated_stakes();
         let (ag_stake_state, _, _) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
 
@@ -1106,7 +1079,6 @@ mod tests {
                     },
                     stake_history,
                     new_rate_activation_epoch,
-                    adjust_delegations_for_rent,
                 },
                 null_tracer(),
                 &ag_stake_state,
@@ -1151,7 +1123,6 @@ mod tests {
                     point_value: &point_value,
                     stake_history: &stake_history,
                     new_rate_activation_epoch: None,
-                    adjust_delegations_for_rent: true,
                 },
                 null_tracer(),
                 &ag_epoch_type,

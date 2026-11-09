@@ -1899,12 +1899,11 @@ mod tests {
             // Make sure these accounts are added to secondary index
             index.update_secondary_indexes(
                 &account_key,
-                &AccountSharedData::create_from_existing_shared_data(
+                &AccountSharedData::new_with_shared_data(
                     0,
                     Arc::new(account_data.to_vec()),
-                    spl_generic_token::token::id(),
+                    &spl_generic_token::token::id(),
                     false,
-                    0,
                 ),
                 secondary_indexes,
             );
@@ -2167,12 +2166,11 @@ mod tests {
         );
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data.to_vec()),
-                Pubkey::default(),
+                &Pubkey::default(),
                 false,
-                0,
             ),
             &secondary_indexes,
         );
@@ -2190,12 +2188,11 @@ mod tests {
         );
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data[1..].to_vec()),
-                *token_id,
+                token_id,
                 false,
-                0,
             ),
             &secondary_indexes,
         );
@@ -2208,12 +2205,11 @@ mod tests {
         for _ in 0..2 {
             index.update_secondary_indexes(
                 &account_key,
-                &AccountSharedData::create_from_existing_shared_data(
+                &AccountSharedData::new_with_shared_data(
                     0,
                     Arc::new(account_data.to_vec()),
-                    *token_id,
+                    token_id,
                     false,
-                    0,
                 ),
                 &secondary_indexes,
             );
@@ -2232,12 +2228,11 @@ mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data.to_vec()),
-                *token_id,
+                token_id,
                 false,
-                0,
             ),
             &secondary_indexes,
         );
@@ -2254,12 +2249,11 @@ mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data.to_vec()),
-                *token_id,
+                token_id,
                 false,
-                0,
             ),
             &secondary_indexes,
         );
@@ -2345,12 +2339,11 @@ mod tests {
         );
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data1.to_vec()),
-                *token_id,
+                token_id,
                 false,
-                0,
             ),
             secondary_indexes,
         );
@@ -2366,12 +2359,11 @@ mod tests {
         );
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data2.to_vec()),
-                *token_id,
+                token_id,
                 false,
-                0,
             ),
             secondary_indexes,
         );
@@ -2395,12 +2387,11 @@ mod tests {
         );
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create_from_existing_shared_data(
+            &AccountSharedData::new_with_shared_data(
                 0,
                 Arc::new(account_data1.to_vec()),
-                *token_id,
+                token_id,
                 false,
-                0,
             ),
             secondary_indexes,
         );

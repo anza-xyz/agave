@@ -1341,7 +1341,7 @@ async fn test_bank_removal_corrects_processed_account_notifications() {
 
     let owner = Pubkey::new_unique();
     let bank1 = Bank::new_from_parent(root.clone(), SlotLeader::default(), 1);
-    bank1.store_account(&accounts[0], &AccountSharedData::new(20, 0, &owner));
+    bank1.store_account(&accounts[0], &AccountSharedData::empty(20, &owner));
     bank1.freeze();
     let bank1 = bank_forks
         .write()
@@ -1349,7 +1349,7 @@ async fn test_bank_removal_corrects_processed_account_notifications() {
         .insert(bank1)
         .clone_without_scheduler();
     let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
-    bank2.store_account(&accounts[1], &AccountSharedData::new(40, 0, &owner));
+    bank2.store_account(&accounts[1], &AccountSharedData::empty(40, &owner));
     bank2.freeze();
     bank_forks.write().unwrap().insert(bank2);
     blockstore.add_tree(tr(0) / (tr(1) / tr(2)), false, false, 3, Hash::default());
@@ -1405,14 +1405,14 @@ async fn test_bank_removal_corrects_processed_account_notifications() {
     assert!(bank_forks.read().unwrap().get(2).is_none());
 
     let replacement1 = Bank::new_from_parent(root, SlotLeader::default(), 1);
-    replacement1.store_account(&accounts[0], &AccountSharedData::new(30, 0, &owner));
+    replacement1.store_account(&accounts[0], &AccountSharedData::empty(30, &owner));
     let replacement1 = bank_forks
         .write()
         .unwrap()
         .insert(replacement1)
         .clone_without_scheduler();
     let replacement2 = Bank::new_from_parent(replacement1, SlotLeader::default(), 2);
-    replacement2.store_account(&accounts[1], &AccountSharedData::new(50, 0, &owner));
+    replacement2.store_account(&accounts[1], &AccountSharedData::empty(50, &owner));
     let replacement2 = bank_forks
         .write()
         .unwrap()

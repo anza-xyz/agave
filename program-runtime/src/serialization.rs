@@ -1569,7 +1569,7 @@ mod tests {
             (Pubkey::new_unique(), shared_account.clone()), // writable shared
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(0, 0, &program_id),
+                AccountSharedData::empty(0, &program_id),
             ), // another writable account
             (
                 Pubkey::new_unique(),
@@ -1581,7 +1581,7 @@ mod tests {
             ), // almost max sized writable account
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(0, 0, &program_id),
+                AccountSharedData::empty(0, &program_id),
             ), // writable dummy to burn accounts_resize_delta
             (
                 Pubkey::new_unique(),

@@ -40,7 +40,7 @@ fn test_no_panic_banks_client() {
         .unwrap();
     bank.freeze();
 
-    let instruction = Instruction::new_with_bincode(
+    let instruction = Instruction::new_with_wincode(
         program_id,
         &[0u8; 0],
         vec![

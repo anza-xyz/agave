@@ -204,7 +204,7 @@ mod serde_snapshot_tests {
             let ancestors = Ancestors::from(vec![0]);
             let account = accounts.load(&ancestors, &pubkeys[idx]);
             let account1 = Some((
-                AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
+                AccountSharedData::empty((idx + 1) as u64, AccountSharedData::default().owner()),
                 0,
             ));
             assert_eq!(account, account1);
@@ -226,7 +226,7 @@ mod serde_snapshot_tests {
         let ancestors = Ancestors::from(vec![slot]);
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
-            let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
+            let account = AccountSharedData::empty(i as u64 + 1, &Pubkey::default());
             accounts.store_accounts(
                 (slot, [(pubkey, &account)].as_slice()),
                 BankId::new(0),
@@ -275,7 +275,7 @@ mod serde_snapshot_tests {
         let unrooted_bank_id = BankId::new(9);
         let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
-        let account0 = AccountSharedData::new(1, 0, &key);
+        let account0 = AccountSharedData::empty(1, &key);
         db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
 
         // Purge the slot
@@ -334,7 +334,7 @@ mod serde_snapshot_tests {
             accounts.modify_accounts(&pubkeys, latest_slot, 10, 3);
             // Overwrite account 30 from slot 0 with lamports=0 into slot 1.
             // Slot 1 should now have 10 + 1 = 11 accounts
-            let account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+            let account = AccountSharedData::empty(0, AccountSharedData::default().owner());
             accounts.store_for_tests((latest_slot, [(&pubkeys[30], &account)].as_slice()));
 
             // Create 10 new accounts in slot 1, should now have 11 + 10 = 21
@@ -353,7 +353,7 @@ mod serde_snapshot_tests {
             accounts.clean_accounts_for_tests();
             // Overwrite account 31 from slot 0 with lamports=0 into slot 2.
             // Slot 2 should now have 20 + 1 = 21 accounts
-            let account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+            let account = AccountSharedData::empty(0, AccountSharedData::default().owner());
             accounts.store_for_tests((latest_slot, [(&pubkeys[31], &account)].as_slice()));
 
             // Create 10 new accounts in slot 2. Slot 2 should now have
@@ -410,14 +410,13 @@ mod serde_snapshot_tests {
 
         let some_lamport = 223;
         let zero_lamport = 0;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(some_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(some_lamport, &owner);
         let pubkey = solana_pubkey::new_rand();
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
-        let account2 = AccountSharedData::new(some_lamport + 1, no_data, &owner);
+        let account2 = AccountSharedData::empty(some_lamport + 1, &owner);
         let pubkey2 = solana_pubkey::new_rand();
 
         let accounts = AccountsDb::default_for_tests();
@@ -458,19 +457,18 @@ mod serde_snapshot_tests {
         let some_lamport = 223;
         let zero_lamport = 0;
         let dummy_lamport = 999;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(some_lamport, no_data, &owner);
-        let account2 = AccountSharedData::new(some_lamport + 100_001, no_data, &owner);
-        let account3 = AccountSharedData::new(some_lamport + 100_002, no_data, &owner);
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(some_lamport, &owner);
+        let account2 = AccountSharedData::empty(some_lamport + 100_001, &owner);
+        let account3 = AccountSharedData::empty(some_lamport + 100_002, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
         let pubkey = solana_pubkey::new_rand();
         let purged_pubkey1 = solana_pubkey::new_rand();
         let purged_pubkey2 = solana_pubkey::new_rand();
 
-        let dummy_account = AccountSharedData::new(dummy_lamport, no_data, &owner);
+        let dummy_account = AccountSharedData::empty(dummy_lamport, &owner);
         let dummy_pubkey = Pubkey::default();
 
         let accounts = AccountsDb::default_for_tests();
@@ -561,14 +559,13 @@ mod serde_snapshot_tests {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(old_lamport, no_data, &owner);
-        let account2 = AccountSharedData::new(old_lamport + 100_001, no_data, &owner);
-        let account3 = AccountSharedData::new(old_lamport + 100_002, no_data, &owner);
-        let dummy_account = AccountSharedData::new(99_999_999, no_data, &owner);
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(old_lamport, &owner);
+        let account2 = AccountSharedData::empty(old_lamport + 100_001, &owner);
+        let account3 = AccountSharedData::empty(old_lamport + 100_002, &owner);
+        let dummy_account = AccountSharedData::empty(99_999_999, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
         let pubkey = solana_pubkey::new_rand();
         let dummy_pubkey = solana_pubkey::new_rand();
@@ -635,15 +632,14 @@ mod serde_snapshot_tests {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
-        let no_data = 0;
         let dummy_lamport = 999_999;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(old_lamport, no_data, &owner);
-        let account2 = AccountSharedData::new(old_lamport + 100_001, no_data, &owner);
-        let account3 = AccountSharedData::new(old_lamport + 100_002, no_data, &owner);
-        let dummy_account = AccountSharedData::new(dummy_lamport, no_data, &owner);
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(old_lamport, &owner);
+        let account2 = AccountSharedData::empty(old_lamport + 100_001, &owner);
+        let account3 = AccountSharedData::empty(old_lamport + 100_002, &owner);
+        let dummy_account = AccountSharedData::empty(dummy_lamport, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
         let pubkey1 = solana_pubkey::new_rand();
         let pubkey2 = solana_pubkey::new_rand();
@@ -740,10 +736,9 @@ mod serde_snapshot_tests {
             .collect();
 
         let some_lamport = 223;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(some_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(some_lamport, &owner);
 
         let mut current_slot = 0;
 
