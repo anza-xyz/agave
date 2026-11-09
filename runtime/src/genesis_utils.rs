@@ -486,7 +486,7 @@ pub(crate) fn create_validator(
         stake_lamports,
     );
 
-    let node_account = AccountSharedData::new(node_lamports, 0, &system_program::id());
+    let node_account = AccountSharedData::empty(node_lamports, &system_program::id());
 
     vec![
         (vote_pubkey, vote_account),
@@ -529,7 +529,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 
     initial_accounts.push((
         *mint_pubkey,
-        AccountSharedData::new(mint_lamports, 0, &system_program::id()),
+        AccountSharedData::empty(mint_lamports, &system_program::id()),
     ));
     let mut validator_accounts = create_validator(
         &rent,
@@ -685,13 +685,8 @@ pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> 
     let data = vec![0; epoch_rewards::SIZE];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
-    let account = AccountSharedData::create_from_existing_shared_data(
-        lamports,
-        Arc::new(data),
-        sysvar::id(),
-        false,
-        u64::MAX,
-    );
+    let account =
+        AccountSharedData::new_with_shared_data(lamports, Arc::new(data), &sysvar::id(), false);
 
     genesis_config.add_account(epoch_rewards::id(), account);
 

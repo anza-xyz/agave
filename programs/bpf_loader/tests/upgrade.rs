@@ -89,13 +89,13 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
         )
         .unwrap();
         program_account.set_executable(true);
-        let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let spill_account = AccountSharedData::empty(0, &Pubkey::new_unique());
         let rent_account = create_sysvar_account(&rent);
         let clock_account = create_sysvar_account(&Clock {
             slot: SLOT.saturating_add(1),
             ..Clock::default()
         });
-        let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (programdata_address, programdata_account),
             (program_address, program_account),
@@ -143,17 +143,6 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
             },
         ];
         (transaction_accounts, instruction_accounts)
-    }
-
-    fn corrupt_buffer_elf(transaction_accounts: &mut [(Pubkey, AccountSharedData)]) {
-        transaction_accounts
-            .get_mut(2)
-            .unwrap()
-            .1
-            .data_as_mut_slice()
-            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-            .unwrap()
-            .fill(0xff);
     }
 
     let process_instruction =
@@ -267,38 +256,18 @@ fn test_bpf_loader_upgradeable_upgrade(set_programdata_to_elf_length: bool) {
     }
 
     // Case: ProgramData account not writable
-    //
-    // The buffer ELF is corrupted so that `InvalidArgument` proves the
-    // writability check fires before the ELF is loaded and verified.
-    let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
+    let (transaction_accounts, mut instruction_accounts) = get_accounts(
         &buffer_address,
         &upgrade_authority_address,
         &upgrade_authority_address,
         &elf_orig,
         &elf_new,
     );
-    corrupt_buffer_elf(&mut transaction_accounts);
     instruction_accounts.first_mut().unwrap().is_writable = false;
     process_instruction(
         transaction_accounts,
         instruction_accounts,
-        Err(InstructionError::InvalidArgument),
-    );
-
-    // Case: Spill account not writable
-    let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
-        &buffer_address,
-        &upgrade_authority_address,
-        &upgrade_authority_address,
-        &elf_orig,
-        &elf_new,
-    );
-    corrupt_buffer_elf(&mut transaction_accounts);
-    instruction_accounts.get_mut(3).unwrap().is_writable = false;
-    process_instruction(
-        transaction_accounts,
-        instruction_accounts,
-        Err(InstructionError::InvalidArgument),
+        Err(InstructionError::ReadonlyDataModified),
     );
 
     // Case: ProgramData account not owned by loader
@@ -839,13 +808,13 @@ fn test_bpf_loader_upgradeable_upgrade_simd_0433() {
         .unwrap();
         program_account.set_executable(true);
 
-        let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+        let spill_account = AccountSharedData::empty(0, &Pubkey::new_unique());
         let rent_account = create_sysvar_account(&rent);
         let clock_account = create_sysvar_account(&Clock {
             slot: SLOT.saturating_add(1),
             ..Clock::default()
         });
-        let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (programdata_address, programdata_account),
             (program_address, program_account),

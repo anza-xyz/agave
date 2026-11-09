@@ -107,7 +107,7 @@ mod tests {
         let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
 
         // Account with key1 is updated twice in two different slots, should get notified twice
         // Need to add root and flush write cache for each slot to ensure accounts are written
@@ -280,8 +280,8 @@ mod tests {
 
         let address = solana_pubkey::new_rand();
         let owner = solana_pubkey::new_rand();
-        let account_open = AccountSharedData::new(/*lamports*/ 123, 0, &owner);
-        let account_close = AccountSharedData::new(/*lamports*/ 0, 0, &owner);
+        let account_open = AccountSharedData::empty(/*lamports*/ 123, &owner);
+        let account_close = AccountSharedData::empty(/*lamports*/ 0, &owner);
 
         let slot_open = 6;
         let slot_close = slot_open + 1;

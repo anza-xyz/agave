@@ -7016,9 +7016,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account"
-version = "5.1.1"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ee649074c8eaec79930b9aad6a6adcf87b2c77a4078bee1bf9a4442166a8da"
+checksum = "a19a89e4abe5053773609fb3653139dd485da0424016365206ea92e549580bbf"
 dependencies = [
  "serde",
  "serde_bytes",
@@ -7818,9 +7818,9 @@ dependencies = [
 
 [[package]]
 name = "solana-client-traits"
-version = "6.0.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f4b2b20eb5df9058f61ecc0f227cafb840cf59873d4bafc9b726f8583fe027f"
+checksum = "62454a466b68beb31f064a363f063079e4297b97182ef866112c3f002d4ac235"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
@@ -10456,9 +10456,9 @@ dependencies = [
 
 [[package]]
 name = "solana-seed-phrase"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc905b200a95f2ea9146e43f2a7181e3aeb55de6bc12afb36462d00a3c7310de"
+checksum = "6390511a5544e743d94e8244c936c82383df7159507f67f297ef0bca8bd5394b"
 dependencies = [
  "hmac 0.12.1",
  "pbkdf2",

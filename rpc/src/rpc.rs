@@ -1754,6 +1754,8 @@ impl JsonRpcRequestProcessor {
     }
 
     pub async fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
+        self.check_if_transaction_history_enabled()?;
+
         if slot == 0 {
             return Ok(Some(self.genesis_creation_time()));
         }
@@ -5405,12 +5407,11 @@ pub mod tests {
                     Arc::new(address_table_state.serialize_for_tests().unwrap());
                 let min_balance_lamports =
                     bank.get_minimum_balance_for_rent_exemption(address_table_data.len());
-                AccountSharedData::create_from_existing_shared_data(
+                AccountSharedData::new_with_shared_data(
                     min_balance_lamports,
                     address_table_data,
-                    address_lookup_table::program::id(),
+                    &address_lookup_table::program::id(),
                     false,
-                    0,
                 )
             };
             bank.store_account(&address_table_pubkey, &address_table_account);
@@ -6625,7 +6626,7 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": "",
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 0,
             },
         });
@@ -6634,12 +6635,11 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let account = AccountSharedData::new_with_shared_data(
             42,
             Arc::new(data.clone()),
-            Pubkey::default(),
+            &Pubkey::default(),
             false,
-            0,
         );
         bank.store_account(&pubkey, &account);
 
@@ -6688,13 +6688,7 @@ pub mod tests {
     fn test_encode_account_does_not_throw_when_slice_larger_than_account() {
         let data = vec![42; 5];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create_from_existing_shared_data(
-            42,
-            Arc::new(data),
-            pubkey,
-            false,
-            0,
-        );
+        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6711,13 +6705,7 @@ pub mod tests {
     fn test_encode_account_throws_when_data_too_large_to_base58_encode() {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create_from_existing_shared_data(
-            42,
-            Arc::new(data),
-            pubkey,
-            false,
-            0,
-        );
+        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
         let _ = encode_account(&account, &pubkey, UiAccountEncoding::Base58, None).unwrap();
     }
 
@@ -6726,13 +6714,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create_from_existing_shared_data(
-            42,
-            Arc::new(data),
-            pubkey,
-            false,
-            0,
-        );
+        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6750,13 +6732,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create_from_existing_shared_data(
-            42,
-            Arc::new(data),
-            pubkey,
-            false,
-            0,
-        );
+        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6774,13 +6750,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::create_from_existing_shared_data(
-            42,
-            Arc::new(data),
-            pubkey,
-            false,
-            0,
-        );
+        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6802,12 +6772,11 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let account = AccountSharedData::new_with_shared_data(
             42,
             Arc::new(data.clone()),
-            Pubkey::default(),
+            &Pubkey::default(),
             false,
-            0,
         );
         bank.store_account(&pubkey, &account);
 
@@ -6827,7 +6796,7 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": ["", "base64"],
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 0,
             },
             null,
@@ -6836,7 +6805,7 @@ pub mod tests {
                 "lamports": 42,
                 "data": [BASE64_STANDARD.encode(&data), "base64"],
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 5,
             }
         ]);
@@ -6861,7 +6830,7 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": ["", "base58"],
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 0,
             },
             null,
@@ -6870,7 +6839,7 @@ pub mod tests {
                 "lamports": 42,
                 "data": [bs58::encode(&data).into_string(), "base58"],
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 5,
             }
         ]);
@@ -6894,7 +6863,7 @@ pub mod tests {
                 "lamports": TEST_MINT_LAMPORTS,
                 "data": ["", "base64"],
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 0,
             },
             null,
@@ -6903,7 +6872,7 @@ pub mod tests {
                 "lamports": 42,
                 "data": [BASE64_STANDARD.encode(&data[1..3]), "base64"],
                 "executable": false,
-                "rentEpoch": 0,
+                "rentEpoch": u64::MAX,
                 "space": 5,
             }
         ]);
@@ -6920,7 +6889,7 @@ pub mod tests {
 
         let new_program_id = Pubkey::new_unique();
         let new_program_account_key = Pubkey::new_unique();
-        let new_program_account = AccountSharedData::new(42, 0, &new_program_id);
+        let new_program_account = AccountSharedData::empty(42, &new_program_id);
         bank.store_account(&new_program_account_key, &new_program_account);
 
         let request = create_test_request(
@@ -7462,12 +7431,11 @@ pub mod tests {
             },
             &mut mint_data,
         );
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let account = AccountSharedData::new_with_shared_data(
             mint_rent_exempt_amount,
             Arc::new(mint_data.into()),
-            spl_token_interface::id(),
+            &spl_token_interface::id(),
             false,
-            0,
         );
         bank.store_account(&mint_pubkey, &account);
 
@@ -7490,12 +7458,11 @@ pub mod tests {
             },
             &mut token_account_data,
         );
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let account = AccountSharedData::new_with_shared_data(
             token_account_rent_exempt_amount,
             Arc::new(token_account_data.into()),
-            spl_token_interface::id(),
+            &spl_token_interface::id(),
             false,
-            0,
         );
         bank.store_account(&token_account_pubkey, &account);
 
@@ -9117,7 +9084,7 @@ pub mod tests {
 
     #[test]
     fn test_get_block_time() {
-        let rpc = RpcHandler::start();
+        let mut rpc = RpcHandler::start();
         rpc.add_roots_to_blockstore(vec![1, 2, 3, 4, 5, 6, 7]);
 
         rpc.block_commitment_cache
@@ -9175,6 +9142,15 @@ pub mod tests {
         let expected = (
             JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
             String::from("Block not available for slot 12345"),
+        );
+        assert_eq!(response, expected);
+
+        rpc.meta.config.enable_rpc_transaction_history = false;
+        let request = create_test_request("getBlockTime", Some(json!([2u64])));
+        let response = parse_failure_response(rpc.handle_request_sync(request));
+        let expected = (
+            JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
+            String::from("Transaction history is not available from this node"),
         );
         assert_eq!(response, expected);
     }
