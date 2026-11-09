@@ -1,28 +1,35 @@
 //! The read of an account's meta entry, shared by the accounts file formats
 
 use {
+    agave_fs::FileSize,
     solana_account::{Account, AccountSharedData},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
     std::{mem::MaybeUninit, slice},
 };
 
 /// The size of a `MetaEntryBuffer`: the most a meta entry read is, in any format
-pub(crate) const META_ENTRY_BUFFER_SIZE: usize = 4 * 1024;
+pub const META_ENTRY_BUFFER_SIZE: usize = 4 * 1024;
 
 /// Byte buffer used for reading meta entries.
 ///
 /// This buffer is aligned to ensure it is safe to read
 /// the meta entry fields after loading from disk.
 #[repr(align(8))]
-pub(crate) struct MetaEntryBuffer([MaybeUninit<u8>; META_ENTRY_BUFFER_SIZE]);
+pub struct MetaEntryBuffer([MaybeUninit<u8>; META_ENTRY_BUFFER_SIZE]);
 
 impl MetaEntryBuffer {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self([MaybeUninit::uninit(); META_ENTRY_BUFFER_SIZE])
     }
 
     /// The buffer's first `len` bytes, to read into
-    pub(crate) fn bytes_mut(&mut self, len: usize) -> &mut [u8] {
+    ///
+    /// # Safety
+    ///
+    /// The returned bytes may be uninitialized: the caller must only write to them, and only read
+    /// the bytes it has written.
+    pub unsafe fn bytes_mut(&mut self, len: usize) -> &mut [u8] {
         let bytes = &mut self.0[..len];
         // SAFETY:
         // * bytes is non-null, thus the ptr used for creating the slice is non-null
@@ -36,15 +43,18 @@ impl MetaEntryBuffer {
 }
 
 /// An account parsed from its meta entry
-pub(crate) enum AccountFromMetaEntry<'a> {
-    /// the meta entry held all the account's data: the account without its data, and the data
-    Complete { account: Account, data: &'a [u8] },
+pub enum AccountFromMetaEntry<'a> {
+    /// the meta entry held all the account's data
+    Complete {
+        account: AccountWithoutData,
+        data: &'a [u8],
+    },
     /// the account's data must be read separately
     Partial(AccountDataRead),
 }
 
 impl AccountFromMetaEntry<'_> {
-    pub(crate) fn passes_load_filter(
+    pub fn passes_load_filter(
         &self,
         load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
     ) -> bool {
@@ -62,21 +72,31 @@ impl AccountFromMetaEntry<'_> {
 }
 
 /// An account whose data must be read separately from its meta entry
-pub(crate) struct AccountDataRead {
-    pub(crate) address: Pubkey,
-    /// the account, without its data
-    pub(crate) account: Account,
+pub struct AccountDataRead {
+    pub address: Pubkey,
+    pub account: AccountWithoutData,
     /// where to read the data from, in the format's file
-    pub(crate) offset: u64,
-    pub(crate) data_len: usize,
+    pub offset: FileSize,
+    pub data_len: usize,
 }
 
-impl AccountDataRead {
+/// An account's fields from its meta entry, without its data
+pub struct AccountWithoutData {
+    pub lamports: u64,
+    pub owner: Pubkey,
+    pub executable: bool,
+    pub rent_epoch: Epoch,
+}
+
+impl AccountWithoutData {
     /// The account, with its `data`
-    pub(crate) fn account_with_data(self, data: Vec<u8>) -> AccountSharedData {
+    pub fn with_data(self, data: Vec<u8>) -> AccountSharedData {
         AccountSharedData::from(Account {
+            lamports: self.lamports,
             data,
-            ..self.account
+            owner: self.owner,
+            executable: self.executable,
+            rent_epoch: self.rent_epoch,
         })
     }
 }

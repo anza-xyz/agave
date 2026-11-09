@@ -23,7 +23,9 @@ use {
     },
     crate::{
         account_storage::{
-            meta_entry_read::{AccountDataRead, AccountFromMetaEntry, MetaEntryBuffer},
+            meta_entry_read::{
+                AccountDataRead, AccountFromMetaEntry, AccountWithoutData, MetaEntryBuffer,
+            },
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         append_vec::AppendVec,
@@ -35,7 +37,7 @@ use {
             BufferedReader, FileBufRead as _, RequiredLenBufFileRead, RequiredLenBufRead as _,
         },
     },
-    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     std::{
         convert::TryFrom,
@@ -442,11 +444,7 @@ impl SplitFile {
             return Ok(None);
         }
         Ok(Some(match from_meta_entry {
-            AccountFromMetaEntry::Complete { account, data } => Account {
-                data: data.to_vec(),
-                ..account
-            }
-            .into(),
+            AccountFromMetaEntry::Complete { account, data } => account.with_data(data.to_vec()),
             AccountFromMetaEntry::Partial(data_read) => self.read_account_data(data_read)?,
         }))
     }
@@ -464,14 +462,13 @@ impl SplitFile {
 
     /// Parses the account from `bytes`, as read by `read_meta_entry_bytes()`: the account, or the
     /// read of its data entry from the data file
-    pub(crate) fn account_from_meta_entry<'a>(
+    pub fn account_from_meta_entry<'a>(
         &self,
         bytes: &'a [u8],
     ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
         let (meta_entry, data_ref) = parse_meta_entry(bytes)?;
-        let account = Account {
+        let account = AccountWithoutData {
             lamports: meta_entry.lamports,
-            data: Vec::new(),
             owner: *meta_entry.owner,
             executable: meta_entry.is_executable,
             rent_epoch: meta_entry.rent_epoch,
@@ -502,7 +499,7 @@ impl SplitFile {
             // the data length came from the meta entry's DataLen
             DataLen(data_read.data_len as u32),
         )?;
-        Ok(data_read.account_with_data(data))
+        Ok(data_read.account.with_data(data))
     }
 
     /// Reads the data entry at `offset` from the data file, and checks it is `address`'s
@@ -1019,10 +1016,7 @@ mod tests {
             else {
                 panic!("expected the meta entry to hold the whole account");
             };
-            let read = AccountSharedData::from(Account {
-                data: data.to_vec(),
-                ..read
-            });
+            let read = read.with_data(data.to_vec());
             assert_eq!(&read, account);
         }
     }

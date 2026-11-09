@@ -14,7 +14,8 @@ use {
     crate::{
         account_storage::{
             meta_entry_read::{
-                AccountDataRead, AccountFromMetaEntry, META_ENTRY_BUFFER_SIZE, MetaEntryBuffer,
+                AccountDataRead, AccountFromMetaEntry, AccountWithoutData, META_ENTRY_BUFFER_SIZE,
+                MetaEntryBuffer,
             },
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
@@ -31,7 +32,7 @@ use {
     },
     log::*,
     meta::{AccountMeta, StoredAccountNoData, StoredMeta},
-    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
@@ -584,11 +585,7 @@ impl AppendVec {
             return Some(None);
         }
         Some(Some(match from_meta_entry {
-            AccountFromMetaEntry::Complete { account, data } => Account {
-                data: data.to_vec(),
-                ..account
-            }
-            .into(),
+            AccountFromMetaEntry::Complete { account, data } => account.with_data(data.to_vec()),
             AccountFromMetaEntry::Partial(data_read) => self.read_account_data(data_read)?,
         }))
     }
@@ -623,9 +620,8 @@ impl AppendVec {
         let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(valid_bytes, next)?;
         let data_len = meta.data_len;
         let remaining_bytes_for_data = bytes.len() - next;
-        let account = Account {
+        let account = AccountWithoutData {
             lamports: account_meta.lamports,
-            data: Vec::new(),
             owner: account_meta.owner,
             executable: account_meta.executable,
             rent_epoch: account_meta.rent_epoch,
@@ -666,7 +662,7 @@ impl AppendVec {
         }
         // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
         unsafe { data.set_len(data_len) };
-        Some(data_read.account_with_data(data))
+        Some(data_read.account.with_data(data))
     }
 
     /// Reads the meta entry at file `offset` into `buffer`, and returns the bytes read: up to a
@@ -676,10 +672,10 @@ impl AppendVec {
         offset: FileOffset,
         buffer: &'a mut MetaEntryBuffer,
     ) -> Option<&'a [u8]> {
-        let buffer_bytes = buffer.bytes_mut(PAGE_SIZE);
+        // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+        let buffer_bytes = unsafe { buffer.bytes_mut(PAGE_SIZE) };
         let bytes_read =
             read_into_buffer(&self.file, self.len() as FileSize, offset, buffer_bytes).ok()?;
-        // we only return the initialized portion.
         Some(&buffer_bytes[..bytes_read])
     }
 
@@ -1999,10 +1995,7 @@ mod tests {
         else {
             panic!("expected the meta entry to hold the whole account");
         };
-        let read = Account {
-            data: data.to_vec(),
-            ..read
-        };
+        let read = read.with_data(data.to_vec());
         assert!(accounts_equal(&read, &account));
     }
 

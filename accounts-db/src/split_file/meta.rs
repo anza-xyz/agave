@@ -341,7 +341,8 @@ pub fn read_meta_entry_bytes<'a>(
     validate_meta_entry_offset(file_len, offset)?;
 
     let read_size = cmp::min(META_ENTRY_MAX_SIZE, (file_len - offset.0) as usize);
-    let buffer_bytes = buffer.bytes_mut(read_size);
+    // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+    let buffer_bytes = unsafe { buffer.bytes_mut(read_size) };
     let num_bytes_read = file_io::read_into_buffer(file, file_len, offset.0, buffer_bytes)?;
     Ok(&buffer_bytes[..num_bytes_read])
 }
