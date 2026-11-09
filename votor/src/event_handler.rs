@@ -1236,6 +1236,7 @@ mod tests {
             Blockstore::open_with_options(
                 &get_tmp_ledger_path!(),
                 BlockstoreOptions::default_for_tests(),
+                None,
             )
             .unwrap(),
         );
