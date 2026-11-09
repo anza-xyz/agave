@@ -26,6 +26,8 @@ jobs:
       entries: ${{ steps.table.outputs.entries }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Rust
         shell: bash
@@ -57,6 +59,8 @@ jobs:
       FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Fetch fixtures
         shell: bash
