@@ -997,7 +997,7 @@ mod tests {
         let owner = Pubkey::new_unique();
         // no data, and data inline in the meta entry
         let accounts = [
-            (Pubkey::new_unique(), AccountSharedData::new(101, 0, &owner)),
+            (Pubkey::new_unique(), AccountSharedData::empty(101, &owner)),
             (
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(
@@ -1053,7 +1053,7 @@ mod tests {
     fn test_account_from_meta_entry_truncated_header() {
         let temp_dir = TempDir::new().unwrap();
         let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
-        let account = AccountSharedData::new(100, 1, &Pubkey::new_unique());
+        let account = AccountSharedData::empty(100, &Pubkey::new_unique());
         let (logical_offsets, _) = split
             .write_accounts(&(0, &[(Pubkey::new_unique(), account)][..]))
             .unwrap();
