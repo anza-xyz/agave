@@ -7,15 +7,15 @@
 //!  +-------------+-------------------+-----------------------+
 //!  |          64 | alignment padding |                4032 B |
 //!  +-------------+-------------------+-----------------------+
-//!  |        4096 | data entry 0      |       36 B + data_len |
+//!  |        4096 | data entry 0      |       data_len + 36 B |
 //!  +-------------+-------------------+-----------------------+
 //!  |             | alignment padding | to 4096-byte boundary |
 //!  +-------------+-------------------+-----------------------+
-//!  | align(4096) | data entry 1      |       36 B + data_len |
+//!  | align(4096) | data entry 1      |       data_len + 36 B |
 //!  +-------------+-------------------+-----------------------+
 //!  |             | alignment padding | to 4096-byte boundary |
 //!  +-------------+-------------------+-----------------------+
-//!  | align(4096) | data entry 2      |       36 B + data_len |
+//!  | align(4096) | data entry 2      |       data_len + 36 B |
 //!  +-------------+-------------------+-----------------------+
 //!  |             | ...               |                       |
 //!  +-------------+-------------------+-----------------------+
@@ -43,18 +43,19 @@
 //!
 //! data entry layout:
 //!
-//!  +--------+----------+----------------+----------+
-//!  | Offset | Field    | Type           |     Size |
-//!  +--------+----------+----------------+----------+
-//!  |      0 | address  | Pubkey         |     32 B |
-//!  +--------+----------+----------------+----------+
-//!  |     32 | data_len | u32            |      4 B |
-//!  +--------+----------+----------------+----------+
-//!  |     36 | data     | [u8; data_len] | data_len |
-//!  +--------+----------+----------------+----------+
+//!  +--------------+----------+----------------+----------+
+//!  |       Offset | Field    | Type           |     Size |
+//!  +--------------+----------+----------------+----------+
+//!  |            0 | data     | [u8; data_len] | data_len |
+//!  +--------------+----------+----------------+----------+
+//!  |     data_len | data_len | u32            |      4 B |
+//!  +--------------+----------+----------------+----------+
+//!  | data_len + 4 | address  | Pubkey         |     32 B |
+//!  +--------------+----------+----------------+----------+
 //!
-//!  - pubkey and data_len fields are used for validation with meta entry
 //!  - data entries are written at file offsets aligned to 4,096
+//!  - data_len and address fields are used for validation with meta entry
+//!  - data_len is *not* required to be stored aligned
 
 use {
     super::{
@@ -81,7 +82,7 @@ use {
 pub const DATA_HEADER_SIZE: usize = 64;
 
 const DATA_MAGIC: &[u8; 16] = b"agave data file\0";
-const DATA_FORMAT_VERSION: Version = Version::new(0, 1, 0);
+const DATA_FORMAT_VERSION: Version = Version::new(1, 0, 0);
 
 /// data entries are always written at offsets that are multiples of this alignment
 pub const DATA_ENTRY_OFFSET_ALIGNMENT: usize = 1 << DATA_ENTRY_OFFSET_ALIGNMENT_LOG2;
@@ -90,10 +91,9 @@ pub const DATA_ENTRY_OFFSET_ALIGNMENT_LOG2: u32 = 12;
 /// Size, in bytes, of a data entry's fixed portion (i.e. *not* the actual account data).
 pub const DATA_ENTRY_FIXED_SIZE: usize = 36;
 
-// byte-offsets of the fields within a data entry
-const DATA_ENTRY_OFFSET_OF_ADDRESS: usize = 0;
-const DATA_ENTRY_OFFSET_OF_DATA_LEN: usize = 32;
-const DATA_ENTRY_OFFSET_OF_DATA: usize = 36;
+// byte-offsets of the fields within the data entry's fixed portion
+const DATA_ENTRY_OFFSET_OF_DATA_LEN: usize = 0;
+const DATA_ENTRY_OFFSET_OF_ADDRESS: usize = 4;
 
 /// Creates a new data file based on `base_path`.
 pub fn create_data_file(
@@ -205,14 +205,14 @@ fn write_data_entry_bytes(
     let data_len = DataLen::try_from(data.len())?;
     let mut num_bytes_written = 0;
 
-    writer.write_all(address.as_ref())?;
-    num_bytes_written += size_of::<Pubkey>();
+    writer.write_all(data)?;
+    num_bytes_written += data.len();
 
     writer.write_all(&data_len.0.to_le_bytes())?;
     num_bytes_written += size_of::<DataLen>();
 
-    writer.write_all(data)?;
-    num_bytes_written += data.len();
+    writer.write_all(address.as_ref())?;
+    num_bytes_written += size_of::<Pubkey>();
 
     let expected_stored_size = calculate_data_entry_stored_size(data.len());
     if num_bytes_written == expected_stored_size {
@@ -243,8 +243,8 @@ pub fn read_data_entry(
     validate_data_entry_offset(file_len, offset, expected_data_len)?;
 
     let mut data_entry = DataEntrySerde {
-        address: Pubkey::default(),
         data_len: 0,
+        address: Pubkey::default(),
     };
     let data_len = expected_data_len.0 as usize;
     let mut buffer = Vec::<u8>::with_capacity(data_len);
@@ -267,8 +267,8 @@ pub fn read_data_entry(
             file_len,
             offset.0,
             &mut [
-                IoSliceMut::new(as_bytes_mut(&mut data_entry)),
                 IoSliceMut::new(buffer_bytes),
+                IoSliceMut::new(as_bytes_mut(&mut data_entry)),
             ],
         )
         .map_err(ReadDataEntryError::Io)?
@@ -317,16 +317,16 @@ fn validate_data_entry(
     expected_address: &Pubkey,
     expected_data_len: DataLen,
 ) -> Result<(), ReadDataEntryError> {
-    if data_entry.address != *expected_address {
-        return Err(ReadDataEntryError::AddressMismatch {
-            expected: *expected_address,
-            actual: data_entry.address,
-        });
-    }
     if data_entry.data_len != expected_data_len.0 {
         return Err(ReadDataEntryError::DataLenMismatch {
             expected: expected_data_len.0,
             actual: data_entry.data_len,
+        });
+    }
+    if data_entry.address != *expected_address {
+        return Err(ReadDataEntryError::AddressMismatch {
+            expected: *expected_address,
+            actual: data_entry.address,
         });
     }
     Ok(())
@@ -339,7 +339,8 @@ pub fn parse_data_entry<'a>(
     expected_address: &Pubkey,
     expected_data_len: DataLen,
 ) -> Result<&'a [u8], ReadDataEntryError> {
-    let stored_size = calculate_data_entry_stored_size(expected_data_len.0 as usize);
+    let data_len = expected_data_len.0 as usize;
+    let stored_size = calculate_data_entry_stored_size(data_len);
     if bytes.len() < stored_size {
         return Err(ReadDataEntryError::ShortRead {
             expected: stored_size,
@@ -347,7 +348,21 @@ pub fn parse_data_entry<'a>(
         });
     }
 
-    let address_bytes = &bytes[DATA_ENTRY_OFFSET_OF_ADDRESS..][..size_of::<Pubkey>()];
+    let fixed_bytes = &bytes[data_len..stored_size];
+    let actual_data_len_bytes = &fixed_bytes[DATA_ENTRY_OFFSET_OF_DATA_LEN..][..size_of::<u32>()];
+    let actual_data_len = u32::from_le_bytes(
+        actual_data_len_bytes
+            .try_into()
+            .expect("data_len field has a fixed size"),
+    );
+    if actual_data_len != expected_data_len.0 {
+        return Err(ReadDataEntryError::DataLenMismatch {
+            expected: expected_data_len.0,
+            actual: actual_data_len,
+        });
+    }
+
+    let address_bytes = &fixed_bytes[DATA_ENTRY_OFFSET_OF_ADDRESS..][..size_of::<Pubkey>()];
     if address_bytes != expected_address.as_ref() {
         // There is an address mismatch, so now read the stored address and put it in the error.
         // This way we do not copy the stored address out unnecessarily.
@@ -358,20 +373,7 @@ pub fn parse_data_entry<'a>(
         });
     }
 
-    let data_len_bytes = &bytes[DATA_ENTRY_OFFSET_OF_DATA_LEN..][..size_of::<u32>()];
-    let data_len = u32::from_le_bytes(
-        data_len_bytes
-            .try_into()
-            .expect("data_len field has a fixed size"),
-    );
-    if data_len != expected_data_len.0 {
-        return Err(ReadDataEntryError::DataLenMismatch {
-            expected: expected_data_len.0,
-            actual: data_len,
-        });
-    }
-
-    Ok(&bytes[DATA_ENTRY_OFFSET_OF_DATA..stored_size])
+    Ok(&bytes[..data_len])
 }
 
 /// Returns the number of bytes required to store a data entry for an account with `data_len`.
@@ -410,15 +412,15 @@ pub struct DataHeader {
     pub uid: u64,
 }
 
-/// On-disk representation of an entry's fixed portiion.
+/// On-disk representation of an entry's fixed portion.
 ///
 /// Used for writing to/reading from disk.
-/// The account data directly follows.
+/// The account data directly precedes.
 #[repr(C)]
 #[derive(Debug)]
 struct DataEntrySerde {
-    address: Pubkey,
     data_len: u32,
+    address: Pubkey,
 }
 const _: () = const {
     // to safely implement AsBytesRef and AsBytesMut, there can be no bytes from padding
@@ -444,9 +446,9 @@ mod tests {
 
     fn new_data_entry_bytes(address: &Pubkey, data: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(DATA_ENTRY_FIXED_SIZE + data.len());
-        bytes.extend_from_slice(address.as_ref());
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
         bytes.extend_from_slice(data);
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(address.as_ref());
         bytes
     }
 
