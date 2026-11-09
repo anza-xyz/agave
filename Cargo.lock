@@ -11701,7 +11701,6 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-rent",
  "solana-sdk-ids",
- "solana-sha256-hasher",
  "solana-slot-hashes",
  "solana-svm-feature-set",
  "solana-system-interface",
