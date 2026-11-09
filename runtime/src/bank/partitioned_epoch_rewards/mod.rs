@@ -488,9 +488,8 @@ mod tests {
         solana_stake_interface::{stake_flags::StakeFlags, state::StakeStateV2},
         solana_system_transaction as system_transaction,
         solana_sysvar::epoch_rewards::{self, EpochRewards},
-        solana_vote::vote_transaction,
         solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
+        solana_vote_program::vote_state::{self, handler::VoteStateHandler},
         std::{
             assert_matches,
             collections::HashSet,
@@ -1511,6 +1510,7 @@ mod tests {
             .extend(vec![(new_stake_address, new_stake_account)]);
 
         let (mut previous_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        populate_vote_accounts_with_votes(&previous_bank, [vote_key], 0);
         let num_slots_in_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
         assert_eq!(num_slots_in_epoch, 32);
 
@@ -1523,19 +1523,6 @@ mod tests {
                 SlotLeader::default(),
                 slot,
             );
-
-            // Fill bank_forks with banks with votes landing in the next slot
-            // So that rewards will be paid out at the epoch boundary, i.e. slot = 32
-            let tower_sync = TowerSync::new_from_slot(slot - 1, previous_bank.hash());
-            let vote = vote_transaction::new_tower_sync_transaction(
-                tower_sync,
-                previous_bank.last_blockhash(),
-                &validator_vote_keypairs.node_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                None,
-            );
-            bank.process_transaction(&vote).unwrap();
 
             // Insert a transfer transaction from the mint to new stake account
             let system_tx = system_transaction::transfer(

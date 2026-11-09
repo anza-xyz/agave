@@ -11680,7 +11680,6 @@ dependencies = [
 name = "solana-vote-program"
 version = "5.0.0-alpha.0"
 dependencies = [
- "agave-feature-set",
  "agave-logger",
  "arbitrary",
  "criterion",
