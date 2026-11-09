@@ -66,7 +66,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
             .unwrap()
             .copy_from_slice(elf);
-        let programdata_account = AccountSharedData::new(0, 0, &system_program::id());
+        let programdata_account = AccountSharedData::empty(0, &system_program::id());
         let program_account = AccountSharedData::new_data_with_space(
             min_program_balance,
             &UpgradeableLoaderState::Uninitialized,
@@ -74,9 +74,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             &bpf_loader_upgradeable::id(),
         )
         .unwrap();
-        let payer_account = AccountSharedData::new(
+        let payer_account = AccountSharedData::empty(
             min_programdata_balance.saturating_add(1),
-            0,
             &system_program::id(),
         );
         let rent_account = create_sysvar_account(&rent);
@@ -84,8 +83,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             slot: SLOT,
             ..Clock::default()
         });
-        let system_program_account = AccountSharedData::new(0, 0, &native_loader::id());
-        let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+        let system_program_account = AccountSharedData::empty(0, &native_loader::id());
+        let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
         let transaction_accounts = vec![
             (*payer_address, payer_account),
             (programdata_address, programdata_account),
@@ -139,17 +138,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
             },
         ];
         (transaction_accounts, instruction_accounts)
-    }
-
-    fn corrupt_buffer_elf(transaction_accounts: &mut [(Pubkey, AccountSharedData)]) {
-        transaction_accounts
-            .get_mut(3)
-            .unwrap()
-            .1
-            .data_as_mut_slice()
-            .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
-            .unwrap()
-            .fill(0xff);
     }
 
     let process_instruction = |max_data_len: usize,
@@ -291,8 +279,12 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
 
     // Case: Program account not owned by loader
     //
-    // The buffer ELF is corrupted so that `IncorrectProgramId` proves the
-    // owner check fires before the ELF is loaded and verified.
+    // Unlike `Upgrade`, `DeployWithMaxDataLen` has no explicit owner
+    // check on the program account. Validation passes, and the failure
+    // only surfaces at the end when the handler tries to mutate the
+    // program's state — `set_state` requires the account to be owned by
+    // the currently-executing program, so it trips
+    // `ExternalAccountDataModified`.
     let (mut transaction_accounts, instruction_accounts) = get_accounts(
         &payer_address,
         &buffer_address,
@@ -305,32 +297,32 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
         .unwrap()
         .1
         .set_owner(Pubkey::new_unique());
-    corrupt_buffer_elf(&mut transaction_accounts);
     process_instruction(
         elf.len(),
         transaction_accounts,
         instruction_accounts,
-        Err(InstructionError::IncorrectProgramId),
+        Err(InstructionError::ExternalAccountDataModified),
     );
 
     // Case: Program account not writable
     //
-    // The buffer ELF is corrupted so that `InvalidArgument` proves the
-    // writability check fires before the ELF is loaded and verified.
-    let (mut transaction_accounts, mut instruction_accounts) = get_accounts(
+    // `DeployWithMaxDataLen` also lacks an explicit writability check on
+    // the program account, so the failure again surfaces at
+    // `set_state`, this time via the writability guard: a non-writable
+    // account yields `ReadonlyDataModified`.
+    let (transaction_accounts, mut instruction_accounts) = get_accounts(
         &payer_address,
         &buffer_address,
         &upgrade_authority_address,
         &upgrade_authority_address,
         &elf,
     );
-    corrupt_buffer_elf(&mut transaction_accounts);
     instruction_accounts.get_mut(2).unwrap().is_writable = false;
     process_instruction(
         elf.len(),
         transaction_accounts,
         instruction_accounts,
-        Err(InstructionError::InvalidArgument),
+        Err(InstructionError::ReadonlyDataModified),
     );
 
     // Case: Program account already initialized

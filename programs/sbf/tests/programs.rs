@@ -148,7 +148,10 @@ fn add_mixed_accounts(
         let pubkey = Pubkey::new_unique();
 
         // Mixed account sizes.
-        accounts.push((pubkey, Account::new(0, 100 + (i * 50), owner)));
+        accounts.push((
+            pubkey,
+            Account::new_with_data(0, vec![0; 100 + (i * 50)], owner),
+        ));
 
         // Mixed account roles.
         if i % 2 == 0 {
@@ -598,7 +601,7 @@ fn test_program_sbf_duplicate_accounts() {
         let mut execute = |data: &[u8]| {
             let mut accounts = program_accounts.clone();
             accounts.extend([
-                (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
+                (payer_pubkey, Account::empty(100, &Pubkey::default())),
                 (
                     payee_pubkey,
                     Account::new_with_data(10, vec![0; 1], &program_id),
@@ -650,7 +653,7 @@ fn test_program_sbf_duplicate_accounts() {
         ];
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
         accounts.extend([
-            (payer_pubkey, Account::new(100, 0, &Pubkey::default())),
+            (payer_pubkey, Account::empty(100, &Pubkey::default())),
             (
                 payee_pubkey,
                 Account::new_with_data(10, vec![0; 1], &program_id),
@@ -869,11 +872,11 @@ fn test_program_sbf_invoke_sanity() {
         // Covers the two `CREATE_ACCOUNT_LAMPORTS` CPIs and stays rent-exempt.
         let from_lamports = CREATE_ACCOUNT_LAMPORTS.saturating_mul(3);
         let from_keypair = Keypair::new();
-        let account = AccountSharedData::new(from_lamports, 0, &system_program::id());
+        let account = AccountSharedData::empty(from_lamports, &system_program::id());
         bank.store_account(&from_keypair.pubkey(), &account);
 
         let unexecutable_program_keypair = Keypair::new();
-        let account = AccountSharedData::new(1, 0, &bpf_loader::id());
+        let account = AccountSharedData::empty(1, &bpf_loader::id());
         bank.store_account(&unexecutable_program_keypair.pubkey(), &account);
 
         let noop_program_keypair = Keypair::new();
@@ -1388,7 +1391,7 @@ fn test_program_sbf_invoke_sanity() {
         }
 
         // Attempt to realloc into unauthorized address space
-        let account = AccountSharedData::new(from_lamports, 0, &system_program::id());
+        let account = AccountSharedData::empty(from_lamports, &system_program::id());
         bank.store_account(&from_keypair.pubkey(), &account);
         bank.store_account(&derived_key1, &AccountSharedData::default());
         let instruction = Instruction::new_with_bytes(
@@ -1451,8 +1454,8 @@ fn test_program_sbf_program_id_spoofing() {
         &spoof1_system_elf,
     ));
     accounts.extend([
-        (from_pubkey, Account::new(10, 0, &system_program::id())),
-        (to_pubkey, Account::new(0, 0, &system_program::id())),
+        (from_pubkey, Account::empty(10, &system_program::id())),
+        (to_pubkey, Account::empty(0, &system_program::id())),
     ]);
 
     let mut program_cache = default_program_cache();
@@ -1557,7 +1560,7 @@ fn test_program_sbf_ro_modify() {
     let test_pubkey = Pubkey::new_unique();
     let mut accounts = vec![keyed_account_for_system_program()];
     accounts.extend(upgradeable_program_accounts(&program_id, &program_elf));
-    accounts.push((test_pubkey, Account::new(10, 0, &system_program::id())));
+    accounts.push((test_pubkey, Account::empty(10, &system_program::id())));
 
     let mut program_cache =
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
@@ -1601,7 +1604,7 @@ fn test_program_sbf_call_depth() {
     let program_accounts = upgradeable_program_accounts(&program_id, &program_elf);
 
     let mut execute = |depth: usize| {
-        let instruction = Instruction::new_with_bincode(program_id, &depth, vec![]);
+        let instruction = Instruction::new_with_wincode(program_id, &depth, vec![]);
 
         let context = InstrContext::new_with_default_budget(
             feature_set,
@@ -1635,7 +1638,7 @@ fn test_program_sbf_compute_budget() {
         default_program_cache_with_program(&program_id, &program_elf, &feature_set);
     let sysvar_cache = default_sysvar_cache();
 
-    let instruction = Instruction::new_with_bincode(program_id, &0, vec![]);
+    let instruction = Instruction::new_with_wincode(program_id, &0, vec![]);
 
     let context = InstrContext {
         feature_set,
@@ -1708,7 +1711,7 @@ fn assert_instruction_count() {
 
         let account_pubkey = Pubkey::new_unique();
         let mut accounts = upgradeable_program_accounts(&program_id, &program_elf);
-        accounts.push((account_pubkey, Account::new(0, 0, &program_id)));
+        accounts.push((account_pubkey, Account::empty(0, &program_id)));
 
         let instruction_accounts = vec![AccountMeta {
             pubkey: account_pubkey,
@@ -3472,7 +3475,7 @@ fn test_program_sbf_realloc_invoke() {
     }
 
     // Realloc to max invoke max
-    let invoke_account = AccountSharedData::new(42, 0, &realloc_invoke_program_id);
+    let invoke_account = AccountSharedData::empty(42, &realloc_invoke_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
     assert_eq!(
         bank_client
@@ -3508,7 +3511,7 @@ fn test_program_sbf_realloc_invoke() {
         (MAX_PERMITTED_DATA_INCREASE, 1, false),
         (1, MAX_PERMITTED_DATA_INCREASE, false),
     ] {
-        let invoke_account = AccountSharedData::new(100_000_000, 0, &realloc_invoke_program_id);
+        let invoke_account = AccountSharedData::empty(100_000_000, &realloc_invoke_program_id);
         bank.store_account(&invoke_pubkey, &invoke_account);
         let mut instruction_data = vec![];
         instruction_data.extend_from_slice(&[INVOKE_REALLOC_TO_THEN_LOCAL_REALLOC_EXTEND, 1]);
@@ -3588,7 +3591,7 @@ fn test_program_sbf_realloc_invoke() {
     assert_eq!(data, &[0, 1, 2, 3, 4, 0, 0, 0, 0, 0]);
 
     // Realloc invoke max twice
-    let invoke_account = AccountSharedData::new(42, 0, &realloc_program_id);
+    let invoke_account = AccountSharedData::empty(42, &realloc_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
     assert_eq!(
         bank_client
@@ -3690,7 +3693,7 @@ fn test_program_sbf_realloc_invoke() {
     // Realloc recursively and fill data
     let invoke_keypair = Keypair::new();
     let invoke_pubkey = invoke_keypair.pubkey().clone();
-    let invoke_account = AccountSharedData::new(START_BALANCE, 0, &realloc_invoke_program_id);
+    let invoke_account = AccountSharedData::empty(START_BALANCE, &realloc_invoke_program_id);
     bank.store_account(&invoke_pubkey, &invoke_account);
     let mut instruction_data = vec![];
     instruction_data.extend_from_slice(&[INVOKE_REALLOC_RECURSIVE, 1]);
@@ -4648,7 +4651,7 @@ fn test_deny_access_beyond_current_length() {
             .advance_slot(1, &bank_forks, SlotLeader::default())
             .unwrap();
 
-        let account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let account = AccountSharedData::empty(42, &invoke_program_id);
         let readonly_account_keypair = Keypair::new();
         let writable_account_keypair = Keypair::new();
         bank.store_account(&readonly_account_keypair.pubkey(), &account);
@@ -5437,7 +5440,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 }
             }
 
-            let account = AccountSharedData::new(42, 0, &program_id);
+            let account = AccountSharedData::empty(42, &program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {

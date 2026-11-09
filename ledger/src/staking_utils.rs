@@ -106,12 +106,11 @@ pub(crate) mod tests {
             StakeFlags::default(),
         );
 
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let account = AccountSharedData::new_with_shared_data(
             1,
             Arc::new(wincode::serialize(&stake_account).unwrap()),
-            stake_program::id(),
+            &stake_program::id(),
             false,
-            u64::MAX,
         );
 
         bank.store_account(&stake_account_pubkey, &account);

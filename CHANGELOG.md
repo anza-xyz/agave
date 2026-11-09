@@ -10,9 +10,8 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 Release channels have their own copy of this changelog:
 
 * [edge - v5.0](#500-unreleased)
-* [alpha - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
-* [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
-* [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
+* [beta - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
+* [stable - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 
 ## 5.0.0-Unreleased
 
@@ -49,6 +48,10 @@ Release channels have their own copy of this changelog:
 ### RPC
 
 #### Breaking
+
+* `getBlockTime` now requires `--enable-rpc-transaction-history` to serve results. Previously, RPC
+  nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
+  block.
 
 #### Changes
 
