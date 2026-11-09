@@ -20,8 +20,10 @@ use {
     agave_votor_messages::wire::WireBlockCertMessage,
     serde_json::Value,
     solana_account::{Account, state_traits::StateMutWincode as _},
-    solana_account_decoder::UiAccount,
-    solana_account_decoder_client_types::token::{UiTokenAccount, UiTokenAmount},
+    solana_account_decoder_client_types::{
+        UiAccount,
+        token::{UiTokenAccount, UiTokenAmount},
+    },
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_info::EpochInfo,
@@ -4469,8 +4471,7 @@ mod tests {
         jsonrpc_core::{Error, IoHandler, Params, futures::prelude::*},
         jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
         serde_json::{Number, json},
-        solana_account_decoder::{UiAccountData, encode_ui_account},
-        solana_account_decoder_client_types::UiAccountEncoding,
+        solana_account_decoder_client_types::{UiAccount, UiAccountEncoding},
         solana_hash::Hash,
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
@@ -4865,7 +4866,17 @@ mod tests {
         };
         let keyed_account = RpcKeyedAccount {
             pubkey: pubkey.to_string(),
-            account: encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None),
+            account: UiAccount {
+                lamports: account.lamports,
+                data: UiAccountData::Binary(
+                    BASE64_STANDARD.encode(&account.data),
+                    UiAccountEncoding::Base64,
+                ),
+                owner: account.owner.to_string(),
+                executable: account.executable,
+                rent_epoch: account.rent_epoch,
+                space: Some(account.data.len() as u64),
+            },
         };
         let expected_result = vec![(pubkey, keyed_account.account.clone())];
         // Test: without context
