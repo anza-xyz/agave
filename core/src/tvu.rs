@@ -649,7 +649,7 @@ pub mod tests {
         let (blockstore_path, _) = create_new_tmp_ledger!(&genesis_config);
         let BlockstoreSignals {
             blockstore,
-            replay_wakeup_receiver,
+            shred_progress_receiver: replay_wakeup_receiver,
             update_parent_receiver,
             ..
         } = Blockstore::open_with_signal(&blockstore_path, BlockstoreOptions::default())

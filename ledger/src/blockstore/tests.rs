@@ -712,12 +712,12 @@ fn test_data_set_completed_on_insert() {
 }
 
 #[test]
-fn test_new_shreds_signal() {
+fn test_shred_progress_signal() {
     // Initialize blockstore
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let BlockstoreSignals {
         blockstore,
-        replay_wakeup_receiver: recvr,
+        shred_progress_receiver: recvr,
         ..
     } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 

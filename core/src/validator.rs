@@ -39,7 +39,7 @@ use {
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::{ReadableAccount, WINCODE_CONFIG},
     solana_accounts_db::{
@@ -79,7 +79,7 @@ use {
         bank_forks_utils,
         blockstore::{
             Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL, MAX_UPDATE_PARENT_SIGNALS,
-            PurgeType, UpdateParentReceiver,
+            PurgeType, SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY, UpdateParentReceiver,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{
@@ -905,12 +905,13 @@ impl Validator {
         ));
 
         let dependency_tracker = Arc::new(DependencyTracker::default());
+        let (replay_wakeup_sender, replay_wakeup_receiver) =
+            bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
 
         let (
             bank_forks,
             blockstore,
             original_blockstore_root,
-            replay_wakeup_receiver,
             update_parent_receiver,
             leader_schedule_cache,
             starting_snapshot_hashes,
@@ -931,6 +932,7 @@ impl Validator {
             &genesis_config,
             exit.clone(),
             &start_progress,
+            replay_wakeup_sender.clone(),
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
@@ -1071,7 +1073,7 @@ impl Validator {
                 bank.ticks_per_slot(),
                 config.delay_leader_block_for_pending_fork,
                 blockstore.clone(),
-                blockstore.replay_wakeup_sender(),
+                Some(replay_wakeup_sender),
                 &leader_schedule_cache,
                 &genesis_config.poh_config,
                 exit.clone(),
@@ -2193,13 +2195,14 @@ fn initialize_event_system(
     Ok(event_system)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn load_blockstore(
     config: &ValidatorConfig,
     ledger_path: &Path,
     genesis_config: &GenesisConfig,
     exit: Arc<AtomicBool>,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
+    shred_progress_signal: Sender<()>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
@@ -2209,7 +2212,6 @@ fn load_blockstore(
         Arc<RwLock<BankForks>>,
         Arc<Blockstore>,
         Slot,
-        Receiver<()>,
         UpdateParentReceiver,
         LeaderScheduleCache,
         Option<StartingSnapshotHashes>,
@@ -2235,7 +2237,7 @@ fn load_blockstore(
         ..blockstore_processor::ProcessOptions::default()
     };
 
-    let (blockstore, replay_wakeup_receiver, bank_from_snapshot_opt) = thread::scope(|scope| {
+    let (blockstore, bank_from_snapshot_opt) = thread::scope(|scope| {
         let load_snapshot_handle = thread::Builder::new()
             .name("solBnkFrkSnap".into())
             .spawn_scoped(scope, || {
@@ -2249,16 +2251,15 @@ fn load_blockstore(
                 )
             })
             .expect("should spawn thread");
-        let (blockstore, replay_wakeup_receiver) =
-            Blockstore::open_with_replay_wakeup(ledger_path, config.blockstore_options.clone())
-                .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+        let blockstore = Blockstore::open_with_options(
+            ledger_path,
+            config.blockstore_options.clone(),
+            Some(shred_progress_signal),
+        )
+        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
         let bank_from_snapshot_result = load_snapshot_handle.join().expect("join thread");
 
-        Ok::<_, String>((
-            Arc::new(blockstore),
-            replay_wakeup_receiver,
-            bank_from_snapshot_result.transpose(),
-        ))
+        Ok::<_, String>((Arc::new(blockstore), bank_from_snapshot_result.transpose()))
     })?;
 
     // following boot sequence (esp BankForks) could set root. so stash the original value
@@ -2334,7 +2335,6 @@ fn load_blockstore(
         bank_forks,
         blockstore,
         original_blockstore_root,
-        replay_wakeup_receiver,
         update_parent_receiver,
         leader_schedule_cache,
         starting_snapshot_hashes,
@@ -2748,6 +2748,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
     match Blockstore::open_with_options(
         &blockstore.ledger_path().join(backup_folder),
         config.blockstore_options.clone(),
+        None,
     ) {
         Ok(backup_blockstore) => {
             info!("Backing up slots from {start_slot} to {end_slot}");
@@ -3090,6 +3091,7 @@ mod tests {
                 access_type: AccessType::PrimaryForMaintenance,
                 ..BlockstoreOptions::default()
             },
+            None,
         )
         .unwrap();
         assert!(stale_event.exists());
@@ -3099,6 +3101,7 @@ mod tests {
                 access_type: AccessType::ReadOnly,
                 ..BlockstoreOptions::default()
             },
+            None,
         )
         .unwrap();
         assert_matches!(
