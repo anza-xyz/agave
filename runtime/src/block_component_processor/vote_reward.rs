@@ -3,10 +3,9 @@ use {
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{
         BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
@@ -114,9 +113,8 @@ impl VoteState {
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
         match self.handler.serialize_padded(self.space) {
             Ok(data) => {
-                let mut updated_account =
+                let updated_account =
                     AccountSharedData::new_with_data(self.lamports, data, &self.owner);
-                updated_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 Some((self.vote_pubkey, updated_account))
             }
             Err(e) => {

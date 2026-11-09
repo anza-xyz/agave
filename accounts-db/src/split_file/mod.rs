@@ -31,7 +31,7 @@ use {
             BufferedReader, FileBufRead as _, RequiredLenBufFileRead, RequiredLenBufRead as _,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     std::{
         convert::TryFrom,
@@ -40,7 +40,7 @@ use {
         ops::ControlFlow,
         path::{Path, PathBuf},
         sync::{
-            Arc, Mutex, MutexGuard, OnceLock,
+            Mutex, MutexGuard, OnceLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -429,13 +429,13 @@ impl SplitFile {
                 LoadedData::Inline(data) => data.to_vec(),
                 LoadedData::External(data) => data,
             };
-            AccountSharedData::create_from_existing_shared_data(
-                meta_entry.lamports,
-                Arc::new(data),
-                *meta_entry.owner,
-                meta_entry.is_executable,
-                meta_entry.rent_epoch,
-            )
+            AccountSharedData::from(Account {
+                lamports: meta_entry.lamports,
+                data,
+                owner: *meta_entry.owner,
+                executable: meta_entry.is_executable,
+                rent_epoch: meta_entry.rent_epoch,
+            })
         })
     }
 
@@ -978,10 +978,7 @@ mod tests {
                     &owner,
                 ),
             ),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(102, no_data, &owner),
-            ),
+            (Pubkey::new_unique(), AccountSharedData::empty(102, &owner)),
             (
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(
@@ -1077,10 +1074,7 @@ mod tests {
                     &owner,
                 ),
             ),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(102, no_data, &owner),
-            ),
+            (Pubkey::new_unique(), AccountSharedData::empty(102, &owner)),
             (
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(
@@ -1207,7 +1201,6 @@ mod tests {
 
         let slot = 23;
         let owner = Pubkey::new_unique();
-        let no_data = 0;
         let inline_data = 165; // 165 bytes is the common size for a token account
         let small_external_data = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
         // Include accounts larger than MIN_CAPACITY (128 KB) of the reader
@@ -1223,10 +1216,7 @@ mod tests {
                     &owner,
                 ),
             ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, no_data, &owner),
-            ));
+            accounts.push((Pubkey::new_unique(), AccountSharedData::empty(123, &owner)));
             accounts.push((
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(
@@ -1317,7 +1307,6 @@ mod tests {
 
         let slot = 23;
         let owner = Pubkey::new_unique();
-        let no_data = 0;
         let inline_data = 165; // 165 bytes is the common size for a token account
         let mut accounts = Vec::new();
         for i in 0..5 {
@@ -1329,10 +1318,7 @@ mod tests {
                     &owner,
                 ),
             ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, no_data, &owner),
-            ));
+            accounts.push((Pubkey::new_unique(), AccountSharedData::empty(123, &owner)));
         }
         // Include enough accounts to ensure the meta file size is larger than
         // the META_SCAN_BUFFER_SIZE to exercise the meta reader's retry logic.
@@ -1409,7 +1395,7 @@ mod tests {
         let accounts: Box<_> = iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 0, &Pubkey::default()),
+                AccountSharedData::empty(1, &Pubkey::default()),
             )
         })
         .take(num_accounts)
@@ -1491,7 +1477,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
-        let account = AccountSharedData::new(123, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(123, &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1936,7 +1922,6 @@ mod tests {
 
         let slot = 33;
         let owner = Pubkey::new_unique();
-        let no_data = 0;
         let inline_data = 42;
         let external_data = meta::META_ENTRY_MAX_SIZE + 1;
         let mut accounts = Vec::new();
@@ -1945,10 +1930,7 @@ mod tests {
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(123, vec![0; inline_data + i], &owner),
             ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, no_data, &owner),
-            ));
+            accounts.push((Pubkey::new_unique(), AccountSharedData::empty(123, &owner)));
             accounts.push((
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(123, vec![0; external_data + i], &owner),

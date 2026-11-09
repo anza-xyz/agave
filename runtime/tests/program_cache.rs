@@ -1,8 +1,6 @@
 use {
     agave_feature_set as feature_set,
-    solana_account::{
-        Account, AccountSharedData, WritableAccount, state_traits::StateMutWincode as _,
-    },
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_feature_gate_interface::{self as feature, Feature},
     solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
@@ -44,7 +42,7 @@ fn test_bank_load_program() {
     let mut file = File::open("../programs/bpf_loader/test_elfs/out/noop_aligned.so").unwrap();
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    let mut program_account = AccountSharedData::new_data(
+    let mut program_account = Account::new_data(
         40,
         &UpgradeableLoaderState::Program {
             programdata_address: programdata_key,
@@ -52,10 +50,11 @@ fn test_bank_load_program() {
         &bpf_loader_upgradeable::id(),
     )
     .unwrap();
-    program_account.set_executable(true);
-    program_account.set_rent_epoch(1);
+    program_account.executable = true;
+    program_account.rent_epoch = 1;
+    let program_account = AccountSharedData::from(program_account);
     let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-    let mut programdata_account = AccountSharedData::new_data_with_space(
+    let mut programdata_account = Account::new_data_with_space(
         40,
         &UpgradeableLoaderState::ProgramData {
             slot: 42,
@@ -65,8 +64,9 @@ fn test_bank_load_program() {
         &bpf_loader_upgradeable::id(),
     )
     .unwrap();
-    programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
-    programdata_account.set_rent_epoch(1);
+    programdata_account.data[programdata_data_offset..].copy_from_slice(&elf);
+    programdata_account.rent_epoch = 1;
+    let programdata_account = AccountSharedData::from(programdata_account);
     bank.store_account(&program_key, &program_account);
     bank.store_account(&programdata_key, &programdata_account);
 
