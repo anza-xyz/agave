@@ -557,19 +557,15 @@ mod external {
             ));
 
             // Spawn progress tracker.
-            let (shared_leader_state, ticks_per_slot) = {
+            let shared_leader_state = {
                 let poh = self.poh_recorder.read().unwrap();
-
-                (poh.shared_leader_state(), poh.ticks_per_slot())
+                poh.shared_leader_state()
             };
-            let migration_status = self.bank_forks.read().unwrap().migration_status();
             threads.push(progress_tracker::spawn(
                 self.worker_exit_signal.clone(),
                 progress_tracker,
                 shared_leader_state,
                 worker_metrics,
-                ticks_per_slot,
-                migration_status,
                 self.alpenglow_slot_clock.clone(),
             ));
 
