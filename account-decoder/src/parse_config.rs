@@ -1,8 +1,5 @@
 use {
-    crate::{
-        parse_account_data::{ParsableAccount, ParseAccountError},
-        validator_info,
-    },
+    crate::parse_account_data::{ParsableAccount, ParseAccountError},
     serde::{Deserialize, Serialize},
     serde_json::Value,
     solana_account::{WINCODE_CONFIG, WincodeConfig},
@@ -10,11 +7,14 @@ use {
     solana_pubkey::Pubkey,
 };
 
+const VALIDATOR_INFO_ID: Pubkey =
+    solana_pubkey::pubkey!("Va1idator1nfo111111111111111111111111111111");
+
 pub fn parse_config(data: &[u8], _pubkey: &Pubkey) -> Result<ConfigAccountType, ParseAccountError> {
     let parsed_account = wincode::config::deserialize::<ConfigKeys, _>(data, WINCODE_CONFIG)
         .ok()
         .and_then(|key_list| {
-            if !key_list.keys.is_empty() && key_list.keys[0].0 == validator_info::id() {
+            if !key_list.keys.is_empty() && key_list.keys[0].0 == VALIDATOR_INFO_ID {
                 parse_config_data::<String>(data, key_list.keys).and_then(|validator_info| {
                     Some(ConfigAccountType::ValidatorInfo(UiConfig {
                         keys: validator_info.keys,
@@ -70,10 +70,15 @@ pub struct UiConfig<T> {
 mod test {
     use {
         super::*,
-        crate::validator_info::ValidatorInfo,
         serde_json::json,
         solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
+        wincode::{SchemaRead, SchemaWrite},
     };
+
+    #[derive(SchemaRead, SchemaWrite)]
+    struct ValidatorInfo {
+        info: String,
+    }
 
     fn create_config_account(
         keys: Vec<(Pubkey, bool)>,
@@ -98,7 +103,7 @@ mod test {
         };
         let info_pubkey = solana_pubkey::new_rand();
         let validator_info_config_account = create_config_account(
-            vec![(validator_info::id(), false), (info_pubkey, true)],
+            vec![(VALIDATOR_INFO_ID, false), (info_pubkey, true)],
             validator_info,
             10,
         );
@@ -107,7 +112,7 @@ mod test {
             ConfigAccountType::ValidatorInfo(UiConfig {
                 keys: vec![
                     UiConfigKey {
-                        pubkey: validator_info::id().to_string(),
+                        pubkey: VALIDATOR_INFO_ID.to_string(),
                         signer: false,
                     },
                     UiConfigKey {
