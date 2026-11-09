@@ -25,6 +25,9 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Multihoming support has been removed. `--bind-address` accepts a single IP address,
+  and the `selectActiveInterface` admin RPC method has been removed.
+
 * The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
   `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`
 * Removed deprecated arguments

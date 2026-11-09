@@ -68,7 +68,7 @@ use {
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         gossip_service::GossipService,
-        node::{Node, NodeMultihoming},
+        node::Node,
     },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -993,9 +993,7 @@ impl Validator {
         }
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
-        cluster_info.set_bind_ip_addrs(node.bind_ip_addrs.clone());
         let cluster_info = Arc::new(cluster_info);
-        let node_multihoming = Arc::new(NodeMultihoming::from(&node));
 
         // Opt-in Geyser notifications for gossip contact info changes. If
         // no loaded plugin opts in, this returns `None` and gossip's hot
@@ -1172,9 +1170,6 @@ impl Validator {
         let max_slots = Arc::new(MaxSlots::default());
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
-
-        let mut tpu_transactions_forwards_client_sockets =
-            Some(node.sockets.tpu_transaction_forwarding_clients);
 
         let key_notifiers = Arc::new(RwLock::new(KeyUpdaters::default()));
 
@@ -1415,7 +1410,9 @@ impl Validator {
                 .expect("repair socket should have local address")
                 .port();
 
-            let gossip_src_port = node.sockets.gossip[0]
+            let gossip_src_port = node
+                .sockets
+                .gossip
                 .local_addr()
                 .expect("gossip socket should have local address")
                 .port();
@@ -1659,10 +1656,9 @@ impl Validator {
                 .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
             ForwardingClientConfig {
                 stake_identity: Arc::as_ref(&identity_keypair),
-                tpu_client_sockets: tpu_transactions_forwards_client_sockets.take().unwrap(),
+                tpu_client_socket: node.sockets.tpu_transaction_forwarding_client,
                 runtime_handle: runtime_handle.clone(),
                 cancel: cancel.clone(),
-                node_multihoming: node_multihoming.clone(),
             }
         };
         let (banking_control_sender, banking_control_receiver) = mpsc::channel(1);
@@ -1743,7 +1739,6 @@ impl Validator {
             notifies: key_notifiers,
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
-            node: Some(node_multihoming),
             banking_control_sender,
             snapshot_controller,
             blockstore: blockstore.clone(),
@@ -1846,7 +1841,7 @@ impl Validator {
         info!("{:?}", node.info);
         info!(
             "local gossip address: {}",
-            node.sockets.gossip[0].local_addr().unwrap()
+            node.sockets.gossip.local_addr().unwrap()
         );
         info!(
             "local broadcast address: {}",

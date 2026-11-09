@@ -602,42 +602,22 @@ mod tests {
         assert!(verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs));
     }
 
-    // This test is gated for non-macOS platforms because it requires binding to 127.0.0.2,
-    // which is not supported on macOS by default.
-    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn test_verify_udp_multiple_ips_reachable() {
-        agave_logger::setup();
-        let config = SocketConfiguration::default();
-        let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
-
+    fn test_verify_udp_reuseport_reachable() {
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
-
-        let (_srv_udp_port, (srv_udp_sock, srv_tcp_listener)) =
-            bind_common_in_range_with_config(ip_a, port_range, config).unwrap();
-
-        let ip_echo_server_addr = srv_udp_sock.local_addr().unwrap();
-        let _runtime = ip_echo_server(
-            srv_tcp_listener,
-            DEFAULT_IP_ECHO_SERVER_THREADS,
-            /*shred_version=*/ Some(42),
-        );
-
-        let mut udp_sockets = Vec::new();
-        let (_p1, (sock_a, _tl_a)) =
-            bind_common_in_range_with_config(ip_a, port_range, config).unwrap();
-        let (_p2, (sock_b, _tl_b)) =
-            bind_common_in_range_with_config(ip_b, port_range, config).unwrap();
-
-        udp_sockets.push(sock_a);
-        udp_sockets.push(sock_b);
-
-        let socket_refs: Vec<&UdpSocket> = udp_sockets.iter().collect();
-
-        assert!(
-            verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs),
-            "all UDP ports on both 127.0.0.1 and 127.0.0.2 should be reachable"
-        );
+        let (_, (_, listener)) =
+            bind_common_in_range_with_config(ip, port_range, SocketConfiguration::default())
+                .unwrap();
+        let server_addr = listener.local_addr().unwrap();
+        let _runtime = ip_echo_server(listener, DEFAULT_IP_ECHO_SERVER_THREADS, Some(42));
+        let (_, sockets) =
+            multi_bind_in_range_with_config(ip, port_range, SocketConfiguration::default(), 4)
+                .unwrap();
+        let sockets = sockets.iter().collect_vec();
+        assert!(verify_all_reachable_udp(&server_addr, &sockets));
+        for socket in sockets {
+            assert_eq!(socket.read_timeout().unwrap(), None);
+        }
     }
 }
