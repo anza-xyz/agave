@@ -19,6 +19,7 @@ pub mod bootstrap;
 pub mod cli;
 pub mod commands;
 pub mod dashboard;
+pub mod shred_receiver_addresses;
 
 pub fn format_name_value(name: &str, value: &str) -> String {
     format!("{} {}", style(name).bold(), value)

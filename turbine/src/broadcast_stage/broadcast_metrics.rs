@@ -23,6 +23,10 @@ pub struct TransmitShredsStats {
     pub total_packets: usize,
     pub(crate) dropped_packets_udp: usize,
     pub(crate) dropped_packets_xdp: usize,
+    /// Copies sent to the `--shred-receiver-address` destinations, counted
+    /// apart from the turbine packets above.
+    pub(crate) mirrored_packets: usize,
+    pub(crate) dropped_packets_mirrored: usize,
     pub(crate) is_xdp: bool,
 }
 
@@ -35,6 +39,8 @@ impl BroadcastStats for TransmitShredsStats {
         self.total_packets += new_stats.total_packets;
         self.dropped_packets_udp += new_stats.dropped_packets_udp;
         self.dropped_packets_xdp += new_stats.dropped_packets_xdp;
+        self.mirrored_packets += new_stats.mirrored_packets;
+        self.dropped_packets_mirrored += new_stats.dropped_packets_mirrored;
     }
     fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
         if was_interrupted {
@@ -48,6 +54,12 @@ impl BroadcastStats for TransmitShredsStats {
                 ("total_packets", self.total_packets as i64, i64),
                 ("dropped_packets_udp", self.dropped_packets_udp as i64, i64),
                 ("dropped_packets_xdp", self.dropped_packets_xdp as i64, i64),
+                ("mirrored_packets", self.mirrored_packets as i64, i64),
+                (
+                    "dropped_packets_mirrored",
+                    self.dropped_packets_mirrored as i64,
+                    i64
+                ),
             );
         } else {
             datapoint_info!(
@@ -67,6 +79,12 @@ impl BroadcastStats for TransmitShredsStats {
                 ("total_packets", self.total_packets as i64, i64),
                 ("dropped_packets_udp", self.dropped_packets_udp as i64, i64),
                 ("dropped_packets_xdp", self.dropped_packets_xdp as i64, i64),
+                ("mirrored_packets", self.mirrored_packets as i64, i64),
+                (
+                    "dropped_packets_mirrored",
+                    self.dropped_packets_mirrored as i64,
+                    i64
+                ),
             );
         }
     }
@@ -211,6 +229,8 @@ mod test {
                 total_packets: 7,
                 dropped_packets_udp: 8,
                 dropped_packets_xdp: 10,
+                mirrored_packets: 0,
+                dropped_packets_mirrored: 0,
                 is_xdp: false,
             },
             &Some(BroadcastShredBatchInfo {
@@ -240,6 +260,8 @@ mod test {
                 total_packets: 17,
                 dropped_packets_udp: 18,
                 dropped_packets_xdp: 20,
+                mirrored_packets: 0,
+                dropped_packets_mirrored: 0,
                 is_xdp: false,
             },
             &None,
@@ -266,6 +288,8 @@ mod test {
                 total_packets: 1,
                 dropped_packets_udp: 1,
                 dropped_packets_xdp: 1,
+                mirrored_packets: 0,
+                dropped_packets_mirrored: 0,
                 is_xdp: false,
             },
             &Some(BroadcastShredBatchInfo {

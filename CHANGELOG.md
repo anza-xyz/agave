@@ -38,6 +38,10 @@ Release channels have their own copy of this changelog:
 #### Changes
 
 * Changed the default account storage file format to SplitFile.
+* Added `--shred-receiver-address` (startup only): send a copy of every leader shred to up to
+  32 extra IPv4 `host:port` destinations after the turbine packets, the same flag as Jito-Agave
+  and Salsa. Reported as `mirrored_packets` / `dropped_packets_mirrored` in
+  `broadcast-transmit-shreds-stats`.
 
 ### CLI
 
