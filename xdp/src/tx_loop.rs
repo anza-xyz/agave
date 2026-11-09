@@ -261,6 +261,12 @@ pub struct TxLoop<U: Umem> {
     completion: TxCompletionRing,
 }
 
+impl<U: Umem> TxLoop<U> {
+    pub fn zero_copy(&self) -> io::Result<bool> {
+        self.socket.zero_copy()
+    }
+}
+
 /// [`TxPacket`] represents a packet to transmit via XDP to a list of addresses with the provided
 /// `payload` and source address.
 pub trait TxPacket {
