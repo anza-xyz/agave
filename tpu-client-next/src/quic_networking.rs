@@ -43,7 +43,7 @@ pub(crate) fn create_client_config(
             client_certificate.key.clone_key(),
         )
         .expect("Failed to set QUIC client certificates");
-    crypto.enable_early_data = true;
+    crypto.enable_early_data = false;
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     crypto.key_log = Arc::new(KeyLogFile::new());
 
