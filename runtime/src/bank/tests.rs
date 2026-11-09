@@ -839,7 +839,7 @@ where
                 reward_type: RewardType::Voting,
                 lamports: 0,
                 post_balance: bank1.get_balance(&vote_id),
-                commission_bps: Some(0),
+                commission_bps: None,
             }
         ),]
     );
@@ -885,7 +885,7 @@ where
                 reward_type: RewardType::Staking,
                 lamports: validator_rewards_lamports as i64,
                 post_balance: bank2.get_balance(&stake_id),
-                commission_bps: Some(0),
+                commission_bps: None,
             }
         )]
     );
