@@ -2367,16 +2367,13 @@ impl AccountsDb {
     where
         F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
     {
-        // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let mut scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+        let mut scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, self.max_root())
             .ok_or(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id,
             })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
-        // Scan Guard max root must be used as the scan guard guarantees that
-        // the account state as of max root is persisted in the database
         let max_root_ancestors = self.root_as_ancestors(scan_guard.max_root());
         let ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors
@@ -2474,16 +2471,13 @@ impl AccountsDb {
             return Ok(used_index);
         }
 
-        // Register this scan so that slots needed by the scan are not cleaned out from under us.
-        let mut scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, || self.max_root())
+        let mut scan_guard = ScanGuard::try_new(&self.scan_tracker, bank_id, self.max_root())
             .ok_or(ScanError::SlotRemoved {
                 slot: ancestors.max_slot(),
                 bank_id,
             })?;
 
         // If the scan's ancestors are all rooted, drop them and scan roots only
-        // Scan Guard max root must be used as the scan guard guarantees that
-        // the account state as of max root is persisted in the database
         let max_root_ancestors = self.root_as_ancestors(scan_guard.max_root());
         let ancestors = if scan_guard.should_use_ancestors(ancestors) {
             ancestors

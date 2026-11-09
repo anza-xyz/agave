@@ -4323,10 +4323,7 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     db.add_root_for_tests(new_root);
 
     // Check that the scan is properly set up
-    assert_eq!(
-        db.scan_tracker.min_ongoing_scan_root().unwrap(),
-        max_scan_root
-    );
+    assert_eq!(db.scan_tracker.active_scans.load(Ordering::Relaxed), 1);
 
     // If we specify a requested_flush_root == 2, then `slot 2 <= max_flush_slot` will
     // be flushed even though `slot 2 > max_scan_root`. The unrooted slot 1 should
@@ -4335,12 +4332,15 @@ fn test_scan_flush_accounts_cache_then_clean_drop() {
     assert_eq!(db.accounts_cache.num_slots(), 1);
     assert!(db.slot_cache_for_tests(1).is_some());
 
-    // Intra cache cleaning should not clean the entry for `account_key` from slot 0,
-    // even though it was updated in slot `2` because of the ongoing scan
+    // Intra cache cleaning should clean the entry for `account_key` from slot 0,
+    // because it was updated in slot `2`.
+    // The scan does not preserve the older rooted version during a flush-with-clean.
+    assert!(db.get_account_at_slot(&account_key, 0).is_none());
+    assert_eq!(db.accounts_index.slot_list_len(&account_key), 1);
     let account = db
-        .get_account_at_slot(&account_key, 0)
+        .get_account_at_slot(&account_key, 2)
         .expect("account should exist");
-    assert_eq!(account.lamports(), slot0_account.lamports());
+    assert_eq!(account.lamports(), slot2_account.lamports());
 
     // Run clean, unrooted slot 1 should not be purged, and still readable from the cache,
     // because we're still doing a scan on it.
@@ -4578,10 +4578,6 @@ fn setup_accounts_db_cache_clean(
                 bank_id,
                 scan_stall_key,
             ));
-            assert_eq!(
-                accounts_db.scan_tracker.min_ongoing_scan_root().unwrap(),
-                *slot
-            );
         }
     }
 
@@ -4771,28 +4767,25 @@ fn run_test_accounts_db_cache_clean_max_root(
             }
         };
 
-        let expected_accounts =
-            if *slot >= requested_flush_root || *slot >= scan_root.unwrap_or(Slot::MAX) {
-                // 1) If slot > `requested_flush_root`, then  either:
-                //   a) If `is_cache_at_limit == false`, still in the cache
-                //   b) if `is_cache_at_limit == true`, were not cleaned before being flushed to storage.
-                //
-                // In both cases all the *original* updates at index `slot` were uncleaned and thus
-                // should be discoverable by this scan.
-                //
-                // 2) If slot == `requested_flush_root`, the slot was not cleaned before being flushed to storage,
-                // so it also contains all the original updates.
-                //
-                // 3) If *slot >= scan_root, then we should not clean it either
-                keys[*slot as usize..]
-                    .iter()
-                    .cloned()
-                    .collect::<HashSet<Pubkey>>()
-            } else {
-                // Slots less than `requested_flush_root` and `scan_root` were cleaned in the cache before being flushed
-                // to storage, should only contain one account
-                std::iter::once(keys[*slot as usize]).collect::<HashSet<Pubkey>>()
-            };
+        let expected_accounts = if *slot >= requested_flush_root {
+            // 1) If slot > `requested_flush_root`, then  either:
+            //   a) If `is_cache_at_limit == false`, still in the cache
+            //   b) if `is_cache_at_limit == true`, were not cleaned before being flushed to storage.
+            //
+            // In both cases all the *original* updates at index `slot` were uncleaned and thus
+            // should be discoverable by this scan.
+            //
+            // 2) If slot == `requested_flush_root`, the slot was not cleaned before being flushed to storage,
+            // so it also contains all the original updates.
+            keys[*slot as usize..]
+                .iter()
+                .cloned()
+                .collect::<HashSet<Pubkey>>()
+        } else {
+            // Slots less than `requested_flush_root` and `scan_root` were cleaned in the cache
+            // before being flushed to storage, should only contain one account.
+            std::iter::once(keys[*slot as usize]).collect::<HashSet<Pubkey>>()
+        };
 
         assert_eq!(slot_accounts, expected_accounts);
     }

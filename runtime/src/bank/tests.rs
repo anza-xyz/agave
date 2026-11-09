@@ -7928,7 +7928,7 @@ fn test_debug_bank() {
     assert!(!debug.is_empty());
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 enum AcceptableScanResults {
     DroppedSlotError,
     NoFailure,
@@ -7977,6 +7977,13 @@ fn test_store_scan_consistency<F>(
     let bank_forks = BankForks::new_rw_arc(bank0);
     let bank0 = bank_forks.read().unwrap().root_bank();
 
+    // Accounts that are never modified must remain visible even during cleaning.
+    let unmodified_pubkeys: HashSet<_> = all_pubkeys
+        .iter()
+        .skip(total_pubkeys_to_modify)
+        .copied()
+        .collect();
+
     // Set aside a subset of accounts to modify
     let pubkeys_to_modify: Arc<HashSet<Pubkey>> = Arc::new(
         all_pubkeys
@@ -7989,6 +7996,7 @@ fn test_store_scan_consistency<F>(
     // Thread that runs scan and constantly checks for
     // consistency
     let pubkeys_to_modify_ = pubkeys_to_modify.clone();
+    let expect_consistent_results = acceptable_scan_results != AcceptableScanResults::NoFailure;
 
     // Channel over which the bank to scan is sent
     let (bank_to_scan_sender, bank_to_scan_receiver): (
@@ -8045,29 +8053,37 @@ fn test_store_scan_consistency<F>(
                             }
                         }
 
-                        // Should never see empty accounts because no slot ever deleted
-                        // any of the original accounts, and the scan should reflect the
-                        // account state at some frozen slot `X` (no partial updates).
+                        // Cleaning may reclaim old versions of accounts during a scan.
+                        // Unmodified accounts must still be returned, without duplicates.
                         if let Ok(accounts) = accounts_result {
                             assert!(!accounts.is_empty());
                             let mut expected_lamports = None;
-                            let mut target_accounts_found = HashSet::new();
+                            let mut target_accounts_found = 0;
+                            let mut unmodified_accounts_found = 0;
+                            let mut scanned_pubkeys = HashSet::new();
                             for (pubkey, account) in accounts {
+                                assert!(scanned_pubkeys.insert(pubkey));
                                 let account_balance = account.lamports();
                                 if pubkeys_to_modify_.contains(&pubkey) {
-                                    target_accounts_found.insert(pubkey);
-                                    if let Some(expected_lamports) = expected_lamports {
-                                        assert_eq!(account_balance, expected_lamports);
-                                    } else {
-                                        // All pubkeys in the specified set should have the same balance
-                                        expected_lamports = Some(account_balance);
+                                    target_accounts_found += 1;
+                                    if expect_consistent_results {
+                                        if let Some(expected_lamports) = expected_lamports {
+                                            assert_eq!(account_balance, expected_lamports);
+                                        } else {
+                                            // All pubkeys in the specified set should have the same balance
+                                            expected_lamports = Some(account_balance);
+                                        }
                                     }
+                                } else if unmodified_pubkeys.contains(&pubkey) {
+                                    unmodified_accounts_found += 1;
+                                    assert_eq!(account_balance, starting_lamports);
                                 }
                             }
 
-                            // Should've found all the accounts, i.e. no partial cleans should
-                            // be detected
-                            assert_eq!(target_accounts_found.len(), total_pubkeys_to_modify);
+                            assert_eq!(unmodified_accounts_found, unmodified_pubkeys.len());
+                            if expect_consistent_results {
+                                assert_eq!(target_accounts_found, total_pubkeys_to_modify);
+                            }
                         }
                     }
                 }
@@ -8091,7 +8107,7 @@ fn test_store_scan_consistency<F>(
         })
         .unwrap();
 
-    // Let threads run for a while, check the scans didn't see any mixed slots
+    // Let threads run for a while and check the allowed scan results.
     let min_expected_number_of_scans = 5;
     std::thread::sleep(Duration::new(5, 0));
     // This can be reduced when you are running this test locally to deal with hangs
