@@ -614,6 +614,13 @@ impl ShredRecoveryContext {
         self.shred_filter_ctx.stricter_shred_validation_from
     }
 
+    /// Apply the activation known by an insertion task to this worker's filters.
+    /// The worker can receive the task before it refreshes its own root bank.
+    pub(crate) fn require_stricter_shred_validation(&mut self, slot: Slot) {
+        let first_slot = &mut self.shred_filter_ctx.stricter_shred_validation_from;
+        *first_slot = Some(first_slot.unwrap_or(slot).min(slot));
+    }
+
     /// Submit stats at most every two seconds
     pub fn maybe_submit_stats(&mut self) {
         self.shred_filter_ctx

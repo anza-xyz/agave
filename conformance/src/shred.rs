@@ -21,10 +21,7 @@ use {
     solana_clock::{DEFAULT_HASHES_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
-            RecoveredShredBatch,
-        },
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType},
         blockstore_meta::BlockLocation,
         blockstore_processor::{set_alpenglow_ticks, verify_ticks},
         shred::{
@@ -197,12 +194,7 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             // Complete recovery before reading blockstore below.
             let mut recovered_batches: Vec<_> = tasks
                 .into_iter()
-                .filter_map(|task| {
-                    let mut batch = RecoveredShredBatch::new(task.erasure_set());
-                    blockstore
-                        .recover_shreds_from_task(task, &mut recovery, &mut batch)
-                        .then_some(batch)
-                })
+                .filter_map(|task| blockstore.recover_shreds_from_task(task, &mut recovery))
                 .collect();
             if !recovered_batches.is_empty() {
                 let _ = blockstore.insert_shreds_with_recovered(

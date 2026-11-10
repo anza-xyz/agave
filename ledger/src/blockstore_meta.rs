@@ -3,8 +3,8 @@ use {
         bit_vec::{BitVec, BitVecRef},
         blockstore::ParentInfo,
         shred::{
-            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, MAX_FEC_SETS_PER_SLOT,
-            Shred, ShredType, merkle_tree::get_proof_size,
+            self, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, Shred, ShredType,
+            merkle_tree::get_proof_size,
         },
     },
     agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
@@ -14,13 +14,9 @@ use {
     solana_hash::{HASH_BYTES, Hash},
     std::{
         fmt::{self, Debug, Display},
-        mem::MaybeUninit,
         ops::{Range, RangeBounds},
     },
-    wincode::{
-        ReadError, ReadResult, SchemaRead, SchemaWrite, adapter::DefaultOnEmptyRead,
-        config::ConfigCore, io::Reader,
-    },
+    wincode::{SchemaRead, SchemaWrite, adapter::DefaultOnEmptyRead},
 };
 
 bitflags! {
@@ -179,14 +175,12 @@ pub struct SlotMetaBase<T> {
 
 pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexes>;
 
-/// Slot metadata stored in blockstore.
+/// Slot metadata persisted by blockstore.
 ///
-/// V3 adds `parent_block_id` and `replay_fec_set_index` for slots that change parent through an
-/// UpdateParent marker.
-/// Replay uses these fields to validate and restart those slots.
-/// When reading V2 records, use the default values for these fields.
-/// The FEC validation bitmap controls which data replay can read.
-/// For older records without the bitmap, set all bits to preserve their replay behavior.
+/// V3 adds `parent_block_id` and `replay_fec_set_index` so replay can validate
+/// and restart slots that switch parent through an UpdateParent marker. The new
+/// fields default on old ledger reads, preserving backward-compatible reads of
+/// V2 data.
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite, Eq, PartialEq)]
 pub struct SlotMetaV3 {
     pub slot: Slot,
@@ -214,95 +208,6 @@ pub struct SlotMetaV3 {
     /// optimistic-parent prefix before this FEC set.
     #[wincode(with = "DefaultOnEmptyRead<u32>")]
     pub replay_fec_set_index: u32,
-    /// Completed FEC checks. Replay also checks the slot's dead flag.
-    pub fec_validation: FecValidation,
-}
-
-/// One bit per FEC set. Set the bit when a check finishes or is not required.
-/// A clear bit blocks replay. A failed required check also marks the slot dead.
-/// The dead flag blocks replay of failed slots; this bitmap only tracks completion.
-///
-/// New records start with all bits clear.
-/// Read older records without this field with all bits set.
-/// Validation used to finish during insertion. The dead flag blocked failed slots.
-#[derive(Clone, Debug, Default, SchemaWrite, Eq, PartialEq)]
-#[repr(transparent)]
-pub struct FecValidation {
-    checked: FecValidationBitSet,
-}
-
-type FecValidationBitSet = [u64; FecValidation::NUM_WORDS];
-
-/// Read SlotMeta records that do not have a bitmap.
-/// A backport can add bitmap storage to older supported releases.
-/// Keep this fallback while a supported upgrade, downgrade, or blockstore restore
-/// can supply records without a bitmap.
-/// Upgrading the validator does not automatically add the bitmap to existing records.
-/// Reading an old record sets default bits in memory. It does not update the stored record.
-///
-/// A later write of SlotMeta can store these default bits for FEC sets that still need validation.
-/// Insertion clears each set's bit when it schedules required SIMD-0504 validation.
-/// Keep that clearing step while stored records can contain these default bits.
-unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for FecValidation {
-    type Dst = Self;
-
-    #[inline]
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        // SAFETY: FecValidation is a #[repr(transparent)] wrapper around FecValidationBitSet.
-        let dst = unsafe { &mut *(dst.as_mut_ptr().cast::<MaybeUninit<FecValidationBitSet>>()) };
-
-        match <FecValidationBitSet as SchemaRead<'de, C>>::read(reader, dst) {
-            Ok(()) => Ok(()),
-            Err(ReadError::Io(wincode::io::ReadError::ReadSizeLimit(_))) => {
-                // If this field was not stored, set all validation bits.
-                // Before this field was added, validation finished during insertion.
-                // Replay used the dead flag to reject failed slots.
-                dst.write([u64::MAX; FecValidation::NUM_WORDS]);
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-}
-
-impl FecValidation {
-    const NUM_WORDS: usize = (MAX_FEC_SETS_PER_SLOT as usize).div_ceil(64);
-
-    pub(crate) fn contains(&self, fec_set_index: u32) -> bool {
-        let bit = fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
-        self.checked
-            .get(bit / 64)
-            .is_some_and(|word| word & (1 << (bit % 64)) != 0)
-    }
-
-    pub(crate) fn insert(&mut self, fec_set_index: u32) {
-        let bit = fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
-        if let Some(word) = self.checked.get_mut(bit / 64) {
-            *word |= 1 << (bit % 64);
-        }
-    }
-
-    /// Clear the bit to block replay until insertion applies a FEC check result.
-    /// This also clears bits set by default when reading older records.
-    pub(crate) fn remove(&mut self, fec_set_index: u32) {
-        let bit = fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
-        if let Some(word) = self.checked.get_mut(bit / 64) {
-            *word &= !(1 << (bit % 64));
-        }
-    }
-
-    /// Find where replay must stop because a FEC bit is clear or a shred is missing.
-    /// Return that shred index. `consumed` is the first missing shred index.
-    /// This checks at most 16 bitmap words in memory and does not read the database.
-    pub(crate) fn checked_end(&self, consumed: u32) -> u32 {
-        for (i, &word) in self.checked.iter().enumerate() {
-            if word != u64::MAX {
-                let fec = i as u32 * 64 + word.trailing_ones();
-                return consumed.min(fec * DATA_SHREDS_PER_FEC_BLOCK as u32);
-            }
-        }
-        consumed.min(MAX_DATA_SHREDS_PER_SLOT as u32)
-    }
 }
 
 pub type SlotMeta = SlotMetaV3;
@@ -714,13 +619,6 @@ fn slot_meta_is_full(last_index: Option<u64>, consumed: u64) -> bool {
 }
 
 impl SlotMeta {
-    /// All data shreds are present and all required FEC checks have finished.
-    /// This does not check the dead flag. A failed check also counts as finished.
-    pub fn is_full_and_checked(&self) -> bool {
-        self.is_full()
-            && self.fec_validation.checked_end(self.consumed as u32) == self.consumed as u32
-    }
-
     #[inline]
     pub fn is_full(&self) -> bool {
         slot_meta_is_full(self.last_index, self.consumed)
@@ -1059,62 +957,6 @@ mod test {
         assert!(index.contains_range(5..2));
     }
 
-    // Stored bits must survive serialization, while older records without a bitmap keep their replay behavior.
-    // Check bit indexing across words and ensure a block replacement clears all previous validation.
-    #[test]
-    fn test_fec_validation_persistence_and_word_boundaries() {
-        let mut meta = SlotMeta::new(100, Some(99));
-        let width = DATA_SHREDS_PER_FEC_BLOCK as u32;
-        for fec in 0..MAX_FEC_SETS_PER_SLOT {
-            assert_eq!(
-                meta.fec_validation
-                    .checked_end(MAX_DATA_SHREDS_PER_SLOT as u32),
-                fec * width
-            );
-            meta.fec_validation.insert(fec * width);
-        }
-        assert_eq!(
-            meta.fec_validation
-                .checked_end(MAX_DATA_SHREDS_PER_SLOT as u32),
-            MAX_DATA_SHREDS_PER_SLOT as u32
-        );
-        // Use mixed bits so an omitted bitmap cannot pass through the all-ones legacy default.
-        meta.fec_validation.remove(64 * width);
-        let bytes = wincode::serialize(&meta).unwrap();
-        assert_eq!(wincode::deserialize::<SlotMeta>(&bytes).unwrap(), meta);
-        // Older V3 records end after replay_fec_set_index, without the validation bitmap.
-        let legacy_len = bytes.len() - wincode::serialize(&meta.fec_validation).unwrap().len();
-        let legacy: SlotMeta = wincode::deserialize(&bytes[..legacy_len]).unwrap();
-        for fec in 0..MAX_FEC_SETS_PER_SLOT {
-            assert!(legacy.fec_validation.contains(fec * width));
-        }
-        // Read stored zeroes as zeroes. Do not use the default for older records.
-        let zeroes = FecValidation::default();
-        assert_eq!(
-            wincode::deserialize::<FecValidation>(&wincode::serialize(&zeroes).unwrap()).unwrap(),
-            zeroes
-        );
-        // Clear one bit without changing other bits, including bits in adjacent words.
-        for fec in [0, 63, 64, MAX_FEC_SETS_PER_SLOT - 1] {
-            let mut validation = legacy.fec_validation.clone();
-            validation.remove(fec * width);
-            assert_eq!(
-                validation.checked_end(MAX_DATA_SHREDS_PER_SLOT as u32),
-                fec * width
-            );
-            assert!(!validation.contains(fec * width));
-            if fec > 0 {
-                assert!(validation.contains((fec - 1) * width));
-            }
-            if fec + 1 < MAX_FEC_SETS_PER_SLOT {
-                assert!(validation.contains((fec + 1) * width));
-            }
-        }
-        assert_eq!(legacy.fec_validation.checked_end(64), 64);
-        meta.clear_unconfirmed_slot();
-        assert_eq!(meta.fec_validation, FecValidation::default());
-    }
-
     #[test]
     fn test_slot_meta_slot_zero_connected() {
         let meta = SlotMeta::new(0 /* slot */, None /* parent */);
@@ -1190,7 +1032,6 @@ mod test {
                     completed_data_indexes: completed_data_indexes.into_iter().collect(),
                     parent_block_id: Hash::new_from_array(parent_block_id),
                     replay_fec_set_index,
-                    fec_validation: FecValidation::default(),
                 },
             )
     }
