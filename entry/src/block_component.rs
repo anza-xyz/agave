@@ -236,7 +236,10 @@ pub enum BlockComponentError {
     EmptyEntryBatch,
 }
 
-/// Block production metadata. User agent is capped at 255 bytes.
+/// Max length of `BlockFooterV1::block_user_agent`.
+pub const MAX_BLOCK_USER_AGENT_LEN: usize = u8::MAX as usize;
+
+/// Block production metadata. User agent is capped at [`MAX_BLOCK_USER_AGENT_LEN`] bytes.
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockFooterV1 {
     pub bank_hash: Hash,
@@ -750,6 +753,20 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         }
+    }
+
+    #[test]
+    fn test_block_user_agent_max_len() {
+        let mut footer = sample_footer();
+        footer.block_user_agent = vec![b'a'; MAX_BLOCK_USER_AGENT_LEN];
+        let serialized = wincode::serialize(&footer).unwrap();
+        assert_eq!(
+            wincode::deserialize::<BlockFooterV1>(&serialized).unwrap(),
+            footer
+        );
+
+        footer.block_user_agent.push(b'a');
+        assert!(wincode::serialize(&footer).is_err());
     }
 
     fn test_votes_aggregate(payload: &[u8], bitmap: Vec<u8>) -> (VotesAggregate, BlsSignature) {

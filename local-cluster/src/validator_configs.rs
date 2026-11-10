@@ -46,6 +46,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         enforce_ulimit_nofile: config.enforce_ulimit_nofile,
         warp_slot: config.warp_slot,
         staked_nodes_overrides: config.staked_nodes_overrides.clone(),
+        block_user_agent_override: config.block_user_agent_override.clone(),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: config
             .validator_exit_backpressure
