@@ -50,30 +50,29 @@ pub enum AccountFromMetaEntry<'a> {
         data: &'a [u8],
     },
     /// the account's data must be read separately
-    Partial(AccountDataRead),
+    Partial {
+        address: Pubkey,
+        account: AccountWithDeferredDataRead,
+    },
 }
 
 impl AccountFromMetaEntry<'_> {
-    pub fn passes_load_filter(
-        &self,
-        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
-    ) -> bool {
+    pub fn passes_load_filter(&self, load_filter: impl Fn(u64, &Pubkey, usize) -> bool) -> bool {
         match self {
             Self::Complete { account, data } => {
                 load_filter(account.lamports, &account.owner, data.len())
             }
-            Self::Partial(data_read) => load_filter(
-                data_read.account.lamports,
-                &data_read.account.owner,
-                data_read.data_len,
+            Self::Partial { account, .. } => load_filter(
+                account.account.lamports,
+                &account.account.owner,
+                account.data_len,
             ),
         }
     }
 }
 
 /// An account whose data must be read separately from its meta entry
-pub struct AccountDataRead {
-    pub address: Pubkey,
+pub struct AccountWithDeferredDataRead {
     pub account: AccountWithoutData,
     /// where to read the data from, in the format's file
     pub offset: FileSize,

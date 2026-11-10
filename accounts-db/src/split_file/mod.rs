@@ -24,7 +24,8 @@ use {
     crate::{
         account_storage::{
             meta_entry_read::{
-                AccountDataRead, AccountFromMetaEntry, AccountWithoutData, MetaEntryBuffer,
+                AccountFromMetaEntry, AccountWithDeferredDataRead, AccountWithoutData,
+                MetaEntryBuffer,
             },
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
@@ -445,7 +446,9 @@ impl SplitFile {
         }
         Ok(Some(match from_meta_entry {
             AccountFromMetaEntry::Complete { account, data } => account.with_data(data.to_vec()),
-            AccountFromMetaEntry::Partial(data_read) => self.read_account_data(data_read)?,
+            AccountFromMetaEntry::Partial { address, account } => {
+                self.read_account_data(&address, account)?
+            }
         }))
     }
 
@@ -476,30 +479,31 @@ impl SplitFile {
         Ok(match data_ref {
             DataRef::NoData => AccountFromMetaEntry::Complete { account, data: &[] },
             DataRef::Inline(data) => AccountFromMetaEntry::Complete { account, data },
-            DataRef::External(external_data_offset) => {
-                AccountFromMetaEntry::Partial(AccountDataRead {
-                    address: *meta_entry.address,
+            DataRef::External(external_data_offset) => AccountFromMetaEntry::Partial {
+                address: *meta_entry.address,
+                account: AccountWithDeferredDataRead {
                     account,
                     offset: external_data_offset.0.0,
                     data_len: meta_entry.data_len.0 as usize,
-                })
-            }
+                },
+            },
         })
     }
 
-    /// Reads the data entry that `data_read` names from the data file, checks it is the account's,
-    /// and returns the account with its data
+    /// Reads `account`'s deferred data entry from the data file, checks it is `address`'s, and
+    /// returns the account with its data
     fn read_account_data(
         &self,
-        data_read: AccountDataRead,
+        address: &Pubkey,
+        account: AccountWithDeferredDataRead,
     ) -> Result<AccountSharedData, SplitFileError> {
         let data = self.read_external_data(
-            FileOffset(data_read.offset),
-            &data_read.address,
+            FileOffset(account.offset),
+            address,
             // the data length came from the meta entry's DataLen
-            DataLen(data_read.data_len as u32),
+            DataLen(account.data_len as u32),
         )?;
-        Ok(data_read.account.with_data(data))
+        Ok(account.account.with_data(data))
     }
 
     /// Reads the data entry at `offset` from the data file, and checks it is `address`'s
@@ -1031,15 +1035,22 @@ mod tests {
             (0..data_len).map(|i| i as u8).collect(),
             &Pubkey::new_unique(),
         );
+        let address = Pubkey::new_unique();
         let (logical_offsets, _) = split
-            .write_accounts(&(0, &[(Pubkey::new_unique(), account.clone())][..]))
+            .write_accounts(&(0, &[(address, account.clone())][..]))
             .unwrap();
         let bytes = read_meta_entry_at(&split, logical_offsets[0]);
-        let Ok(AccountFromMetaEntry::Partial(data_read)) = split.account_from_meta_entry(&bytes)
+        let Ok(AccountFromMetaEntry::Partial {
+            address: read_address,
+            account: account_with_deferred_data,
+        }) = split.account_from_meta_entry(&bytes)
         else {
             panic!("expected the account's data to be in the data file");
         };
-        let read = split.read_account_data(data_read).unwrap();
+        assert_eq!(read_address, address);
+        let read = split
+            .read_account_data(&read_address, account_with_deferred_data)
+            .unwrap();
         assert_eq!(read, account);
     }
 

@@ -14,8 +14,8 @@ use {
     crate::{
         account_storage::{
             meta_entry_read::{
-                AccountDataRead, AccountFromMetaEntry, AccountWithoutData, META_ENTRY_BUFFER_SIZE,
-                MetaEntryBuffer,
+                AccountFromMetaEntry, AccountWithDeferredDataRead, AccountWithoutData,
+                META_ENTRY_BUFFER_SIZE, MetaEntryBuffer,
             },
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
@@ -586,7 +586,7 @@ impl AppendVec {
         }
         Some(Some(match from_meta_entry {
             AccountFromMetaEntry::Complete { account, data } => account.with_data(data.to_vec()),
-            AccountFromMetaEntry::Partial(data_read) => self.read_account_data(data_read)?,
+            AccountFromMetaEntry::Partial { account, .. } => self.read_account_data(account)?,
         }))
     }
 
@@ -634,35 +634,35 @@ impl AppendVec {
             // not enough was read from file to get `data`
             assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
             // Note here `next` is a 0-based offset from the beginning of this account.
-            AccountFromMetaEntry::Partial(AccountDataRead {
+            AccountFromMetaEntry::Partial {
                 address: meta.pubkey,
-                account,
-                offset: offset + next as FileOffset,
-                data_len: data_len as usize,
-            })
+                account: AccountWithDeferredDataRead {
+                    account,
+                    offset: offset + next as FileOffset,
+                    data_len: data_len as usize,
+                },
+            }
         })
     }
 
-    /// Reads the account's data that `data_read` names, and returns the account with it
-    fn read_account_data(&self, data_read: AccountDataRead) -> Option<AccountSharedData> {
-        let data_len = data_read.data_len;
+    /// Reads `account`'s deferred data, and returns the account with it
+    fn read_account_data(&self, account: AccountWithDeferredDataRead) -> Option<AccountSharedData> {
+        let data_len = account.data_len;
         let mut data = Vec::with_capacity(data_len);
         let slice = data.spare_capacity_mut();
         // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-        let bytes_read = read_into_buffer(
-            &self.file,
-            self.len() as FileSize,
-            data_read.offset,
-            unsafe { slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len) },
-        )
-        .ok()?;
+        let bytes_read =
+            read_into_buffer(&self.file, self.len() as FileSize, account.offset, unsafe {
+                slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len)
+            })
+            .ok()?;
         if bytes_read < data_len {
             // eof or otherwise couldn't read all the data
             return None;
         }
         // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
         unsafe { data.set_len(data_len) };
-        Some(data_read.account.with_data(data))
+        Some(account.account.with_data(data))
     }
 
     /// Reads the meta entry at file `offset` into `buffer`, and returns the bytes read: up to a
@@ -2016,12 +2016,15 @@ mod tests {
         let offset = file_offset_from_logical(index);
         let mut buffer = MetaEntryBuffer::new();
         let bytes = av.read_meta_entry_bytes(offset, &mut buffer).unwrap();
-        let Some(AccountFromMetaEntry::Partial(data_read)) =
-            av.account_from_meta_entry(offset, bytes)
+        let Some(AccountFromMetaEntry::Partial {
+            address,
+            account: account_with_deferred_data,
+        }) = av.account_from_meta_entry(offset, bytes)
         else {
             panic!("expected the account's data to continue past the meta entry");
         };
-        let read = av.read_account_data(data_read).unwrap();
+        assert_eq!(address, Pubkey::default());
+        let read = av.read_account_data(account_with_deferred_data).unwrap();
         assert!(accounts_equal(&read, &account));
     }
 
