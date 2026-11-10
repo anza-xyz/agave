@@ -44,8 +44,6 @@ pub(crate) struct PeerRateLimiter {
     /// Consumed only by datagrams dropped by the shaper.
     /// Draining it dry results in connection closure.
     flood_detection: TokenBucket,
-    /// Capacity of `flood_detection`.
-    burst_dos: u64,
 }
 
 impl PeerRateLimiter {
@@ -53,13 +51,12 @@ impl PeerRateLimiter {
         Self {
             traffic_shaper: TokenBucket::new(burst, burst, tokens_per_second),
             flood_detection: TokenBucket::new(burst_dos, burst_dos, tokens_per_second),
-            burst_dos,
         }
     }
 
     /// Returns true if the peer has not exceeded its rate limits recently.
     fn is_idle(&self) -> bool {
-        self.flood_detection.current_tokens() >= self.burst_dos
+        self.flood_detection.is_full() && self.traffic_shaper.is_full()
     }
 }
 
