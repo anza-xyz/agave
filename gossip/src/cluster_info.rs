@@ -487,6 +487,11 @@ impl ClusterInfo {
         self.refresh_my_gossip_contact_info();
     }
 
+    pub fn set_client(&self, client: solana_version::ClientId) {
+        self.my_contact_info.write().set_client(client);
+        self.refresh_my_gossip_contact_info();
+    }
+
     pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.my_contact_info.write().set_gossip(gossip_addr)?;
         self.refresh_my_gossip_contact_info();

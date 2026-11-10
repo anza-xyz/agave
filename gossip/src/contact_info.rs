@@ -266,6 +266,11 @@ impl ContactInfo {
     }
 
     #[inline]
+    pub fn set_client(&mut self, client: solana_version::ClientId) {
+        self.version.set_client(client);
+    }
+
+    #[inline]
     pub fn version(&self) -> &solana_version::Version {
         &self.version
     }

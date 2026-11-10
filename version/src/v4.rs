@@ -225,6 +225,10 @@ impl Version {
         self.feature_set
     }
 
+    pub fn set_client(&mut self, client: ClientId) {
+        self.client = client;
+    }
+
     pub fn client(&self) -> &ClientId {
         &self.client
     }

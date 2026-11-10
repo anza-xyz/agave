@@ -220,6 +220,14 @@ pub trait AdminRpc {
     #[rpc(name = "setLogFilter")]
     fn set_log_filter(&self, filter: String) -> Result<()>;
 
+    #[rpc(meta, name = "getGossipClientId")]
+    fn get_gossip_client_id(&self, meta: Self::Metadata) -> Result<u16>;
+
+    /// Sets the advertised gossip client ID until restart.
+    /// IDs 0 through 127 are reserved for existing validator implementations.
+    #[rpc(meta, name = "setGossipClientId")]
+    fn set_gossip_client_id(&self, meta: Self::Metadata, client_id: u16) -> Result<()>;
+
     #[rpc(meta, name = "setEventFilter")]
     fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()>;
 
@@ -559,6 +567,34 @@ impl AdminRpc for AdminRpcImpl {
         debug!("set_log_filter admin rpc request received");
         agave_logger::setup_with(&filter);
         Ok(())
+    }
+
+    fn get_gossip_client_id(&self, meta: Self::Metadata) -> Result<u16> {
+        meta.with_post_init(|post_init| {
+            u16::try_from(
+                post_init
+                    .cluster_info
+                    .my_contact_info()
+                    .version()
+                    .client()
+                    .clone(),
+            )
+            .map_err(|_| jsonrpc_core::Error::internal_error())
+        })
+    }
+
+    fn set_gossip_client_id(&self, meta: Self::Metadata, client_id: u16) -> Result<()> {
+        if client_id <= 127 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Gossip client IDs 0 through 127 are reserved",
+            ));
+        }
+        meta.with_post_init(|post_init| {
+            post_init
+                .cluster_info
+                .set_client(solana_version::ClientId::from(client_id));
+            Ok(())
+        })
     }
 
     fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()> {
@@ -1331,6 +1367,50 @@ mod tests {
 
         let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
         (BankForks::new_rw_arc(bank), Arc::new(voting_keypair))
+    }
+
+    #[test]
+    fn test_set_gossip_client_id() {
+        let RpcHandler { io, meta } = RpcHandler::_start();
+        let cluster_info = meta
+            .with_post_init(|post_init| Ok(post_init.cluster_info.clone()))
+            .unwrap();
+        let request = |client_id: u64| -> Value {
+            let request = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"setGossipClientId","params":[{client_id}]}}"#,
+            );
+            serde_json::from_str(&io.handle_request_sync(&request, meta.clone()).unwrap()).unwrap()
+        };
+        let get_request = || -> Value {
+            serde_json::from_str(
+                &io.handle_request_sync(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"getGossipClientId","params":[]}"#,
+                    meta.clone(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let mut expected_version = cluster_info.my_contact_info().version().clone();
+        let original_id = u16::try_from(expected_version.client().clone()).unwrap();
+        assert_eq!(get_request()["result"], original_id);
+        for client_id in [128, u16::MAX] {
+            assert_eq!(
+                request(u64::from(client_id)),
+                serde_json::json!({"jsonrpc":"2.0","id":1,"result":null})
+            );
+            expected_version.set_client(solana_version::ClientId::from(client_id));
+            assert_eq!(get_request()["result"], client_id);
+            assert_eq!(cluster_info.my_contact_info().version(), &expected_version);
+        }
+        for client_id in (0..=127).chain([u64::from(u16::MAX) + 1, u64::MAX]) {
+            assert_eq!(request(client_id)["error"]["code"], -32602);
+            assert_eq!(get_request()["result"], u16::MAX);
+            assert_eq!(cluster_info.my_contact_info().version(), &expected_version);
+        }
+        *meta.post_init.write().unwrap() = None;
+        assert!(request(128).get("error").is_some());
+        assert!(get_request().get("error").is_some());
     }
 
     // This test checks that the rpc call to `set_identity` works a expected with
