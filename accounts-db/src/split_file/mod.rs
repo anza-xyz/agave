@@ -23,10 +23,7 @@ use {
     },
     crate::{
         account_storage::{
-            meta_entry_read::{
-                AccountFromMetaEntry, AccountWithDeferredDataRead, AccountWithoutData,
-                MetaEntryBuffer,
-            },
+            meta_entry_read::{AccountFromMetaEntry, AccountMetaOwned, MetaEntryBuffer},
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         append_vec::AppendVec,
@@ -445,10 +442,15 @@ impl SplitFile {
             return Ok(None);
         }
         Ok(Some(match from_meta_entry {
-            AccountFromMetaEntry::Complete { account, data } => account.with_data(data.to_vec()),
-            AccountFromMetaEntry::Partial { address, account } => {
-                self.read_account_data(&address, account)?
+            AccountFromMetaEntry::Complete { account_meta, data } => {
+                account_meta.into_account_shared_data(data.to_vec())
             }
+            AccountFromMetaEntry::Partial {
+                address,
+                account_meta,
+                data_offset,
+                data_len,
+            } => self.read_account_data(&address, account_meta, data_offset, data_len)?,
         }))
     }
 
@@ -470,40 +472,43 @@ impl SplitFile {
         bytes: &'a [u8],
     ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
         let (meta_entry, data_ref) = parse_meta_entry(bytes)?;
-        let account = AccountWithoutData {
+        let account_meta = AccountMetaOwned {
             lamports: meta_entry.lamports,
             owner: *meta_entry.owner,
             executable: meta_entry.is_executable,
             rent_epoch: meta_entry.rent_epoch,
         };
         Ok(match data_ref {
-            DataRef::NoData => AccountFromMetaEntry::Complete { account, data: &[] },
-            DataRef::Inline(data) => AccountFromMetaEntry::Complete { account, data },
+            DataRef::NoData => AccountFromMetaEntry::Complete {
+                account_meta,
+                data: &[],
+            },
+            DataRef::Inline(data) => AccountFromMetaEntry::Complete { account_meta, data },
             DataRef::External(external_data_offset) => AccountFromMetaEntry::Partial {
                 address: *meta_entry.address,
-                account: AccountWithDeferredDataRead {
-                    account,
-                    offset: external_data_offset.0.0,
-                    data_len: meta_entry.data_len.0 as usize,
-                },
+                account_meta,
+                data_offset: external_data_offset.0.0,
+                data_len: meta_entry.data_len.0 as usize,
             },
         })
     }
 
-    /// Reads `account`'s deferred data entry from the data file, checks it is `address`'s, and
+    /// Reads the data entry at `data_offset` from the data file, checks it is `address`'s, and
     /// returns the account with its data
     fn read_account_data(
         &self,
         address: &Pubkey,
-        account: AccountWithDeferredDataRead,
+        account_meta: AccountMetaOwned,
+        data_offset: FileSize,
+        data_len: usize,
     ) -> Result<AccountSharedData, SplitFileError> {
         let data = self.read_external_data(
-            FileOffset(account.offset),
+            FileOffset(data_offset),
             address,
             // the data length came from the meta entry's DataLen
-            DataLen(account.data_len as u32),
+            DataLen(data_len as u32),
         )?;
-        Ok(account.account.with_data(data))
+        Ok(account_meta.into_account_shared_data(data))
     }
 
     /// Reads the data entry at `offset` from the data file, and checks it is `address`'s
@@ -1013,14 +1018,12 @@ mod tests {
         let (logical_offsets, _) = split.write_accounts(&(0, accounts.as_slice())).unwrap();
         for ((_, account), logical_offset) in accounts.iter().zip(logical_offsets) {
             let bytes = read_meta_entry_at(&split, logical_offset);
-            let Ok(AccountFromMetaEntry::Complete {
-                account: read,
-                data,
-            }) = split.account_from_meta_entry(&bytes)
+            let Ok(AccountFromMetaEntry::Complete { account_meta, data }) =
+                split.account_from_meta_entry(&bytes)
             else {
                 panic!("expected the meta entry to hold the whole account");
             };
-            let read = read.with_data(data.to_vec());
+            let read = account_meta.into_account_shared_data(data.to_vec());
             assert_eq!(&read, account);
         }
     }
@@ -1042,14 +1045,16 @@ mod tests {
         let bytes = read_meta_entry_at(&split, logical_offsets[0]);
         let Ok(AccountFromMetaEntry::Partial {
             address: read_address,
-            account: account_with_deferred_data,
+            account_meta,
+            data_offset,
+            data_len,
         }) = split.account_from_meta_entry(&bytes)
         else {
             panic!("expected the account's data to be in the data file");
         };
         assert_eq!(read_address, address);
         let read = split
-            .read_account_data(&read_address, account_with_deferred_data)
+            .read_account_data(&read_address, account_meta, data_offset, data_len)
             .unwrap();
         assert_eq!(read, account);
     }

@@ -46,50 +46,45 @@ impl MetaEntryBuffer {
 pub enum AccountFromMetaEntry<'a> {
     /// the meta entry held all the account's data
     Complete {
-        account: AccountWithoutData,
+        account_meta: AccountMetaOwned,
         data: &'a [u8],
     },
     /// the account's data must be read separately
     Partial {
         address: Pubkey,
-        account: AccountWithDeferredDataRead,
+        account_meta: AccountMetaOwned,
+        /// where to read the data from, in the format's file
+        data_offset: FileSize,
+        data_len: usize,
     },
 }
 
 impl AccountFromMetaEntry<'_> {
     pub fn passes_load_filter(&self, load_filter: impl Fn(u64, &Pubkey, usize) -> bool) -> bool {
         match self {
-            Self::Complete { account, data } => {
-                load_filter(account.lamports, &account.owner, data.len())
+            Self::Complete { account_meta, data } => {
+                load_filter(account_meta.lamports, &account_meta.owner, data.len())
             }
-            Self::Partial { account, .. } => load_filter(
-                account.account.lamports,
-                &account.account.owner,
-                account.data_len,
-            ),
+            Self::Partial {
+                account_meta,
+                data_len,
+                ..
+            } => load_filter(account_meta.lamports, &account_meta.owner, *data_len),
         }
     }
 }
 
-/// An account whose data must be read separately from its meta entry
-pub struct AccountWithDeferredDataRead {
-    pub account: AccountWithoutData,
-    /// where to read the data from, in the format's file
-    pub offset: FileSize,
-    pub data_len: usize,
-}
-
 /// An account's fields from its meta entry, without its data
-pub struct AccountWithoutData {
+pub struct AccountMetaOwned {
     pub lamports: u64,
     pub owner: Pubkey,
     pub executable: bool,
     pub rent_epoch: Epoch,
 }
 
-impl AccountWithoutData {
-    /// The account, with its `data`
-    pub fn with_data(self, data: Vec<u8>) -> AccountSharedData {
+impl AccountMetaOwned {
+    /// The account, with `data` as its data
+    pub fn into_account_shared_data(self, data: Vec<u8>) -> AccountSharedData {
         AccountSharedData::from(Account {
             lamports: self.lamports,
             data,

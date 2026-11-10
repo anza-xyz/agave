@@ -14,8 +14,7 @@ use {
     crate::{
         account_storage::{
             meta_entry_read::{
-                AccountFromMetaEntry, AccountWithDeferredDataRead, AccountWithoutData,
-                META_ENTRY_BUFFER_SIZE, MetaEntryBuffer,
+                AccountFromMetaEntry, AccountMetaOwned, META_ENTRY_BUFFER_SIZE, MetaEntryBuffer,
             },
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
@@ -585,8 +584,15 @@ impl AppendVec {
             return Some(None);
         }
         Some(Some(match from_meta_entry {
-            AccountFromMetaEntry::Complete { account, data } => account.with_data(data.to_vec()),
-            AccountFromMetaEntry::Partial { account, .. } => self.read_account_data(account)?,
+            AccountFromMetaEntry::Complete { account_meta, data } => {
+                account_meta.into_account_shared_data(data.to_vec())
+            }
+            AccountFromMetaEntry::Partial {
+                account_meta,
+                data_offset,
+                data_len,
+                ..
+            } => self.read_account_data(account_meta, data_offset, data_len)?,
         }))
     }
 
@@ -620,7 +626,7 @@ impl AppendVec {
         let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(valid_bytes, next)?;
         let data_len = meta.data_len;
         let remaining_bytes_for_data = bytes.len() - next;
-        let account = AccountWithoutData {
+        let account_meta = AccountMetaOwned {
             lamports: account_meta.lamports,
             owner: account_meta.owner,
             executable: account_meta.executable,
@@ -629,30 +635,32 @@ impl AppendVec {
         Some(if remaining_bytes_for_data >= data_len as usize {
             // we already read enough data to load this account
             let (data, _) = Self::get_slice(valid_bytes, next, data_len as usize)?;
-            AccountFromMetaEntry::Complete { account, data }
+            AccountFromMetaEntry::Complete { account_meta, data }
         } else {
             // not enough was read from file to get `data`
             assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
             // Note here `next` is a 0-based offset from the beginning of this account.
             AccountFromMetaEntry::Partial {
                 address: meta.pubkey,
-                account: AccountWithDeferredDataRead {
-                    account,
-                    offset: offset + next as FileOffset,
-                    data_len: data_len as usize,
-                },
+                account_meta,
+                data_offset: offset + next as FileOffset,
+                data_len: data_len as usize,
             }
         })
     }
 
-    /// Reads `account`'s deferred data, and returns the account with it
-    fn read_account_data(&self, account: AccountWithDeferredDataRead) -> Option<AccountSharedData> {
-        let data_len = account.data_len;
+    /// Reads the account's `data_len` bytes of data at `data_offset`, and returns the account with it
+    fn read_account_data(
+        &self,
+        account_meta: AccountMetaOwned,
+        data_offset: FileSize,
+        data_len: usize,
+    ) -> Option<AccountSharedData> {
         let mut data = Vec::with_capacity(data_len);
         let slice = data.spare_capacity_mut();
         // SAFETY: `read_into_buffer` will only write to uninitialized memory.
         let bytes_read =
-            read_into_buffer(&self.file, self.len() as FileSize, account.offset, unsafe {
+            read_into_buffer(&self.file, self.len() as FileSize, data_offset, unsafe {
                 slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len)
             })
             .ok()?;
@@ -662,7 +670,7 @@ impl AppendVec {
         }
         // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
         unsafe { data.set_len(data_len) };
-        Some(account.account.with_data(data))
+        Some(account_meta.into_account_shared_data(data))
     }
 
     /// Reads the meta entry at file `offset` into `buffer`, and returns the bytes read: up to a
@@ -1988,14 +1996,12 @@ mod tests {
         let offset = file_offset_from_logical(index);
         let mut buffer = MetaEntryBuffer::new();
         let bytes = av.read_meta_entry_bytes(offset, &mut buffer).unwrap();
-        let Some(AccountFromMetaEntry::Complete {
-            account: read,
-            data,
-        }) = av.account_from_meta_entry(offset, bytes)
+        let Some(AccountFromMetaEntry::Complete { account_meta, data }) =
+            av.account_from_meta_entry(offset, bytes)
         else {
             panic!("expected the meta entry to hold the whole account");
         };
-        let read = read.with_data(data.to_vec());
+        let read = account_meta.into_account_shared_data(data.to_vec());
         assert!(accounts_equal(&read, &account));
     }
 
@@ -2018,13 +2024,17 @@ mod tests {
         let bytes = av.read_meta_entry_bytes(offset, &mut buffer).unwrap();
         let Some(AccountFromMetaEntry::Partial {
             address,
-            account: account_with_deferred_data,
+            account_meta,
+            data_offset,
+            data_len,
         }) = av.account_from_meta_entry(offset, bytes)
         else {
             panic!("expected the account's data to continue past the meta entry");
         };
         assert_eq!(address, Pubkey::default());
-        let read = av.read_account_data(account_with_deferred_data).unwrap();
+        let read = av
+            .read_account_data(account_meta, data_offset, data_len)
+            .unwrap();
         assert!(accounts_equal(&read, &account));
     }
 
