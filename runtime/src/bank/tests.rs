@@ -6775,8 +6775,10 @@ fn test_vat_burn_slot_params() {
         .collect::<Vec<_>>();
 
     // Loop through slot reduction features one at a time.
-    for (slot_time_feature_id, params) in std::iter::once((None, LEGACY_SLOT_PARAMS))
-        .chain(slot_time_feature_gates().map(|(feature_id, params)| (Some(feature_id), params)))
+    for (slot_time_feature_id, mut params, halve_vat_fee) in
+        std::iter::once((None, LEGACY_SLOT_PARAMS))
+            .chain(slot_time_feature_gates().map(|(feature_id, params)| (Some(feature_id), params)))
+            .flat_map(|(id, params)| [(id, params, false), (id, params, true)])
     {
         // Genesis with slot reduction feature active (if applicable).
         let GenesisConfigInfo {
@@ -6794,9 +6796,14 @@ fn test_vat_burn_slot_params() {
             activate_feature(&mut genesis_config, feature_id);
         }
 
+        if halve_vat_fee {
+            activate_feature(&mut genesis_config, feature_set::halve_vat_fee::id());
+            params.vat_to_burn_per_epoch /= 2;
+        }
+
         // Advance forward such that feature goes effective.
         let (parent_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let bank_slot = if slot_time_feature_id.is_some() {
+        let bank_slot = if slot_time_feature_id.is_some() || halve_vat_fee {
             parent_bank.epoch_schedule().get_first_slot_in_epoch(1)
         } else {
             parent_bank.slot().saturating_add(1)

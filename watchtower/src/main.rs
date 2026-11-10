@@ -26,7 +26,7 @@ use {
     },
 };
 
-const LEGACY_VAT_TO_BURN_PER_EPOCH: u64 = 800_000_000;
+const LEGACY_VAT_TO_BURN_PER_EPOCH: u64 = 1_600_000_000;
 
 struct Config {
     address_labels: HashMap<String, String>,
@@ -319,19 +319,19 @@ fn slot_time_reduction_vat_burns() -> [(Pubkey, u64); 4] {
     [
         (
             agave_feature_set::reduce_slot_time_to_200ms::id(),
-            400_000_000,
+            800_000_000,
         ),
         (
             agave_feature_set::reduce_slot_time_to_250ms::id(),
-            500_000_000,
+            1_000_000_000,
         ),
         (
             agave_feature_set::reduce_slot_time_to_300ms::id(),
-            600_000_000,
+            1_200_000_000,
         ),
         (
             agave_feature_set::reduce_slot_time_to_350ms::id(),
-            700_000_000,
+            1_400_000_000,
         ),
     ]
 }
@@ -349,6 +349,14 @@ fn is_feature_active_at_slot(
 
 fn vat_to_burn_per_epoch(rpc_client: &RpcClient, slot: u64) -> client_error::Result<u64> {
     let epoch_schedule = rpc_client.get_epoch_schedule()?;
+    let reduction_effective = rpc_client
+        .get_feature_activation_slot(&agave_feature_set::halve_vat_fee::id())?
+        .is_some_and(|activation_slot| {
+            epoch_schedule.get_first_slot_in_epoch(
+                epoch_schedule.get_epoch(activation_slot).saturating_add(1),
+            ) <= slot
+        });
+    let divisor = if reduction_effective { 2 } else { 1 };
 
     // Keep this table in sync with runtime/src/slot_params.rs. Slot-time
     // feature gates take effect at the first slot of the epoch after activation.
@@ -364,11 +372,11 @@ fn vat_to_burn_per_epoch(rpc_client: &RpcClient, slot: u64) -> client_error::Res
         let effective_slot =
             epoch_schedule.get_first_slot_in_epoch(activation_epoch.saturating_add(1));
         if effective_slot <= slot {
-            return Ok(vat_to_burn_per_epoch);
+            return Ok(vat_to_burn_per_epoch / divisor);
         }
     }
 
-    Ok(LEGACY_VAT_TO_BURN_PER_EPOCH)
+    Ok(LEGACY_VAT_TO_BURN_PER_EPOCH / divisor)
 }
 
 fn get_minimum_vat_vote_account_balance(

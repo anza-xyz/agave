@@ -129,7 +129,7 @@ pub(crate) const LEGACY_SLOT_PARAMS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 32_768,
     max_entry_bytes_per_slot: 20 * 1024 * 1024,
     partitioned_epoch_rewards_stake_account_stores_per_block: 4096,
-    vat_to_burn_per_epoch: 800_000_000,
+    vat_to_burn_per_epoch: 1_600_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_350MS: SlotParams = SlotParams {
@@ -141,7 +141,7 @@ pub(crate) const SLOT_PARAMS_350MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 28_672,
     max_entry_bytes_per_slot: 18_350_080,
     partitioned_epoch_rewards_stake_account_stores_per_block: 3_584,
-    vat_to_burn_per_epoch: 700_000_000,
+    vat_to_burn_per_epoch: 1_400_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_300MS: SlotParams = SlotParams {
@@ -153,7 +153,7 @@ pub(crate) const SLOT_PARAMS_300MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 24_576,
     max_entry_bytes_per_slot: 15_728_640,
     partitioned_epoch_rewards_stake_account_stores_per_block: 3_072,
-    vat_to_burn_per_epoch: 600_000_000,
+    vat_to_burn_per_epoch: 1_200_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_250MS: SlotParams = SlotParams {
@@ -165,7 +165,7 @@ pub(crate) const SLOT_PARAMS_250MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 20_480,
     max_entry_bytes_per_slot: 13_107_200,
     partitioned_epoch_rewards_stake_account_stores_per_block: 2_560,
-    vat_to_burn_per_epoch: 500_000_000,
+    vat_to_burn_per_epoch: 1_000_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_200MS: SlotParams = SlotParams {
@@ -177,7 +177,7 @@ pub(crate) const SLOT_PARAMS_200MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 16_384,
     max_entry_bytes_per_slot: 10_485_760,
     partitioned_epoch_rewards_stake_account_stores_per_block: 2_048,
-    vat_to_burn_per_epoch: 400_000_000,
+    vat_to_burn_per_epoch: 800_000_000,
 };
 
 /// Slot-time reduction gates in the intended activation order.
@@ -265,6 +265,24 @@ impl SlotParamsArchive {
             }
         }
 
+        // Preserve the old fee throughout the activation epoch. Applying the
+        // reduction to every later transition also covers future slot-time changes.
+        if let Some(activation_slot) = feature_set.activated_slot(&feature_set::halve_vat_fee::ID) {
+            let effective_slot = Self::feature_effective_slot(epoch_schedule, activation_slot);
+            let mut effective_params = *param_transitions
+                .range(..=effective_slot)
+                .next_back()
+                .expect("slot-0 baseline is always present")
+                .1;
+            effective_params.vat_to_burn_per_epoch /= 2;
+            for (_, params) in
+                param_transitions.range_mut((Excluded(effective_slot), Included(Slot::MAX)))
+            {
+                params.vat_to_burn_per_epoch /= 2;
+            }
+            param_transitions.insert(effective_slot, effective_params);
+        }
+
         Self { param_transitions }
     }
 
@@ -322,8 +340,8 @@ impl SlotParamsArchive {
     /// Returns the first slot where a slot-time feature may affect bank state.
     ///
     /// A gate that activates in epoch E is effective starting at the first slot
-    /// of epoch E + 1, giving shred filters a full epoch of advance notice
-    /// before enforcing lower shred limits.
+    /// of epoch E + 1. This boundary applies to slot-time reductions and the
+    /// VAT fee reduction.
     fn feature_effective_slot(epoch_schedule: &EpochSchedule, activation_slot: Slot) -> Slot {
         let activation_epoch = epoch_schedule.get_epoch(activation_slot);
         epoch_schedule.get_first_slot_in_epoch(activation_epoch.saturating_add(1))
@@ -354,15 +372,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_vat_burn_per_epoch_for_slot_durations() {
-        for (params, expected_lamports) in [
-            (LEGACY_SLOT_PARAMS, 800_000_000),
-            (SLOT_PARAMS_350MS, 700_000_000),
-            (SLOT_PARAMS_300MS, 600_000_000),
-            (SLOT_PARAMS_250MS, 500_000_000),
-            (SLOT_PARAMS_200MS, 400_000_000),
-        ] {
-            assert_eq!(params.vat_to_burn_per_epoch(), expected_lamports);
+    fn test_vat_fee_reduction_at_next_epoch() {
+        let schedule = EpochSchedule::custom(32, 32, false);
+        // Exercise no slot-time feature, and every slot-time regime, with the
+        // fee activation before, during, and after the slot-time activation.
+        for slot_feature in std::iter::once(None).chain(slot_time_feature_gates().map(Some)) {
+            for activation_slot in [0, 32, 47, 64] {
+                let mut features = FeatureSet::default();
+                if let Some((id, _)) = slot_feature {
+                    features.activate(&id, 32);
+                }
+                let before = SlotParamsArchive::new(&features, &schedule, LEGACY_SLOT_PARAMS);
+                features.activate(&feature_set::halve_vat_fee::ID, activation_slot);
+                let after = SlotParamsArchive::new(&features, &schedule, LEGACY_SLOT_PARAMS);
+                let effective_slot =
+                    schedule.get_first_slot_in_epoch(schedule.get_epoch(activation_slot) + 1);
+                for slot in [
+                    0,
+                    effective_slot - 1,
+                    effective_slot,
+                    effective_slot + 32,
+                    128,
+                ] {
+                    let mut expected = before.params_at_slot(slot);
+                    if slot >= effective_slot {
+                        expected.vat_to_burn_per_epoch /= 2;
+                    }
+                    assert_eq!(after.params_at_slot(slot), expected);
+                }
+                // Rebuilding the archive (as on snapshot restore) must not halve twice.
+                let rebuilt = SlotParamsArchive::new(&features, &schedule, after.baseline_params());
+                assert_eq!(rebuilt.params_at_slot(128), after.params_at_slot(128));
+            }
         }
     }
 

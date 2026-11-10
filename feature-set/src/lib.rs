@@ -1498,6 +1498,10 @@ pub mod set_lamports_per_byte_to_6960 {
     pub const LAMPORTS_PER_BYTE: u64 = 6960;
 }
 
+pub mod halve_vat_fee {
+    solana_pubkey::declare_id!("DyQfJvrGwa8TS8RkE9XDBPf3pkVMibcxzUfFftm6rtCs");
+}
+
 pub mod reduce_slot_time_to_350ms {
     solana_pubkey::declare_id!("iBRL5RuWhw4yqaAZu96RUULHckHTZAoe2b77qaV38JZ");
 }
@@ -2480,6 +2484,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alpenglow::id(),
             "SIMD-0326: Alpenglow: new consensus algorithm",
+        ),
+        (
+            halve_vat_fee::id(),
+            "Halve Validator Admission Ticket fees starting the epoch after activation",
         ),
         (
             reduce_slot_time_to_350ms::id(),

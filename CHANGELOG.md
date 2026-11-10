@@ -25,9 +25,11 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
-* Halved the Validator Admission Ticket (VAT) burn for every slot duration, including
-  from 0.8 to 0.4 SOL per epoch at 200ms. Updated CLI withdrawal reserves and watchtower
-  balance thresholds to match. This consensus change requires a coordinated rollout.
+* Added the `halve_vat_fee` feature to halve the Validator Admission Ticket (VAT)
+  burn for every slot duration, including from 0.8 to 0.4 SOL per epoch at 200ms.
+  The reduction takes effect at the start of the epoch after on-chain feature
+  activation. CLI withdrawal reserves and watchtower balance thresholds follow
+  the same activation boundary.
 
 * The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
   `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`

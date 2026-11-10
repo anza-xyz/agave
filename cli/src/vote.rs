@@ -6,7 +6,7 @@ use {
             log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{ComputeUnitConfig, simulate_and_update_compute_unit_limit},
-        feature::get_feature_is_active,
+        feature::{get_feature_activation_epoch, get_feature_is_active},
         message_builder::MessageBuilder,
         nonce::check_nonce_account,
         spend_utils::{
@@ -60,7 +60,7 @@ pub trait VoteSubCommands {
 }
 
 // All public clusters use 200ms slots and have Alpenglow activated.
-const VAT_TO_BURN_PER_EPOCH: u64 = 400_000_000;
+const VAT_TO_BURN_PER_EPOCH: u64 = 800_000_000;
 
 impl VoteSubCommands for App<'_, '_> {
     fn vote_subcommands(self) -> Self {
@@ -2130,7 +2130,15 @@ pub async fn process_withdraw_from_vote_account(
     let vat_to_reserve = if allow_vat_withdrawal {
         0
     } else {
-        VAT_TO_BURN_PER_EPOCH
+        let activation_epoch =
+            get_feature_activation_epoch(rpc_client, &agave_feature_set::halve_vat_fee::id())
+                .await?;
+        let current_epoch = rpc_client.get_epoch_info().await?.epoch;
+        if activation_epoch.is_some_and(|epoch| current_epoch > epoch) {
+            VAT_TO_BURN_PER_EPOCH / 2
+        } else {
+            VAT_TO_BURN_PER_EPOCH
+        }
     };
     // VAT eligibility uses the rent-exempt minimum of the current vote-state layout, even for a
     // legacy vote account whose serialized data is smaller.
