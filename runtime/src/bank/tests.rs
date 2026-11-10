@@ -141,8 +141,8 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, BlockTimestamp, MAX_LOCKOUT_HISTORY, VoteAuthorize, VoteInit, VoteStateV4,
-            VoteStateVersions, VoterWithBLSArgs, create_bls_pubkey_and_proof_of_possession,
+            self, BlockTimestamp, VoteAuthorize, VoteInit, VoteStateV4, VoteStateVersions,
+            VoterWithBLSArgs, create_bls_pubkey_and_proof_of_possession,
             create_v4_account_with_authorized, handler::VoteStateHandler,
         },
     },
@@ -800,12 +800,9 @@ where
     // generate some rewards
     let mut vote_state =
         VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-    for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
-        let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
-        vote_account.set_state(&versioned).unwrap();
-        bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
-    }
+    vote_state.increment_credits(bank0.epoch(), 42);
+    let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
+    vote_account.set_state(&versioned).unwrap();
     bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
     bank0.freeze();
 
@@ -839,7 +836,7 @@ where
                 reward_type: RewardType::Voting,
                 lamports: 0,
                 post_balance: bank1.get_balance(&vote_id),
-                commission_bps: Some(0),
+                commission_bps: None,
             }
         ),]
     );
@@ -885,7 +882,7 @@ where
                 reward_type: RewardType::Staking,
                 lamports: validator_rewards_lamports as i64,
                 post_balance: bank2.get_balance(&stake_id),
-                commission_bps: Some(0),
+                commission_bps: None,
             }
         )]
     );
@@ -964,12 +961,9 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     // generate some rewards
     let mut vote_state =
         VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-    for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-        vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
-        let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
-        vote_account.set_state(&versioned).unwrap();
-        bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-    }
+    vote_state.increment_credits(bank.epoch(), 42);
+    let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
+    vote_account.set_state(&versioned).unwrap();
     bank.store_account_and_update_capitalization(&vote_id, &vote_account);
 
     // put a child bank in epoch 1, which calls update_rewards()...
@@ -5606,9 +5600,7 @@ fn test_bank_hash_consistency() {
     let mut vote_state = VoteStateHandler::new_v4(
         VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
     );
-    for slot in 0..4 {
-        vote_state::process_slot_vote_unchecked(&mut vote_state, slot);
-    }
+    vote_state.increment_credits(bank.epoch(), 4);
     vote_account
         .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
         .unwrap();
@@ -5666,7 +5658,7 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "6iDjBhShETA9i9Y87awoci3zW44S7vDHiezqWRW8TLtk",
+                "EF5ZuHxyhX5w1bTmYL1pFEvuyFHLnryG3hHHWMpcDHAG",
             );
         }
 
@@ -5674,14 +5666,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "3GxcN9XSVKfcLLWrCPCt4r344zE5WQuu5RUa2pusf5aW",
+                "Ae28nQud8ibDJKafZDsgKm7n5bqGYB68Jr2Ek4snzzZP",
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "6mswQESK3xesWuUVVMt8A6pPNqDhxj2CW5u4Y57uHUri",
+                "2G1iBBeiNtDNtKtLY2ZnUopEKBN7m7NQTAiigPGRobdV",
             );
             break;
         }
@@ -5753,9 +5745,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         let mut vote_state = VoteStateHandler::new_v4(
             VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
         );
-        for slot in 0..MAX_LOCKOUT_HISTORY + 42 {
-            vote_state::process_slot_vote_unchecked(&mut vote_state, slot as u64);
-        }
+        vote_state.increment_credits(bank0.epoch(), 42);
         vote_account
             .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
             .unwrap();
@@ -5993,7 +5983,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "9Z7dedWFsaEKp5MoK3igSc6NeP7QEzZWH2QET95Hns3x",
+        "EZPqueG9qihQs5Ws2Fo2yUjg6BvQWcC2ZE4JBZ3dDtPq",
     );
 }
 

@@ -68,6 +68,7 @@ solana-program-runtime = { workspace = true, features = ["dev-context-only-utils
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
+solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
 solana-sbpf = { workspace = true, features = ["debugger", "jit"] }

@@ -1811,15 +1811,12 @@ mod tests {
         let data_offset =
             data::DATA_HEADER_SIZE.next_multiple_of(data::DATA_ENTRY_OFFSET_ALIGNMENT) as u64;
         let wrong_data_len = expected_data_len - 1;
+        let data_len_offset = data_offset + expected_data_len as u64;
         let mut data_file = data_file;
-        data_file.seek(SeekFrom::Start(data_offset)).unwrap();
-        write_data_entry(
-            &mut data_file,
-            FileOffset(data_offset),
-            &address,
-            vec![0; wrong_data_len].as_slice(),
-        )
-        .unwrap();
+        data_file.seek(SeekFrom::Start(data_len_offset)).unwrap();
+        data_file
+            .write_all(&(wrong_data_len as u32).to_le_bytes())
+            .unwrap();
 
         // test case: get_account_without_data()
         {
