@@ -144,7 +144,7 @@ use {
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
-    solana_turbine::broadcast_stage::ShredReceivers,
+    solana_turbine::{ShredReceiverAddresses, broadcast_stage::ShredReceivers},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::handler::VoteStateHandler,
@@ -336,7 +336,7 @@ pub struct ValidatorConfig {
     pub turbine_mode: TurbineMode,
     /// Extra IPv4 destinations that receive a copy of every shred this
     /// validator broadcasts as leader (`--shred-receiver-address`).
-    pub shred_receiver_addresses: Vec<SocketAddr>,
+    pub shred_receiver_addresses: ShredReceiverAddresses,
     pub fixed_leader_schedule: Option<FixedSchedule>,
     pub wait_for_supermajority: Option<Slot>,
     pub new_hard_forks: Option<Vec<Slot>>,
@@ -416,7 +416,7 @@ impl ValidatorConfig {
             pubsub_config: PubSubConfig::default_for_tests(),
             snapshot_config: SnapshotConfig::new_load_only(),
             turbine_mode: TurbineMode::default(),
-            shred_receiver_addresses: Vec::new(),
+            shred_receiver_addresses: ShredReceiverAddresses::default(),
             fixed_leader_schedule: None,
             wait_for_supermajority: None,
             new_hard_forks: None,

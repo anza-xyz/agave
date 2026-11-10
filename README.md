@@ -67,6 +67,19 @@ For XDP zero-copy mode (`--xdp-zero-copy`), additional capabilities are needed:
 $ sudo setcap 'cap_net_admin,cap_net_raw,cap_bpf,cap_perfmon+eip' <path-to-agave-validator-binary>
 ```
 
+# Mirroring leader shreds to extra receivers
+
+`--shred-receiver-address HOST:PORT` (repeatable, IPv4 only, startup only) sends a copy of every
+shred this validator broadcasts as leader to each listed destination, after the turbine packets:
+
+```bash
+$ agave-validator ... --shred-receiver-address 192.0.2.10:8001
+```
+
+Each address is one more full copy of the leader's shred stream, with no built-in limit, so size
+the uplink for it. With XDP transmit (the Linux default) the copies are routed through the XDP
+interface like the turbine packets; a loopback or other-interface receiver needs `--no-xdp`.
+
 # Testing
 
 **Run the test suite:**

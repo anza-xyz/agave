@@ -7,7 +7,7 @@ use {
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
-        XdpSender,
+        ShredReceiverAddresses, XdpSender,
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
     },
     agave_votor::event::VotorEventSender,
@@ -471,7 +471,7 @@ pub enum BroadcastSocket<'a> {
 /// after the turbine packets.
 #[derive(Clone)]
 pub struct ShredReceivers {
-    addrs: Arc<Vec<SocketAddr>>,
+    addrs: Arc<ShredReceiverAddresses>,
     /// Bound to the unspecified address and an ephemeral port rather than
     /// `--bind-address`, so on the UDP arm the kernel routing table picks the
     /// outbound interface per receiver.
@@ -481,7 +481,7 @@ pub struct ShredReceivers {
 impl ShredReceivers {
     /// `None` when no address is configured: nothing is bound and
     /// `broadcast_shreds` sends nothing extra.
-    pub fn new(addrs: Vec<SocketAddr>) -> Option<Self> {
+    pub fn new(addrs: ShredReceiverAddresses) -> Option<Self> {
         if addrs.is_empty() {
             return None;
         }
@@ -815,7 +815,7 @@ pub mod test {
 
     #[test]
     fn test_shred_receivers_none_when_unconfigured() {
-        assert!(ShredReceivers::new(Vec::new()).is_none());
+        assert!(ShredReceivers::new(ShredReceiverAddresses::default()).is_none());
     }
 
     #[test]
@@ -829,10 +829,12 @@ pub mod test {
         };
         let receiver_sockets = [bind_receiver(), bind_receiver()];
         let receivers = ShredReceivers::new(
-            receiver_sockets
-                .iter()
-                .map(|socket| socket.local_addr().unwrap())
-                .collect(),
+            ShredReceiverAddresses::new(
+                receiver_sockets
+                    .iter()
+                    .map(|socket| socket.local_addr().unwrap()),
+            )
+            .unwrap(),
         )
         .unwrap();
         let turbine_socket = bind_to_localhost_unique().unwrap();
@@ -894,8 +896,8 @@ pub mod test {
             .iter()
             .map(|shred| shred.payload().to_vec())
             .collect();
-        // The socket is bound to 0.0.0.0, so the kernel picks the source IP;
-        // the port identifies it.
+        // The socket is bound to the unspecified address, so the kernel picks
+        // the source IP; the port identifies it.
         let source_port = receivers.socket.local_addr().unwrap().port();
         for receiver in &receiver_sockets {
             let mut buf = [0u8; 2048];
