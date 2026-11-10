@@ -8710,3 +8710,85 @@ fn test_get_block_footer_certificates(slow: bool) {
         );
     }
 }
+
+#[test_case(false; "fast")]
+#[test_case(true; "slow")]
+fn test_get_rooted_block_footer_finalization_certificate(slow: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 10;
+    let certificate = create_finalization_certificate(slot - 1, slow);
+    blockstore.insert_block_with_footer(slot, Some(certificate.clone()), TEST_FOOTER_SHRED_VERSION);
+
+    // A full block that is not rooted is not served.
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(slot),
+        Err(BlockstoreError::SlotNotRooted)
+    );
+
+    blockstore.set_roots(std::iter::once(&slot)).unwrap();
+    assert_eq!(
+        blockstore
+            .get_rooted_block_footer_finalization_certificate(slot)
+            .unwrap(),
+        Some((certificate, TEST_FOOTER_SHRED_VERSION))
+    );
+}
+
+#[test]
+fn test_get_rooted_block_footer_finalization_certificate_none_and_errors() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    // A footer without a finalization certificate.
+    let slot = 10;
+    blockstore.insert_block_with_footer(slot, None, TEST_FOOTER_SHRED_VERSION);
+    blockstore.set_roots(std::iter::once(&slot)).unwrap();
+    assert_eq!(
+        blockstore
+            .get_rooted_block_footer_finalization_certificate(slot)
+            .unwrap(),
+        None
+    );
+
+    // A slot at or below the cleanup watermark is cleaned up.
+    *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(slot),
+        Err(BlockstoreError::SlotCleanedUp)
+    );
+    *blockstore.lowest_cleanup_slot.write().unwrap() = 0;
+
+    // A rooted block without a footer: a single entry batch ends the slot.
+    let slot = 20;
+    let shreds = create_entry_batch_shreds(
+        slot,
+        slot - 1,
+        create_ticks(1, 0, Hash::new_unique()),
+        0,
+        true,
+    );
+    blockstore
+        .insert_shreds(data_shreds(shreds), false)
+        .unwrap();
+    blockstore.set_roots(std::iter::once(&slot)).unwrap();
+    assert_eq!(
+        blockstore
+            .get_rooted_block_footer_finalization_certificate(slot)
+            .unwrap(),
+        None
+    );
+
+    // A slot the blockstore never saw is not rooted.
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(30),
+        Err(BlockstoreError::SlotNotRooted)
+    );
+
+    // A rooted slot whose block is not in the blockstore is unavailable.
+    blockstore.set_roots(std::iter::once(&40)).unwrap();
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(40),
+        Err(BlockstoreError::SlotUnavailable)
+    );
+}

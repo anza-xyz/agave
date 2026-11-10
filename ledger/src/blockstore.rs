@@ -6421,6 +6421,33 @@ impl Blockstore {
         self.meta(slot).unwrap().unwrap().last_index.unwrap()
     }
 
+    /// Returns the finalization certificate carried in the footer of rooted slot `slot`, with
+    /// the shred version of the footer's shreds, which the certificate's votes sign. Returns
+    /// `None` when the footer carries no finalization certificate. A block without a footer, as
+    /// before Alpenglow, returns `None` or an error, depending on how its entries are laid out.
+    ///
+    /// A leader's footer carries the highest finalization certificate it has seen, so the
+    /// certificate's `slot` is earlier than `slot`, often but not always `slot - 1`. The original
+    /// block location is read, which holds the rooted version of a slot (see
+    /// `switch_block_from_alternate`).
+    pub fn get_rooted_block_footer_finalization_certificate(
+        &self,
+        slot: Slot,
+    ) -> Result<Option<(BlockFinalizationCert, u16)>> {
+        let _lock = self.check_lowest_cleanup_slot(slot)?;
+        if !self.is_root(slot) {
+            return Err(BlockstoreError::SlotNotRooted);
+        }
+        let Some(last_index) = self
+            .meta(slot)?
+            .filter(|meta| meta.is_full())
+            .and_then(|meta| meta.last_index)
+        else {
+            return Err(BlockstoreError::SlotUnavailable);
+        };
+        self.get_block_footer_finalization_certificate(slot, last_index)
+    }
+
     /// Reads the finalization certificate from the footer of a full block whose last data shred
     /// has index `last_index`, with the shred version of the shred that starts the footer's FEC
     /// set. Components end at FEC set boundaries and only the final tick may follow the footer,
