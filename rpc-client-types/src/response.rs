@@ -402,6 +402,24 @@ pub struct RpcVatActiveSetRankMapEntry {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RpcEpochCommissionContext {
+    /// The epoch for which rewards are calculated
+    pub epoch: Epoch,
+
+    /// The slot of the bank when queried
+    pub slot: Slot,
+
+    /// The effective commission percentage used for rewards calculation in the current epoch,
+    /// derived from the epoch stakes snapshot.
+    pub commission: u8,
+
+    /// The effective commission in basis points used for rewards calculation in the current epoch,
+    /// derived from the epoch stakes snapshot.
+    pub inflation_rewards_commission_bps: u16,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RpcVoteAccountStatus {
     pub current: Vec<RpcVoteAccountInfo>,
     pub delinquent: Vec<RpcVoteAccountInfo>,
@@ -443,6 +461,20 @@ pub struct RpcVoteAccountInfo {
 
     /// Current root slot for this vote account (0 if no root slot exists)
     pub root_slot: Slot,
+
+    /// The effective commission percentage used for rewards calculation in the current epoch,
+    /// derived from the epoch stakes snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_commission: Option<u8>,
+
+    /// The effective commission in basis points used for rewards calculation in the current epoch,
+    /// derived from the epoch stakes snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_inflation_rewards_commission_bps: Option<u16>,
+
+    /// Effective commission context for the current epoch from the epoch stakes snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_commission_context: Option<RpcEpochCommissionContext>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

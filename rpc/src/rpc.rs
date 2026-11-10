@@ -1295,9 +1295,11 @@ impl JsonRpcRequestProcessor {
 
         let bank = self.bank(config.commitment);
         let vote_accounts = bank.vote_accounts();
+        let current_epoch = bank.get_epoch_and_slot_index(bank.slot()).0;
         let epoch_vote_accounts = bank
-            .epoch_vote_accounts(bank.get_epoch_and_slot_index(bank.slot()).0)
+            .epoch_vote_accounts(current_epoch)
             .ok_or_else(Error::invalid_request)?;
+        let include_commission_context = config.include_commission_context.unwrap_or_default();
         let delinquent_validator_slot_distance = config
             .delinquent_slot_distance
             .unwrap_or(DELINQUENT_VALIDATOR_SLOT_DISTANCE);
@@ -1326,6 +1328,32 @@ impl JsonRpcRequestProcessor {
                     .collect();
                 let commission_bps = vote_state_view.inflation_rewards_commission();
 
+                let (
+                    epoch_commission,
+                    epoch_inflation_rewards_commission_bps,
+                    epoch_commission_context,
+                ) = if include_commission_context {
+                    if let Some((_, epoch_vote_account)) = epoch_vote_accounts.get(vote_pubkey) {
+                        let epoch_view = epoch_vote_account.vote_state_view();
+                        let epoch_comm = epoch_view.commission();
+                        let epoch_bps = epoch_view.inflation_rewards_commission();
+                        (
+                            Some(epoch_comm),
+                            Some(epoch_bps),
+                            Some(RpcEpochCommissionContext {
+                                epoch: current_epoch,
+                                slot: bank.slot(),
+                                commission: epoch_comm,
+                                inflation_rewards_commission_bps: epoch_bps,
+                            }),
+                        )
+                    } else {
+                        (None, None, None)
+                    }
+                } else {
+                    (None, None, None)
+                };
+
                 Some(RpcVoteAccountInfo {
                     vote_pubkey: vote_pubkey.to_string(),
                     node_pubkey: vote_state_view.node_pubkey().to_string(),
@@ -1337,6 +1365,9 @@ impl JsonRpcRequestProcessor {
                     epoch_credits,
                     epoch_vote_account: epoch_vote_accounts.contains_key(vote_pubkey),
                     last_vote,
+                    epoch_commission,
+                    epoch_inflation_rewards_commission_bps,
+                    epoch_commission_context,
                 })
             })
             .partition(|vote_account_info| {
@@ -9335,6 +9366,111 @@ pub mod tests {
                     rpc.leader_vote_keypair.pubkey().to_string()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_get_vote_accounts_effective_commission() {
+        let rpc = RpcHandler::start_tower();
+        let mut bank = rpc.working_bank();
+        let RpcHandler {
+            ref io,
+            ref meta,
+            ref leader_vote_keypair,
+            ..
+        } = rpc;
+
+        let leader_pubkey = leader_vote_keypair.pubkey();
+
+        // 1. Without include_commission_context (default), epoch commission fields are omitted / None.
+        {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
+                json!([RpcGetVoteAccountsConfig {
+                    vote_pubkey: Some(leader_pubkey.to_string()),
+                    commitment: Some(CommitmentConfig::processed()),
+                    ..RpcGetVoteAccountsConfig::default()
+                }])
+            );
+            let res = io.handle_request_sync(&req, meta.clone());
+            let result: Value = serde_json::from_str(&res.expect("actual response"))
+                .expect("actual response deserialization");
+
+            let vote_account_status: RpcVoteAccountStatus =
+                serde_json::from_value(result["result"].clone()).unwrap();
+            let leader_info = &vote_account_status.delinquent[0];
+            assert!(leader_info.epoch_commission_context.is_none());
+            assert!(leader_info.epoch_commission.is_none());
+            assert!(leader_info.epoch_inflation_rewards_commission_bps.is_none());
+            assert!(result["result"]["delinquent"][0].get("epochCommissionContext").is_none());
+            assert!(result["result"]["delinquent"][0].get("epochCommission").is_none());
+        }
+
+        // 2. With include_commission_context: true, effective commission is returned.
+        {
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
+                json!([RpcGetVoteAccountsConfig {
+                    vote_pubkey: Some(leader_pubkey.to_string()),
+                    commitment: Some(CommitmentConfig::processed()),
+                    include_commission_context: Some(true),
+                    ..RpcGetVoteAccountsConfig::default()
+                }])
+            );
+            let res = io.handle_request_sync(&req, meta.clone());
+            let result: Value = serde_json::from_str(&res.expect("actual response"))
+                .expect("actual response deserialization");
+
+            let vote_account_status: RpcVoteAccountStatus =
+                serde_json::from_value(result["result"].clone()).unwrap();
+            let leader_info = &vote_account_status.delinquent[0];
+            let ctx = leader_info.epoch_commission_context.as_ref().unwrap();
+            assert_eq!(ctx.epoch, bank.epoch());
+            assert_eq!(ctx.slot, bank.slot());
+            assert_eq!(ctx.commission, leader_info.commission);
+            assert_eq!(ctx.inflation_rewards_commission_bps, leader_info.inflation_rewards_commission_bps.unwrap());
+            assert_eq!(leader_info.epoch_commission, Some(leader_info.commission));
+            assert_eq!(leader_info.epoch_inflation_rewards_commission_bps, leader_info.inflation_rewards_commission_bps);
+        }
+
+        // 3. Mutate live vote account commission to a different value mid-epoch:
+        // live commission should reflect the new rate, but epoch_commission_context retains the snapshot rate!
+        {
+            let mut vote_account = bank.get_account(&leader_pubkey).unwrap();
+            let vote_state = VoteStateV4::deserialize(vote_account.data(), &leader_pubkey)
+                .expect("deserialize vote state");
+            let mut vote_state = VoteStateHandler::try_new_from_vote_state_versions(
+                VoteStateVersionsInline::V4(vote_state),
+            )
+            .expect("create vote state handler");
+            let original_commission = vote_state.commission();
+            let new_commission = if original_commission == 0 { 50 } else { 0 };
+            vote_state.set_commission(new_commission);
+            vote_state
+                .serialize_into(vote_account.data_as_mut_slice())
+                .expect("serialize vote state");
+            bank.store_account(&leader_pubkey, &vote_account);
+
+            let req = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"getVoteAccounts","params":{}}}"#,
+                json!([RpcGetVoteAccountsConfig {
+                    vote_pubkey: Some(leader_pubkey.to_string()),
+                    commitment: Some(CommitmentConfig::processed()),
+                    include_commission_context: Some(true),
+                    ..RpcGetVoteAccountsConfig::default()
+                }])
+            );
+            let res = io.handle_request_sync(&req, meta.clone());
+            let result: Value = serde_json::from_str(&res.expect("actual response"))
+                .expect("actual response deserialization");
+
+            let vote_account_status: RpcVoteAccountStatus =
+                serde_json::from_value(result["result"].clone()).unwrap();
+            let leader_info = &vote_account_status.delinquent[0];
+            assert_eq!(leader_info.commission, new_commission);
+            let ctx = leader_info.epoch_commission_context.as_ref().unwrap();
+            assert_eq!(ctx.commission, original_commission);
+            assert_eq!(leader_info.epoch_commission, Some(original_commission));
         }
     }
 
