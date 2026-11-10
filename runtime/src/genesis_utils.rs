@@ -41,7 +41,7 @@ use {
     solana_sysvar::epoch_rewards,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
-    std::{borrow::Borrow, sync::Arc},
+    std::borrow::Borrow,
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -685,8 +685,7 @@ pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> 
     let data = vec![0; epoch_rewards::SIZE];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
-    let account =
-        AccountSharedData::new_with_shared_data(lamports, Arc::new(data), &sysvar::id(), false);
+    let account = AccountSharedData::new_with_data(lamports, data, &sysvar::id());
 
     genesis_config.add_account(epoch_rewards::id(), account);
 

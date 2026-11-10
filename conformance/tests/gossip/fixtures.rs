@@ -152,25 +152,6 @@ fn generate_gossip_fixtures() {
         );
     }
 
-    // CrdsData edge cases
-    {
-        let es = make_epoch_slots_crds_data(255, &pk, 1_000_000);
-        let val = make_crds_value_bytes(&sig, &es);
-        write_fixture(
-            &dir,
-            "epoch_slots_index_at_max",
-            &make_push_message_bytes(&pk, &[val]),
-        );
-    }
-    {
-        let ls = make_lowest_slot_crds_data(1, &pk, 42, 1_000_000);
-        let val = make_crds_value_bytes(&sig, &ls);
-        write_fixture(
-            &dir,
-            "lowest_slot_nonzero_index",
-            &make_push_message_bytes(&pk, &[val]),
-        );
-    }
     {
         let sh =
             make_snapshot_hashes_crds_data(&pk, 1_000_000_000_000_000, &[0xAA; 32], &[], 1_000_000);

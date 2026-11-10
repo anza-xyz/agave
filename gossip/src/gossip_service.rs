@@ -82,7 +82,6 @@ impl GossipService {
         let (consume_sender, listen_receiver) =
             EvictingSender::new_bounded(CHANNEL_CONSUME_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
-            epoch_specs.as_ref().map(|es| es.clone_box()),
             request_receiver,
             consume_sender,
             exit.clone(),

@@ -20,10 +20,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
     solana_account::ReadableAccount,
-    solana_account_decoder::{
-        UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
-        parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
-    },
+    solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -165,57 +162,22 @@ pub struct CliAccount {
     pub use_lamports_unit: bool,
 }
 
-pub struct CliAccountNewConfig {
-    pub data_encoding: UiAccountEncoding,
-    pub additional_data: Option<AccountAdditionalDataV3>,
-    pub data_slice_config: Option<UiDataSliceConfig>,
-    pub use_lamports_unit: bool,
-}
-
-impl Default for CliAccountNewConfig {
-    fn default() -> Self {
-        Self {
-            data_encoding: UiAccountEncoding::Base64,
-            additional_data: None,
-            data_slice_config: None,
-            use_lamports_unit: false,
-        }
-    }
-}
-
 impl CliAccount {
     pub fn new<T: ReadableAccount>(address: &Pubkey, account: &T, use_lamports_unit: bool) -> Self {
-        Self::new_with_config(
-            address,
-            account,
-            &CliAccountNewConfig {
-                use_lamports_unit,
-                ..CliAccountNewConfig::default()
-            },
-        )
-    }
-
-    pub fn new_with_config<T: ReadableAccount>(
-        address: &Pubkey,
-        account: &T,
-        config: &CliAccountNewConfig,
-    ) -> Self {
-        let CliAccountNewConfig {
-            data_encoding,
-            additional_data,
-            data_slice_config,
-            use_lamports_unit,
-        } = *config;
         Self {
             keyed_account: RpcKeyedAccount {
                 pubkey: address.to_string(),
-                account: encode_ui_account(
-                    address,
-                    account,
-                    data_encoding,
-                    additional_data,
-                    data_slice_config,
-                ),
+                account: UiAccount {
+                    lamports: account.lamports(),
+                    data: UiAccountData::Binary(
+                        BASE64_STANDARD.encode(account.data()),
+                        UiAccountEncoding::Base64,
+                    ),
+                    owner: account.owner().to_string(),
+                    executable: account.executable(),
+                    rent_epoch: account.rent_epoch(),
+                    space: Some(account.data().len() as u64),
+                },
             },
             use_lamports_unit,
         }
@@ -2490,50 +2452,6 @@ impl CliFees {
     }
     pub fn none() -> Self {
         Self { inner: None }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CliTokenAccount {
-    pub address: String,
-    #[serde(flatten)]
-    pub token_account: UiTokenAccount,
-}
-
-impl QuietDisplay for CliTokenAccount {}
-impl VerboseDisplay for CliTokenAccount {}
-
-impl fmt::Display for CliTokenAccount {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f)?;
-        writeln_name_value(f, "Address:", &self.address)?;
-        let account = &self.token_account;
-        writeln_name_value(
-            f,
-            "Balance:",
-            &account.token_amount.real_number_string_trimmed(),
-        )?;
-        let mint = format!(
-            "{}{}",
-            account.mint,
-            if account.is_native { " (native)" } else { "" }
-        );
-        writeln_name_value(f, "Mint:", &mint)?;
-        writeln_name_value(f, "Owner:", &account.owner)?;
-        writeln_name_value(f, "State:", &format!("{:?}", account.state))?;
-        if let Some(delegate) = &account.delegate {
-            writeln!(f, "Delegation:")?;
-            writeln_name_value(f, "  Delegate:", delegate)?;
-            let allowance = account.delegated_amount.as_ref().unwrap();
-            writeln_name_value(f, "  Allowance:", &allowance.real_number_string_trimmed())?;
-        }
-        writeln_name_value(
-            f,
-            "Close authority:",
-            account.close_authority.as_ref().unwrap_or(&String::new()),
-        )?;
-        Ok(())
     }
 }
 

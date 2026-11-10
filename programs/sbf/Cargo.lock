@@ -185,7 +185,7 @@ dependencies = [
 [[package]]
 name = "agave-geyser-plugin-interface"
 version = "7.0.0"
-source = "git+https://github.com/anza-xyz/agave-sdk?rev=3cf9d5c0dc4da480bafbf5991ebf98ed4d49f7b1#3cf9d5c0dc4da480bafbf5991ebf98ed4d49f7b1"
+source = "git+https://github.com/anza-xyz/agave-sdk?rev=ca66671a9d4b7879ca194ad92b351e43e5876f3b#ca66671a9d4b7879ca194ad92b351e43e5876f3b"
 dependencies = [
  "log",
  "solana-bls-signatures",
@@ -6257,7 +6257,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-account",
- "solana-account-decoder",
+ "solana-account-decoder-client-types",
  "solana-bls-signatures",
  "solana-clap-utils",
  "solana-cli-config",
@@ -6948,7 +6948,6 @@ dependencies = [
  "bv",
  "bytes",
  "crossbeam-channel",
- "flate2",
  "indexmap",
  "itertools 0.15.0",
  "lazy-lru",
@@ -7967,7 +7966,6 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-account",
- "solana-account-decoder",
  "solana-account-decoder-client-types",
  "solana-bls-signatures",
  "solana-clock",
@@ -10009,7 +10007,6 @@ dependencies = [
  "solana-bls-signatures",
  "solana-clock",
  "solana-epoch-schedule",
- "solana-hash",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-packet",
@@ -10017,7 +10014,6 @@ dependencies = [
  "solana-pubkey 4.4.0",
  "solana-rent",
  "solana-sdk-ids",
- "solana-slot-hashes",
  "solana-system-interface",
  "solana-transaction-context",
  "solana-vote-interface",
