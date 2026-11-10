@@ -60,7 +60,7 @@ pub trait VoteSubCommands {
 }
 
 // All public clusters use 200ms slots and have Alpenglow activated.
-const VAT_TO_BURN_PER_EPOCH: u64 = 800_000_000;
+const VAT_TO_BURN_PER_EPOCH: u64 = 400_000_000;
 
 impl VoteSubCommands for App<'_, '_> {
     fn vote_subcommands(self) -> Self {

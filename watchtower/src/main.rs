@@ -26,7 +26,7 @@ use {
     },
 };
 
-const LEGACY_VAT_TO_BURN_PER_EPOCH: u64 = 1_600_000_000;
+const LEGACY_VAT_TO_BURN_PER_EPOCH: u64 = 800_000_000;
 
 struct Config {
     address_labels: HashMap<String, String>,
@@ -319,19 +319,19 @@ fn slot_time_reduction_vat_burns() -> [(Pubkey, u64); 4] {
     [
         (
             agave_feature_set::reduce_slot_time_to_200ms::id(),
-            800_000_000,
+            400_000_000,
         ),
         (
             agave_feature_set::reduce_slot_time_to_250ms::id(),
-            1_000_000_000,
+            500_000_000,
         ),
         (
             agave_feature_set::reduce_slot_time_to_300ms::id(),
-            1_200_000_000,
+            600_000_000,
         ),
         (
             agave_feature_set::reduce_slot_time_to_350ms::id(),
-            1_400_000_000,
+            700_000_000,
         ),
     ]
 }

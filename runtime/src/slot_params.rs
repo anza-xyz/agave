@@ -129,7 +129,7 @@ pub(crate) const LEGACY_SLOT_PARAMS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 32_768,
     max_entry_bytes_per_slot: 20 * 1024 * 1024,
     partitioned_epoch_rewards_stake_account_stores_per_block: 4096,
-    vat_to_burn_per_epoch: 1_600_000_000,
+    vat_to_burn_per_epoch: 800_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_350MS: SlotParams = SlotParams {
@@ -141,7 +141,7 @@ pub(crate) const SLOT_PARAMS_350MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 28_672,
     max_entry_bytes_per_slot: 18_350_080,
     partitioned_epoch_rewards_stake_account_stores_per_block: 3_584,
-    vat_to_burn_per_epoch: 1_400_000_000,
+    vat_to_burn_per_epoch: 700_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_300MS: SlotParams = SlotParams {
@@ -153,7 +153,7 @@ pub(crate) const SLOT_PARAMS_300MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 24_576,
     max_entry_bytes_per_slot: 15_728_640,
     partitioned_epoch_rewards_stake_account_stores_per_block: 3_072,
-    vat_to_burn_per_epoch: 1_200_000_000,
+    vat_to_burn_per_epoch: 600_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_250MS: SlotParams = SlotParams {
@@ -165,7 +165,7 @@ pub(crate) const SLOT_PARAMS_250MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 20_480,
     max_entry_bytes_per_slot: 13_107_200,
     partitioned_epoch_rewards_stake_account_stores_per_block: 2_560,
-    vat_to_burn_per_epoch: 1_000_000_000,
+    vat_to_burn_per_epoch: 500_000_000,
 };
 
 pub(crate) const SLOT_PARAMS_200MS: SlotParams = SlotParams {
@@ -177,7 +177,7 @@ pub(crate) const SLOT_PARAMS_200MS: SlotParams = SlotParams {
     max_code_shreds_per_slot: 16_384,
     max_entry_bytes_per_slot: 10_485_760,
     partitioned_epoch_rewards_stake_account_stores_per_block: 2_048,
-    vat_to_burn_per_epoch: 800_000_000,
+    vat_to_burn_per_epoch: 400_000_000,
 };
 
 /// Slot-time reduction gates in the intended activation order.
@@ -352,6 +352,19 @@ impl SlotParamsArchive {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_vat_burn_per_epoch_for_slot_durations() {
+        for (params, expected_lamports) in [
+            (LEGACY_SLOT_PARAMS, 800_000_000),
+            (SLOT_PARAMS_350MS, 700_000_000),
+            (SLOT_PARAMS_300MS, 600_000_000),
+            (SLOT_PARAMS_250MS, 500_000_000),
+            (SLOT_PARAMS_200MS, 400_000_000),
+        ] {
+            assert_eq!(params.vat_to_burn_per_epoch(), expected_lamports);
+        }
+    }
 
     #[test]
     fn test_cost_limits_scaling_matches_simd_0525() {
