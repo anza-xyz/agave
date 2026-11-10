@@ -7469,9 +7469,9 @@ dependencies = [
 
 [[package]]
 name = "solana-packet"
-version = "4.4.1"
+version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993f9d2969eaffcaaa017d5de6d282d584ad3def7a0718185a3660a4cca3c2c6"
+checksum = "3c751ff7c598eb0ed448d30a9feabfc67ab487f0d6b7e14037896270d630a2a9"
 dependencies = [
  "bitflags 2.13.2",
  "solana-pubkey 4.4.0",
