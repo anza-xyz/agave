@@ -488,8 +488,8 @@ mod tests {
         solana_stake_interface::{stake_flags::StakeFlags, state::StakeStateV2},
         solana_system_transaction as system_transaction,
         solana_sysvar::epoch_rewards::{self, EpochRewards},
-        solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, handler::VoteStateHandler},
+        solana_vote_interface::state::{VoteStateV4, VoteStateVersions},
+        solana_vote_program::vote_state::handler::VoteStateHandler,
         std::{
             assert_matches,
             collections::HashSet,
@@ -1022,11 +1022,9 @@ mod tests {
                 VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
             );
             vote_state.set_commission(commission);
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
-                let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
-                vote_account.set_state(&versioned).unwrap();
-            }
+            vote_state.increment_credits(bank.epoch(), 42);
+            let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
+            vote_account.set_state(&versioned).unwrap();
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
         }
     }

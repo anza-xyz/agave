@@ -4984,7 +4984,7 @@ pub mod tests {
         solana_send_transaction_service::test_utils::create_client_for_tests,
         solana_sha256_hasher::hash,
         solana_signer::Signer,
-        solana_slot_hashes::{SlotHash, SlotHashes},
+        solana_slot_hashes::SlotHashes,
         solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
         solana_svm_log_collector::ic_logger_msg,
         solana_system_interface::{instruction as system_instruction, program as system_program},
@@ -4998,9 +4998,9 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
         },
-        solana_vote_interface::state::{Vote, VoteStateV4},
+        solana_vote_interface::state::{LandedVote, Lockout, VoteStateV4},
         solana_vote_program::vote_state::{
-            self, MAX_LOCKOUT_HISTORY, VoteInit, VoteStateVersions,
+            MAX_LOCKOUT_HISTORY, VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteInit, VoteStateVersions,
             handler::{VoteStateHandler, VoteStateVersionsInline},
         },
         spl_token_2022_interface::{
@@ -5013,7 +5013,7 @@ pub mod tests {
         },
         std::{
             borrow::Cow,
-            collections::{HashMap, HashSet},
+            collections::{HashMap, HashSet, VecDeque},
             net::Ipv4Addr,
         },
         test_case::test_case,
@@ -9190,6 +9190,7 @@ pub mod tests {
             }
         }
 
+        let credits_per_slot = VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
         let mut advance_bank = || {
             let vote_slot = bank.slot();
             bank.freeze();
@@ -9202,15 +9203,11 @@ pub mod tests {
                     VoteStateVersionsInline::V4(vote_state),
                 )
                 .expect("create vote state handler");
-                let vote = Vote::new(vec![vote_slot], Hash::default());
-                vote_state::process_vote(
-                    &mut vote_state,
-                    &vote,
-                    &[SlotHash::new(vote_slot, vote.hash)],
-                    bank.epoch(),
-                    bank.slot(),
-                )
-                .expect("record vote");
+                vote_state.set_votes(VecDeque::from([LandedVote {
+                    latency: 1,
+                    lockout: Lockout::new(vote_slot),
+                }]));
+                vote_state.increment_credits(bank.epoch(), credits_per_slot);
                 vote_state
                     .serialize_into(vote_account.data_as_mut_slice())
                     .expect("serialize vote state");
@@ -9246,12 +9243,8 @@ pub mod tests {
             .find(|x| x.vote_pubkey == leader_vote_keypair.pubkey().to_string())
             .unwrap();
         assert_ne!(leader_info.activated_stake, 0);
-        // Subtract one because the last vote always carries over to the next epoch
-        // Each slot earned maximum credits
-        let credits_per_slot =
-            solana_vote_program::vote_state::VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
-        let expected_credits =
-            (TEST_SLOTS_PER_EPOCH - MAX_LOCKOUT_HISTORY as u64 - 1) * credits_per_slot;
+        // Subtract one because the final vote lands in the next epoch.
+        let expected_credits = (TEST_SLOTS_PER_EPOCH - 1) * credits_per_slot;
         assert_eq!(
             leader_info.epoch_credits,
             vec![
