@@ -59,6 +59,11 @@ There are three release channels that map to branches as follows:
 * beta - tracks the largest (and latest) `vX.Y` stabilization branch, more stable.
 * stable - tracks the second largest `vX.Y` stabilization branch, most stable.
 
+Edge serves the tip of `master`. Beta and stable serve the latest tag on their
+branch, not its tip. The "sync release channels" step at the end of every tag's
+`agave-secondary` build copies those tags' artifacts into the channels. If a
+channel is stale, retry that step on any tag build.
+
 ## Steps to Create a Branch
 
 ### Major release branch
