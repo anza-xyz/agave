@@ -6,7 +6,7 @@ use {
             log_instruction_custom_error, message_into_signed_transaction,
         },
         compute_budget::{ComputeUnitConfig, simulate_and_update_compute_unit_limit},
-        feature::{get_feature_activation_epoch, get_feature_is_active},
+        feature::get_feature_is_active,
         message_builder::MessageBuilder,
         nonce::check_nonce_account,
         spend_utils::{
@@ -21,6 +21,7 @@ use {
     agave_votor_messages::consensus_message::BLS_KEYPAIR_DERIVE_SEED,
     clap::{App, Arg, ArgMatches, SubCommand, value_t_or_exit},
     solana_account::Account,
+    solana_account_decoder_client_types::UiAccountEncoding,
     solana_bls_signatures::keypair::Keypair as BLSKeypair,
     solana_clap_utils::{
         compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
@@ -41,7 +42,7 @@ use {
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
+    solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcGetVoteAccountsConfig},
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_system_interface::error::SystemError,
     solana_vote_program::{
@@ -58,9 +59,6 @@ use {
 pub trait VoteSubCommands {
     fn vote_subcommands(self) -> Self;
 }
-
-// All public clusters use 200ms slots and have Alpenglow activated.
-const VAT_TO_BURN_PER_EPOCH: u64 = 800_000_000;
 
 impl VoteSubCommands for App<'_, '_> {
     fn vote_subcommands(self) -> Self {
@@ -2088,6 +2086,89 @@ pub async fn process_show_vote_account(
     Ok(config.output_format.formatted_string(&vote_account_data))
 }
 
+async fn get_vat_withdrawal_reserve(
+    rpc_client: &RpcClient,
+    commitment: CommitmentConfig,
+) -> Result<u64, CliError> {
+    // Keep these pre-reduction fees in sync with runtime/src/slot_params.rs.
+    let slot_time_rates = [
+        (
+            agave_feature_set::reduce_slot_time_to_200ms::id(),
+            800_000_000,
+        ),
+        (
+            agave_feature_set::reduce_slot_time_to_250ms::id(),
+            1_000_000_000,
+        ),
+        (
+            agave_feature_set::reduce_slot_time_to_300ms::id(),
+            1_200_000_000,
+        ),
+        (
+            agave_feature_set::reduce_slot_time_to_350ms::id(),
+            1_400_000_000,
+        ),
+    ];
+    let feature_ids = [alpenglow::id(), agave_feature_set::halve_vat_fee::id()]
+        .into_iter()
+        .chain(slot_time_rates.iter().map(|(id, _)| *id))
+        .collect::<Vec<_>>();
+    // Fetch all gates from one bank, at the withdrawal's commitment, so a
+    // boundary crossing between RPC calls cannot select inconsistent fees.
+    let response = rpc_client
+        .get_multiple_ui_accounts_with_config(
+            &feature_ids,
+            RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                commitment: Some(commitment),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await?;
+    if response.value.len() != feature_ids.len() {
+        return Err(CliError::RpcRequestError(
+            "Incomplete VAT feature response".to_string(),
+        ));
+    }
+    let slot = response.context.slot;
+    let mut features = agave_feature_set::FeatureSet::default();
+    for (id, account) in feature_ids.into_iter().zip(response.value) {
+        if let Some(account) = account {
+            let invalid_feature =
+                || CliError::RpcRequestError(format!("Invalid VAT feature account {id}"));
+            let account: Account = account.to_account().ok_or_else(invalid_feature)?;
+            let feature = from_account(&account).ok_or_else(invalid_feature)?;
+            if let Some(activation_slot) = feature
+                .activated_at
+                .filter(|activation_slot| *activation_slot <= slot)
+            {
+                features.activate(&id, activation_slot);
+            }
+        }
+    }
+    if !features.is_active(&alpenglow::id()) {
+        return Ok(0);
+    }
+    let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+    let effective = |id: &Pubkey| {
+        features.activated_slot(id).is_some_and(|activation_slot| {
+            epoch_schedule.get_first_slot_in_epoch(
+                epoch_schedule.get_epoch(activation_slot).saturating_add(1),
+            ) <= slot
+        })
+    };
+    let fee = slot_time_rates
+        .into_iter()
+        .find(|(id, _)| effective(id))
+        .map(|(_, fee)| fee)
+        .unwrap_or(1_600_000_000);
+    Ok(if effective(&agave_feature_set::halve_vat_fee::id()) {
+        fee / 2
+    } else {
+        fee
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn process_withdraw_from_vote_account(
     rpc_client: &RpcClient,
@@ -2130,15 +2211,7 @@ pub async fn process_withdraw_from_vote_account(
     let vat_to_reserve = if allow_vat_withdrawal {
         0
     } else {
-        let activation_epoch =
-            get_feature_activation_epoch(rpc_client, &agave_feature_set::halve_vat_fee::id())
-                .await?;
-        let current_epoch = rpc_client.get_epoch_info().await?.epoch;
-        if activation_epoch.is_some_and(|epoch| current_epoch > epoch) {
-            VAT_TO_BURN_PER_EPOCH / 2
-        } else {
-            VAT_TO_BURN_PER_EPOCH
-        }
+        get_vat_withdrawal_reserve(rpc_client, config.commitment).await?
     };
     // VAT eligibility uses the rent-exempt minimum of the current vote-state layout, even for a
     // legacy vote account whose serialized data is smaller.
@@ -2405,6 +2478,194 @@ mod tests {
         solana_signer::Signer,
         tempfile::NamedTempFile,
     };
+
+    fn vat_reserve_rpc(slot: u64, activations: &[(Pubkey, Option<u64>)]) -> RpcClient {
+        use {
+            base64::{Engine, prelude::BASE64_STANDARD},
+            serde_json::json,
+            solana_account::ReadableAccount,
+            solana_epoch_schedule::EpochSchedule,
+            solana_feature_gate_interface::{Feature, create_account},
+            solana_rpc_client_api::request::RpcRequest,
+        };
+        let feature_ids = [
+            alpenglow::id(),
+            agave_feature_set::halve_vat_fee::id(),
+            agave_feature_set::reduce_slot_time_to_200ms::id(),
+            agave_feature_set::reduce_slot_time_to_250ms::id(),
+            agave_feature_set::reduce_slot_time_to_300ms::id(),
+            agave_feature_set::reduce_slot_time_to_350ms::id(),
+        ];
+        let accounts = feature_ids.map(|id| {
+            activations
+                .iter()
+                .find(|(key, _)| *key == id)
+                .map(|(_, activated_at)| {
+                    let account = create_account(
+                        &Feature {
+                            activated_at: *activated_at,
+                        },
+                        1,
+                    );
+                    json!({
+                        "lamports": account.lamports(),
+                        "data": [BASE64_STANDARD.encode(account.data()), "base64"],
+                        "owner": account.owner().to_string(),
+                        "executable": false,
+                        "rentEpoch": 0,
+                    })
+                })
+        });
+        RpcClient::new_mock_with_mocks(
+            "succeeds".to_string(),
+            [
+                (
+                    RpcRequest::GetMultipleAccounts,
+                    json!({
+                        "context": { "slot": slot },
+                        "value": accounts,
+                    }),
+                ),
+                (
+                    RpcRequest::GetEpochSchedule,
+                    json!(EpochSchedule::custom(32, 32, false)),
+                ),
+            ]
+            .into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_vat_reserve_matches_slot_regimes() {
+        let regimes = [
+            (None, 1_600_000_000),
+            (
+                Some(agave_feature_set::reduce_slot_time_to_350ms::id()),
+                1_400_000_000,
+            ),
+            (
+                Some(agave_feature_set::reduce_slot_time_to_300ms::id()),
+                1_200_000_000,
+            ),
+            (
+                Some(agave_feature_set::reduce_slot_time_to_250ms::id()),
+                1_000_000_000,
+            ),
+            (
+                Some(agave_feature_set::reduce_slot_time_to_200ms::id()),
+                800_000_000,
+            ),
+        ];
+        for (feature, fee) in regimes {
+            for (slot, reduction, expected) in [
+                (63, None, fee),
+                (63, Some(None), fee),
+                (63, Some(Some(47)), fee),
+                (64, Some(Some(47)), fee / 2),
+                (64, Some(Some(65)), fee),
+                (96, Some(Some(47)), fee / 2),
+            ] {
+                let mut activations = vec![(alpenglow::id(), Some(0))];
+                if let Some(id) = feature {
+                    activations.push((id, Some(0)));
+                }
+                if let Some(activation) = reduction {
+                    activations.push((agave_feature_set::halve_vat_fee::id(), activation));
+                }
+                let rpc_client = vat_reserve_rpc(slot, &activations);
+                assert_eq!(
+                    get_vat_withdrawal_reserve(&rpc_client, CommitmentConfig::confirmed())
+                        .await
+                        .unwrap(),
+                    expected,
+                    "slot {slot}, slot-time feature {feature:?}, fee activation {reduction:?}",
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vat_reserve_slot_time_activation_boundary() {
+        let activations = [
+            (alpenglow::id(), Some(0)),
+            (agave_feature_set::halve_vat_fee::id(), Some(0)),
+            (agave_feature_set::reduce_slot_time_to_350ms::id(), Some(0)),
+            (agave_feature_set::reduce_slot_time_to_200ms::id(), Some(47)),
+            // A later activation cannot lengthen slots after 200ms took effect.
+            (agave_feature_set::reduce_slot_time_to_300ms::id(), Some(65)),
+        ];
+        for (slot, expected) in [(63, 700_000_000), (64, 400_000_000), (128, 400_000_000)] {
+            let rpc_client = vat_reserve_rpc(slot, &activations);
+            assert_eq!(
+                get_vat_withdrawal_reserve(&rpc_client, CommitmentConfig::confirmed())
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vat_reserve_without_alpenglow() {
+        for activations in [
+            vec![],
+            vec![(alpenglow::id(), None)],
+            vec![(alpenglow::id(), Some(65))],
+        ] {
+            let rpc_client = vat_reserve_rpc(64, &activations);
+            assert_eq!(
+                get_vat_withdrawal_reserve(&rpc_client, CommitmentConfig::confirmed())
+                    .await
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vat_reserve_rejects_invalid_rpc_state() {
+        use {serde_json::json, solana_rpc_client_api::request::RpcRequest};
+
+        let rpc_client = RpcClient::new_mock("fails".to_string());
+        assert!(
+            get_vat_withdrawal_reserve(&rpc_client, CommitmentConfig::confirmed())
+                .await
+                .is_err()
+        );
+
+        for accounts in [
+            json!([]),
+            json!([{
+                "lamports": 1,
+                "data": ["", "base64"],
+                "owner": solana_feature_gate_interface::id().to_string(),
+                "executable": false,
+                "rentEpoch": 0,
+            }, null, null, null, null, null]),
+            json!([{
+                "lamports": 1,
+                "data": ["invalid-base64", "base64"],
+                "owner": solana_feature_gate_interface::id().to_string(),
+                "executable": false,
+                "rentEpoch": 0,
+            }, null, null, null, null, null]),
+        ] {
+            let rpc_client = RpcClient::new_mock_with_mocks(
+                "succeeds".to_string(),
+                [(
+                    RpcRequest::GetMultipleAccounts,
+                    json!({
+                        "context": { "slot": 64 }, "value": accounts,
+                    }),
+                )]
+                .into(),
+            );
+            assert!(matches!(
+                get_vat_withdrawal_reserve(&rpc_client, CommitmentConfig::confirmed()).await,
+                Err(CliError::RpcRequestError(_))
+            ));
+        }
+    }
 
     fn make_tmp_file() -> (String, NamedTempFile) {
         let tmp_file = NamedTempFile::new().unwrap();
