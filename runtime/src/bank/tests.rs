@@ -5527,8 +5527,9 @@ fn test_fuzz_instructions() {
 // new feature that affects the bank hash, you should update this test to use a
 // test matrix that tests the bank hash calculation with and without your
 // added feature.
-#[test]
-fn test_bank_hash_consistency() {
+#[test_case(false; "original_vat_fee")]
+#[test_case(true; "halved_vat_fee")]
+fn test_bank_hash_consistency(halve_vat_fee: bool) {
     const VALIDATOR_STAKE_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
 
     let mut genesis_config = GenesisConfig {
@@ -5576,7 +5577,10 @@ fn test_bank_hash_consistency() {
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
-    let feature_set = FeatureSet::all_enabled();
+    let mut feature_set = FeatureSet::all_enabled();
+    if !halve_vat_fee {
+        feature_set.deactivate(&feature_set::halve_vat_fee::id());
+    }
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
@@ -5666,14 +5670,22 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "Ae28nQud8ibDJKafZDsgKm7n5bqGYB68Jr2Ek4snzzZP",
+                if halve_vat_fee {
+                    "CLhU5d81bx3guYTphW4N5e3cmztSEVpt4GdujxJQSxwV"
+                } else {
+                    "Ae28nQud8ibDJKafZDsgKm7n5bqGYB68Jr2Ek4snzzZP"
+                },
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "2G1iBBeiNtDNtKtLY2ZnUopEKBN7m7NQTAiigPGRobdV",
+                if halve_vat_fee {
+                    "4epqHxgkeVCc2sTw8RYXPM7RqQo7cAqYYgL6UvKeaQdD"
+                } else {
+                    "2G1iBBeiNtDNtKtLY2ZnUopEKBN7m7NQTAiigPGRobdV"
+                },
             );
             break;
         }
@@ -5705,8 +5717,9 @@ fn pubkeys_by_owner(
 ///
 /// The genesis config includes all feature accounts, so adding or rekeying a
 /// feature requires updating the expected hash.
-#[test]
-fn test_bank_hash_deterministic_with_stakes_cache() {
+#[test_case(false; "original_vat_fee")]
+#[test_case(true; "halved_vat_fee")]
+fn test_bank_hash_deterministic_with_stakes_cache(halve_vat_fee: bool) {
     const NUM_VALIDATORS: usize = 128;
     const SNAPSHOT_STAKES_PER_VALIDATOR: usize = 64;
     const ADDITIONAL_STAKES_PER_VALIDATOR: usize = 16;
@@ -5733,6 +5746,12 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         vec![STAKE_LAMPORTS; NUM_VALIDATORS],
     );
 
+    if !halve_vat_fee {
+        genesis_config
+            .accounts
+            .remove(&feature_set::halve_vat_fee::id())
+            .unwrap();
+    }
     genesis_config.creation_time = 0;
     genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
@@ -5983,7 +6002,11 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "EZPqueG9qihQs5Ws2Fo2yUjg6BvQWcC2ZE4JBZ3dDtPq",
+        if halve_vat_fee {
+            "FqRJaeMDkTiahE8Nwi8n3jEX9p93fkq5o5ckPvbsXZqM"
+        } else {
+            "EZPqueG9qihQs5Ws2Fo2yUjg6BvQWcC2ZE4JBZ3dDtPq"
+        },
     );
 }
 
@@ -6718,6 +6741,10 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
 #[test]
 fn test_reduce_slot_time_features() {
     let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
+    genesis_config
+        .accounts
+        .remove(&feature_set::halve_vat_fee::id())
+        .unwrap();
     for feature_id in slot_time_feature_ids() {
         genesis_config.accounts.remove(&feature_id).unwrap();
     }
@@ -6759,6 +6786,131 @@ fn test_reduce_slot_time_features() {
         );
         assert!(bank.slot_time_reduction_active());
         assert_slot_time_bank_state(&bank, params);
+    }
+}
+
+#[test]
+fn test_vat_fee_reduction_preserves_inflation() {
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    bank.feature_set = Arc::new(FeatureSet::default());
+    bank.refresh_slot_params();
+    let ranges = [97, 128, 1_000, 100_003, 10_000_003];
+    let expected_rates =
+        ranges.map(|end| bank.integer_inflation_rate_between(INITIAL_RATE, 0, end, 15));
+    let expected_durations = ranges.map(|end| bank.slot_range_duration_in_years(0, end));
+
+    Arc::make_mut(&mut bank.feature_set).activate(&feature_set::halve_vat_fee::id(), 47);
+    bank.refresh_slot_params();
+
+    for ((end, rate), duration) in ranges
+        .into_iter()
+        .zip(expected_rates)
+        .zip(expected_durations)
+    {
+        assert_eq!(
+            bank.integer_inflation_rate_between(INITIAL_RATE, 0, end, 15),
+            rate
+        );
+        assert_eq!(
+            bank.slot_range_duration_in_years(0, end).to_bits(),
+            duration.to_bits()
+        );
+    }
+}
+
+#[test]
+fn test_vat_fee_activation_snapshot_replay() {
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000_000);
+    genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
+    let feature_id = feature_set::halve_vat_fee::id();
+    for id in slot_time_feature_ids().into_iter().chain([feature_id]) {
+        genesis_config.accounts.remove(&id).unwrap();
+    }
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let bank = Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 17);
+    bank.store_account_and_update_capitalization(
+        &feature_id,
+        &feature::create_account(
+            &Feature::default(),
+            genesis_config.rent.minimum_balance(Feature::size_of()),
+        ),
+    );
+    assert!(!bank.feature_set.is_active(&feature_id));
+    let mut bank =
+        Bank::new_from_parent_with_bank_forks(&bank_forks, bank, SlotLeader::default(), 32);
+    assert_eq!(bank.feature_set.activated_slot(&feature_id), Some(32));
+
+    // Restore both during the activation epoch and after the fee reduction.
+    for (epoch, expected_fee) in [(1, 1_600_000_000), (2, 800_000_000)] {
+        assert_eq!(bank.epoch(), epoch);
+        assert_eq!(bank.vat_to_burn_per_epoch(), expected_fee);
+        if !bank.is_complete() {
+            goto_end_of_slot(bank.clone());
+        }
+        bank.set_block_id(Some(BlockId::from(Hash::from([7u8; 32]))));
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_config = SnapshotConfig {
+            bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
+            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
+                .path()
+                .to_path_buf(),
+            use_direct_io: false,
+            use_registered_io_uring_buffers: false,
+            ..SnapshotConfig::default()
+        };
+        let archive = bank_to_full_snapshot_archive(&snapshot_config, &bank).unwrap();
+        let (_accounts_tempdir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let restored = bank_from_snapshot_archives(
+            &[accounts_dir],
+            &archive,
+            None,
+            &snapshot_config,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            Some(*bank.leader()),
+            None,
+            false,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(bank.hash(), restored.hash());
+        assert_eq!(restored.vat_to_burn_per_epoch(), expected_fee);
+        for slot in [31, 32, 63, 64, 96] {
+            assert_eq!(
+                bank.slot_params_at_slot(slot),
+                restored.slot_params_at_slot(slot)
+            );
+        }
+        let next_slot = bank.epoch_schedule().get_first_slot_in_epoch(epoch + 1);
+        bank = Bank::new_from_parent_with_bank_forks(
+            &bank_forks,
+            bank,
+            SlotLeader::default(),
+            next_slot,
+        );
+        let (restored, restored_forks) = restored.wrap_with_bank_forks_for_tests();
+        let replayed = Bank::new_from_parent_with_bank_forks(
+            &restored_forks,
+            restored,
+            SlotLeader::default(),
+            next_slot,
+        );
+        assert_eq!(bank.vat_to_burn_per_epoch(), 800_000_000);
+        assert_eq!(
+            bank.vat_to_burn_per_epoch(),
+            replayed.vat_to_burn_per_epoch()
+        );
+        goto_end_of_slot(bank.clone());
+        goto_end_of_slot(replayed.clone());
+        assert_eq!(bank.hash(), replayed.hash());
     }
 }
 
@@ -6865,7 +7017,11 @@ fn test_vat_burn_slot_params() {
 
 #[test]
 fn test_reduce_slot_time_features_active_at_genesis() {
-    let (genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
+    let (mut genesis_config, _) = create_genesis_config_with_legacy_slot_params(1_000_000);
+    genesis_config
+        .accounts
+        .remove(&feature_set::halve_vat_fee::id())
+        .unwrap();
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     assert!(!bank.slot_time_reduction_active());

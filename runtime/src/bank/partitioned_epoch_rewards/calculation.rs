@@ -2683,18 +2683,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_alpenglow_partitioned_rewards_use_epoch_start_budget_after_burn() {
-        let validator_keypairs = vec![genesis_utils::ValidatorVoteKeypairs::new_rand()];
+    #[test_case(false; "original_vat_fee")]
+    #[test_case(true; "halved_vat_fee")]
+    fn test_alpenglow_partitioned_rewards_use_epoch_start_budget_after_burn(halve_vat_fee: bool) {
+        // Two VAT burns keep the capitalization change large enough to exceed
+        // the per-slot reward rounding even with the reduced fee.
+        let validator_keypairs = (0..2)
+            .map(|_| genesis_utils::ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
         let GenesisConfigInfo {
             mut genesis_config, ..
         } = genesis_utils::create_genesis_config_with_vote_accounts(
             1_000_000_000 * LAMPORTS_PER_SOL,
             &validator_keypairs,
-            vec![100 * LAMPORTS_PER_SOL],
+            vec![100 * LAMPORTS_PER_SOL; validator_keypairs.len()],
         );
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-        let features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
+        let mut features_to_deactivate = crate::slot_params::slot_time_feature_ids().to_vec();
+        if !halve_vat_fee {
+            features_to_deactivate.push(agave_feature_set::halve_vat_fee::id());
+        }
         deactivate_features(&mut genesis_config, &features_to_deactivate);
 
         let (bank, bank_forks) =

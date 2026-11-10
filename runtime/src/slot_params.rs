@@ -226,6 +226,9 @@ pub(crate) struct SlotParamsArchive {
     /// ranges. The transitions are normalized so slot duration never increases
     /// as slots advance, even if slot-time features activate out of order.
     param_transitions: BTreeMap<Slot, SlotParams>,
+    /// Fee changes must not split the timing schedule: inflation decay rounds
+    /// at each timing transition, even if the slot duration did not change.
+    vat_fee_reduction_slot: Option<Slot>,
 }
 
 impl Default for SlotParamsArchive {
@@ -265,25 +268,14 @@ impl SlotParamsArchive {
             }
         }
 
-        // Preserve the old fee throughout the activation epoch. Applying the
-        // reduction to every later transition also covers future slot-time changes.
-        if let Some(activation_slot) = feature_set.activated_slot(&feature_set::halve_vat_fee::ID) {
-            let effective_slot = Self::feature_effective_slot(epoch_schedule, activation_slot);
-            let mut effective_params = *param_transitions
-                .range(..=effective_slot)
-                .next_back()
-                .expect("slot-0 baseline is always present")
-                .1;
-            effective_params.vat_to_burn_per_epoch /= 2;
-            for (_, params) in
-                param_transitions.range_mut((Excluded(effective_slot), Included(Slot::MAX)))
-            {
-                params.vat_to_burn_per_epoch /= 2;
-            }
-            param_transitions.insert(effective_slot, effective_params);
-        }
+        let vat_fee_reduction_slot = feature_set
+            .activated_slot(&feature_set::halve_vat_fee::ID)
+            .map(|slot| Self::feature_effective_slot(epoch_schedule, slot));
 
-        Self { param_transitions }
+        Self {
+            param_transitions,
+            vat_fee_reduction_slot,
+        }
     }
 
     /// Returns the baseline params supplied at genesis or snapshot restore.
@@ -296,14 +288,22 @@ impl SlotParamsArchive {
 
     /// Returns the slot params effective at `slot`.
     pub(crate) fn params_at_slot(&self, slot: Slot) -> SlotParams {
-        self.param_transitions
+        let mut params = self
+            .param_transitions
             .range(..=slot)
             .next_back()
             .map(|(_, params)| *params)
-            .unwrap_or(LEGACY_SLOT_PARAMS)
+            .unwrap_or(LEGACY_SLOT_PARAMS);
+        if self
+            .vat_fee_reduction_slot
+            .is_some_and(|effective_slot| slot >= effective_slot)
+        {
+            params.vat_to_burn_per_epoch /= 2;
+        }
+        params
     }
 
-    /// Returns sorted slot-parameter transitions.
+    /// Returns sorted timing transitions, excluding the independent VAT gate.
     pub(crate) fn param_transitions(&self) -> impl Iterator<Item = (Slot, SlotParams)> + '_ {
         self.param_transitions
             .iter()
