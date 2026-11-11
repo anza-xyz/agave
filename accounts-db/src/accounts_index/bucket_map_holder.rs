@@ -69,8 +69,8 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 
     pub stats: Stats,
 
-    /// This controlls how often 'age' is incremented.
-    /// Additionally controlls how often the in-mem index runs its flush/evict loop.
+    /// This controls how often 'age' is incremented.
+    /// Additionally controls how often the in-mem index runs its flush/evict loop.
     age_ms: u64,
     age_timer: AtomicInterval,
 
