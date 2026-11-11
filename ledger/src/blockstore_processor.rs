@@ -45,7 +45,7 @@ use {
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::{Bank, BankId, NewBankOptions},
+        bank::{Bank, BankId},
         bank_forks::BankForks,
         block_component_processor::BlockComponentProcessorError,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -64,7 +64,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         cmp,
         collections::{HashMap, HashSet},
@@ -297,9 +297,6 @@ pub enum BlockstoreProcessorError {
 
     #[error("root bank with mismatched capitalization at {0}")]
     RootBankWithMismatchedCapitalization(Slot),
-
-    #[error("user transactions found in vote only mode bank at slot {0}")]
-    UserTransactionsInVoteOnlyBank(Slot),
 
     #[error("invalid parent -> child chained merkle root at slot {0} parent {1}")]
     ChainedBlockIdFailure(Slot, Slot),
@@ -1651,32 +1648,14 @@ fn confirm_slot_entries(
         }
     };
     let mut replay_timer = Measure::start("replay_elapsed");
-    let is_vote_only_bank = bank.vote_only_bank();
     let replay_entries =
         entries
             .into_iter()
             .zip(entry_tx_starting_indexes)
-            .map(|(entry, tx_starting_index)| {
-                if !is_vote_only_bank {
-                    return Ok(ReplayEntry {
-                        entry,
-                        starting_index: tx_starting_index,
-                    });
-                }
-
-                // If bank is in vote-only mode, validate that entries contain only vote transactions
-                if let EntryType::Transactions(ref transactions) = entry
-                    && transactions
-                        .iter()
-                        .any(|tx| !is_valid_vote_only_transaction(tx))
-                {
-                    return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
-                        bank.slot(),
-                    ));
-                }
+            .map(|(entry, starting_index)| {
                 Ok(ReplayEntry {
                     entry,
-                    starting_index: tx_starting_index,
+                    starting_index,
                 })
             });
 
@@ -1935,15 +1914,12 @@ fn process_next_slots(
                 }
             }
 
-            let next_bank = Bank::new_from_parent_with_options(
+            let next_bank = Bank::new_from_parent(
                 bank.clone(),
                 leader_schedule_cache
                     .slot_leader_at(*next_slot, Some(bank))
                     .unwrap(),
                 *next_slot,
-                NewBankOptions {
-                    vote_only_bank: migration_status.should_bank_be_vote_only(*next_slot),
-                },
             );
             set_alpenglow_ticks(&next_bank, migration_status);
             trace!(
@@ -2558,10 +2534,7 @@ pub mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::bank_hash_details::SlotDetails,
-            genesis_utils::{
-                self, ValidatorVoteKeypairs, create_genesis_config_with_tower_leader,
-                create_genesis_config_with_tower_vote_accounts,
-            },
+            genesis_utils::create_genesis_config_with_tower_leader,
             installed_scheduler_pool::{
                 InstalledSchedulerPool, MockInstalledScheduler, MockUninstalledScheduler,
                 SchedulerAborted, SchedulingContext,
@@ -2575,15 +2548,15 @@ pub mod tests {
         solana_transaction::{Transaction, sanitized::MessageHash},
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_pool::DefaultSchedulerPool,
-        solana_vote::{vote_account::VoteAccount, vote_transaction},
+        solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
             self,
-            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
+            vote_state::{VoteStateV4, VoteStateVersions},
         },
         std::{
             assert_matches,
             collections::BTreeSet,
-            sync::{Arc, Barrier, Mutex, RwLock, atomic::Ordering},
+            sync::{Arc, Barrier, Mutex, RwLock},
             thread,
         },
         test_case::test_case,
@@ -2621,20 +2594,16 @@ pub mod tests {
     }
 
     #[test]
-    fn test_startup_replay_enable_waits_for_poh_service_when_started() {
+    fn test_startup_replay_enable_notifies_migration_waiters() {
         let genesis_block = Block {
             slot: 1,
             block_id: BlockId::new_unique(),
         };
         let migration_status = Arc::new(ready_to_enable_migration_status(genesis_block));
-        let poh_service = {
+        let waiter = {
             let migration_status = Arc::clone(&migration_status);
-            migration_status.set_poh_service_started();
             thread::spawn(move || {
-                while !migration_status.shutdown_poh.load(Ordering::Acquire) {
-                    thread::yield_now();
-                }
-                migration_status.poh_service_is_shutting_down();
+                migration_status.wait_for_migration_or_exit(&AtomicBool::new(false))
             })
         };
 
@@ -2642,13 +2611,8 @@ pub mod tests {
             migration_status.enable_alpenglow_during_startup(),
             genesis_block.slot
         );
-        poh_service.join().unwrap();
-
+        assert_eq!(waiter.join().unwrap(), Some(genesis_block));
         assert!(migration_status.is_alpenglow_enabled());
-        assert_eq!(
-            migration_status.wait_for_migration_or_exit(&AtomicBool::new(false)),
-            Some(genesis_block)
-        );
     }
 
     fn test_process_blockstore(
@@ -2806,7 +2770,7 @@ pub mod tests {
         let replacement_bank = Bank::new_from_parent(root_bank, SlotLeader::default(), slot);
         replacement_bank.store_account(
             &replacement_key,
-            &AccountSharedData::new(1, 0, &Pubkey::new_unique()),
+            &AccountSharedData::empty(1, &Pubkey::new_unique()),
         );
         assert_eq!(replacement_bank.get_balance(&replacement_key), 1);
         let replacement_bank = bank_forks.write().unwrap().insert(replacement_bank);
@@ -3887,8 +3851,7 @@ pub mod tests {
                     .unwrap()
                     .last_blockhash
             );
-            // Though bankhash is not affected, bank_details should be different.
-            assert_ne!(ok_bank_details, bank_details);
+            assert_eq!(ok_bank_details, bank_details);
             // Different types of transaction failure should not affect bank hash
             if let Some(prev_bank_details) = &err_bank_details {
                 assert_eq!(
@@ -4677,225 +4640,6 @@ pub mod tests {
                 assert!(parent_bank.is_frozen());
             }
         }
-    }
-
-    fn make_slot_with_vote_tx(
-        blockstore: &Blockstore,
-        ticks_per_slot: u64,
-        tx_landed_slot: Slot,
-        parent_slot: Slot,
-        parent_blockhash: &Hash,
-        vote_tx: Transaction,
-        slot_leader_keypair: &Arc<Keypair>,
-    ) {
-        // Add votes to `last_slot` so that `root` will be confirmed
-        let vote_entry = next_entry(parent_blockhash, 1, vec![vote_tx]);
-        let mut entries = create_ticks(ticks_per_slot, 0, vote_entry.hash);
-        entries.insert(0, vote_entry);
-        blockstore
-            .write_entries(
-                tx_landed_slot,
-                0,
-                0,
-                ticks_per_slot,
-                Some(parent_slot),
-                true,
-                slot_leader_keypair,
-                entries,
-                0,
-            )
-            .unwrap();
-    }
-
-    fn run_test_process_blockstore_with_supermajority_root(
-        blockstore_root: Option<Slot>,
-        blockstore_access_type: AccessType,
-    ) {
-        agave_logger::setup();
-        /*
-            Build fork structure:
-                 slot 0
-                   |
-                 slot 1 <- (blockstore root)
-                 /    \
-            slot 2    |
-               |      |
-            slot 4    |
-                    slot 5
-                      |
-                `expected_root_slot`
-                     /    \
-                  ...    minor fork
-                  /
-            `last_slot`
-                 |
-            `really_last_slot`
-        */
-        let starting_fork_slot = 5;
-        let mut main_fork = tr(starting_fork_slot);
-        let mut main_fork_ref = main_fork.root_mut().get_mut();
-
-        // Make enough slots to make a root slot > blockstore_root
-        let expected_root_slot = starting_fork_slot + blockstore_root.unwrap_or(0);
-        let really_expected_root_slot = expected_root_slot + 1;
-        let last_main_fork_slot = expected_root_slot + MAX_LOCKOUT_HISTORY as u64 + 1;
-        let really_last_main_fork_slot = last_main_fork_slot + 1;
-
-        // Make `minor_fork`
-        let last_minor_fork_slot = really_last_main_fork_slot + 1;
-        let minor_fork = tr(last_minor_fork_slot);
-
-        // Make 'main_fork`
-        for slot in starting_fork_slot + 1..last_main_fork_slot {
-            if slot - 1 == expected_root_slot {
-                main_fork_ref.push_front(minor_fork.clone());
-            }
-            main_fork_ref.push_front(tr(slot));
-            main_fork_ref = main_fork_ref.front_mut().unwrap().get_mut();
-        }
-        let forks = tr(0) / (tr(1) / (tr(2) / (tr(4))) / main_fork);
-        let validator_keypairs = ValidatorVoteKeypairs::new_rand();
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_vote_accounts(
-                10_000,
-                &[&validator_keypairs],
-                vec![100],
-            );
-        let ticks_per_slot = genesis_config.ticks_per_slot();
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        blockstore.add_tree(forks, false, true, ticks_per_slot, genesis_config.hash());
-
-        if let Some(blockstore_root) = blockstore_root {
-            blockstore
-                .set_roots(std::iter::once(&blockstore_root))
-                .unwrap();
-        }
-
-        let opts = ProcessOptions {
-            run_verification: true,
-            ..ProcessOptions::default()
-        };
-
-        let (bank_forks, ..) = test_process_blockstore_with_custom_options(
-            &genesis_config,
-            &blockstore,
-            &opts,
-            blockstore_access_type.clone(),
-        );
-        let bank_forks = bank_forks.read().unwrap();
-
-        // prepare to add votes
-        let last_vote_bank_hash = bank_forks.get(last_main_fork_slot - 1).unwrap().hash();
-        let last_vote_blockhash = bank_forks
-            .get(last_main_fork_slot - 1)
-            .unwrap()
-            .last_blockhash();
-        let tower_sync = TowerSync::new_from_slot(last_main_fork_slot - 1, last_vote_bank_hash);
-        let vote_tx = vote_transaction::new_tower_sync_transaction(
-            tower_sync,
-            last_vote_blockhash,
-            &validator_keypairs.node_keypair,
-            &validator_keypairs.vote_keypair,
-            &validator_keypairs.vote_keypair,
-            None,
-        );
-
-        // Add votes to `last_slot` so that `root` will be confirmed
-        let leader_keypair = Arc::new(validator_keypairs.node_keypair);
-        make_slot_with_vote_tx(
-            &blockstore,
-            ticks_per_slot,
-            last_main_fork_slot,
-            last_main_fork_slot - 1,
-            &last_vote_blockhash,
-            vote_tx,
-            &leader_keypair,
-        );
-
-        let (bank_forks, ..) = test_process_blockstore_with_custom_options(
-            &genesis_config,
-            &blockstore,
-            &opts,
-            blockstore_access_type.clone(),
-        );
-        let bank_forks = bank_forks.read().unwrap();
-
-        assert_eq!(bank_forks.root(), expected_root_slot);
-        assert_eq!(
-            bank_forks.frozen_banks().count() as u64,
-            last_minor_fork_slot - really_expected_root_slot + 1
-        );
-
-        // Minor fork at `last_main_fork_slot + 1` was above the `expected_root_slot`
-        // so should not have been purged
-        //
-        // Fork at slot 2 was purged because it was below the `expected_root_slot`
-        for slot in 0..=last_minor_fork_slot {
-            // this slot will be created below
-            if slot == really_last_main_fork_slot {
-                continue;
-            }
-            if slot >= expected_root_slot {
-                let bank = bank_forks.get(slot).unwrap();
-                assert_eq!(bank.slot(), slot);
-                assert!(bank.is_frozen());
-            } else {
-                assert!(bank_forks.get(slot).is_none());
-            }
-        }
-
-        // really prepare to add votes
-        let last_vote_bank_hash = bank_forks.get(last_main_fork_slot).unwrap().hash();
-        let last_vote_blockhash = bank_forks
-            .get(last_main_fork_slot)
-            .unwrap()
-            .last_blockhash();
-        let tower_sync = TowerSync::new_from_slot(last_main_fork_slot, last_vote_bank_hash);
-        let vote_tx = vote_transaction::new_tower_sync_transaction(
-            tower_sync,
-            last_vote_blockhash,
-            &leader_keypair,
-            &validator_keypairs.vote_keypair,
-            &validator_keypairs.vote_keypair,
-            None,
-        );
-
-        // Add votes to `really_last_slot` so that `root` will be confirmed again
-        make_slot_with_vote_tx(
-            &blockstore,
-            ticks_per_slot,
-            really_last_main_fork_slot,
-            last_main_fork_slot,
-            &last_vote_blockhash,
-            vote_tx,
-            &leader_keypair,
-        );
-
-        let (bank_forks, ..) = test_process_blockstore_with_custom_options(
-            &genesis_config,
-            &blockstore,
-            &opts,
-            blockstore_access_type,
-        );
-        let bank_forks = bank_forks.read().unwrap();
-
-        assert_eq!(bank_forks.root(), really_expected_root_slot);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_without_blockstore_root() {
-        run_test_process_blockstore_with_supermajority_root(None, AccessType::Primary);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_without_blockstore_root_readonly_access() {
-        run_test_process_blockstore_with_supermajority_root(None, AccessType::ReadOnly);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_with_blockstore_root() {
-        run_test_process_blockstore_with_supermajority_root(Some(1), AccessType::Primary)
     }
 
     #[test]
@@ -6035,7 +5779,7 @@ pub mod tests {
             1,
         ));
         first_alpenglow_bank
-            .store_account(&first_alpenglow_key, &AccountSharedData::new(1, 0, &owner));
+            .store_account(&first_alpenglow_key, &AccountSharedData::empty(1, &owner));
         assert!(
             first_alpenglow_bank
                 .get_account(&first_alpenglow_key)
@@ -6045,7 +5789,7 @@ pub mod tests {
             BankWithScheduler::new_without_scheduler(first_alpenglow_bank.clone());
 
         let pending_bank = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 2);
-        pending_bank.store_account(&pending_key, &AccountSharedData::new(1, 0, &owner));
+        pending_bank.store_account(&pending_key, &AccountSharedData::empty(1, &owner));
         assert!(pending_bank.get_account(&pending_key).is_some());
 
         let pending_meta = blockstore.meta(2).unwrap().unwrap();
@@ -6135,139 +5879,6 @@ pub mod tests {
 
         purge_responder.join().unwrap();
         assert!(pending_slots.is_empty());
-    }
-
-    #[test]
-    fn test_process_next_slots_sets_vote_only_bank_during_migration() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
-
-        let migration_status = MigrationStatus::default();
-        let migration_slot = migration_status.record_feature_activation(0);
-        let pre_migration_slot = migration_slot.checked_sub(1).unwrap();
-        let child_slots = [pre_migration_slot, migration_slot, migration_slot + 1];
-
-        let mut parent_meta = SlotMeta::new(0, None);
-        parent_meta.next_slots = child_slots.as_slice().into();
-        for slot in child_slots {
-            let mut meta = SlotMeta::new(slot, Some(0));
-            meta.consumed = 1;
-            meta.received = 1;
-            meta.last_index = Some(0);
-            blockstore.put_meta(slot, &meta).unwrap();
-        }
-
-        let mut pending_slots = Vec::new();
-        process_next_slots(
-            &bank0,
-            &parent_meta,
-            &blockstore,
-            &leader_schedule_cache,
-            &mut pending_slots,
-            &ProcessOptions::default(),
-            None,
-            &migration_status,
-        )
-        .unwrap();
-
-        pending_slots.sort_by_key(|(_, bank, _)| bank.slot());
-        assert_eq!(
-            pending_slots
-                .iter()
-                .map(|(_, bank, _)| (bank.slot(), bank.vote_only_bank()))
-                .collect::<Vec<_>>(),
-            vec![
-                (pre_migration_slot, false),
-                (migration_slot, true),
-                (migration_slot + 1, true),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_startup_replay_rejects_user_transactions_in_vote_only_bank() {
-        let GenesisConfigInfo {
-            mut genesis_config,
-            mint_keypair,
-            ..
-        } = create_tower_genesis_config(10_000);
-        let ticks_per_slot = 1;
-        genesis_config.ticks_per_slot = ticks_per_slot;
-        genesis_utils::activate_feature(&mut genesis_config, agave_feature_set::alpenglow::id());
-
-        let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
-        let migration_status = bank_forks.read().unwrap().migration_status();
-        let migration_slot = migration_status.migration_slot().unwrap();
-
-        let user_entry = next_entry(
-            &blockhash,
-            1,
-            vec![system_transaction::transfer(
-                &mint_keypair,
-                &Pubkey::new_unique(),
-                1,
-                blockhash,
-            )],
-        );
-        let tick_entries = create_ticks(migration_slot * ticks_per_slot, 0, user_entry.hash);
-        blockstore
-            .write_entries(
-                migration_slot,
-                0,
-                0,
-                ticks_per_slot,
-                Some(0),
-                true,
-                &Arc::new(Keypair::new()),
-                std::iter::once(user_entry).chain(tick_entries).collect(),
-                0,
-            )
-            .unwrap();
-
-        let opts = ProcessOptions {
-            run_verification: true,
-            // Surface the per-fork error instead of continuing past the dead slot.
-            abort_on_invalid_block: true,
-            ..ProcessOptions::default()
-        };
-        let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
-        let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(NonZeroUsize::MIN);
-        process_bank_0(
-            &bank0,
-            compute_shred_version(&genesis_config.hash(), None),
-            &blockstore,
-            &replay_verification_worker_pool,
-            &opts,
-            None,
-            None,
-            &migration_status,
-        )
-        .unwrap();
-        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank0);
-
-        assert_matches!(
-            process_blockstore_from_root(
-                &blockstore,
-                &bank_forks,
-                compute_shred_version(&genesis_config.hash(), None),
-                &leader_schedule_cache,
-                &opts,
-                None,
-                None,
-                None,
-            ),
-            Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(slot))
-                if slot == migration_slot
-        );
-        assert!(blockstore.is_dead(migration_slot));
-        assert_eq!(frozen_bank_slots(&bank_forks.read().unwrap()), vec![0]);
     }
 
     #[test]

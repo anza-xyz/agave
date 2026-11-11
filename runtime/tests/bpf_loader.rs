@@ -207,9 +207,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
     bank.store_account(
         &payer_keypair.pubkey(),
-        &AccountSharedData::new(
+        &AccountSharedData::empty(
             payer_base_balance.saturating_add(min_payer_balance),
-            0,
             &system_program::id(),
         ),
     );
@@ -369,9 +368,8 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
         .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
     bank.store_account(
         &payer_keypair.pubkey(),
-        &AccountSharedData::new(
+        &AccountSharedData::empty(
             payer_base_balance.saturating_add(min_payer_balance),
-            0,
             &system_program::id(),
         ),
     );

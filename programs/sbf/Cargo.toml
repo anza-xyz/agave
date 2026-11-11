@@ -135,7 +135,7 @@ solana-instructions-sysvar = "=5.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-msg = "=3.1.0"
 solana-poseidon = "=5.0.1"
-solana-program = "=5.1.0"
+solana-program = "=5.2.0"
 solana-program-binaries = { path = "../../program-binaries", version = "=5.0.0-alpha.0" }
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.1"
@@ -168,7 +168,7 @@ solana-test-validator = { path = "../../test-validator", version = "=5.0.0-alpha
 solana-vote = { path = "../../vote", version = "=5.0.0-alpha.0" }
 solana-vote-interface = "7.3.0"
 solana-vote-program = { path = "../../programs/vote", version = "=5.0.0-alpha.0" }
-test-case = "3.4.0"
+test-case = "3.4.1"
 thiserror = "2.0"
 wincode = { version = "0.6.3", default-features = false }
 
@@ -187,9 +187,9 @@ agave-logger = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 borsh = { workspace = true }
-solana-account = { version = "5.1.1", features = ["wincode"] }
+solana-account = { version = "5.4.0", features = ["wincode"] }
 solana-account-info = "3.1.0"
-solana-client-traits = "6.0.0"
+solana-client-traits = "6.0.1"
 solana-clock = { workspace = true }
 solana-cluster-type = "3.0.0"
 solana-compute-budget = { workspace = true }
@@ -199,7 +199,7 @@ solana-fee = { workspace = true }
 solana-fee-calculator = "3.2.0"
 solana-fee-structure = "4.0.0"
 solana-hash = "4.3.0"
-solana-instruction = { workspace = true }
+solana-instruction = { workspace = true, features = ["wincode"] }
 solana-instruction-error = "3.1.0"
 solana-keypair = "4.0.0"
 solana-loader-v3-interface = { version = "9.0.0", features = ["wincode"] }

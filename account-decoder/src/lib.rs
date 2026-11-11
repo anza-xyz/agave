@@ -12,7 +12,6 @@ pub mod parse_sysvar;
 pub mod parse_token;
 pub mod parse_token_extension;
 pub mod parse_vote;
-pub mod validator_info;
 
 pub use solana_account_decoder_client_types::{
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,

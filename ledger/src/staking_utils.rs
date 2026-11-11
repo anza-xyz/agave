@@ -25,7 +25,6 @@ pub(crate) mod tests {
                 create_bls_proof_of_possession,
             },
         },
-        std::sync::Arc,
     };
 
     pub(crate) fn setup_vote_and_stake_accounts(
@@ -106,12 +105,10 @@ pub(crate) mod tests {
             StakeFlags::default(),
         );
 
-        let account = AccountSharedData::create_from_existing_shared_data(
+        let account = AccountSharedData::new_with_data(
             1,
-            Arc::new(wincode::serialize(&stake_account).unwrap()),
-            stake_program::id(),
-            false,
-            u64::MAX,
+            wincode::serialize(&stake_account).unwrap(),
+            &stake_program::id(),
         );
 
         bank.store_account(&stake_account_pubkey, &account);

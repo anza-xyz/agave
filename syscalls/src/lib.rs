@@ -29,12 +29,12 @@ use {
         invoke_context::InvokeContext,
         memory::{MemoryTranslationError, translate_vm_slice},
         program_cache::env::ProgramRuntimeEnvironment,
-        stable_log, translate_inner, translate_slice_inner, translate_type_inner,
+        stable_log, translate_slice_inner, translate_type_inner,
     },
     solana_pubkey::{MAX_SEED_LEN, MAX_SEEDS, PUBKEY_BYTES, Pubkey, PubkeyError},
     solana_sbpf::{
         ebpf,
-        memory_region::{AccessType, MemoryMapping},
+        memory_region::{AccessType, MemoryMapping, map_with_access_violation_handler},
         program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
         vm::Config,
     },
@@ -591,15 +591,15 @@ fn translate_slice_mut<T>(
 }
 
 fn touch_type_mut<T>(invoke_context: &mut InvokeContext, vm_addr: u64) -> Result<(), Error> {
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-    translate_inner!(
-        memory_mapping,
-        map_with_access_violation_handler,
+    map_with_access_violation_handler(
+        invoke_context,
         AccessType::Store,
         vm_addr,
         size_of::<T>() as u64,
     )
+    .map_err(|err| err.into())
     .map(|_| ())
+    .into()
 }
 fn touch_slice_mut<T>(
     invoke_context: &mut InvokeContext,
@@ -609,15 +609,15 @@ fn touch_slice_mut<T>(
     if element_count == 0 {
         return Ok(());
     }
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
-    translate_inner!(
-        memory_mapping,
-        map_with_access_violation_handler,
+    map_with_access_violation_handler(
+        invoke_context,
         AccessType::Store,
         vm_addr,
         element_count.saturating_mul(size_of::<T>() as u64),
     )
+    .map_err(|err| err.into())
     .map(|_| ())
+    .into()
 }
 
 // No other translated references can be live when calling this.
@@ -2847,7 +2847,7 @@ mod tests {
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext},
             memory_context::MemoryContext,
-            with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
+            translate_inner, with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             aligned_memory::AlignedMemory,
@@ -2906,9 +2906,9 @@ mod tests {
             let transaction_accounts = vec![
                 (
                     $loader_key,
-                    AccountSharedData::new(0, 0, &native_loader::id()),
+                    AccountSharedData::empty(0, &native_loader::id()),
                 ),
-                ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
+                ($program_key, AccountSharedData::empty(0, &$loader_key)),
             ];
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
@@ -2928,9 +2928,9 @@ mod tests {
             let transaction_accounts = vec![
                 (
                     $loader_key,
-                    AccountSharedData::new(0, 0, &native_loader::id()),
+                    AccountSharedData::empty(0, &native_loader::id()),
                 ),
-                ($program_key, AccountSharedData::new(0, 0, &$loader_key)),
+                ($program_key, AccountSharedData::empty(0, &$loader_key)),
             ];
             with_mock_invoke_context_with_feature_set!(
                 $invoke_context,
@@ -5162,7 +5162,7 @@ mod tests {
             .map(|_| {
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0, &bpf_loader::id()),
+                    AccountSharedData::empty(0, &bpf_loader::id()),
                 )
             })
             .collect::<Vec<_>>();
@@ -5382,7 +5382,7 @@ mod tests {
             .map(|_| {
                 (
                     Pubkey::new_unique(),
-                    AccountSharedData::new(0, 0, &bpf_loader::id()),
+                    AccountSharedData::empty(0, &bpf_loader::id()),
                 )
             })
             .collect::<Vec<_>>();
@@ -6344,7 +6344,6 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -6406,7 +6405,6 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,

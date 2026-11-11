@@ -7,6 +7,12 @@ use {
 };
 
 impl AccountsDb {
+    pub fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+        if let Some(notifier) = &self.accounts_update_notifier {
+            notifier.notify_bank_creation(slot, parent, bank_id);
+        }
+    }
+
     pub fn notify_account_at_accounts_update(
         &self,
         slot: Slot,
@@ -59,9 +65,14 @@ mod tests {
     struct GeyserTestPlugin {
         pub accounts_notified: DashMap<Pubkey, Vec<(Slot, u64, AccountSharedData)>>,
         pub is_startup_done: AtomicBool,
+        pub banks_notified: DashMap<BankId, (Slot, Option<Slot>)>,
     }
 
     impl AccountsUpdateNotifierInterface for GeyserTestPlugin {
+        fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
+            self.banks_notified.insert(bank_id, (slot, parent));
+        }
+
         fn snapshot_notifications_enabled(&self) -> bool {
             true
         }
@@ -107,7 +118,7 @@ mod tests {
         let mut accounts_db = AccountsDb::default_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
-        let account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(1, &Pubkey::default());
 
         // Account with key1 is updated twice in two different slots, should get notified twice
         // Need to add root and flush write cache for each slot to ensure accounts are written
@@ -174,6 +185,24 @@ mod tests {
 
         // Ensure we were notified that startup is done
         assert!(notifier.is_startup_done.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_notify_bank_creation() {
+        let mut accounts_db = AccountsDb::default_for_tests();
+        accounts_db.notify_bank_creation(42, None, BankId::new(100));
+        let notifier = Arc::new(GeyserTestPlugin::default());
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        for (id, parent) in [(100, None), (101, Some(40))] {
+            accounts_db.notify_bank_creation(42, parent, BankId::new(id));
+            assert_eq!(
+                *notifier.banks_notified.get(&BankId::new(id)).unwrap(),
+                (42, parent)
+            );
+        }
+        assert_eq!(notifier.banks_notified.len(), 2);
+        assert!(notifier.accounts_notified.is_empty());
+        assert!(!notifier.is_startup_done.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -280,8 +309,8 @@ mod tests {
 
         let address = solana_pubkey::new_rand();
         let owner = solana_pubkey::new_rand();
-        let account_open = AccountSharedData::new(/*lamports*/ 123, 0, &owner);
-        let account_close = AccountSharedData::new(/*lamports*/ 0, 0, &owner);
+        let account_open = AccountSharedData::empty(/*lamports*/ 123, &owner);
+        let account_close = AccountSharedData::empty(/*lamports*/ 0, &owner);
 
         let slot_open = 6;
         let slot_close = slot_open + 1;

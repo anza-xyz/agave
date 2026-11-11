@@ -155,8 +155,7 @@ pub struct BlockCreationLoopConfig {
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
 
-    // Channel to receive RecordReceiver from PohService
-    pub record_receiver_receiver: Receiver<RecordReceiver>,
+    pub record_receiver: RecordReceiver,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
 
     /// Sender for packets to banking stage (used to re-inject transactions after sad leader handover).
@@ -267,7 +266,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         slot_status_notifier,
         entry_notification_sender,
         transaction_status_sender,
-        record_receiver_receiver,
+        record_receiver,
         leader_window_info_receiver,
         replay_highest_frozen,
         highest_parent_ready,
@@ -285,17 +284,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
     let mut my_pubkey = cluster_info.id();
 
     info!("{my_pubkey}: Block creation loop initialized");
-
-    // Wait for PohService to be shutdown
-    let record_receiver = match record_receiver_receiver.recv() {
-        Ok(receiver) => receiver,
-        Err(e) => {
-            info!("{my_pubkey}: Failed to receive RecordReceiver from PohService. Exiting: {e:?}",);
-            return;
-        }
-    };
-
-    info!("{my_pubkey}: PohService has shutdown, BlockCreationLoop is enabled");
 
     let mut ctx = LeaderContext {
         exit,
@@ -322,13 +310,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         highest_finalized,
     };
 
-    // Setup poh
-    // Important this is called *before* any new alpenglow
-    // leaders call `set_bank()`, otherwise, the old PoH
-    // tick producer will still tick in that alpenglow bank
-    // Since we received the `record_receiver` from PohService, we know that PohService has shutdown
-    // AND that replay no longer touches poh recorder. At this point BlockCreationLoop is the sole
-    // modifier of poh_recorder
+    // Configure PoH before any Alpenglow leader calls `set_bank()`. At this point,
+    // BlockCreationLoop is the sole modifier of poh_recorder.
     {
         let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
         w_poh_recorder.enable_alpenglow();
@@ -345,6 +328,8 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
             warn!(
                 "Identity changed from {my_old_pubkey} to {my_pubkey} during block creation loop"
             );
+
+            refresh_next_leader_slot(&ctx);
         }
 
         // Wait for the first window notification, then drain both sources and pick the newest
@@ -444,6 +429,40 @@ fn reset_poh_recorder(bank: &Arc<Bank>, ctx: &LeaderContext) {
         .write()
         .unwrap()
         .reset(bank.clone(), next_leader_slot);
+}
+
+fn refresh_next_leader_slot(ctx: &LeaderContext) {
+    let schedule_bank = ctx.bank_forks.read().unwrap().root_bank();
+
+    // next_leader_slot() searches strictly after this slot. Keep the latest
+    // observed window eligible unless it has already expired.
+    let search_after_slot = ctx
+        .alpenglow_slot_clock
+        .load()
+        .map_or(schedule_bank.slot(), |clock| {
+            let window_end = last_of_consecutive_leader_slots(clock.slot);
+            let remaining_slots = window_end - clock.slot + 1;
+            let window_duration = clock.slot_duration.saturating_mul(remaining_slots as u32);
+            if clock.started_at.elapsed() >= window_duration {
+                window_end
+            } else {
+                clock.slot.saturating_sub(1)
+            }
+        })
+        .max(schedule_bank.slot());
+
+    let next_leader_slot = ctx.leader_schedule_cache.next_leader_slot(
+        &ctx.my_pubkey,
+        search_after_slot,
+        &schedule_bank,
+        Some(ctx.blockstore.as_ref()),
+        GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
+    );
+
+    ctx.poh_recorder
+        .write()
+        .unwrap()
+        .update_next_leader_slot(next_leader_slot);
 }
 
 /// Returns the elapsed leader-window time at which `slot` must be completed.
@@ -643,11 +662,9 @@ fn produce_intra_window_slot(
 
 /// Asks the rewards service to build the reward certs for `slot`'s footer.
 ///
-/// Call this before waiting for the parent. That wait can use up most of the slot's budget, and
-/// the footer doesn't wait for the reply, so requesting afterwards can leave the rewards service
-/// no time to answer.
+/// Call this before waiting for the parent to parallelize waiting for parent with building certs.
 fn request_reward_certs(
-    ctx: &mut LeaderContext,
+    ctx: &LeaderContext,
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
 ) -> Result<Option<RewardRequestToken>, StartLeaderError> {
@@ -661,7 +678,7 @@ fn produce_slot(
     slot_metrics: &mut SlotMetrics,
     slot: Slot,
     optimistic_parent: Option<Block>,
-    reward_cert_request: Option<RewardRequestToken>,
+    reward_cert_token: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     working_bank: Arc<Bank>,
 ) -> Result<(), StartLeaderError> {
@@ -678,7 +695,7 @@ fn produce_slot(
         slot_metrics,
         slot,
         optimistic_parent,
-        reward_cert_request,
+        reward_cert_token,
         block_timer,
         timeout,
     ) {
@@ -750,7 +767,7 @@ fn record_and_complete_block(
     slot_metrics: &mut SlotMetrics,
     bank_slot: Slot,
     mut optimistic_parent: Option<Block>,
-    reward_cert_request: Option<RewardRequestToken>,
+    reward_cert_token: Option<RewardRequestToken>,
     block_timer: &mut Instant,
     block_timeout: Duration,
 ) -> Result<(), PohRecorderError> {
@@ -852,6 +869,20 @@ fn record_and_complete_block(
         "optimistic_parent should be None after receiving ParentReady"
     );
 
+    // This call can do a blocking receive so do it before grabing the locks below.
+    let reward_resp = ctx
+        .reward_certs_requestor
+        .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_token)
+        .map_err(|()| PohRecorderError::ChannelDisconnected)?;
+
+    // after a blocking call, ensure that the window has not moved on.
+    let window_moved_on = ctx.highest_parent_ready.read().unwrap().0 > bank_slot;
+    if window_moved_on {
+        abort_working_bank(ctx, bank_slot)
+            .map_err(|_| PohRecorderError::ResetBankError(bank_slot, bank_slot))?;
+        return Err(PohRecorderError::WindowMovedOn(bank_slot));
+    }
+
     // Alpentick, produce the footer, and clear bank
     let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
     let bank = w_poh_recorder
@@ -878,17 +909,18 @@ fn record_and_complete_block(
     bank.set_tick_height(max_tick_height - 1);
 
     let footer = {
-        let reward_certs = ctx
-            .reward_certs_requestor
-            .recv_reward_certs(slot_metrics, ctx.my_pubkey, reward_cert_request)
-            .map_err(|()| PohRecorderError::ChannelDisconnected)?;
-        let RewardRespSucc {
-            skip,
-            notar,
-            validators,
-        } = reward_certs;
-        let reward_cert =
-            ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?;
+        let (reward_cert, skip, notar) = match reward_resp {
+            Some(RewardRespSucc {
+                skip,
+                notar,
+                validators,
+            }) => (
+                ValidatedRewardCert::try_new_for_leader(&bank, &skip, &notar, validators)?,
+                skip,
+                notar,
+            ),
+            None => (None, None, None),
+        };
         let guard = ctx.highest_finalized.read().unwrap();
         let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
@@ -1729,6 +1761,34 @@ mod tests {
 
         // After refreshing the identity, a later window can still start a bank.
         ctx.my_pubkey = new_identity;
+        ctx.alpenglow_slot_clock
+            .update(4, Instant::now(), Duration::from_millis(400));
+        refresh_next_leader_slot(&ctx);
+        assert_eq!(
+            ctx.poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .next_leader_slot_range(),
+            Some((4, 7))
+        );
+        ctx.alpenglow_slot_clock.update_leader(
+            4,
+            Instant::now() - Duration::from_secs(2),
+            Duration::from_millis(400),
+        );
+        refresh_next_leader_slot(&ctx);
+        assert_eq!(
+            ctx.poh_recorder
+                .read()
+                .unwrap()
+                .shared_leader_state()
+                .load()
+                .next_leader_slot_range(),
+            Some((8, 11))
+        );
+
         let bank = start_leader_wait_for_parent_replay(
             &mut ctx,
             &mut SlotMetrics::new(4, false),
@@ -2093,13 +2153,15 @@ mod tests {
             ))
             .unwrap();
 
+        let mut slot_metrics = SlotMetrics::new(1, true);
+        let reward_cert_request = request_reward_certs(&ctx, &mut slot_metrics, 1).unwrap();
         let start = Instant::now();
         let result = record_and_complete_block(
             &mut ctx,
-            &mut SlotMetrics::new(1, true),
+            &mut slot_metrics,
             1,
             None,
-            None,
+            reward_cert_request,
             &mut Instant::now(),
             Duration::ZERO,
         );

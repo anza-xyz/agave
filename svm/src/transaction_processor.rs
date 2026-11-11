@@ -183,8 +183,6 @@ pub struct TransactionProcessingEnvironment {
     /// change transaction fees. For this reason, it is recommended to use the
     /// `fee_per_signature` field to adjust transaction fees.
     pub blockhash_lamports_per_signature: u64,
-    /// Whether the alpenglow migration has completed for this bank context.
-    pub alpenglow_migration_succeeded: bool,
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
@@ -200,7 +198,6 @@ pub fn get_mock_transaction_processing_environment() -> TransactionProcessingEnv
     TransactionProcessingEnvironment {
         blockhash: Hash::default(),
         blockhash_lamports_per_signature: 0,
-        alpenglow_migration_succeeded: false,
         epoch_total_stake: 0,
         feature_set: SVMFeatureSet::default(),
         program_runtime_environments: ProgramRuntimeEnvironments::mock(),
@@ -536,7 +533,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &environment.blockhash,
                     environment.blockhash_lamports_per_signature,
                     &environment.rent,
-                    environment.feature_set.relax_post_exec_min_balance_check,
                     config.strict_nonce_size_check,
                     &mut error_metrics,
                 ),
@@ -766,7 +762,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment_blockhash: &Hash,
         next_lamports_per_signature: u64,
         rent: &Rent,
-        relax_post_exec_min_balance_check: bool,
         strict_nonce_size_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionValidationResult {
@@ -807,7 +802,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             nonce_info,
             compute_budget_and_limits,
             rent,
-            relax_post_exec_min_balance_check,
             error_counters,
         );
 
@@ -848,7 +842,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_info: Option<NonceInfo>,
         compute_budget_and_limits: SVMTransactionExecutionAndFeeBudgetLimits,
         rent: &Rent,
-        relax_post_exec_min_balance_check: bool,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let fee_payer_address = message.fee_payer();
@@ -872,7 +865,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             error_counters,
             rent,
             compute_budget_and_limits.fee_details.total_fee(),
-            relax_post_exec_min_balance_check,
         )?;
 
         // Capture fee-subtracted fee payer account and next nonce account state
@@ -1154,14 +1146,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             },
         );
 
-        let relax_post_exec_min_balance_check =
-            environment.feature_set.relax_post_exec_min_balance_check;
-        let pre_account_state_info = TransactionAccountStateInfo::new_pre_exec(
-            &transaction_context,
-            tx,
-            &environment.rent,
-            relax_post_exec_min_balance_check,
-        );
+        let pre_account_state_info =
+            TransactionAccountStateInfo::new_pre_exec(&transaction_context, tx, &environment.rent);
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -1182,7 +1168,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
-                environment.alpenglow_migration_succeeded,
                 callback,
                 &environment.feature_set,
                 &environment.program_runtime_environments,
@@ -1210,7 +1195,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     tx,
                     &pre_account_state_info,
                     &environment.rent,
-                    relax_post_exec_min_balance_check,
                 );
                 verify_changes(
                     &pre_account_state_info,
@@ -1494,7 +1478,7 @@ mod tests {
             rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
-        solana_account::WritableAccount,
+        solana_account::{Account, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
@@ -2595,9 +2579,11 @@ mod tests {
         );
 
         let fee_payer_rent_epoch = current_epoch;
-        let mut fee_payer_account =
-            AccountSharedData::new_with_data(starting_balance, Vec::new(), &Pubkey::default());
-        fee_payer_account.set_rent_epoch(fee_payer_rent_epoch);
+        let fee_payer_account = AccountSharedData::from(Account {
+            lamports: starting_balance,
+            rent_epoch: fee_payer_rent_epoch,
+            ..Account::default()
+        });
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mock_bank = MockBankCallback {
@@ -2623,17 +2609,15 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
 
-        let post_validation_fee_payer_account = {
-            let mut account = fee_payer_account.clone();
-            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-            account.set_lamports(0);
-            account
-        };
+        let post_validation_fee_payer_account = AccountSharedData::from(Account {
+            lamports: 0,
+            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
+            ..Account::from(fee_payer_account.clone())
+        });
 
         assert_eq!(
             result,
@@ -2690,7 +2674,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2710,7 +2693,7 @@ mod tests {
             MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details);
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = AccountSharedData::new(fee_payer_balance, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(fee_payer_balance, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mut mock_bank = MockBankCallback {
@@ -2743,7 +2726,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2766,7 +2748,7 @@ mod tests {
         let rent = Rent::default();
         let min_balance = rent.minimum_balance(0);
         let starting_balance = min_balance + transaction_fee - 1;
-        let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(starting_balance, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mut mock_bank = MockBankCallback {
@@ -2799,7 +2781,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -2818,7 +2799,7 @@ mod tests {
             MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0);
         let fee_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(fee_details);
         let fee_payer_address = message.fee_payer();
-        let fee_payer_account = AccountSharedData::new(fee_payer_balance, 0, &Pubkey::new_unique());
+        let fee_payer_account = AccountSharedData::empty(fee_payer_balance, &Pubkey::new_unique());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account);
         let mut mock_bank = MockBankCallback {
@@ -2851,7 +2832,6 @@ mod tests {
                 &Hash::default(),
                 lamports_per_signature,
                 &Rent::default(),
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
@@ -3047,14 +3027,12 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );
 
             let post_validation_fee_payer_account = {
                 let mut account = fee_payer_account.clone();
-                account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 account.set_lamports(min_balance);
                 account
             };
@@ -3110,7 +3088,6 @@ mod tests {
                 &environment_blockhash,
                 lamports_per_signature,
                 &rent,
-                mock_bank.feature_set.relax_post_exec_min_balance_check,
                 false,
                 &mut error_counters,
             );

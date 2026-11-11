@@ -15,7 +15,6 @@ use {
         transaction_meta::TransactionConfiguration, transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::incinerator,
-    solana_svm::rent_calculator::check_static_account_rent_state_transition,
     solana_system_interface::program as system_program,
     solana_vote::vote_state_view_mut::VoteStateViewMut,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
@@ -62,7 +61,7 @@ impl FeeDistribution {
 }
 
 pub(crate) fn default_system_account() -> AccountSharedData {
-    AccountSharedData::new(0, 0, &system_program::id())
+    AccountSharedData::empty(0, &system_program::id())
 }
 
 fn report_deposit_error(slot: u64, destination: &Pubkey, deposit: u64, err: DepositFeeError) {
@@ -154,7 +153,7 @@ impl Bank {
         // schedule for the current epoch, which *DOES NOT* correspond to
         // `Bank::current_epoch_stakes()`.
         let feature_snapshot = self.feature_set.snapshot();
-        let (collector_id, commission_bps) = if feature_snapshot.custom_commission_collector {
+        let (collector_id, commission_bps) = {
             let vote_account = self
                 .epoch_stakes
                 .get(&self.epoch)
@@ -176,8 +175,6 @@ impl Bank {
                 // For pre-v4 vote states, defaults to the max of 10_000 bps
                 vote_account.vote_state_view().block_revenue_commission(),
             )
-        } else {
-            (&self.leader.id, MAX_BPS)
         };
 
         let (validator_fee, delegator_fee) = if feature_snapshot.block_revenue_sharing {
@@ -250,47 +247,18 @@ impl Bank {
             .get_account_do_not_populate_read_cache(collector_id)
             .unwrap_or_else(default_system_account);
 
-        let feature_snapshot = self.feature_set.snapshot();
-        if feature_snapshot.custom_commission_collector {
-            let pre_lamports = account.lamports();
-            account
-                .checked_add_lamports(fees)
-                .map_err(|_| DepositFeeError::LamportOverflow)?;
-            if collector_id != &self.leader.vote_address {
-                Bank::collector_type_checked(
-                    collector_id,
-                    pre_lamports,
-                    &account,
-                    &self.reserved_account_keys,
-                    &self.rent_collector().rent,
-                    feature_snapshot.relax_post_exec_min_balance_check,
-                )?;
-            }
-        } else {
-            if !system_program::check_id(account.owner()) {
-                return Err(DepositFeeError::InvalidAccountOwner);
-            }
-
-            let pre_balance = account.lamports();
-            let distribution = account.checked_add_lamports(fees);
-            if distribution.is_err() {
-                return Err(DepositFeeError::LamportOverflow);
-            }
-
-            // rent state transition must be checked in case the account receiving the distribution
-            // doesn't exist yet.
-            if check_static_account_rent_state_transition(
-                pre_balance,
-                account.lamports(),
-                account.data().len(),
+        let pre_lamports = account.lamports();
+        account
+            .checked_add_lamports(fees)
+            .map_err(|_| DepositFeeError::LamportOverflow)?;
+        if collector_id != &self.leader.vote_address {
+            Bank::collector_type_checked(
+                collector_id,
+                pre_lamports,
+                &account,
+                &self.reserved_account_keys,
                 &self.rent_collector().rent,
-                0, // account index isn't relevant and only used for error message
-                feature_snapshot.relax_post_exec_min_balance_check,
-            )
-            .is_err()
-            {
-                return Err(DepositFeeError::InvalidRentPayingAccount);
-            }
+            )?;
         }
 
         self.store_account(collector_id, &account);
@@ -341,7 +309,6 @@ impl Bank {
         account: &AccountSharedData,
         reserved_account_keys: &ReservedAccountKeys,
         rent: &Rent,
-        relax_post_execution_balance_checks: bool,
     ) -> Result<ExternalCollectorType, DepositFeeError> {
         if !system_program::check_id(account.owner()) {
             return Err(DepositFeeError::InvalidAccountOwner);
@@ -356,9 +323,7 @@ impl Bank {
         if *collector_id == incinerator::id() {
             Ok(ExternalCollectorType::Incinerator)
         } else {
-            if !rent.is_exempt(account.lamports(), account.data().len())
-                && (!relax_post_execution_balance_checks || pre_lamports == 0)
-            {
+            if !rent.is_exempt(account.lamports(), account.data().len()) && pre_lamports == 0 {
                 Err(DepositFeeError::InvalidRentPayingAccount)
             } else {
                 Ok(ExternalCollectorType::SystemAccount)
@@ -380,7 +345,6 @@ pub mod tests {
         solana_signer::Signer,
         solana_vote_interface::state::{VoteStateV3, VoteStateV4, VoteStateVersions},
         std::sync::{Arc, RwLock},
-        test_case::test_case,
     };
 
     #[test]
@@ -390,9 +354,8 @@ pub mod tests {
         assert_eq!(bank.deposit_or_burn_fee(0), 0);
     }
 
-    #[test_case(true; "custom_commission_collector")]
-    #[test_case(false; "no_custom_commission_collector")]
-    fn test_deposit_or_burn_fee(custom_commission_collector: bool) {
+    #[test]
+    fn test_deposit_or_burn_fee() {
         #[derive(PartialEq)]
         enum Scenario {
             Normal,
@@ -421,15 +384,6 @@ pub mod tests {
             TestCase::new(Scenario::VoteAccount),
             TestCase::new(Scenario::Incinerator),
         ] {
-            if !custom_commission_collector {
-                // Some scenarios don't make sense without a custom collector
-                match test_case.scenario {
-                    Scenario::NonDefault | Scenario::VoteAccount | Scenario::Incinerator => {
-                        continue;
-                    }
-                    Scenario::Normal | Scenario::InvalidOwner | Scenario::RentPayingAccount => {}
-                }
-            }
             let initial_balance = 1000;
             let mut genesis =
                 create_genesis_config_with_leader(0, &pubkey::new_rand(), initial_balance);
@@ -438,37 +392,28 @@ pub mod tests {
             genesis.genesis_config.rent = rent; // Ensure rent is non-zero, as genesis_utils sets Rent::free by default
 
             // update collector id at genesis for some cases
-            let maybe_collector_id = if custom_commission_collector {
-                let mut maybe_collector_id = None;
-                for (address, account) in genesis.genesis_config.accounts.iter_mut() {
-                    if account.owner == solana_sdk_ids::vote::id() {
-                        let mut vote_state =
-                            VoteStateV4::deserialize(account.data(), &Pubkey::default()).unwrap();
-                        let collector_id = match test_case.scenario {
-                            Scenario::Normal => vote_state.block_revenue_collector,
-                            Scenario::InvalidOwner
-                            | Scenario::RentPayingAccount
-                            | Scenario::NonDefault => Pubkey::new_unique(),
-                            Scenario::Incinerator => incinerator::id(),
-                            Scenario::VoteAccount => *address,
-                        };
-                        vote_state.block_revenue_collector = collector_id;
-                        maybe_collector_id = Some(collector_id);
-                        let versioned = VoteStateVersions::V4(Box::new(vote_state));
-                        account.set_state(&versioned).unwrap();
-                    }
+            let mut maybe_collector_id = None;
+            for (address, account) in genesis.genesis_config.accounts.iter_mut() {
+                if account.owner == solana_sdk_ids::vote::id() {
+                    let mut vote_state =
+                        VoteStateV4::deserialize(account.data(), &Pubkey::default()).unwrap();
+                    let collector_id = match test_case.scenario {
+                        Scenario::Normal => vote_state.block_revenue_collector,
+                        Scenario::InvalidOwner
+                        | Scenario::RentPayingAccount
+                        | Scenario::NonDefault => Pubkey::new_unique(),
+                        Scenario::Incinerator => incinerator::id(),
+                        Scenario::VoteAccount => *address,
+                    };
+                    vote_state.block_revenue_collector = collector_id;
+                    maybe_collector_id = Some(collector_id);
+                    let versioned = VoteStateVersions::V4(Box::new(vote_state));
+                    account.set_state(&versioned).unwrap();
                 }
-                maybe_collector_id
-            } else {
-                None
-            };
+            }
 
             let mut bank = Bank::new_for_tests(&genesis.genesis_config);
-            let mut feature_set = FeatureSet::all_enabled();
-            if !custom_commission_collector {
-                feature_set.deactivate(&agave_feature_set::custom_commission_collector::id());
-            }
-            bank.feature_set = Arc::new(feature_set);
+            bank.feature_set = Arc::new(FeatureSet::all_enabled());
 
             let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
 
@@ -485,7 +430,7 @@ pub mod tests {
                 Scenario::InvalidOwner => {
                     // ensure that account owner is invalid and fee distribution will fail
                     let account =
-                        AccountSharedData::new(min_rent_exempt_balance, 0, &Pubkey::new_unique());
+                        AccountSharedData::empty(min_rent_exempt_balance, &Pubkey::new_unique());
                     bank.store_account(&collector_id, &account);
                 }
                 Scenario::VoteAccount => {
@@ -497,7 +442,7 @@ pub mod tests {
                 }
                 Scenario::NonDefault | Scenario::Normal => {
                     let account =
-                        AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
+                        AccountSharedData::empty(min_rent_exempt_balance, &system_program::id());
                     bank.store_account(&collector_id, &account);
                 }
             }
@@ -581,7 +526,7 @@ pub mod tests {
             let mut bank = Bank::new_for_tests(&genesis.genesis_config);
             bank.feature_set = Arc::new(FeatureSet::all_enabled());
 
-            let pre_collector_account = AccountSharedData::new(min_rent_exempt_balance, 0, &system_program::id());
+            let pre_collector_account = AccountSharedData::empty(min_rent_exempt_balance, &system_program::id());
             bank.store_account(&collector_id, &pre_collector_account);
 
             let burn = bank.deposit_or_burn_fee(total_fee);
@@ -650,27 +595,19 @@ pub mod tests {
         );
     }
 
-    #[test_case(true, Ok(()); "allowed")]
-    #[test_case(false, Err(DepositFeeError::InvalidAccountOwner); "prohibited")]
-    fn test_deposit_fees_to_vote_account(
-        custom_commission_collector: bool,
-        expected: Result<(), DepositFeeError>,
-    ) {
+    #[test]
+    fn test_deposit_fees_to_vote_account() {
         let initial_balance = 1000;
         let genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), initial_balance);
         let mut bank = Bank::new_for_tests(&genesis.genesis_config);
-        let mut feature_set = FeatureSet::all_enabled();
-        if !custom_commission_collector {
-            feature_set.deactivate(&agave_feature_set::custom_commission_collector::id());
-        }
-        bank.feature_set = Arc::new(feature_set);
+        bank.feature_set = Arc::new(FeatureSet::all_enabled());
 
         let pubkey = genesis.voting_keypair.pubkey();
         let deposit_amount = 500;
         let pre_lamports = bank.get_balance(&pubkey);
         assert_eq!(
-            expected.map(|_| pre_lamports.saturating_add(deposit_amount)),
-            bank.deposit_fees(&pubkey, deposit_amount)
+            pre_lamports.saturating_add(deposit_amount),
+            bank.deposit_fees(&pubkey, deposit_amount).unwrap()
         );
     }
 
@@ -744,11 +681,8 @@ pub mod tests {
         );
     }
 
-    #[test_case(true; "custom_commission_collector")]
-    #[test_case(false; "no_custom_commission_collector")]
-    fn test_deposit_or_burn_fee_respects_relaxed_post_exec_min_balance_check(
-        custom_commission_collector: bool,
-    ) {
+    #[test]
+    fn test_deposit_or_burn_fee_respects_relaxed_post_exec_min_balance_check() {
         enum CollectorState {
             InitializedToSubRentExemptMinimum,
             UninitializedToSubRentExemptMinimum,
@@ -760,85 +694,66 @@ pub mod tests {
             CollectorState::UninitializedToSubRentExemptMinimum,
             CollectorState::UninitializedToRentExempt,
         ] {
-            for relax_post_exec_min_balance_check in [false, true] {
-                let mut genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), 1000);
-                let rent = Rent::default();
-                genesis.genesis_config.rent = rent.clone();
+            let mut genesis = create_genesis_config_with_leader(0, &pubkey::new_rand(), 1000);
+            let rent = Rent::default();
+            genesis.genesis_config.rent = rent.clone();
 
-                let initialized_data_len = 64;
-                let rent_exempt_minimum = rent.minimum_balance(initialized_data_len);
-                assert!(rent_exempt_minimum > 1);
+            let initialized_data_len = 64;
+            let rent_exempt_minimum = rent.minimum_balance(initialized_data_len);
+            assert!(rent_exempt_minimum > 1);
 
-                let (pre_balance, deposit, should_succeed) = match collector_state {
-                    CollectorState::InitializedToSubRentExemptMinimum => (
-                        rent_exempt_minimum - 2,
-                        1,
-                        relax_post_exec_min_balance_check,
-                    ),
-                    CollectorState::UninitializedToSubRentExemptMinimum => (0, 1, false),
-                    CollectorState::UninitializedToRentExempt => (0, rent_exempt_minimum, true),
-                };
-                let post_balance = pre_balance + deposit;
-                let maybe_collector_id = if custom_commission_collector {
-                    let mut maybe_collector_id = None;
-                    for account in genesis.genesis_config.accounts.values_mut() {
-                        if account.owner == solana_sdk_ids::vote::id() {
-                            let mut vote_state =
-                                VoteStateV4::deserialize(account.data(), &Pubkey::default())
-                                    .unwrap();
-                            let collector_id = Pubkey::new_unique();
-                            vote_state.block_revenue_collector = collector_id;
-                            maybe_collector_id = Some(collector_id);
-                            let versioned = VoteStateVersions::V4(Box::new(vote_state));
-                            account.set_state(&versioned).unwrap();
-                        }
-                    }
-                    maybe_collector_id
-                } else {
-                    None
-                };
-
-                let mut bank = Bank::new_for_tests(&genesis.genesis_config);
-
-                let mut feature_set = FeatureSet::all_enabled();
-                if !custom_commission_collector {
-                    feature_set.deactivate(&agave_feature_set::custom_commission_collector::id());
+            let (pre_balance, deposit, should_succeed) = match collector_state {
+                CollectorState::InitializedToSubRentExemptMinimum => {
+                    (rent_exempt_minimum - 2, 1, true)
                 }
-                if !relax_post_exec_min_balance_check {
-                    feature_set
-                        .deactivate(&agave_feature_set::relax_post_exec_min_balance_check::id());
+                CollectorState::UninitializedToSubRentExemptMinimum => (0, 1, false),
+                CollectorState::UninitializedToRentExempt => (0, rent_exempt_minimum, true),
+            };
+            let post_balance = pre_balance + deposit;
+            let mut maybe_collector_id = None;
+            for account in genesis.genesis_config.accounts.values_mut() {
+                if account.owner == solana_sdk_ids::vote::id() {
+                    let mut vote_state =
+                        VoteStateV4::deserialize(account.data(), &Pubkey::default()).unwrap();
+                    let collector_id = Pubkey::new_unique();
+                    vote_state.block_revenue_collector = collector_id;
+                    maybe_collector_id = Some(collector_id);
+                    let versioned = VoteStateVersions::V4(Box::new(vote_state));
+                    account.set_state(&versioned).unwrap();
                 }
-                bank.feature_set = Arc::new(feature_set);
+            }
 
-                let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
-                let account = AccountSharedData::new_with_data(
-                    pre_balance,
-                    vec![0; initialized_data_len],
-                    &system_program::id(),
+            let mut bank = Bank::new_for_tests(&genesis.genesis_config);
+            bank.feature_set = Arc::new(FeatureSet::all_enabled());
+
+            let collector_id = maybe_collector_id.unwrap_or(*bank.leader_id());
+            let account = AccountSharedData::new_with_data(
+                pre_balance,
+                vec![0; initialized_data_len],
+                &system_program::id(),
+            );
+            bank.store_account(&collector_id, &account);
+
+            let burned = bank.deposit_or_burn_fee(deposit);
+            let rewards = bank.rewards.read().unwrap();
+
+            // post simd-392, deposits to existing accounts are always valid because
+            // they are rent-exempt before and after the deposit takes place.
+            // Deposits to uninitialized accounts still must make the account rent-exempt.
+            // pre simd-392, if a deposit to a rent-paying account isn't sufficient to
+            // make it rent-exempt then it fails and the deposit is burned.
+            if should_succeed {
+                assert_eq!(burned, 0);
+                assert_eq!(bank.get_balance(&collector_id), post_balance);
+                assert_eq!(rewards.len(), 1, "fee should be distributed to the leader");
+                assert_eq!(rewards[0].1.post_balance, post_balance);
+            } else {
+                assert_eq!(burned, deposit);
+                assert_eq!(bank.get_balance(&collector_id), pre_balance);
+                assert!(
+                    rewards.is_empty(),
+                    "fee should be burned when the rent transition is invalid"
                 );
-                bank.store_account(&collector_id, &account);
-
-                let burned = bank.deposit_or_burn_fee(deposit);
-                let rewards = bank.rewards.read().unwrap();
-
-                // post simd-392, deposits to existing accounts are always valid because
-                // they are rent-exempt before and after the deposit takes place.
-                // Deposits to uninitialized accounts still must make the account rent-exempt.
-                // pre simd-392, if a deposit to a rent-paying account isn't sufficient to
-                // make it rent-exempt then it fails and the deposit is burned.
-                if should_succeed {
-                    assert_eq!(burned, 0);
-                    assert_eq!(bank.get_balance(&collector_id), post_balance);
-                    assert_eq!(rewards.len(), 1, "fee should be distributed to the leader");
-                    assert_eq!(rewards[0].1.post_balance, post_balance);
-                } else {
-                    assert_eq!(burned, deposit);
-                    assert_eq!(bank.get_balance(&collector_id), pre_balance);
-                    assert!(
-                        rewards.is_empty(),
-                        "fee should be burned when the rent transition is invalid"
-                    );
-                }
             }
         }
     }

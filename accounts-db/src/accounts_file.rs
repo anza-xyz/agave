@@ -438,8 +438,8 @@ impl AccountsFile {
 /// An enum that creates AccountsFile instance with the specified format.
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsFileProvider {
-    #[default]
     AppendVec,
+    #[default]
     Split,
 }
 
@@ -527,8 +527,8 @@ mod tests {
 
         let owner = Pubkey::default();
         let accounts = [
-            (Pubkey::new_unique(), AccountSharedData::new(1, 0, &owner)),
-            (Pubkey::new_unique(), AccountSharedData::new(0, 0, &owner)),
+            (Pubkey::new_unique(), AccountSharedData::empty(1, &owner)),
+            (Pubkey::new_unique(), AccountSharedData::empty(0, &owner)),
             (
                 Pubkey::new_unique(),
                 AccountSharedData::new_with_data(

@@ -10,9 +10,8 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 Release channels have their own copy of this changelog:
 
 * [edge - v5.0](#500-unreleased)
-* [alpha - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
-* [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
-* [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
+* [beta - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
+* [stable - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 
 ## 5.0.0-Unreleased
 
@@ -26,8 +25,8 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
-* The following TowerBFT/PoH related flags have been removed `--tower`, `--no_poh_speed_test`,
-  `--no-wait-for-vote-to-start-leader`, `--poh_pinned_cpu_core`, and `--poh_hashes_per_batch`
+* The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
+  `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`
 * Removed deprecated arguments
   * `--account-shrink-path`
   * `--accounts-db-access-storages-method`
@@ -37,6 +36,8 @@ Release channels have their own copy of this changelog:
   * `--no-skip-initial-accounts-db-clean`
 
 #### Changes
+
+* Changed the default account storage file format to SplitFile.
 
 ### CLI
 
@@ -49,6 +50,10 @@ Release channels have their own copy of this changelog:
 ### RPC
 
 #### Breaking
+
+* `getBlockTime` now requires `--enable-rpc-transaction-history` to serve results. Previously, RPC
+  nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
+  block.
 
 #### Changes
 

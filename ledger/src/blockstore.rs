@@ -22,14 +22,17 @@ use {
             ShredFlags, ShredId, ShredType, Shredder,
             filter::ShredRecoveryContext,
             merkle::{ErasureBatch, FecSetViolation},
-            merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size},
+            merkle_tree::{MerkleTree, get_proof_size},
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
+    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
     agave_snapshots::unpack_genesis_archive,
     agave_votor_messages::{
-        migration::MigrationStatus, unverified_vote_message::UnverifiedCertificate,
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
+        unverified_vote_message::UnverifiedCertificate,
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
@@ -73,7 +76,6 @@ use {
     },
     std::{
         assert_matches,
-        borrow::Cow,
         cell::RefCell,
         cmp,
         collections::{
@@ -455,10 +457,10 @@ pub struct SlotMetaWorkingSetEntry {
     did_insert_occur: bool,
 }
 
-struct ShredInsertionTracker<'a, 'batch> {
+struct ShredInsertionTracker<'batch> {
     // Map which contains data shreds that have just been inserted. They will
     // later be written to `cf::ShredData` or `cf::AlternateShredData`
-    just_inserted_shreds: HashMap<(BlockLocation, ShredId), Cow<'a, Shred>>,
+    just_inserted_shreds: HashMap<(BlockLocation, ShredId), Shred>,
     // In-memory map that maintains the dirty copy of the erasure meta.  It will
     // later be written to `cf::ErasureMeta`
     erasure_metas: BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
@@ -483,7 +485,7 @@ struct ShredInsertionTracker<'a, 'batch> {
     stricter_shred_validation_from: Option<Slot>,
 }
 
-impl<'batch> ShredInsertionTracker<'_, 'batch> {
+impl<'batch> ShredInsertionTracker<'batch> {
     fn new(shred_num: usize, write_batch: &'batch mut WriteBatch) -> Self {
         Self {
             just_inserted_shreds: HashMap::with_capacity(shred_num),
@@ -562,10 +564,8 @@ impl SlotMetaWorkingSetEntry {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ParentInfo {
-    /// Parent slot to expose through SlotMeta and replay.
-    pub(crate) parent_slot: Slot,
-    /// Parent block id paired with `parent_slot`.
-    pub(crate) parent_block_id: Hash,
+    /// Parent block to expose through SlotMeta and replay.
+    pub(crate) parent_block: Block,
     /// Zero for the block header parent; non-zero when populated by UpdateParent.
     pub(crate) replay_fec_set_index: u32,
 }
@@ -576,11 +576,13 @@ impl ParentInfo {
     fn from_slot_meta(slot_meta: &SlotMeta) -> Option<Self> {
         let parent_slot = slot_meta.parent_slot?;
         let parent_info = ParentInfo {
-            parent_slot,
-            parent_block_id: slot_meta.parent_block_id,
+            parent_block: Block {
+                slot: parent_slot,
+                block_id: BlockId::from(slot_meta.parent_block_id),
+            },
             replay_fec_set_index: slot_meta.replay_fec_set_index,
         };
-        (parent_info.has_update_parent() || parent_info.parent_block_id != Hash::default())
+        (parent_info.has_update_parent() || parent_info.parent_block.block_id != BlockId::default())
             .then_some(parent_info)
     }
 
@@ -603,8 +605,10 @@ impl ParentInfo {
         let VersionedBlockHeader::V1(header) = marker.as_block_header()?;
 
         Some(ParentInfo {
-            parent_slot: header.parent_slot,
-            parent_block_id: header.parent_block_id.to_hash(),
+            parent_block: Block {
+                slot: header.parent_slot,
+                block_id: header.parent_block_id,
+            },
             replay_fec_set_index: 0,
         })
     }
@@ -637,7 +641,7 @@ impl ParentInfo {
             return Err(BlockstoreError::UpdateParentMatchesBlockHeader(slot));
         }
 
-        if update_parent_info.parent_slot > block_header_parent_info.parent_slot {
+        if update_parent_info.parent_block.slot > block_header_parent_info.parent_block.slot {
             return Err(BlockstoreError::UpdateParentSlotGreaterThanBlockHeader(
                 slot,
             ));
@@ -665,8 +669,8 @@ impl ParentInfo {
     }
 
     /// Parent slot and block id as a single comparable value.
-    fn block(&self) -> (Slot, Hash) {
-        (self.parent_slot, self.parent_block_id)
+    fn block(&self) -> Block {
+        self.parent_block
     }
 
     /// Validate this parent against both ledger ancestry and the shred header.
@@ -676,26 +680,26 @@ impl ParentInfo {
     /// The shred header has no parent block id, so same-slot UpdateParent
     /// switches remain legal for duplicate parent blocks.
     fn validate_shred_parent(&self, slot: Slot, shred_parent_slot: Slot, root: Slot) -> Result<()> {
-        if !verify_shred_slots(slot, self.parent_slot, root) {
+        if !verify_shred_slots(slot, self.parent_block.slot, root) {
             return Err(BlockstoreError::InvalidParentInfo {
                 slot,
-                parent_slot: self.parent_slot,
+                parent_slot: self.parent_block.slot,
                 root,
             });
         }
 
-        if self.populated_from_block_header() && self.parent_slot != shred_parent_slot {
+        if self.populated_from_block_header() && self.parent_block.slot != shred_parent_slot {
             return Err(BlockstoreError::BlockHeaderParentMismatch {
                 slot,
-                block_header_parent_slot: self.parent_slot,
+                block_header_parent_slot: self.parent_block.slot,
                 shred_parent_slot,
             });
         }
 
-        if self.has_update_parent() && self.parent_slot > shred_parent_slot {
+        if self.has_update_parent() && self.parent_block.slot > shred_parent_slot {
             return Err(BlockstoreError::UpdateParentSlotGreaterThanShredParent {
                 slot,
-                update_parent_slot: self.parent_slot,
+                update_parent_slot: self.parent_block.slot,
                 shred_parent_slot,
             });
         }
@@ -1229,7 +1233,7 @@ impl Blockstore {
         current_shred: &Shred,
         slot: Slot,
         location: BlockLocation,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
     ) -> Option<ParentInfo> {
         let current_index = current_shred.index();
         let fec_set_index = current_shred.fec_set_index();
@@ -1259,7 +1263,7 @@ impl Blockstore {
                 .and_then(|flags| {
                     flags
                         .contains(ShredFlags::DATA_COMPLETE_SHRED)
-                        .then_some(Cow::Borrowed(current_shred.payload()))
+                        .then_some(current_shred.payload().clone())
                 });
 
             (shred_bytes, fec_set_index)
@@ -1279,8 +1283,10 @@ impl Blockstore {
         let VersionedUpdateParent::V1(update_parent) = marker.as_update_parent()?;
 
         Some(ParentInfo {
-            parent_slot: update_parent.new_parent_slot,
-            parent_block_id: update_parent.new_parent_block_id.to_hash(),
+            parent_block: Block {
+                slot: update_parent.new_parent_slot,
+                block_id: update_parent.new_parent_block_id,
+            },
             replay_fec_set_index: target_fec_set_index,
         })
     }
@@ -1297,7 +1303,7 @@ impl Blockstore {
         shred_parent_slot: Slot,
         location: BlockLocation,
         slot_meta: &mut SlotMeta,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
         write_batch: &mut WriteBatch,
     ) -> Result<()> {
         let slot = shred.slot();
@@ -1524,13 +1530,13 @@ impl Blockstore {
         &'a self,
         index: &'a Index,
         erasure_set: ErasureSetId,
-        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Shred>,
     ) -> impl Iterator<Item = Shred> + 'a {
         let slot = index.slot;
         erasure_set.data_shred_indices().filter_map(move |i| {
             let key = ShredId::new(slot, i, ShredType::Data);
             if let Some(shred) = prev_inserted_shreds.get(&(BlockLocation::Original, key)) {
-                return Some(shred.as_ref().clone());
+                return Some(shred.clone());
             }
             let i = u64::from(i);
             if !index.data().contains(i) {
@@ -1556,13 +1562,13 @@ impl Blockstore {
         &'a self,
         index: &'a Index,
         erasure_meta: &'a ErasureMeta,
-        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        prev_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Shred>,
     ) -> impl Iterator<Item = Shred> + 'a {
         let slot = index.slot;
         erasure_meta.coding_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Code);
             if let Some(shred) = prev_inserted_shreds.get(&(BlockLocation::Original, key)) {
-                return Some(shred.as_ref().clone());
+                return Some(shred.clone());
             }
             if !index.coding().contains(i) {
                 return None;
@@ -1589,7 +1595,7 @@ impl Blockstore {
         index: &Index,
         erasure_set: ErasureSetId,
         erasure_meta: Option<&ErasureMeta>,
-        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
     ) -> std::result::Result<ErasureBatch, shred::Error> {
         let data = self.get_recovery_data_shreds(index, erasure_set, prev_inserted_shreds);
@@ -1697,11 +1703,11 @@ impl Blockstore {
 
     /// Attempts to insert shreds into blockstore and updates relevant metrics
     /// based on the results, split out by shred source (turbine vs. repair).
-    fn attempt_shred_insertion<'a, 'db>(
+    fn attempt_shred_insertion<'db>(
         &'db self,
         shreds: impl IntoIterator<
             Item = (
-                Cow<'a, Shred>,
+                Shred,
                 /*is_repaired:*/ bool,
                 BlockLocation,
                 /*precomputed_merkle_root:*/ Option<Hash>,
@@ -1710,7 +1716,7 @@ impl Blockstore {
         >,
         is_trusted: bool,
         pinnable_slice: &mut DBPinnableSlice<'db>,
-        shred_insertion_tracker: &mut ShredInsertionTracker<'a, '_>,
+        shred_insertion_tracker: &mut ShredInsertionTracker<'_>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) {
         let shreds = shreds.into_iter();
@@ -1827,7 +1833,7 @@ impl Blockstore {
         &self,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
         index_working_set: &HashMap<(BlockLocation, u64), IndexMetaWorkingSetEntry>,
-        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        prev_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
         shred_recovery_ctx: &mut ShredRecoveryContext,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> (
@@ -1997,7 +2003,7 @@ impl Blockstore {
         for shred in recovered_data_shreds {
             let slot = shred.slot();
             *match self.check_insert_data_shred(
-                Cow::Owned(shred),
+                shred,
                 BlockLocation::Original,
                 shred_insertion_tracker,
                 is_trusted,
@@ -2317,11 +2323,11 @@ impl Blockstore {
     /// On success, the function returns an Ok result with a vector of
     /// `CompletedDataSetInfo` and a vector of its corresponding index in the
     /// input `shreds` vector.
-    fn do_insert_shreds<'a, 'db>(
+    fn do_insert_shreds<'db>(
         &'db self,
         shreds: impl IntoIterator<
             Item = (
-                Cow<'a, Shred>,
+                Shred,
                 /*is_repaired:*/ bool,
                 BlockLocation,
                 /*precomputed_merkle_root:*/ Option<Hash>,
@@ -2367,12 +2373,12 @@ impl Blockstore {
     }
 
     /// Core shred insertion logic.
-    fn do_insert_shreds_locked<'a, 'db>(
+    fn do_insert_shreds_locked<'db>(
         &'db self,
         _insert_shreds_lock: &MutexGuard<'_, ()>,
         shreds: impl IntoIterator<
             Item = (
-                Cow<'a, Shred>,
+                Shred,
                 /*is_repaired:*/ bool,
                 BlockLocation,
                 /*precomputed_merkle_root:*/ Option<Hash>,
@@ -2460,12 +2466,9 @@ impl Blockstore {
     /// Simlar to `insert_shreds_at_location_handle_duplicate`  but always inserts
     /// shreds in the original column specified by `BlockLocation::Original`
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn insert_shreds_handle_duplicate<'a, F>(
+    pub fn insert_shreds_handle_duplicate<F>(
         &self,
-        shreds: impl IntoIterator<
-            Item = (Cow<'a, Shred>, /*is_repaired:*/ bool),
-            IntoIter: ExactSizeIterator,
-        >,
+        shreds: impl IntoIterator<Item = (Shred, /*is_repaired:*/ bool), IntoIter: ExactSizeIterator>,
         is_trusted: bool,
         shred_recovery_context: &mut ShredRecoveryContext,
         handle_duplicate: &F,
@@ -2495,11 +2498,11 @@ impl Blockstore {
     /// and handling duplicate shreds). Broadcast stage should instead call
     /// Blockstore::insert_shreds when inserting own shreds during leader slots.
     /// The pinnable slice and write batch can be reused across calls.
-    pub fn insert_shreds_at_location_handle_duplicate<'a, 'db, F>(
+    pub fn insert_shreds_at_location_handle_duplicate<'db, F>(
         &'db self,
         shreds: impl IntoIterator<
             Item = (
-                Cow<'a, Shred>,
+                Shred,
                 /*is_repaired:*/ bool,
                 BlockLocation,
                 /*precomputed_merkle_root:*/ Option<Hash>,
@@ -2622,7 +2625,7 @@ impl Blockstore {
 
         let shreds = shreds.into_iter().map(|shred| {
             (
-                Cow::Owned(shred),
+                shred,
                 /*is_repaired:*/ false,
                 to_location,
                 /*precomputed_merkle_root:*/ None,
@@ -2744,9 +2747,9 @@ impl Blockstore {
     /// `BroadcastStage` is an example of a valid use when inserting our own
     /// shreds during leader slots. We created the shreds so we can trust them
     /// and `BroadcastStage` will separately handle sending shreds out
-    pub fn insert_trusted_shreds<'a, 'db>(
+    pub fn insert_trusted_shreds<'db>(
         &'db self,
-        shreds: impl IntoIterator<Item = Cow<'a, Shred>, IntoIter: ExactSizeIterator>,
+        shreds: impl IntoIterator<Item = Shred, IntoIter: ExactSizeIterator>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
     ) -> Result<Vec<CompletedDataSetInfo>> {
@@ -2779,7 +2782,7 @@ impl Blockstore {
         let mut write_batch = self.get_write_batch();
         let shreds = shreds.into_iter().map(|shred| {
             (
-                Cow::Owned(shred),
+                shred,
                 /*is_repaired:*/ false,
                 BlockLocation::Original,
                 /*precomputed_merkle_root:*/ None,
@@ -2817,10 +2820,10 @@ impl Blockstore {
     /// - `is_trusted`: if false, duplicate and integrity checks are applied.
     /// - `shred_source`: the source of the shred.
     /// - `pinnable_slice`: reusable RocksDB pinnable slice.
-    fn check_insert_coding_shred<'a, 'db>(
+    fn check_insert_coding_shred<'db>(
         &'db self,
-        shred: Cow<'a, Shred>,
-        shred_insertion_tracker: &mut ShredInsertionTracker<'a, '_>,
+        shred: Shred,
+        shred_insertion_tracker: &mut ShredInsertionTracker<'_>,
         is_trusted: bool,
         shred_source: ShredSource,
         // Precomputed by caller, else computed inline.
@@ -2931,9 +2934,8 @@ impl Blockstore {
 
         if !erasure_meta.check_coding_shred(&shred) {
             if !self.has_duplicate_shreds_in_slot(slot) {
-                if let Some(conflicting_shred) = self
-                    .find_conflicting_coding_shred(slot, erasure_meta, just_inserted_shreds)
-                    .map(Cow::into_owned)
+                if let Some(conflicting_shred) =
+                    self.find_conflicting_coding_shred(slot, erasure_meta, just_inserted_shreds)
                 {
                     if let Err(e) = self.store_duplicate_slot(
                         slot,
@@ -2947,7 +2949,7 @@ impl Blockstore {
                     }
 
                     duplicate_shreds.push(PossibleDuplicateShred::ErasureConflict(
-                        shred.as_ref().clone(),
+                        shred.clone(),
                         conflicting_shred,
                     ));
                 } else {
@@ -3002,12 +3004,12 @@ impl Blockstore {
         Ok(())
     }
 
-    fn find_conflicting_coding_shred<'a>(
-        &'a self,
+    fn find_conflicting_coding_shred(
+        &self,
         slot: Slot,
         erasure_meta: &ErasureMeta,
-        just_received_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
-    ) -> Option<Cow<'a, shred::Payload>> {
+        just_received_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
+    ) -> Option<shred::Payload> {
         // Search for the shred which set the initial erasure config, either inserted,
         // or in the current batch in just_received_shreds.
         let index = erasure_meta.first_received_coding_shred_index()?;
@@ -3045,11 +3047,11 @@ impl Blockstore {
     ///   input shred is duplicate.
     /// - `shred_source`: the source of the shred.
     /// - `pinnable_slice`: reusable RocksDB pinnable slice.
-    fn check_insert_data_shred<'a, 'db>(
+    fn check_insert_data_shred<'db>(
         &'db self,
-        shred: Cow<'a, Shred>,
+        shred: Shred,
         location: BlockLocation,
-        shred_insertion_tracker: &mut ShredInsertionTracker<'a, '_>,
+        shred_insertion_tracker: &mut ShredInsertionTracker<'_>,
         is_trusted: bool,
         shred_source: ShredSource,
         // Precomputed by caller, else computed inline.
@@ -3285,27 +3287,25 @@ impl Blockstore {
     /// shreds or the backing store. Returns None if there is no shred.
     fn get_shred_from_just_inserted_or_db<'a>(
         &'a self,
-        just_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &'a HashMap<(BlockLocation, ShredId), Shred>,
         shred_id: ShredId,
         location: BlockLocation,
-    ) -> Option<Cow<'a, shred::Payload>> {
+    ) -> Option<shred::Payload> {
         let (slot, index, shred_type) = shred_id.unpack();
         match (just_inserted_shreds.get(&(location, shred_id)), shred_type) {
-            (Some(shred), _) => Some(Cow::Borrowed(shred.payload())),
+            (Some(shred), _) => Some(shred.payload().clone()),
             // If it doesn't exist in the just inserted set, it must exist in
             // the backing store
             (_, ShredType::Data) => self
                 .get_data_shred_from_location(slot, u64::from(index), location)
                 .unwrap()
-                .map(shred::Payload::from)
-                .map(Cow::Owned),
+                .map(shred::Payload::from),
             (_, ShredType::Code) => {
                 // Coding shreds can only be present in the Original column
                 assert_matches!(location, BlockLocation::Original);
                 self.get_coding_shred(slot, u64::from(index))
                     .unwrap()
                     .map(shred::Payload::from)
-                    .map(Cow::Owned)
             }
         }
     }
@@ -3317,7 +3317,7 @@ impl Blockstore {
     /// `duplicate_shreds`.
     fn check_merkle_root_consistency(
         &self,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
         slot: Slot,
         location: BlockLocation,
         merkle_root_meta: &MerkleRootMeta,
@@ -3349,9 +3349,8 @@ impl Blockstore {
                 merkle_root_meta.first_received_shred_index(),
                 merkle_root_meta.first_received_shred_type(),
             );
-            let Some(conflicting_shred) = self
-                .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id, location)
-                .map(Cow::into_owned)
+            let Some(conflicting_shred) =
+                self.get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id, location)
             else {
                 error!(
                     "Shred {shred_id:?} indicated by merkle root meta {merkle_root_meta:?} is \
@@ -3389,7 +3388,7 @@ impl Blockstore {
     /// does not exist yet.
     fn check_existing_shred_consistency(
         &self,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
         slot: Slot,
         location: BlockLocation,
         merkle_root_meta: &MerkleRootMeta,
@@ -3431,7 +3430,6 @@ impl Blockstore {
             return true;
         }
         if !self.has_duplicate_shreds_in_slot(slot) {
-            let existing_shred = existing_shred.into_owned();
             if let Err(err) =
                 self.store_duplicate_slot(slot, existing_shred.clone(), shred.payload().clone())
             {
@@ -3439,7 +3437,7 @@ impl Blockstore {
             }
             duplicate_shreds.push(PossibleDuplicateShred::PayloadConflict(
                 shred.clone(),
-                existing_shred,
+                existing_shred.clone(),
             ));
         }
         false
@@ -3450,7 +3448,7 @@ impl Blockstore {
         shred: &Shred,
         location: BlockLocation,
         slot_meta: &SlotMeta,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
         max_root: Slot,
         shred_source: ShredSource,
         duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
@@ -3475,10 +3473,11 @@ impl Blockstore {
                     u32::try_from(meta_last_index).unwrap(),
                     ShredType::Data,
                 );
-                let Some(ending_shred) = self
-                    .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id, location)
-                    .map(Cow::into_owned)
-                else {
+                let Some(ending_shred) = self.get_shred_from_just_inserted_or_db(
+                    just_inserted_shreds,
+                    shred_id,
+                    location,
+                ) else {
                     error!(
                         "Last index data shred {shred_id:?} indicated by slot meta {slot_meta:?} \
                          is missing from blockstore. This should only happen in extreme cases \
@@ -3523,10 +3522,11 @@ impl Blockstore {
                     u32::try_from(slot_meta.received - 1).unwrap(),
                     ShredType::Data,
                 );
-                let Some(ending_shred) = self
-                    .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id, location)
-                    .map(Cow::into_owned)
-                else {
+                let Some(ending_shred) = self.get_shred_from_just_inserted_or_db(
+                    just_inserted_shreds,
+                    shred_id,
+                    location,
+                ) else {
                     error!(
                         "Last received data shred {shred_id:?} indicated by slot meta \
                          {slot_meta:?} is missing from blockstore. This should only happen in \
@@ -3624,7 +3624,7 @@ impl Blockstore {
         slot: Slot,
         location: BlockLocation,
         slot_meta: &SlotMeta,
-        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Cow<'_, Shred>>,
+        just_inserted_shreds: &HashMap<(BlockLocation, ShredId), Shred>,
     ) -> Option<Slot> {
         if !slot_meta.has_update_parent() {
             return slot_meta.parent_slot;

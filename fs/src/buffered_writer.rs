@@ -36,6 +36,7 @@ pub fn large_file_buf_writer(
         let file_creator = IoUringFileCreatorBuilder::new()
             .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
             .write_with_direct_io(io_setup.use_direct_io)
+            .huge_pages(io_setup.huge_pages)
             .shared_sqpoll(io_setup.shared_sqpoll_fd())
             .build(DEFAULT_IO_URING_BUFFER_SIZE, |_| None)?;
 

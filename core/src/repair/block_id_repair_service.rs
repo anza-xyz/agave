@@ -1058,13 +1058,12 @@ mod tests {
     use {
         super::*,
         crate::repair::request_response::RequestResponse as _,
+        agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, ping_pong::Ping},
         solana_hash::Hash,
         solana_keypair::{Keypair, Signer},
         solana_ledger::{
-            blockstore::Blockstore,
-            get_tmp_ledger_path_auto_delete,
-            shred::merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY},
+            blockstore::Blockstore, get_tmp_ledger_path_auto_delete, shred::merkle_tree::MerkleTree,
         },
         solana_net_utils::SocketAddrSpace,
         solana_perf::packet::BytesPacket,

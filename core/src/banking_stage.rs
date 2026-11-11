@@ -2,10 +2,7 @@
 //! to construct a software pipeline.
 
 use {
-    self::{
-        committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        vote_packet_receiver::VotePacketReceiver, vote_storage::VoteStorage,
-    },
+    self::{committer::Committer, consumer::Consumer, decision_maker::DecisionMaker},
     crate::{
         banking_stage::{
             consume_worker::ConsumeWorker,
@@ -27,24 +24,21 @@ use {
     agave_votor::slot_clock::SharedAlpenglowSlotClock,
     crossbeam_channel::{Receiver, Sender, bounded},
     futures::{StreamExt, stream::FuturesUnordered},
-    histogram::Histogram,
-    solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH, bytes::Bytes},
+    solana_perf::packet::{BytesPacket, bytes::Bytes},
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         transaction_execution::TransactionStatusSender,
     },
-    solana_time_utils::AtomicInterval,
     std::{
         collections::HashSet,
         num::{NonZeroU64, NonZeroUsize},
         sync::{
             Arc, RwLock,
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
     },
     tokio::sync::mpsc,
     tokio_util::sync::CancellationToken,
@@ -53,7 +47,6 @@ use {
         greedy_scheduler::{GreedyScheduler, GreedySchedulerConfig},
         receive_and_buffer::TransactionViewReceiveAndBuffer,
     },
-    vote_worker::VoteWorker,
 };
 
 pub mod transaction_scheduler;
@@ -63,14 +56,9 @@ mod committer;
 mod consume_worker;
 mod consumer;
 mod decision_maker;
-mod latest_validator_vote_packet;
-mod leader_slot_metrics;
 mod leader_slot_timing_metrics;
 mod qos_service;
 mod scheduler_messages;
-mod vote_packet_receiver;
-mod vote_storage;
-mod vote_worker;
 
 #[cfg(unix)]
 mod progress_tracker;
@@ -84,7 +72,6 @@ const MAX_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 const DEFAULT_NUM_WORKERS: NonZeroUsize = NonZeroUsize::new(4).unwrap();
 
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
-const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
 /// Returns the packet's payload, or None if the packet is discarded.
 fn packet_bytes(packet: &BytesPacket) -> Option<Bytes> {
@@ -101,235 +88,11 @@ fn bind_arena(assigned_arena: Option<Arena>) -> Option<DisableThreadTcacheOnDrop
     })
 }
 
-#[derive(Debug, Default)]
-pub struct BankingStageStats {
-    last_report: AtomicInterval,
-    tpu_counts: VoteSourceCounts,
-    gossip_counts: VoteSourceCounts,
-    pub(crate) dropped_duplicated_packets_count: AtomicUsize,
-    dropped_forward_packets_count: AtomicUsize,
-    current_buffered_packets_count: AtomicUsize,
-    rebuffered_packets_count: AtomicUsize,
-    consumed_buffered_packets_count: AtomicUsize,
-    batch_packet_indexes_len: Histogram,
-
-    // Timing
-    consume_buffered_packets_elapsed: AtomicU64,
-    receive_and_buffer_packets_elapsed: AtomicU64,
-    filter_pending_packets_elapsed: AtomicU64,
-    pub(crate) packet_conversion_elapsed: AtomicU64,
-    transaction_processing_elapsed: AtomicU64,
-}
-
-#[derive(Debug, Default)]
-struct VoteSourceCounts {
-    receive_and_buffer_packets_count: AtomicUsize,
-    dropped_packets_count: AtomicUsize,
-    newly_buffered_packets_count: AtomicUsize,
-    newly_buffered_forwarded_packets_count: AtomicUsize,
-}
-
-impl VoteSourceCounts {
-    fn is_empty(&self) -> bool {
-        0 == self
-            .receive_and_buffer_packets_count
-            .load(Ordering::Relaxed)
-            + self.dropped_packets_count.load(Ordering::Relaxed)
-            + self.newly_buffered_packets_count.load(Ordering::Relaxed)
-            + self
-                .newly_buffered_forwarded_packets_count
-                .load(Ordering::Relaxed)
-    }
-}
-
-impl BankingStageStats {
-    pub fn new() -> Self {
-        BankingStageStats {
-            batch_packet_indexes_len: Histogram::configure()
-                .max_value(PACKETS_PER_BATCH as u64)
-                .build()
-                .unwrap(),
-            ..BankingStageStats::default()
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.gossip_counts.is_empty()
-            && self.tpu_counts.is_empty()
-            && 0 == self
-                .dropped_duplicated_packets_count
-                .load(Ordering::Relaxed) as u64
-                + self.dropped_forward_packets_count.load(Ordering::Relaxed) as u64
-                + self.current_buffered_packets_count.load(Ordering::Relaxed) as u64
-                + self.rebuffered_packets_count.load(Ordering::Relaxed) as u64
-                + self.consumed_buffered_packets_count.load(Ordering::Relaxed) as u64
-                + self
-                    .consume_buffered_packets_elapsed
-                    .load(Ordering::Relaxed)
-                + self
-                    .receive_and_buffer_packets_elapsed
-                    .load(Ordering::Relaxed)
-                + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
-                + self.packet_conversion_elapsed.load(Ordering::Relaxed)
-                + self.transaction_processing_elapsed.load(Ordering::Relaxed)
-                + self.batch_packet_indexes_len.entries()
-    }
-
-    fn report(&mut self, report_interval_ms: u64) {
-        // skip reporting metrics if stats is empty
-        if self.is_empty() {
-            return;
-        }
-        if self.last_report.should_update(report_interval_ms) {
-            datapoint_info!(
-                "banking_stage-vote_loop_stats",
-                (
-                    "tpu_receive_and_buffer_packets_count",
-                    self.tpu_counts
-                        .receive_and_buffer_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "tpu_dropped_packets_count",
-                    self.tpu_counts
-                        .dropped_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "tpu_newly_buffered_packets_count",
-                    self.tpu_counts
-                        .newly_buffered_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "tpu_newly_buffered_forwarded_packets_count",
-                    self.tpu_counts
-                        .newly_buffered_forwarded_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_receive_and_buffer_packets_count",
-                    self.gossip_counts
-                        .receive_and_buffer_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_dropped_packets_count",
-                    self.gossip_counts
-                        .dropped_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_newly_buffered_packets_count",
-                    self.gossip_counts
-                        .newly_buffered_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "gossip_newly_buffered_forwarded_packets_count",
-                    self.gossip_counts
-                        .newly_buffered_forwarded_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "dropped_duplicated_packets_count",
-                    self.dropped_duplicated_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "dropped_forward_packets_count",
-                    self.dropped_forward_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "current_buffered_packets_count",
-                    self.current_buffered_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "rebuffered_packets_count",
-                    self.rebuffered_packets_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "consumed_buffered_packets_count",
-                    self.consumed_buffered_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "consume_buffered_packets_elapsed",
-                    self.consume_buffered_packets_elapsed
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "receive_and_buffer_packets_elapsed",
-                    self.receive_and_buffer_packets_elapsed
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "filter_pending_packets_elapsed",
-                    self.filter_pending_packets_elapsed
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "packet_conversion_elapsed",
-                    self.packet_conversion_elapsed.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "transaction_processing_elapsed",
-                    self.transaction_processing_elapsed
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "packet_batch_indices_len_min",
-                    self.batch_packet_indexes_len.minimum().unwrap_or(0),
-                    i64
-                ),
-                (
-                    "packet_batch_indices_len_max",
-                    self.batch_packet_indexes_len.maximum().unwrap_or(0),
-                    i64
-                ),
-                (
-                    "packet_batch_indices_len_mean",
-                    self.batch_packet_indexes_len.mean().unwrap_or(0),
-                    i64
-                ),
-                (
-                    "packet_batch_indices_len_90pct",
-                    self.batch_packet_indexes_len.percentile(90.0).unwrap_or(0),
-                    i64
-                )
-            );
-            self.batch_packet_indexes_len.clear();
-        }
-    }
-}
-
 pub struct BankingStage {
     banking_shutdown_signal: CancellationToken,
     worker_exit_signal: Arc<AtomicBool>,
     worker_thread_arenas: Option<Arc<ArenaGroup>>,
     banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
-    tpu_vote_receiver: BankingPacketReceiver,
-    gossip_vote_receiver: BankingPacketReceiver,
     non_vote_receiver: BankingPacketReceiver,
     transaction_recorder: TransactionRecorder,
     poh_recorder: Arc<RwLock<PohRecorder>>,
@@ -350,8 +113,6 @@ impl BankingStage {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
-        tpu_vote_receiver: BankingPacketReceiver,
-        gossip_vote_receiver: BankingPacketReceiver,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
@@ -373,8 +134,6 @@ impl BankingStage {
             worker_exit_signal: Arc::new(AtomicBool::new(false)),
             worker_thread_arenas,
             banking_control_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
             non_vote_receiver,
             transaction_recorder,
             poh_recorder,
@@ -528,10 +287,8 @@ impl BankingStage {
             check_result_receiver,
         );
 
-        // Spawn vote worker.
-        let mut threads = Vec::with_capacity(num_workers + NUM_CHECK_WORKERS.get() + 2);
+        let mut threads = Vec::with_capacity(num_workers + NUM_CHECK_WORKERS.get() + 1);
         threads.extend(check_worker_handles);
-        threads.push(self.spawn_vote_worker());
 
         // Create channels for communication between scheduler and workers
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
@@ -624,45 +381,6 @@ impl BankingStage {
         );
 
         Ok(threads)
-    }
-
-    fn spawn_vote_worker(&self) -> JoinHandle<()> {
-        let vote_storage = VoteStorage::new(&self.bank_forks.read().unwrap().working_bank());
-        let tpu_receiver =
-            VotePacketReceiver::new(self.tpu_vote_receiver.clone(), self.filter_keys.clone());
-        let gossip_receiver =
-            VotePacketReceiver::new(self.gossip_vote_receiver.clone(), self.filter_keys.clone());
-        let consumer = Consumer::new(
-            self.committer.clone(),
-            self.transaction_recorder.clone(),
-            self.log_messages_bytes_limit,
-        );
-        let migration_status = self.bank_forks.read().unwrap().migration_status();
-        let decision_maker = DecisionMaker::new(
-            self.poh_recorder.read().unwrap().shared_leader_state(),
-            migration_status,
-            self.alpenglow_slot_clock.clone(),
-        );
-
-        let worker_exit_signal = self.worker_exit_signal.clone();
-        let shutdown_signal = self.banking_shutdown_signal.clone();
-        let bank_forks = self.bank_forks.clone();
-        Builder::new()
-            .name("solBanknStgVote".to_string())
-            .spawn(move || {
-                VoteWorker::new(
-                    worker_exit_signal,
-                    shutdown_signal,
-                    decision_maker,
-                    tpu_receiver,
-                    gossip_receiver,
-                    vote_storage,
-                    bank_forks,
-                    consumer,
-                )
-                .run()
-            })
-            .unwrap()
     }
 
     pub fn default_num_workers() -> NonZeroUsize {
@@ -829,9 +547,7 @@ mod external {
 
             // Spawn tpu to pack.
             let tpu_to_pack_receivers = BankingPacketReceivers {
-                non_vote_receiver: self.non_vote_receiver.clone(),
-                gossip_vote_receiver: Some(self.gossip_vote_receiver.clone()),
-                tpu_vote_receiver: Some(self.tpu_vote_receiver.clone()),
+                packet_receiver: self.non_vote_receiver.clone(),
             };
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
@@ -929,10 +645,7 @@ mod tests {
         agave_banking_stage_ingress_types::{
             to_banking_packet_batch, to_single_banking_packet_batch,
         },
-        solana_entry::{
-            entry::{self, EntrySlice},
-            recorder_message::RecorderMessage,
-        },
+        solana_entry::entry::{self, EntrySlice},
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
@@ -940,19 +653,25 @@ mod tests {
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
             },
             get_tmp_ledger_path_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
         },
         solana_poh::{
-            poh_recorder::{PohRecorderError, create_test_recorder},
-            record_channels::record_channels,
+            poh_recorder::{PohRecorderError, WorkingBankMessage},
+            record_channels::{RecordReceiver, record_channels},
             transaction_recorder::RecordTransactionsSummary,
         },
+        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::{assert_matches, sync::atomic::Ordering, thread::sleep, time::Instant},
+        std::{
+            assert_matches,
+            thread::sleep,
+            time::{Duration, Instant},
+        },
     };
 
     pub(crate) fn sanitize_transactions(
@@ -963,6 +682,51 @@ mod tests {
             .collect()
     }
 
+    #[allow(clippy::type_complexity)]
+    fn create_test_recorder_without_service(
+        bank: Arc<Bank>,
+        blockstore: Arc<Blockstore>,
+        poh_config: &PohConfig,
+    ) -> (
+        Arc<RwLock<PohRecorder>>,
+        TransactionRecorder,
+        RecordReceiver,
+        Receiver<WorkingBankMessage>,
+    ) {
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            blockstore,
+            &leader_schedule_cache,
+            poh_config,
+            Arc::default(),
+        );
+        poh_recorder.set_bank_for_test(bank.clone());
+
+        let (record_sender, mut record_receiver) = record_channels(false);
+        record_receiver.restart(bank.bank_id());
+
+        (
+            Arc::new(RwLock::new(poh_recorder)),
+            TransactionRecorder::new(record_sender),
+            record_receiver,
+            entry_receiver,
+        )
+    }
+
+    fn wait_for_condition(mut condition: impl FnMut() -> bool, message: &str) {
+        const TIMEOUT: Duration = Duration::from_secs(10);
+        let start = Instant::now();
+        while !condition() {
+            assert!(start.elapsed() <= TIMEOUT, "{message}");
+            sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn test_banking_stage_shutdown1() {
         let genesis_config = create_genesis_config(2).genesis_config;
@@ -970,32 +734,34 @@ mod tests {
         let Channels {
             non_vote_sender,
             non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
+            ..
         } = Channels::new();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            transaction_recorder,
-            poh_service,
-            _entry_receiever,
-        ) = create_test_recorder(bank, blockstore, None, None);
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
+            bank.tick_height(),
+            bank.last_blockhash(),
+            bank.clone(),
+            Some((4, 4)),
+            bank.ticks_per_slot(),
+            blockstore,
+            &leader_schedule_cache,
+            &genesis_config.poh_config,
+            Arc::default(),
+        );
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, _record_receiver) = record_channels(false);
+        let transaction_recorder = TransactionRecorder::new(record_sender);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
             mpsc::channel(1).1,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
@@ -1011,11 +777,7 @@ mod tests {
             Arc::new(SchedulerPriorityFloor::new()),
         );
         drop(non_vote_sender);
-        drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
-        exit.store(true, Ordering::Relaxed);
         banking_stage.join().unwrap();
-        poh_service.join().unwrap();
     }
 
     #[test]
@@ -1031,32 +793,25 @@ mod tests {
         let Channels {
             non_vote_sender,
             non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
+            ..
         } = Channels::new();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            transaction_recorder,
-            poh_service,
-            entry_receiver,
-        ) = create_test_recorder(bank, blockstore, None, None);
+        let (poh_recorder, transaction_recorder, mut record_receiver, entry_receiver) =
+            create_test_recorder_without_service(
+                bank.clone(),
+                blockstore,
+                &genesis_config.poh_config,
+            );
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
             mpsc::channel(1).1,
             DEFAULT_NUM_WORKERS,
             SchedulerConfig {
@@ -1065,97 +820,87 @@ mod tests {
             None,
             None,
             None,
-            bank_forks, // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
+            bank_forks,
             SharedAlpenglowSlotClock::default(),
             None,
             Arc::default(),
             Arc::new(SchedulerPriorityFloor::new()),
         );
 
-        // good tx, and no verify
-        let to = solana_pubkey::new_rand();
-        let tx_no_ver = system_transaction::transfer(&mint_keypair, &to, 2, start_hash);
+        // This packet is valid, but explicitly discarded before BankingStage sees it.
+        let discarded_recipient = Pubkey::new_unique();
+        let discarded_tx =
+            system_transaction::transfer(&mint_keypair, &discarded_recipient, 2, start_hash);
 
-        // good tx
-        let to2 = solana_pubkey::new_rand();
-        let tx = system_transaction::transfer(&mint_keypair, &to2, 1, start_hash);
+        // This is the only valid transaction that should be recorded.
+        let valid_recipient = Pubkey::new_unique();
+        let valid_tx = system_transaction::transfer(&mint_keypair, &valid_recipient, 1, start_hash);
 
-        // bad tx, AccountNotFound
-        let keypair = Keypair::new();
-        let to3 = solana_pubkey::new_rand();
-        let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
+        // This transaction fails account loading because its source account does not exist.
+        let missing_source = Keypair::new();
+        let missing_recipient = Pubkey::new_unique();
+        let account_not_found_tx =
+            system_transaction::transfer(&missing_source, &missing_recipient, 1, start_hash);
 
-        // send 'em over
-        let mut packet_batch = to_banking_packet_batch(&[tx_no_ver, tx_anf, tx]);
+        let mut packet_batch =
+            to_banking_packet_batch(&[discarded_tx, account_not_found_tx, valid_tx]);
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
             .meta_mut()
-            .set_discard(true); // set discard on `tx_no_ver`
+            .set_discard(true);
+        non_vote_sender.send(packet_batch).unwrap();
 
-        // glad they all fit
-        assert_eq!(packet_batch.len(), 3);
-
-        non_vote_sender // no_ver, anf, tx
-            .send(packet_batch)
-            .unwrap();
-
-        // capture the entry receiver until we've received all our entries.
-        let mut entries = Vec::with_capacity(100);
-        loop {
-            if let Ok((_bank, (RecorderMessage::Entry(entry), _))) = entry_receiver.try_recv() {
-                let tx_entry = !entry.transactions.is_empty();
-                entries.push(entry);
-                if tx_entry {
-                    break; // once we have the entry break. don't expect more than one.
-                }
-            }
-            sleep(Duration::from_millis(10));
-        }
+        wait_for_condition(
+            || bank.get_balance(&valid_recipient) == 1,
+            "banking stage took too long to process the valid transaction",
+        );
 
         drop(non_vote_sender);
-        drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
         banking_stage.join().unwrap();
 
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
+        // BlockCreationLoop owns this handoff in production. Drain it synchronously here so the
+        // test exercises the same Record -> Entry conversion without recreating PohService.
+        record_receiver.shutdown();
+        let records: Vec<_> = record_receiver.drain_after_shutdown().collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].transactions.len(), 1);
+        for record in records {
+            poh_recorder
+                .write()
+                .unwrap()
+                .record(record.bank_id, record.mixin, record.transactions)
+                .unwrap();
+        }
         drop(poh_recorder);
 
-        let blockhash = start_hash;
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // receive entries + ticks. The sender has been dropped, so there
-        // are no more entries that will ever come in after the `iter` here.
-        entries.extend(
-            entry_receiver
-                .iter()
-                .map(|(_bank, (message, _tick_height))| message.unwrap_entry()),
-        );
-
+        let entries: Vec<_> = entry_receiver
+            .iter()
+            .map(|(_bank, (message, _tick_height))| message.unwrap_entry())
+            .collect();
+        assert_eq!(entries.len(), 1);
         assert!(
             entries
-                .verify(&blockhash, &entry::thread_pool_for_tests())
+                .verify(&start_hash, &entry::thread_pool_for_tests())
                 .status()
         );
+
+        let replay_bank = Bank::new_for_tests(&genesis_config);
         for entry in entries {
-            bank.process_entry_transactions(entry.transactions)
+            replay_bank
+                .process_entry_transactions(entry.transactions)
                 .iter()
-                .for_each(|x| assert_eq!(*x, Ok(())));
+                .for_each(|result| assert_eq!(*result, Ok(())));
         }
-
-        assert_eq!(bank.get_balance(&to2), 1);
-        assert_eq!(bank.get_balance(&to), 0);
-
-        drop(entry_receiver);
+        assert_eq!(replay_bank.get_balance(&valid_recipient), 1);
+        assert_eq!(replay_bank.get_balance(&discarded_recipient), 0);
     }
 
     #[test]
     fn test_banking_stage_entryfication() {
         agave_logger::setup();
-        // In this attack we'll demonstrate that a verifier can interpret the ledger
-        // differently if either the server doesn't signal the ledger to add an
-        // Entry OR if the verifier tries to parallelize across multiple Entries.
+        // Conflicting transactions must be placed in separate entries so replay observes the
+        // same account state transitions as the producer.
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -1164,101 +909,103 @@ mod tests {
         let Channels {
             non_vote_sender,
             non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
+            ..
         } = Channels::new();
-
-        // Process a batch that includes a transaction that receives two lamports.
-        let alice = Keypair::new();
-        let tx =
-            system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
-
-        let packet_batches = to_single_banking_packet_batch(&tx);
-        non_vote_sender.send(packet_batches).unwrap();
-
-        // Process a second batch that uses the same from account, so conflicts with above TX
-        let tx =
-            system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_single_banking_packet_batch(&tx);
-        non_vote_sender.send(packet_batches).unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(
             Blockstore::open(ledger_path.path())
                 .expect("Expected to be able to open database ledger"),
         );
-
-        let entry_receiver = {
-            // start a banking_stage to eat verified receiver
-            let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-            let (
-                exit,
-                poh_recorder,
-                _poh_controller,
-                transaction_recorder,
-                poh_service,
-                entry_receiver,
-            ) = create_test_recorder(bank.clone(), blockstore, None, None);
-            let banking_stage = BankingStage::new_num_threads(
-                BlockProductionMethod::CentralSchedulerGreedy,
-                poh_recorder,
-                transaction_recorder,
-                non_vote_receiver,
-                tpu_vote_receiver,
-                gossip_vote_receiver,
-                mpsc::channel(1).1,
-                DEFAULT_NUM_WORKERS,
-                SchedulerConfig {
-                    scheduler_pacing: SchedulerPacing::Disabled,
-                },
-                None,
-                None,
-                None,
-                bank_forks,
-                SharedAlpenglowSlotClock::default(),
-                None,
-                Arc::default(),
-                Arc::new(SchedulerPriorityFloor::new()),
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let start_hash = bank.last_blockhash();
+        let (poh_recorder, transaction_recorder, mut record_receiver, entry_receiver) =
+            create_test_recorder_without_service(
+                bank.clone(),
+                blockstore,
+                &genesis_config.poh_config,
             );
+        let banking_stage = BankingStage::new_num_threads(
+            BlockProductionMethod::CentralSchedulerGreedy,
+            poh_recorder.clone(),
+            transaction_recorder,
+            non_vote_receiver,
+            mpsc::channel(1).1,
+            DEFAULT_NUM_WORKERS,
+            SchedulerConfig {
+                scheduler_pacing: SchedulerPacing::Disabled,
+            },
+            None,
+            None,
+            None,
+            bank_forks,
+            SharedAlpenglowSlotClock::default(),
+            None,
+            Arc::default(),
+            Arc::new(SchedulerPriorityFloor::new()),
+        );
 
-            // wait for banking_stage to eat the packets
-            const TIMEOUT: Duration = Duration::from_secs(10);
-            let start = Instant::now();
-            while bank.get_balance(&alice.pubkey()) < 1 {
-                if start.elapsed() > TIMEOUT {
-                    panic!("banking stage took too long to process transactions");
-                }
-                sleep(Duration::from_millis(10));
-            }
-            exit.store(true, Ordering::Relaxed);
-            banking_stage.join().unwrap();
-            poh_service.join().unwrap();
-            entry_receiver
-        };
+        let alice = Keypair::new();
+        let fund_alice =
+            system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
+        non_vote_sender
+            .send(to_single_banking_packet_batch(&fund_alice))
+            .unwrap();
+        wait_for_condition(
+            || bank.get_balance(&alice.pubkey()) == 2,
+            "banking stage took too long to fund the dependent account",
+        );
+
+        // The second transaction depends on the first transaction creating and funding Alice's
+        // account. If both transactions were placed in one entry, parallel replay could evaluate
+        // this spend before the funding transaction's state was visible.
+        let spend_from_alice =
+            system_transaction::transfer(&alice, &mint_keypair.pubkey(), 1, genesis_config.hash());
+        non_vote_sender
+            .send(to_single_banking_packet_batch(&spend_from_alice))
+            .unwrap();
+        wait_for_condition(
+            || bank.get_balance(&alice.pubkey()) == 1,
+            "banking stage took too long to process the dependent transaction",
+        );
+        let producer_balance = bank.get_balance(&alice.pubkey());
+        assert_eq!(producer_balance, 1);
+
         drop(non_vote_sender);
-        drop(tpu_vote_sender);
-        drop(gossip_vote_sender);
+        banking_stage.join().unwrap();
 
-        // consume the entire entry_receiver, feed it into a new bank
-        // check that the balance is what we expect.
+        record_receiver.shutdown();
+        let records: Vec<_> = record_receiver.drain_after_shutdown().collect();
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|record| record.transactions.len() == 1));
+        for record in records {
+            poh_recorder
+                .write()
+                .unwrap()
+                .record(record.bank_id, record.mixin, record.transactions)
+                .unwrap();
+        }
+        drop(poh_recorder);
+
         let entries: Vec<_> = entry_receiver
             .iter()
             .map(|(_bank, (message, _tick_height))| message.unwrap_entry())
             .collect();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| entry.transactions.len() == 1));
+        assert!(
+            entries
+                .verify(&start_hash, &entry::thread_pool_for_tests())
+                .status()
+        );
 
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let replay_bank = Bank::new_for_tests(&genesis_config);
         for entry in entries {
-            let _ = bank
+            let _ = replay_bank
                 .try_process_entry_transactions(entry.transactions)
-                .expect("All transactions should be processed");
+                .expect("all transactions should be processed during replay");
         }
-
-        // Assert the user doesn't hold three lamports. If the stage only outputs one
-        // entry, then one of the transactions will be rejected, because it drives
-        // the account balance below zero before the credit is added.
-        assert!(bank.get_balance(&alice.pubkey()) != 3);
+        assert_eq!(replay_bank.get_balance(&alice.pubkey()), producer_balance);
     }
 
     #[test]

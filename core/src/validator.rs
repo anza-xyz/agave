@@ -1078,10 +1078,6 @@ impl Validator {
             )
         };
         let (record_sender, record_receiver) = record_channels(transaction_status_sender.is_some());
-        let (record_receiver_sender, record_receiver_receiver) = bounded(1);
-        record_receiver_sender
-            .send(record_receiver)
-            .expect("block creation loop record receiver must be connected");
         let transaction_recorder = TransactionRecorder::new(record_sender);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (bank_forks_controller, bank_forks_controller_receiver) =
@@ -1543,7 +1539,7 @@ impl Validator {
             leader_window_info_receiver,
             highest_parent_ready: highest_parent_ready.clone(),
             replay_highest_frozen: replay_highest_frozen.clone(),
-            record_receiver_receiver,
+            record_receiver,
             optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
             banking_stage_sender: banking_stage_sender_for_bcl,
@@ -2769,7 +2765,6 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let mut write_batch = backup_blockstore.get_write_batch();
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
-                let shreds = shreds.into_iter().map(Cow::Owned);
                 let _ = backup_blockstore.insert_trusted_shreds(
                     shreds,
                     &mut pinnable_slice,

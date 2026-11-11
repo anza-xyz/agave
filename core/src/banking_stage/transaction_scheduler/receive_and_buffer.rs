@@ -189,10 +189,6 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: AsRef<[u8]>>(
         return Err(PacketHandlingError::Sanitization);
     }
 
-    if bank.vote_only_bank() && !view.is_simple_vote_transaction() {
-        return Err(PacketHandlingError::Sanitization);
-    }
-
     let transaction_account_lock_limit = transaction_account_lock_limits
         .for_version(view.version())
         .map_err(|_| PacketHandlingError::Sanitization)?;

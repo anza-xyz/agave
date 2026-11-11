@@ -320,7 +320,6 @@ impl Tvu {
         let bls_sigverifier = bls_sigverifier::spawn_service(
             exit.clone(),
             SigVerifierContext {
-                migration_status,
                 ban_sender: votor_ban_sender,
                 sharable_banks,
                 highest_parent_ready: highest_parent_ready.clone(),
@@ -615,7 +614,7 @@ pub mod tests {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
-        solana_poh::poh_recorder::create_test_recorder,
+        solana_poh::poh_recorder::PohRecorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
             bank::{Bank, SlotLeader},
@@ -657,24 +656,28 @@ pub mod tests {
             .expect("Expected to successfully open ledger");
         let blockstore = Arc::new(blockstore);
         let bank = bank_forks.read().unwrap().working_bank();
-        // Give PoH a child bank outside of bank_forks (this also freezes bank 0).
-        // Otherwise PoH may complete bank 0, which ReplayStage tracks as active
-        // without a progress entry, and panics.
+        // Use a child bank outside bank_forks as the recorder's start bank. Constructing the
+        // child also freezes bank 0, matching ReplayStage's expected starting state.
         let poh_bank = Arc::new(Bank::new_from_parent(
             bank.clone(),
             SlotLeader::default(),
             1,
         ));
-        let (
-            exit,
-            poh_recorder,
-            _poh_controller,
-            _transaction_recorder,
-            poh_service,
-            _entry_receiver,
-        ) = create_test_recorder(poh_bank, blockstore.clone(), None, None);
-        let vote_keypair = Keypair::new();
+        let exit = Arc::new(AtomicBool::default());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (poh_recorder, _entry_receiver) = PohRecorder::new(
+            poh_bank.tick_height(),
+            poh_bank.last_blockhash(),
+            poh_bank.clone(),
+            Some((4, 4)),
+            poh_bank.ticks_per_slot(),
+            blockstore.clone(),
+            &leader_schedule_cache,
+            &genesis_config.poh_config,
+            exit.clone(),
+        );
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let vote_keypair = Keypair::new();
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let (verified_voter_slots_sender, verified_voter_slots_receiver) =
             EvictingSender::new_bounded(1024);
@@ -762,6 +765,5 @@ pub mod tests {
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);
         tvu.join().unwrap();
-        poh_service.join().unwrap();
     }
 }

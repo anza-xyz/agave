@@ -96,7 +96,7 @@ impl Sanitize for RestartLastVotedForkSlots {
 }
 
 impl RestartLastVotedForkSlots {
-    // This number is MAX_CRDS_OBJECT_SIZE - empty serialized RestartLastVotedForkSlots.
+    // Encoded slots must fit within the legacy 928-byte CRDS object limit.
     const MAX_BYTES: usize = 824;
 
     pub fn new(

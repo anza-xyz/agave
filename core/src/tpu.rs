@@ -238,9 +238,6 @@ impl Tpu {
             poh_recorder.clone(),
             transaction_recorder,
             non_vote_receiver,
-            // Votes are not ingested. A disconnected receiver would shut down banking stage.
-            crossbeam_channel::never(),
-            crossbeam_channel::never(),
             banking_control_receiver,
             block_production_num_workers,
             block_production_scheduler_config,

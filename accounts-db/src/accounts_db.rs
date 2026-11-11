@@ -69,6 +69,7 @@ use {
         buffered_reader::{FileBufRead as _, RequiredLenBufFileRead},
         io_setup::IoSetupState,
     },
+    agave_memory::{HugePageAlign, HugePages},
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,
@@ -928,9 +929,11 @@ impl AccountsDb {
         &self.bank_hash_details_dir
     }
 
-    /// Returns true if there is an accounts update notifier.
+    /// Returns true if the notifier needs runtime account updates.
     pub fn has_accounts_update_notifier(&self) -> bool {
-        self.accounts_update_notifier.is_some()
+        self.accounts_update_notifier
+            .as_ref()
+            .is_some_and(|notifier| notifier.account_notifications_enabled())
     }
 
     fn next_id(&self) -> AccountsFileId {
@@ -4460,7 +4463,9 @@ impl AccountsDb {
     ) {
         // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
         let use_direct_io = self.use_direct_io;
-        let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
+        let io_setup = IoSetupState::default()
+            .with_direct_io(use_direct_io)
+            .with_huge_pages(HugePages::Transparent(HugePageAlign::Start));
         let mut buf_reader =
             storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
                 .expect("create storage reader");
@@ -5280,7 +5285,7 @@ impl AccountsDb {
             let idx = rng().random_range(0..num);
             let account = self.do_load_for_tests(&ancestors, &pubkeys[idx]);
             let account1 = Some((
-                AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default()),
+                AccountSharedData::empty((idx + count) as u64, &Pubkey::default()),
                 slot,
             ));
             assert_eq!(account, account1);
@@ -5294,7 +5299,7 @@ impl AccountsDb {
         let slot = accounts.target_slot();
         let ancestors = Ancestors::from(vec![slot]);
 
-        let placeholder = AccountSharedData::new(1, 0, &Pubkey::default());
+        let placeholder = AccountSharedData::empty(1, &Pubkey::default());
 
         // Build a list of zero-lamport accounts not present in the index
         let mut pre_populate_zero_lamport = Vec::new();
@@ -5328,7 +5333,7 @@ impl AccountsDb {
     #[allow(clippy::needless_range_loop)]
     pub fn modify_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         for idx in 0..num {
-            let account = AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default());
+            let account = AccountSharedData::empty((idx + count) as u64, &Pubkey::default());
             self.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
         }
     }
