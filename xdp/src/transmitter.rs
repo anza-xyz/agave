@@ -599,7 +599,8 @@ impl TransmitterBuilder {
         const DROP_CHANNEL_CAP: usize = 1_000_000;
         // How many low priority packets wait for a queue that has other packets to send. Kept
         // much shorter than the default `tx_channel_cap`, so that a queue that cannot keep up
-        // refuses new ones instead of building a long backlog.
+        // refuses new ones instead of building a long backlog. The top-level README.md quotes
+        // this number.
         const LOW_PRIORITY_TX_CHANNEL_CAP: usize = 4096;
 
         let Self {

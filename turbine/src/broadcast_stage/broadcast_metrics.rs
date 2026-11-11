@@ -23,9 +23,12 @@ pub struct TransmitShredsStats {
     pub total_packets: usize,
     pub(crate) dropped_packets_udp: usize,
     pub(crate) dropped_packets_xdp: usize,
-    /// Copies sent to the `--shred-receiver-address` destinations, counted
-    /// apart from the turbine packets above.
+    /// Copies handed to the sender for the `--shred-receiver-address`
+    /// destinations, counted apart from the turbine packets above.
     pub(crate) mirrored_packets: usize,
+    /// Copies the sender refused: a failed send on the UDP arm, a full low
+    /// priority channel on the XDP arm. Copies the XDP transmit loop drops
+    /// later (no route, no neighbor, MTU) are not counted.
     pub(crate) dropped_packets_mirrored: usize,
     pub(crate) is_xdp: bool,
 }

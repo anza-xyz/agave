@@ -644,7 +644,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  address is one more full copy of the leader's shred stream, with no built-in \
                  limit. Copies follow the kernel routing table rather than --bind-address; with \
                  XDP they leave through the XDP interface, so loopback or other-interface \
-                 receivers need --no-xdp.",
+                 receivers need --no-xdp. With XDP the copies are best effort: a transmit queue \
+                 sends them only when it has no other packet waiting, and drops them when too \
+                 many wait.",
             ),
     )
     .arg(

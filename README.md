@@ -80,6 +80,14 @@ Each address is one more full copy of the leader's shred stream, with no built-i
 the uplink for it. With XDP transmit (the Linux default) the copies are routed through the XDP
 interface like the turbine packets; a loopback or other-interface receiver needs `--no-xdp`.
 
+With XDP transmit the copies are best effort: a transmit queue (one per `--xdp-cpu-cores` core)
+sends them only when it has no other packet waiting. It keeps up to 4,096 packets of copies
+waiting, each carrying one shred to up to 32 addresses in the order given, and drops the rest
+(`dropped_packets_mirrored` in `broadcast-transmit-shreds-stats`). In a list of more than 32
+addresses, the ones listed last get each batch last and lose their copies first, and with the
+default single XDP core a list longer than about 1,000 addresses can lose copies even on an idle
+link.
+
 # Testing
 
 **Run the test suite:**
