@@ -2040,6 +2040,8 @@ fn maybe_cluster_restart_with_hard_fork(config: &ValidatorConfig, root_slot: Slo
     // detect cluster restart (hard fork) indirectly via wait_for_supermajority...
     if let Some(wait_slot_for_supermajority) = config.wait_for_supermajority
         && wait_slot_for_supermajority == root_slot
+        // genesis is not a restart
+        && root_slot != 0
     {
         return Some(wait_slot_for_supermajority);
     }
@@ -3266,6 +3268,24 @@ mod tests {
         );
         validator.close();
         remove_dir_all(validator_ledger_path).unwrap();
+    }
+
+    #[test]
+    fn test_maybe_cluster_restart_with_hard_fork() {
+        let mut validator_config = ValidatorConfig::default_for_test();
+
+        // A new cluster waits for supermajority at genesis, which is not a hard fork
+        validator_config.wait_for_supermajority = Some(0);
+        assert_eq!(
+            maybe_cluster_restart_with_hard_fork(&validator_config, 0),
+            None
+        );
+
+        validator_config.wait_for_supermajority = Some(1);
+        assert_eq!(
+            maybe_cluster_restart_with_hard_fork(&validator_config, 1),
+            Some(1)
+        );
     }
 
     #[test]
