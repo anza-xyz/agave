@@ -52,13 +52,6 @@ impl Deref for ShredReceiverAddresses {
     }
 }
 
-// For generic APIs expecting something like AsRef<[SocketAddr]>.
-impl AsRef<[SocketAddr]> for ShredReceiverAddresses {
-    fn as_ref(&self) -> &[SocketAddr] {
-        &self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
