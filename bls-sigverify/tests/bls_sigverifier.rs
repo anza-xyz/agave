@@ -1282,6 +1282,7 @@ fn test_same_type_certs_try_next_candidate_after_failure() {
     }
     let invalid_cert = Certificate {
         cert_type,
+        // Neither compression nor sort flags are set, so this sender is not exempt.
         signature: Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
         bitmap: encode_base2(&bitmap).unwrap(),
     };
@@ -1419,8 +1420,11 @@ fn test_banlist_updates_for_invalid_votes() {
 fn test_banlist_updates_for_invalid_certificates() {
     let mut ctx = TestContext::new();
 
-    let invalid_indexes = [0usize, 4usize];
-    let messages: Vec<_> = (0..5)
+    // Either compression or sort flags cause the certificate to be skipped without banning.
+    let invalid_signature_bytes = [0x00, 0x01, 0x20, 0x80, 0xA0, 0xA1];
+    let invalid_indexes = 0..11;
+    let exempt_indexes = [2, 3, 4, 5, 8, 9, 10];
+    let messages: Vec<_> = (0..12)
         .map(|i| {
             let slot = 10 + i as u64;
             let cert_type = CertificateType::new_unique_notar(slot);
@@ -1430,8 +1434,20 @@ fn test_banlist_updates_for_invalid_certificates() {
                 cert_type,
                 &(0..7).collect::<Vec<_>>(),
             );
-            if invalid_indexes.contains(&i) {
+            if let Some(&byte) = invalid_signature_bytes.get(i) {
+                cert.signature = Signature([byte; BLS_SIGNATURE_AFFINE_SIZE]);
+            } else if i == 6 {
+                // A valid point signing a different payload must still result in a ban.
+                cert.cert_type = CertificateType::new_unique_notar(slot + 100);
+            } else if i == 7 {
+                // Bitmap errors without either flag still result in a ban.
                 cert.signature = Signature([0; BLS_SIGNATURE_AFFINE_SIZE]);
+                cert.bitmap.clear();
+            } else if (8..11).contains(&i) {
+                // Certificates with either flag or both set are skipped even with bitmap errors.
+                let byte = [0x20, 0x80, 0xA0][i - 8];
+                cert.signature = Signature([byte; BLS_SIGNATURE_AFFINE_SIZE]);
+                cert.bitmap.clear();
             }
             (ConsensusMessage::Certificate(cert), Pubkey::new_unique())
         })
@@ -1467,7 +1483,12 @@ fn test_banlist_updates_for_invalid_certificates() {
 
     let banned = ctx.banned_pubkeys();
     for (i, (_, sender)) in messages.iter().enumerate() {
-        if invalid_indexes.contains(&i) {
+        if exempt_indexes.contains(&i) {
+            assert!(
+                !banned.contains(sender),
+                "rollout-exempt sender {i} should not be banned"
+            );
+        } else if invalid_indexes.contains(&i) {
             assert!(
                 banned.contains(sender),
                 "invalid sender {i} should be banned"
