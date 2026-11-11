@@ -1847,11 +1847,10 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
 
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
 
-        let new_nonce_state = AccountSharedData::new_with_shared_data(
+        let new_nonce_state = AccountSharedData::new_with_data(
             LAMPORTS_PER_SOL,
-            Arc::new(vec![0; nonce_size]),
+            vec![0; nonce_size],
             &system_program::id(),
-            false,
         );
 
         test_entry.update_expected_account_data(nonce_pubkey, &new_nonce_state);
@@ -2102,11 +2101,10 @@ fn simd83_account_deallocate() -> Vec<SvmTestEntry> {
 
         let target = Pubkey::new_unique();
 
-        let mut target_data = AccountSharedData::new_with_shared_data(
+        let mut target_data = AccountSharedData::new_with_data(
             Rent::default().minimum_balance(1),
-            Arc::new(vec![0]),
+            vec![0],
             &program_id,
-            false,
         );
         test_entry.add_initial_account(target, &target_data);
 
@@ -2338,14 +2336,8 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
     common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
-    let mk_target = |size| {
-        AccountSharedData::new_with_shared_data(
-            LAMPORTS_PER_SOL * 10,
-            Arc::new(vec![0; size]),
-            &program_id,
-            false,
-        )
-    };
+    let mk_target =
+        |size| AccountSharedData::new_with_data(LAMPORTS_PER_SOL * 10, vec![0; size], &program_id);
 
     let target = Pubkey::new_unique();
     let target_start_size = 100;
@@ -2427,22 +2419,11 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
     let new_min_balance = bumped_rent.minimum_balance(target_size);
     assert!(new_min_balance > old_min_balance + LAMPORTS_PER_SIGNATURE);
 
-    let mk_program_account = |lamports, size| {
-        AccountSharedData::new_with_shared_data(
-            lamports,
-            Arc::new(vec![0; size]),
-            &program_id,
-            false,
-        )
-    };
+    let mk_program_account =
+        |lamports, size| AccountSharedData::new_with_data(lamports, vec![0; size], &program_id);
 
     let mk_system_account = |lamports, size| {
-        AccountSharedData::new_with_shared_data(
-            lamports,
-            Arc::new(vec![0; size]),
-            &system_program::id(),
-            false,
-        )
+        AccountSharedData::new_with_data(lamports, vec![0; size], &system_program::id())
     };
 
     // write-only should succeed below updated rent minimum
@@ -3580,12 +3561,7 @@ mod balance_collector {
         let bob = bob_keypair.pubkey();
         let charlie = charlie_keypair.pubkey();
 
-        let native_state = AccountSharedData::new_with_shared_data(
-            STARTING_BALANCE,
-            Arc::new(vec![]),
-            &system_program::id(),
-            false,
-        );
+        let native_state = AccountSharedData::empty(STARTING_BALANCE, &system_program::id());
 
         let mut mint_buf = vec![0; Mint::get_packed_len()];
         Mint {
@@ -3595,11 +3571,10 @@ mod balance_collector {
         }
         .pack_into_slice(&mut mint_buf);
 
-        let mint_state = AccountSharedData::new_with_shared_data(
+        let mint_state = AccountSharedData::new_with_data(
             LAMPORTS_PER_SOL,
-            Arc::new(mint_buf),
+            mint_buf,
             &spl_token_interface::id(),
-            false,
         );
 
         let token_account_for_tests = || TokenAccount {
@@ -3613,11 +3588,10 @@ mod balance_collector {
         let mut token_buf = vec![0; TokenAccount::get_packed_len()];
         token_account_for_tests().pack_into_slice(&mut token_buf);
 
-        let token_state = AccountSharedData::new_with_shared_data(
+        let token_state = AccountSharedData::new_with_data(
             LAMPORTS_PER_SOL,
-            Arc::new(token_buf),
+            token_buf,
             &spl_token_interface::id(),
-            false,
         );
 
         let mut program_accounts =
@@ -3753,31 +3727,28 @@ mod balance_collector {
 
                 token_account.amount = *user_balances.get(&alice).unwrap();
                 token_account.pack_into_slice(&mut token_buf);
-                let final_token_state = AccountSharedData::new_with_shared_data(
+                let final_token_state = AccountSharedData::new_with_data(
                     LAMPORTS_PER_SOL,
-                    Arc::new(token_buf.clone()),
+                    token_buf.clone(),
                     &spl_token_interface::id(),
-                    false,
                 );
                 test_entry.update_expected_account_data(alice, &final_token_state);
 
                 token_account.amount = *user_balances.get(&bob).unwrap();
                 token_account.pack_into_slice(&mut token_buf);
-                let final_token_state = AccountSharedData::new_with_shared_data(
+                let final_token_state = AccountSharedData::new_with_data(
                     LAMPORTS_PER_SOL,
-                    Arc::new(token_buf.clone()),
+                    token_buf.clone(),
                     &spl_token_interface::id(),
-                    false,
                 );
                 test_entry.update_expected_account_data(bob, &final_token_state);
 
                 token_account.amount = *user_balances.get(&charlie).unwrap();
                 token_account.pack_into_slice(&mut token_buf);
-                let final_token_state = AccountSharedData::new_with_shared_data(
+                let final_token_state = AccountSharedData::new_with_data(
                     LAMPORTS_PER_SOL,
-                    Arc::new(token_buf.clone()),
+                    token_buf.clone(),
                     &spl_token_interface::id(),
-                    false,
                 );
                 test_entry.update_expected_account_data(charlie, &final_token_state);
             } else {
