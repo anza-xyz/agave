@@ -113,6 +113,7 @@ name = "agave-conformance"
 version = "5.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
+ "agave-shred-wire-format",
  "agave-transaction-view",
  "agave-votor-messages",
  "ahash 0.8.12",

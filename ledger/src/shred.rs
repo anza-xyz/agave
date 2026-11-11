@@ -58,7 +58,7 @@ use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::payload::PayloadMutGuard,
     agave_shred_wire_format::{
-        constants::{self as wire_format_consts, MerkleProofEntry},
+        constants::{DATA_SHREDS_PER_FEC_BLOCK, MerkleProofEntry},
         error::ParseError,
     },
     bitflags::bitflags,
@@ -111,11 +111,6 @@ pub mod layout {
     pub use super::wire::*;
 }
 
-// Every erasure batch is a fixed 32:32 set of data and coding shreds.
-pub const DATA_SHREDS_PER_FEC_BLOCK: usize = wire_format_consts::DATA_SHREDS;
-pub const CODING_SHREDS_PER_FEC_BLOCK: usize = wire_format_consts::CODE_SHREDS;
-pub const SHREDS_PER_FEC_BLOCK: usize = wire_format_consts::SHARDS;
-
 /// An upper bound on maximum number of data shreds we can handle in a slot
 /// 32K shreds would allow ~320K peak TPS
 /// (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
@@ -129,7 +124,7 @@ pub const MAX_FEC_SETS_PER_SLOT: u32 =
 /// leaving its signature stale; the caller re-signs if the shred has to verify.
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 pub fn override_proof_size(payload: &mut [u8], proof_size: u8) {
-    let byte = &mut payload[wire_format_consts::OFFSET_OF_VARIANT];
+    let byte = &mut payload[agave_shred_wire_format::constants::OFFSET_OF_VARIANT];
     let shred_variant = ShredVariant::try_from(*byte).expect("payload holds a merkle shred");
     *byte = u8::from(match shred_variant {
         ShredVariant::MerkleCode { resigned, .. } => ShredVariant::MerkleCode {
@@ -434,7 +429,7 @@ struct CodingShredHeader {
     /// batch. Currently always [`DATA_SHREDS_PER_FEC_BLOCK`].
     num_data_shreds: u16,
     /// Number of coding shreds in this erasure batch, currently always
-    /// [`CODING_SHREDS_PER_FEC_BLOCK`].
+    /// [`CODING_SHREDS_PER_FEC_BLOCK`](agave_shred_wire_format::constants::CODING_SHREDS_PER_FEC_BLOCK).
     num_coding_shreds: u16,
     /// This shred's position among the batch's coding shreds, in
     /// `[0, num_coding_shreds)`. Add `num_data_shreds` to get the shred's index

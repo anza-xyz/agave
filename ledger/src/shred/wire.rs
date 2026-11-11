@@ -379,9 +379,10 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            SHREDS_PER_FEC_BLOCK, Shred, make_merkle_shreds_for_tests,
+            Shred, make_merkle_shreds_for_tests,
             traits::{ShredCode as _, ShredData},
         },
+        agave_shred_wire_format::constants::SHREDS_PER_FEC_BLOCK,
         bytes::Bytes,
         rand::Rng,
         solana_perf::packet::{Meta, PacketFlags},

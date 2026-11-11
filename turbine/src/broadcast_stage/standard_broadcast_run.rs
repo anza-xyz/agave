@@ -698,6 +698,7 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
+        agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
         rand::Rng,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
@@ -710,7 +711,7 @@ mod test {
             blockstore_meta::SlotMeta,
             genesis_utils::create_genesis_config,
             get_tmp_ledger_path,
-            shred::{DATA_SHREDS_PER_FEC_BLOCK, ShredFlags, layout, max_ticks_per_n_shreds},
+            shred::{ShredFlags, layout, max_ticks_per_n_shreds},
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_pubkey::Pubkey,

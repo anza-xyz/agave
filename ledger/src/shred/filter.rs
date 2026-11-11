@@ -3,12 +3,12 @@
 
 use {
     super::{
-        DATA_SHREDS_PER_FEC_BLOCK, Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType,
-        ShredVariant, layout,
+        Error, Payload, Shred, ShredFetchStats, ShredFlags, ShredType, ShredVariant, layout,
         merkle::{self, ErasureBatch},
     },
     crate::blockstore,
     agave_feature_set as feature_set,
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     agave_worker_pool::WorkerPool,
     itertools::Itertools,
     solana_clock::Slot,
@@ -720,8 +720,8 @@ mod tests {
     use {
         super::{
             super::{
-                CODING_SHREDS_PER_FEC_BLOCK, PROOF_ENTRIES_FOR_32_32_BATCH, Shred,
-                make_merkle_shreds_for_tests, override_proof_size,
+                PROOF_ENTRIES_FOR_32_32_BATCH, Shred, make_merkle_shreds_for_tests,
+                override_proof_size,
             },
             *,
         },
@@ -730,8 +730,8 @@ mod tests {
             shred::{MAX_CODE_SHREDS_PER_SLOT, tests::*},
         },
         agave_shred_wire_format::constants::{
-            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
-            OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_VARIANT,
+            CODING_SHREDS_PER_FEC_BLOCK, OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX,
+            OFFSET_OF_FLAGS, OFFSET_OF_INDEX, OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_VARIANT,
         },
         itertools::Itertools,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
