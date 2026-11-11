@@ -54,7 +54,7 @@ crossbeam-channel = "0.5.17"
 csv = "1.4.0"
 dashmap = "6.2.1"
 futures = "0.3.34"
-histogram = "0.6.9"
+histogram = "1.6.5"
 itertools = "0.15.0"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = ["unprefixed_malloc_on_supported_platforms"] }
 log = "0.4.28"
