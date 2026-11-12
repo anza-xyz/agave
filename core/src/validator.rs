@@ -39,7 +39,7 @@ use {
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
-    crossbeam_channel::{Receiver, bounded, unbounded},
+    crossbeam_channel::{Receiver, Sender, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::{ReadableAccount, WINCODE_CONFIG},
     solana_accounts_db::{
@@ -78,8 +78,8 @@ use {
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
         blockstore::{
-            Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL,
-            MAX_REPLAY_WAKE_UP_SIGNALS, MAX_UPDATE_PARENT_SIGNALS, PurgeType, UpdateParentReceiver,
+            Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL, MAX_UPDATE_PARENT_SIGNALS,
+            PurgeType, SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY, UpdateParentReceiver,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{
@@ -905,12 +905,13 @@ impl Validator {
         ));
 
         let dependency_tracker = Arc::new(DependencyTracker::default());
+        let (replay_wakeup_sender, replay_wakeup_receiver) =
+            bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
 
         let (
             bank_forks,
             blockstore,
             original_blockstore_root,
-            ledger_signal_receiver,
             update_parent_receiver,
             leader_schedule_cache,
             starting_snapshot_hashes,
@@ -931,6 +932,7 @@ impl Validator {
             &genesis_config,
             exit.clone(),
             &start_progress,
+            replay_wakeup_sender.clone(),
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
@@ -1071,7 +1073,7 @@ impl Validator {
                 bank.ticks_per_slot(),
                 config.delay_leader_block_for_pending_fork,
                 blockstore.clone(),
-                blockstore.get_new_shred_signal(0),
+                Some(replay_wakeup_sender),
                 &leader_schedule_cache,
                 &genesis_config.poh_config,
                 exit.clone(),
@@ -1548,12 +1550,6 @@ impl Validator {
         let (block_creation_loop, reward_aggregates_sender) =
             BlockCreationLoop::new(block_creation_loop_config);
 
-        assert_eq!(
-            blockstore.get_new_shred_signals_len(),
-            1,
-            "New shred signal for the TVU should be the same as the clear bank signal."
-        );
-
         let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
 
         let serve_repair_service = ServeRepairService::new(
@@ -1594,7 +1590,7 @@ impl Validator {
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
-            ledger_signal_receiver,
+            replay_wakeup_receiver,
             update_parent_receiver,
             rpc_subscriptions.clone(),
             poh_recorder.read().unwrap().shared_leader_state(),
@@ -1833,7 +1829,7 @@ impl Validator {
     pub fn exit(&mut self) {
         self.validator_exit.write().unwrap().exit();
 
-        // drop all signals in blockstore
+        // drop the completed-slots and update-parent senders in blockstore
         self.blockstore.drop_signal();
     }
 
@@ -2199,13 +2195,14 @@ fn initialize_event_system(
     Ok(event_system)
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn load_blockstore(
     config: &ValidatorConfig,
     ledger_path: &Path,
     genesis_config: &GenesisConfig,
     exit: Arc<AtomicBool>,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
+    shred_progress_signal: Sender<()>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
@@ -2215,7 +2212,6 @@ fn load_blockstore(
         Arc<RwLock<BankForks>>,
         Arc<Blockstore>,
         Slot,
-        Receiver<bool>,
         UpdateParentReceiver,
         LeaderScheduleCache,
         Option<StartingSnapshotHashes>,
@@ -2255,9 +2251,12 @@ fn load_blockstore(
                 )
             })
             .expect("should spawn thread");
-        let blockstore =
-            Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
-                .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+        let blockstore = Blockstore::open_with_options(
+            ledger_path,
+            config.blockstore_options.clone(),
+            Some(shred_progress_signal),
+        )
+        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
         let bank_from_snapshot_result = load_snapshot_handle.join().expect("join thread");
 
         Ok::<_, String>((Arc::new(blockstore), bank_from_snapshot_result.transpose()))
@@ -2329,8 +2328,6 @@ fn load_blockstore(
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
 
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit);
-    let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
-    blockstore.add_new_shred_signal(ledger_signal_sender);
     let (update_parent_sender, update_parent_receiver) = bounded(MAX_UPDATE_PARENT_SIGNALS);
     blockstore.add_update_parent_signal(update_parent_sender);
 
@@ -2338,7 +2335,6 @@ fn load_blockstore(
         bank_forks,
         blockstore,
         original_blockstore_root,
-        ledger_signal_receiver,
         update_parent_receiver,
         leader_schedule_cache,
         starting_snapshot_hashes,
@@ -2752,6 +2748,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
     match Blockstore::open_with_options(
         &blockstore.ledger_path().join(backup_folder),
         config.blockstore_options.clone(),
+        None,
     ) {
         Ok(backup_blockstore) => {
             info!("Backing up slots from {start_slot} to {end_slot}");
@@ -3094,6 +3091,7 @@ mod tests {
                 access_type: AccessType::PrimaryForMaintenance,
                 ..BlockstoreOptions::default()
             },
+            None,
         )
         .unwrap();
         assert!(stale_event.exists());
@@ -3103,6 +3101,7 @@ mod tests {
                 access_type: AccessType::ReadOnly,
                 ..BlockstoreOptions::default()
             },
+            None,
         )
         .unwrap();
         assert_matches!(
