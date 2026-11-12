@@ -253,6 +253,25 @@ pub struct AccountsCache {
     total_accounts_count: Arc<AtomicU64>,
 }
 
+/// Stores accounts into one active, unfrozen bank without retaining an outer map guard.
+/// Keep this writer local to a store call; the bank must not be flushed or purged while it is used.
+pub(crate) struct SlotCacheWriter<'a> {
+    slot_cache: Arc<SlotCache>,
+    index: &'a AccountsCacheIndex,
+    bank_id: BankId,
+}
+
+impl SlotCacheWriter<'_> {
+    pub(crate) fn store(&self, pubkey: &Pubkey, account: AccountSharedData) -> Arc<CachedAccount> {
+        let (item, is_new_key) = self.slot_cache.insert(pubkey, account);
+        if is_new_key {
+            // Overwrites cannot update the index: its ref count already includes this bank.
+            self.index.insert(pubkey, self.bank_id);
+        }
+        item
+    }
+}
+
 impl AccountsCache {
     pub fn new_inner(&self, slot: Slot) -> Arc<SlotCache> {
         Arc::new(SlotCache {
@@ -297,6 +316,10 @@ impl AccountsCache {
         pubkey: &Pubkey,
         account: AccountSharedData,
     ) -> Arc<CachedAccount> {
+        self.slot_cache_writer(slot, bank_id).store(pubkey, account)
+    }
+
+    pub(crate) fn slot_cache_writer(&self, slot: Slot, bank_id: BankId) -> SlotCacheWriter<'_> {
         let slot_cache = self.bank_cache(bank_id).unwrap_or_else(|| {
             // DashMap entry.or_insert() returns a RefMut, essentially a write lock,
             // which is dropped after this block ends, minimizing time held by the lock.
@@ -309,14 +332,11 @@ impl AccountsCache {
         });
         debug_assert_eq!(slot_cache.slot, slot, "{bank_id:?} stores at another slot");
 
-        let (item, is_new_key) = slot_cache.insert(pubkey, account);
-        if is_new_key {
-            // Only update the index when the pubkey is new to this slot. Overwrites within the
-            // same slot (is_new_key = false) cannot update the index because the ref count was
-            // already incremented when the pubkey was first stored in this slot
-            self.index.insert(pubkey, bank_id);
+        SlotCacheWriter {
+            slot_cache,
+            index: &self.index,
+            bank_id,
         }
-        item
     }
 
     /// Returns `pubkey`'s account from `bank_id`'s cache, and the slot it was stored at
@@ -545,6 +565,36 @@ mod tests {
             AccountSharedData::empty(3, &Pubkey::default()),
         );
         assert_eq!(slot_cache.len(), 2);
+    }
+
+    #[test]
+    fn test_slot_cache_writer_reuse_and_bank_identity() {
+        let cache = AccountsCache::default();
+        let slot = 7;
+        let bank_ids = [BankId::new(10), BankId::new(11)];
+        let key = Pubkey::new_unique();
+        let other_key = Pubkey::new_unique();
+        let account = |lamports| AccountSharedData::new(lamports, 8, &Pubkey::default());
+        for bank_id in bank_ids {
+            let writer = cache.slot_cache_writer(slot, bank_id);
+            let first = writer.store(&key, account(1));
+            writer.store(&other_key, account(2));
+            writer.store(&key, account(2));
+            let replacement = cache.store(slot, bank_id, &key, account(u64::from(bank_id)));
+            let (loaded, loaded_slot) = cache.load(bank_id, &key).unwrap();
+            assert_eq!(loaded_slot, slot);
+            assert!(Arc::ptr_eq(&loaded, &replacement));
+            assert_eq!(first.account, account(1));
+        }
+        for bank_id in bank_ids {
+            let (loaded, _) = cache.load(bank_id, &key).unwrap();
+            assert_eq!(loaded.account.lamports(), u64::from(bank_id));
+        }
+        // Overwrites count only once per bank, even when the banks share a slot.
+        assert_eq!(*cache.index.entries.get(&key).unwrap(), (bank_ids[1], 2));
+        assert_eq!(cache.remove_bank(bank_ids[0]), Some(vec![]));
+        assert_eq!(cache.remove_bank(bank_ids[1]).unwrap().len(), 2);
+        assert_eq!(cache.size(), 0);
     }
 
     #[test]
