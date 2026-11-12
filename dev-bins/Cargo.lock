@@ -6444,7 +6444,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "arrayvec",
- "bincode",
  "bitvec",
  "bytes",
  "chrono",
