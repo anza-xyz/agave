@@ -1,5 +1,5 @@
 use {
-    crate::{contact_info, duplicate_shred},
+    crate::contact_info,
     crossbeam_channel::{RecvError, SendError},
     std::io,
     thiserror::Error,
@@ -9,8 +9,6 @@ use {
 pub enum GossipError {
     #[error("duplicate node instance")]
     DuplicateNodeInstance,
-    #[error(transparent)]
-    DuplicateShredError(#[from] duplicate_shred::Error),
     #[error(transparent)]
     InvalidContactInfo(#[from] contact_info::Error),
     #[error(transparent)]
