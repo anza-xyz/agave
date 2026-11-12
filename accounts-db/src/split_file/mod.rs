@@ -59,7 +59,7 @@ pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
     num_stored_bytes_data: AtomicU64::new(0),
 };
 
-/// Buffer size to use when scaning a meta file.
+/// Buffer size to use when scanning a meta file.
 const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Writes end up in the kernel's page cache, so the buffer only amortizes write syscalls.
