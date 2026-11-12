@@ -20,6 +20,7 @@ use {
         },
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
+    ahash::RandomState as AHashRandomState,
     log::debug,
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::{Epoch, Slot},
@@ -238,7 +239,7 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Builtin program ids for this fork.
     /// Used to see the `builtin_program_cache` between slots via
     /// `new_from()`.
-    pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
+    pub builtin_program_ids: RwLock<HashSet<Pubkey, AHashRandomState>>,
 
     /// Cached ProgramCacheForTxBatch pre-populated with builtin entries.
     /// Populated once per slot in `new_from()` from the global program cache.
@@ -277,7 +278,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
                 BuiltinProgram::new_loader(VmConfig::default()),
             ),
             deployment_env_override: None,
-            builtin_program_ids: RwLock::new(HashSet::new()),
+            builtin_program_ids: RwLock::new(HashSet::with_hasher(AHashRandomState::default())),
             builtin_program_cache: RwLock::new(ProgramCacheForTxBatch::new(Slot::default())),
             execution_cost: SVMTransactionExecutionCost::default(),
         }
