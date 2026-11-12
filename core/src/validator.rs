@@ -368,6 +368,8 @@ pub struct ValidatorConfig {
     pub accounts_db_config: AccountsDbConfig,
     pub warp_slot: Option<Slot>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
+    /// Overrides the user agent written into the footer of blocks this node produces.
+    pub block_user_agent_override: Arc<RwLock<Option<Vec<u8>>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub wait_to_vote_slot: Option<Slot>,
@@ -440,6 +442,7 @@ impl ValidatorConfig {
             process_ledger_before_services: false,
             warp_slot: None,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+            block_user_agent_override: Arc::default(),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             validator_exit_backpressure: HashMap::default(),
             accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -1542,6 +1545,7 @@ impl Validator {
             record_receiver,
             optimistic_parent_receiver: optimistic_parent_receiver.clone(),
             highest_finalized: highest_finalized.clone(),
+            block_user_agent_override: config.block_user_agent_override.clone(),
             banking_stage_sender: banking_stage_sender_for_bcl,
             sharable_banks: bank_forks.read().unwrap().sharable_banks(),
         };
