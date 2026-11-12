@@ -120,7 +120,6 @@ solana-slot-history = "3.2.0"
 solana-stake-history = "2.1.0"
 solana-stake-interface = "5.1.0"
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
-solana-streamer = { path = "../streamer", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm = { path = "../svm", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-callback = { path = "../svm-callback", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }
 solana-svm-feature-set = { path = "../svm-feature-set", version = "=5.0.0-alpha.0", features = ["agave-unstable-api"] }

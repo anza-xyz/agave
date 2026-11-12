@@ -21,7 +21,6 @@ dev-context-only-utils = ["dep:wincode", "dep:solana-transaction"]
 
 [dependencies]
 agave-scheduler-bindings = { workspace = true }
-agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 rts-alloc = { workspace = true }
 solana-pubkey = { workspace = true }

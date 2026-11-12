@@ -278,13 +278,11 @@ flate2 = "1.1.10"
 fnv = "1.0.7"
 futures = "0.3.34"
 futures-util = "0.3.34"
-gag = "1.0.0"
 gethostname = "1.1.0"
 goauth = "0.17.0"
 hashbrown = { version = "0.17.1", default-features = false }
 hex = "0.4.3"
 hidapi = { version = "2.6.7", default-features = false }
-histogram = "0.6.9"
 http = "1.5.0"
 humantime = "2.4.0"
 hyper-util = "0.1.21"
