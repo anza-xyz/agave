@@ -53,7 +53,7 @@ use {
     solana_svm_timings::ExecuteTimings,
     solana_transaction::TransactionVerificationMode,
     solana_transaction_error::TransactionError,
-    std::{collections::HashMap, num::NonZeroUsize, sync::Arc},
+    std::{collections::HashMap, num::NonZeroUsize},
 };
 #[cfg(not(test))]
 use {prost::Message, std::ffi::c_int};
@@ -270,10 +270,10 @@ fn new_accounts_db_config_for_tests_single_threaded() -> AccountsDbConfig {
 }
 
 pub(crate) fn new_accounts_for_tests_single_threaded() -> Accounts {
-    Accounts::new(Arc::new(AccountsDb::new_for_tests_with_config(
+    Accounts::new(AccountsDb::new_for_tests_with_config(
         Vec::new(),
         new_accounts_db_config_for_tests_single_threaded(),
-    )))
+    ))
 }
 
 /// Rejected before processing. Precompile error codes are not conformant, so

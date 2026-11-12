@@ -155,14 +155,16 @@ impl AccountStorage {
     }
 
     /// initialize the storage map to 'all_storages'
-    pub fn initialize(&mut self, all_storages: AccountStorageMap) {
+    pub fn initialize(&self, all_storages: AccountStorageMap) {
         assert!(self.map.is_empty());
         assert!(
             self.no_shrink_in_progress(),
             "shrink is in progress! slots: {:?}",
             self.shrink_in_progress_map.read().unwrap().keys(),
         );
-        self.map = all_storages;
+        for (slot, storage) in all_storages {
+            self.map.insert(slot, storage);
+        }
     }
 
     /// remove the append vec at 'slot'
@@ -644,7 +646,7 @@ mod tests {
     #[should_panic(expected = "shrink is in progress!")]
     fn test_initialize_fail() {
         let (_temp_dir, sample) = new_test_storage();
-        let mut storage = AccountStorage::default();
+        let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
             .write()
