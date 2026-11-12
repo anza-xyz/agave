@@ -1004,7 +1004,7 @@ mod tests {
     };
 
     enum SecondaryIndexTypes<'a> {
-        // We don't access the inner value, but we do use it for type checking during cmopilation.
+        // We don't access the inner value, but we do use it for type checking during compilation.
         #[allow(dead_code)]
         RwLock(&'a SecondaryIndex<RwLockSecondaryIndexEntry>),
     }
