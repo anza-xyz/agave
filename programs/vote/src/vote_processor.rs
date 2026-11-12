@@ -314,7 +314,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_program_runtime::{
             invoke_context::mock_process_instruction_with_feature_set,
-            program_cache::entry::ProgramCacheEntry,
+            program_cache::tx_batch::TxBatchCacheEntry,
             solana_sbpf::{program::BuiltinFunctionDefinition, vm::ContextObject},
         },
         solana_pubkey::Pubkey,
@@ -331,7 +331,7 @@ mod tests {
                 VoterWithBLSArgs,
             },
         },
-        std::{cell::RefCell, collections::HashSet, str::FromStr, sync::Arc},
+        std::{cell::RefCell, collections::HashSet, str::FromStr},
         test_case::test_matrix,
     };
 
@@ -439,9 +439,9 @@ mod tests {
                 // Register system program for CPI support.
                 invoke_context.program_cache_for_tx_batch.replenish(
                     solana_sdk_ids::system_program::id(),
-                    Arc::new(ProgramCacheEntry::new_builtin(
+                    TxBatchCacheEntry::new_builtin(
                         solana_system_program::system_processor::Entrypoint::register,
-                    )),
+                    ),
                 );
                 *cu_consumed.borrow_mut() = invoke_context.get_remaining();
             },

@@ -6,8 +6,9 @@ use {
     crate::{
         invoke_context::InvokeContext,
         program_cache::{
-            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
-            owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
+            env::ProgramRuntimeEnvironment,
+            owner::ProgramCacheEntryOwner,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntry},
         },
     },
     solana_clock::Slot,
@@ -65,7 +66,7 @@ pub fn deploy_program(
     #[cfg(feature = "metrics")]
     let mut register_syscalls_time = Measure::start("register_syscalls_time");
     let deployment_program_runtime_environment = morph_into_deployment_environment(
-        ProgramRuntimeEnvironment::clone(&program_runtime_environment),
+        program_runtime_environment,
         disable_sbpf_v0_v1_v2_deployment,
     )
     .map_err(|e| {
@@ -104,12 +105,10 @@ pub fn deploy_program(
         verify_code_time.stop();
         load_program_metrics.verify_code_us = verify_code_time.as_us();
     }
-    // Insert but with program_runtime_environment
-    let program_cache_entry = ProgramCacheEntry::new_unloaded(
+    let program_cache_entry = TxBatchCacheEntry::new_unloaded(
         deployment_slot,
         ProgramCacheEntryOwner::try_from(loader_key)
             .map_err(|_| InstructionError::InvalidAccountData)?,
-        program_runtime_environment,
     );
     if let Some(old_entry) = program_cache_for_tx_batch.find(program_id) {
         program_cache_entry.stats.merge_from(&old_entry.stats);
@@ -118,7 +117,7 @@ pub fn deploy_program(
     {
         load_program_metrics.program_id = program_id.to_string();
     }
-    program_cache_for_tx_batch.store_modified_entry(*program_id, Arc::new(program_cache_entry));
+    program_cache_for_tx_batch.store_modified_entry(*program_id, program_cache_entry);
     Ok(())
 }
 

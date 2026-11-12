@@ -49,7 +49,7 @@ use {
             global::{Percent, ProgramCache, ProgramToLoad},
             metrics::ProgramStatistics,
             owner::ProgramCacheEntryOwner,
-            tx_batch::ProgramCacheForTxBatch,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntry},
         },
         solana_sbpf::{program::BuiltinProgram, vm::Config as VmConfig},
         sysvar_cache::SysvarCache,
@@ -1439,7 +1439,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.builtin_program_cache
             .write()
             .unwrap()
-            .replenish(program_id, entry);
+            .replenish(program_id, TxBatchCacheEntry::from(entry.as_ref()));
     }
 
     /// Remove a builtin-program from this fork.
@@ -1493,7 +1493,10 @@ mod tests {
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
             invoke_context::BuiltinFunctionRegisterer,
-            program_cache::{entry::ProgramCacheEntryType, fork_graph::BlockRelation},
+            program_cache::{
+                entry::ProgramCacheEntryType, fork_graph::BlockRelation,
+                tx_batch::TxBatchCacheEntryType,
+            },
         },
         solana_rent::Rent,
         solana_sbpf::vm,
@@ -2167,10 +2170,7 @@ mod tests {
                 true,
             );
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
-
-        // Repeating code because ProgramCacheEntry does not implement clone.
-        let program = ProgramCacheEntry::new_builtin(register_fn);
-        assert_eq!(entry, Arc::new(program));
+        assert!(entry.is_builtin());
     }
 
     #[test]
@@ -2248,7 +2248,7 @@ mod tests {
             .unwrap()
             .find(&key)
             .unwrap();
-        assert_eq!(entry, Arc::new(ProgramCacheEntry::new_builtin(register_fn)));
+        assert!(entry.is_builtin());
     }
 
     #[test]
@@ -2404,7 +2404,7 @@ mod tests {
             );
         assert!(matches!(
             extracted.find(&key).unwrap().program,
-            ProgramCacheEntryType::DelayVisibility
+            TxBatchCacheEntryType::DelayVisibility
         ));
 
         // Rolling to the next slot rebuilds the batch cache from the fork guard,
@@ -2455,7 +2455,7 @@ mod tests {
         );
         assert!(matches!(
             extracted.find(&key).unwrap().program,
-            ProgramCacheEntryType::Builtin(_)
+            TxBatchCacheEntryType::Builtin(_)
         ));
     }
 
@@ -3254,7 +3254,7 @@ mod tests {
             true,
         );
         let entry = program_cache_for_tx_batch.find(&program_id).unwrap();
-        assert!(matches!(entry.program, ProgramCacheEntryType::Loaded(_)));
+        assert!(matches!(entry.program, TxBatchCacheEntryType::Loaded(_)));
         assert_eq!(entry.deployment_slot, expected_deployment_slot);
         assert_eq!(entry.account_owner, loader);
     }
@@ -3370,14 +3370,8 @@ mod tests {
                     None, // <-- no panic
                 );
                 let entry = program_cache_for_tx_batch.find(&program_id).unwrap();
-                assert_eq!(
-                    entry,
-                    Arc::new(ProgramCacheEntry::new_failed_verification_tombstone(
-                        0, // <-- V1/V2 programs are always deployment slot 0
-                        loader,
-                        environment,
-                    ))
-                );
+                // V1/V2 programs are always deployment slot 0.
+                assert!(entry.is_failed_verification_tombstone(0, loader));
             }
             ProgramCacheEntryOwner::LoaderV3 | ProgramCacheEntryOwner::LoaderV4 => {
                 // For Loader V3 & V4, data is too small for the respective
@@ -3669,7 +3663,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             stored.program,
-            ProgramCacheEntryType::DelayVisibility
+            TxBatchCacheEntryType::DelayVisibility
         ));
         assert_eq!(stored.deployment_slot, BATCH_SLOT);
 
@@ -3677,7 +3671,7 @@ mod tests {
         let entry = program_cache_for_tx_batch.find(&program_id).unwrap();
         assert!(matches!(
             entry.program,
-            ProgramCacheEntryType::DelayVisibility
+            TxBatchCacheEntryType::DelayVisibility
         ));
         assert_eq!(entry.deployment_slot, BATCH_SLOT);
 
@@ -3750,7 +3744,7 @@ mod tests {
         let entry = program_cache_for_tx_batch.find(&program_id).unwrap();
         assert!(matches!(
             entry.program,
-            ProgramCacheEntryType::FailedVerification(_)
+            TxBatchCacheEntryType::FailedVerification
         ));
         assert_eq!(entry.deployment_slot, DEPLOYMENT_SLOT);
 

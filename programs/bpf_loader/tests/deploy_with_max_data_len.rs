@@ -12,12 +12,11 @@ use {
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
-    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
+    solana_program_runtime::program_cache::tx_batch::TxBatchCacheEntry,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::{bpf_loader_upgradeable, native_loader, system_program, sysvar},
-    solana_svm_type_overrides::sync::Arc,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, error::SystemError},
     std::{fs::File, io::Read},
     test_case::test_case,
@@ -164,9 +163,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_data_len(allow_prefunded_programd
                 // Register the system program for CPI support.
                 invoke_context.program_cache_for_tx_batch.replenish(
                     system_program::id(),
-                    Arc::new(ProgramCacheEntry::new_builtin(
+                    TxBatchCacheEntry::new_builtin(
                         solana_system_program::system_processor::Entrypoint::register,
-                    )),
+                    ),
                 );
             },
         )
