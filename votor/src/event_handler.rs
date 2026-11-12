@@ -29,6 +29,7 @@ use {
     crossbeam_channel::select,
     parking_lot::RwLock,
     solana_clock::Slot,
+    solana_ledger::blockstore::FirstShredReceiver,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -64,6 +65,7 @@ pub(crate) struct EventHandlerContext {
     pub(crate) migration_status: Arc<MigrationStatus>,
 
     pub(crate) event_receiver: VotorEventReceiver,
+    pub(crate) first_shred_receiver: FirstShredReceiver,
     pub(crate) timer_manager: Arc<RwLock<TimerManager>>,
 
     // Contexts
@@ -84,6 +86,15 @@ enum EventLoopError {
 
 pub(crate) struct EventHandler {
     t_event_handler: JoinHandle<()>,
+}
+
+/// Converts a first-shred notification from Blockstore into a Votor event.
+///
+/// Only the first slot of a leader window needs the event. Blockstore may report
+/// a slot more than once, which is fine because handling `FirstShred` is
+/// idempotent. Slots at or below root are dropped by `VotorEvent::should_ignore`.
+fn first_shred_event(slot: Slot) -> Option<VotorEvent> {
+    (first_of_consecutive_leader_slots(slot) == slot).then_some(VotorEvent::FirstShred(slot))
 }
 
 struct LocalContext {
@@ -120,6 +131,7 @@ impl EventHandler {
             validator_exit,
             migration_status,
             event_receiver,
+            first_shred_receiver,
             timer_manager,
             shared_context: ctx,
             voting_context: mut vctx,
@@ -167,6 +179,15 @@ impl EventHandler {
             while !exit.load(Ordering::Relaxed) {
                 let mut receive_event_time = Measure::start("receive_event");
                 let event = select! {
+                    recv(first_shred_receiver) -> msg => {
+                        let slot = msg.map_err(|_| {
+                            EventLoopError::ChannelDisconnected("first_shred_receiver")
+                        })?;
+                        match first_shred_event(slot) {
+                            Some(event) => Ok(event),
+                            None => continue,
+                        }
+                    },
                     recv(event_receiver) -> msg => {
                         msg
                     },
