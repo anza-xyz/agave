@@ -11,6 +11,7 @@ pub use solana_rpc_client_types::response::{
     RpcResponseContext, RpcSignatureConfirmation, RpcSignatureResult, RpcSimulateTransactionResult,
     RpcSnapshotSlotInfo, RpcStorageTurn, RpcSupply, RpcTokenAccountBalance, RpcVatActiveSetRankMap,
     RpcVatActiveSetRankMapEntry, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
+    RpcEpochCommissionContext,
     SlotInfo, SlotTransactionStats, SlotUpdate, StakeActivationState, TransactionBinaryEncoding,
     TransactionConfirmationStatus, TransactionError, TransactionParsedAccount, TransactionResult,
     UiAccount, UiAccountData, UiAccountEncoding, UiAccountsList, UiCompiledInstruction,

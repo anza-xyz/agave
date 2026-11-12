@@ -2490,6 +2490,7 @@ impl RpcClient {
     ///     commitment: Some(commitment),
     ///     keep_unstaked_delinquents: Some(true),
     ///     delinquent_slot_distance: Some(10),
+    ///     ..RpcGetVoteAccountsConfig::default()
     /// };
     /// let accounts = rpc_client.get_vote_accounts_with_config(
     ///     config,
