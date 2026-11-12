@@ -28,6 +28,7 @@ pub mod inflation;
 mod message_builder;
 pub mod nonce;
 pub mod program;
+pub mod send;
 pub mod spend_utils;
 pub mod stake;
 pub mod test_utils;
