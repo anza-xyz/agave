@@ -5,12 +5,17 @@ mod common;
 use {
     agave_cpu_utils::cpu_affinity,
     agave_xdp::{
+        device::{NetworkDevice, QueueId},
         gre::packet::GRE_HEADER_BASE_SIZE,
         netlink::{MacAddress, netlink_get_neighbors},
         packet::{ETH_HEADER_SIZE, IP_HEADER_SIZE, UDP_HEADER_SIZE},
+        route::NextHop,
         transmitter::{
             BytesTxPacket, NeighborIntervals, QueueCpuBinding, Transmitter, TransmitterBuilder,
             XdpConfig, XdpSender,
+        },
+        tx_loop::{
+            self, TrySendError, TxLoopBuilder, TxLoopConfigBuilder, TxPacket, TxReceiver, TxSender,
         },
     },
     bytes::Bytes,
@@ -19,7 +24,7 @@ use {
         poll::{PollFd, PollFlags, PollTimeout, poll},
         sys::socket::{
             AddressFamily, MsgFlags, SockFlag, SockProtocol, SockType, SockaddrLike,
-            SockaddrStorage, bind, recv, socket,
+            SockaddrStorage, bind, recv, setsockopt, socket, sockopt::RcvBufForce,
         },
     },
     std::{
@@ -28,7 +33,7 @@ use {
         ops::Range,
         os::fd::{AsFd, AsRawFd, OwnedFd},
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
         time::{Duration, Instant},
@@ -121,6 +126,28 @@ impl PacketSocket {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid packet address"))?;
         bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
         Ok(Self { fd })
+    }
+
+    /// Makes room for frames that arrive before the test reads them.
+    fn set_receive_buffer(&self, bytes: usize) -> io::Result<()> {
+        setsockopt(&self.fd, RcvBufForce, &bytes).map_err(io::Error::from)
+    }
+
+    /// Counts the frames already received that match `expected`, without waiting for more.
+    fn count_received_udp(&self, expected: &ExpectedUdpPacket<'_>) -> usize {
+        let mut buf = [0u8; 2048];
+        let mut count = 0usize;
+        loop {
+            match recv(self.fd.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT) {
+                Ok(len) => {
+                    if matching_udp_payload(&buf[..len], expected).is_some() {
+                        count = count.saturating_add(1);
+                    }
+                }
+                Err(Errno::EINTR) => {}
+                Err(_) => return count,
+            }
+        }
     }
 
     fn recv_matching_udp<'a>(
@@ -343,9 +370,11 @@ fn matching_ipv4_udp_payload(
     (payload == expected.payload).then_some(payload_start..payload_end)
 }
 
-#[test]
-#[ignore = "requires root and network namespace privileges"]
-fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
+/// Queues one packet with `send` on a copy-mode transmitter on the left veth end and expects its
+/// frame on the right end.
+fn assert_transmitter_sends_udp_payload_over_veth(
+    send: impl FnOnce(&XdpSender, BytesTxPacket) -> Result<(), TrySendError<BytesTxPacket>>,
+) {
     let cpu_id = transmitter_cpu();
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
@@ -380,10 +409,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
         None,
         payload.clone(),
     );
-    transmitter
-        .sender()
-        .try_send(0, packet)
-        .expect("queue packet through XdpSender::try_send");
+    send(transmitter.sender(), packet).expect("queue packet through XdpSender");
 
     let mut buf = [0u8; 2048];
     let received = receiver
@@ -402,6 +428,20 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
         )
         .expect("receive UDP frame from AF_XDP transmitter");
     assert_eq!(received, payload.as_ref());
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
+    assert_transmitter_sends_udp_payload_over_veth(|sender, packet| sender.try_send(0, packet));
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn transmitter_sends_low_priority_udp_payload_over_veth_in_copy_mode() {
+    assert_transmitter_sends_udp_payload_over_veth(|sender, packet| {
+        sender.try_send_low_priority(0, packet)
+    });
 }
 
 #[test]
@@ -696,4 +736,308 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
         )
         .expect("receive GRE-encapsulated UDP frame from AF_XDP transmitter");
     assert_eq!(received, payload.as_ref());
+}
+
+const TX_LOOP_SRC_PORT: u16 = 12_348;
+const TX_LOOP_DST_PORT: u16 = 45_690;
+
+/// The frame a packet queued by [`tx_loop_packet`] becomes on the right veth end.
+fn tx_loop_frame<'a>(links: &common::TestLinks, payload: &'a [u8]) -> ExpectedUdpPacket<'a> {
+    ExpectedUdpPacket {
+        src_mac: links.left_mac,
+        dst_mac: links.right_mac,
+        src_ip: links.left_ip,
+        dst_ip: links.right_ip,
+        src_port: TX_LOOP_SRC_PORT,
+        dst_port: TX_LOOP_DST_PORT,
+        payload,
+    }
+}
+
+fn tx_loop_packet(links: &common::TestLinks, dst_ip: Ipv4Addr, payload: Bytes) -> BytesTxPacket {
+    BytesTxPacket::new(
+        SocketAddrV4::new(links.left_ip, TX_LOOP_SRC_PORT),
+        SocketAddr::V4(SocketAddrV4::new(dst_ip, TX_LOOP_DST_PORT)),
+        None,
+        payload,
+    )
+}
+
+/// Runs a copy-mode tx loop on the left veth end until every sender of `receiver` is gone. The
+/// test owns the channel and the `drop_item` callback, which the loop calls after each item, so
+/// it can act at an exact point of the loop. Only the right veth end is routable.
+fn run_tx_loop(
+    links: &common::TestLinks,
+    receiver: TxReceiver<BytesTxPacket>,
+    drop_item: impl FnMut(BytesTxPacket),
+) {
+    let dev = NetworkDevice::new(common::LEFT_IFACE).expect("open the left veth end");
+    let config = TxLoopConfigBuilder::new()
+        .build_with_src_device(&dev)
+        .expect("read the MAC address of the left veth end");
+    let tx_loop = TxLoopBuilder::new(transmitter_cpu(), QueueId(0), config, &dev)
+        .expect("allocate the tx loop")
+        .build()
+        .expect("build a copy-mode tx loop");
+    let next_hop = NextHop {
+        mac_addr: Some(links.right_mac),
+        ip_addr: IpAddr::V4(links.right_ip),
+        if_index: links.left_if_index,
+        mtu: 1500,
+        neigh_requires_refresh: false,
+        preferred_src_ip: None,
+        gre: None,
+        vlan: None,
+    };
+    let routable = IpAddr::V4(links.right_ip);
+    tx_loop.run(receiver, drop_item, |ip| {
+        (*ip == routable).then(|| next_hop.clone())
+    });
+}
+
+type TxLoopTrySend =
+    fn(&TxSender<BytesTxPacket>, BytesTxPacket) -> Result<(), TrySendError<BytesTxPacket>>;
+
+/// Queues `lower` packets with `send_lower`, then `higher` packets with `send_higher`, and has the
+/// tx loop queue `more_higher` packets with `send_higher` right after it is done with its tenth
+/// `send_lower` packet. Expects every `send_higher` packet on the right veth end ahead of the
+/// `send_lower` packets that still wait when it is queued.
+fn assert_tx_loop_sends_the_higher_class_first(
+    (sender, receiver): (TxSender<BytesTxPacket>, TxReceiver<BytesTxPacket>),
+    send_lower: TxLoopTrySend,
+    lower: usize,
+    send_higher: TxLoopTrySend,
+    higher: usize,
+    more_higher: usize,
+) {
+    // The loop queues the later packets right after it is done with this `send_lower` packet.
+    const LAST_LOWER_PACKET_BEFORE_MORE: usize = 9;
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+    let capture = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    capture
+        .set_receive_buffer(8 << 20)
+        .expect("grow the receive buffer of the raw packet receiver");
+
+    let lower_payload = |i: usize| Bytes::from(format!("lower-{i:03}"));
+    let higher_payload = |i: usize| Bytes::from(format!("higher-{i:03}"));
+
+    // The `send_lower` packets are queued first.
+    for i in 0..lower {
+        send_lower(
+            &sender,
+            tx_loop_packet(&links, links.right_ip, lower_payload(i)),
+        )
+        .expect("queue packet of the lower class");
+    }
+    for i in 0..higher {
+        send_higher(
+            &sender,
+            tx_loop_packet(&links, links.right_ip, higher_payload(i)),
+        )
+        .expect("queue packet of the higher class");
+    }
+
+    // The loop queues the later packets itself, with this sender. The test holds it so that it
+    // can end the loop even when the loop never gets to that point.
+    let more = higher..higher.saturating_add(more_higher);
+    let loop_sender = Mutex::new(Some(sender.clone()));
+    let mismatch = std::thread::scope(|scope| {
+        let (links, loop_sender) = (&links, &loop_sender);
+        let trigger = lower_payload(LAST_LOWER_PACKET_BEFORE_MORE);
+        let more_from_the_loop = more.clone();
+        scope.spawn(move || {
+            run_tx_loop(links, receiver, |item| {
+                if item.payload() == &trigger {
+                    let sender = loop_sender.lock().unwrap().take();
+                    let sender = sender.expect("the trigger is sent once");
+                    for i in more_from_the_loop.clone() {
+                        send_higher(
+                            &sender,
+                            tx_loop_packet(links, links.right_ip, higher_payload(i)),
+                        )
+                        .expect("queue packet of the higher class");
+                    }
+                }
+            });
+        });
+
+        let first_lower = 0..=LAST_LOWER_PACKET_BEFORE_MORE;
+        let rest_lower = LAST_LOWER_PACKET_BEFORE_MORE.saturating_add(1)..lower;
+        let wire_order = (0..higher)
+            .map(higher_payload)
+            .chain(first_lower.map(lower_payload))
+            .chain(more.map(higher_payload))
+            .chain(rest_lower.map(lower_payload));
+        let mut buf = [0u8; 2048];
+        let mismatch = wire_order.enumerate().find_map(|(position, expected)| {
+            capture
+                .recv_matching_udp(
+                    &mut buf,
+                    &tx_loop_frame(links, expected.as_ref()),
+                    Duration::from_secs(3),
+                )
+                .err()
+                .map(|err| format!("frame {position} on the wire is not {expected:?}: {err}"))
+        });
+        // Ends the loop.
+        drop(loop_sender.lock().unwrap().take());
+        drop(sender);
+        mismatch
+    });
+    assert_eq!(mismatch, None);
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn tx_loop_sends_low_priority_packets_when_nothing_else_waits() {
+    const LOW_PRIORITY_PACKETS: usize = 200;
+    const PACKETS: usize = 64;
+
+    // The loop sends everything that is not low priority first, however many low priority
+    // packets wait, and then goes on with those.
+    assert_tx_loop_sends_the_higher_class_first(
+        tx_loop::channel(PACKETS, LOW_PRIORITY_PACKETS),
+        TxSender::try_send_low_priority,
+        LOW_PRIORITY_PACKETS,
+        TxSender::try_send,
+        0,
+        PACKETS,
+    );
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn tx_loop_sends_lowest_priority_packets_after_the_low_priority_ones() {
+    const PACKETS_OF_EACH_KIND: usize = 40;
+    const MORE_LOW_PRIORITY_PACKETS: usize = 8;
+
+    // Every low priority packet leaves before the first lowest priority one, and those that
+    // arrive later go ahead of the lowest priority packets that still wait.
+    assert_tx_loop_sends_the_higher_class_first(
+        tx_loop::channel(1, PACKETS_OF_EACH_KIND),
+        TxSender::try_send_lowest_priority,
+        PACKETS_OF_EACH_KIND,
+        TxSender::try_send_low_priority,
+        PACKETS_OF_EACH_KIND,
+        MORE_LOW_PRIORITY_PACKETS,
+    );
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn tx_loop_holds_low_priority_packets_while_frames_wait_on_the_device() {
+    // In copy mode the kernel takes at most 32 frames from the TX ring per kick, so most of these
+    // are still in the ring when the loop has written the last one.
+    const PACKETS: usize = 200;
+    // The loop takes a low priority packet only while fewer frames than this are written and not
+    // yet completed.
+    const MAX_WAITING: usize = 64;
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+    let capture = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    capture
+        .set_receive_buffer(8 << 20)
+        .expect("grow the receive buffer of the raw packet receiver");
+    let payload = Bytes::from_static(b"agave-xdp-tx-loop-waiting");
+    let low_priority_payload = Bytes::from_static(b"agave-xdp-tx-loop-low-priority");
+
+    let (sender, receiver) = tx_loop::channel(PACKETS, 1);
+    for _ in 0..PACKETS {
+        sender
+            .try_send(tx_loop_packet(&links, links.right_ip, payload.clone()))
+            .expect("queue packet");
+    }
+    sender
+        .try_send_low_priority(tx_loop_packet(
+            &links,
+            links.right_ip,
+            low_priority_payload.clone(),
+        ))
+        .expect("queue low priority packet");
+
+    // How many of the packets were on the wire when the loop was done with the low priority
+    // packet.
+    let (sent_sender, sent_receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let (links, capture, payload) = (&links, &capture, &payload);
+        scope.spawn(move || {
+            run_tx_loop(links, receiver, |item| {
+                if item.payload() == &low_priority_payload {
+                    let sent = capture.count_received_udp(&tx_loop_frame(links, payload));
+                    sent_sender.send(sent).expect("report the packets sent");
+                }
+            });
+        });
+        let sent = sent_receiver
+            .recv_timeout(Duration::from_secs(3))
+            .expect("the loop takes the low priority packet");
+        // Ends the loop.
+        drop(sender);
+        assert!(
+            PACKETS.saturating_sub(sent) < MAX_WAITING,
+            "only {sent} of {PACKETS} packets were on the wire when the loop was done with the \
+             low priority packet"
+        );
+    });
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn tx_loop_sends_packets_after_one_low_priority_packet_it_cannot_send() {
+    // Fewer than the loop commits at once, so they leave only when the loop commits them, and
+    // no more than the kernel sends per kick in copy mode, so one commit sends them all.
+    const PACKETS: usize = 8;
+    const LOW_PRIORITY_PACKETS: usize = 4;
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+    let capture = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    let payload = Bytes::from_static(b"agave-xdp-tx-loop-not-held-back");
+    // No route leads there, so the loop drops these packets without writing a frame.
+    let unroutable = Ipv4Addr::new(203, 0, 113, 1);
+    let low_priority_payload = |i: usize| Bytes::from(format!("low-priority-{i:03}"));
+
+    let (sender, receiver) = tx_loop::channel(PACKETS, LOW_PRIORITY_PACKETS);
+    for _ in 0..PACKETS {
+        sender
+            .try_send(tx_loop_packet(&links, links.right_ip, payload.clone()))
+            .expect("queue packet");
+    }
+    for i in 0..LOW_PRIORITY_PACKETS {
+        sender
+            .try_send_low_priority(tx_loop_packet(&links, unroutable, low_priority_payload(i)))
+            .expect("queue low priority packet");
+    }
+
+    // How many of the packets were on the wire when the loop was done with its second low
+    // priority packet.
+    let (sent_sender, sent_receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let (links, capture, payload) = (&links, &capture, &payload);
+        let second = low_priority_payload(1);
+        scope.spawn(move || {
+            run_tx_loop(links, receiver, |item| {
+                if item.payload() == &second {
+                    // The loop commits nothing while it is in this callback, so waiting here
+                    // only gives the kernel time to deliver what was committed before.
+                    let start = Instant::now();
+                    let mut sent = 0usize;
+                    while sent < PACKETS && start.elapsed() < Duration::from_secs(1) {
+                        let frame = tx_loop_frame(links, payload);
+                        sent = sent.saturating_add(capture.count_received_udp(&frame));
+                    }
+                    sent_sender.send(sent).expect("report the packets sent");
+                }
+            });
+        });
+        let sent_before_second_low_priority_packet = sent_receiver
+            .recv_timeout(Duration::from_secs(3))
+            .expect("the loop takes the low priority packets");
+        // Ends the loop.
+        drop(sender);
+        assert_eq!(sent_before_second_low_priority_packet, PACKETS);
+    });
 }

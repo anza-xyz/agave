@@ -67,6 +67,32 @@ For XDP zero-copy mode (`--xdp-zero-copy`), additional capabilities are needed:
 $ sudo setcap 'cap_net_admin,cap_net_raw,cap_bpf,cap_perfmon+eip' <path-to-agave-validator-binary>
 ```
 
+# Mirroring leader shreds to extra receivers
+
+`--shred-receiver-address HOST:PORT` (repeatable, IPv4 only, startup only) sends a copy of every
+shred this validator broadcasts as leader to each listed destination, after the turbine packets:
+
+```bash
+$ agave-validator ... --shred-receiver-address 192.0.2.10:8001
+```
+
+Each address is one more full copy of the leader's shred stream, with no built-in limit, so size
+the uplink for it. With XDP transmit (the Linux default) the copies are routed through the XDP
+interface like the turbine packets; a loopback or other-interface receiver needs `--no-xdp`.
+
+With XDP transmit the copies are best effort: a transmit queue (one per `--xdp-cpu-cores` core)
+sends them only when it has no other packet waiting, the copies of data shreds before those of
+coding shreds. It keeps up to 4,096 packets of each kind waiting, each carrying one shred to up to
+32 addresses in the order given, and drops the rest (`dropped_packets_mirrored` in
+`broadcast-transmit-shreds-stats`; `dropped_packets_mirrored_data` counts the copies of data
+shreds among them, and is always 0 without XDP). A queue that cannot send every copy therefore
+drops copies of coding shreds first, and the receivers still get every data shred while it can
+send those alone. The copies of coding shreds it does send wait for every queued copy of a data
+shred, with no age limit: they can leave more than a slot late, and much later while the copies
+of data shreds take nearly all the queue can send. In a list of more than 32 addresses, the ones
+listed last get each batch last and lose their copies first, and with the default single XDP core
+a list longer than about 2,000 addresses can lose copies even on an idle link.
+
 # Testing
 
 **Run the test suite:**

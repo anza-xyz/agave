@@ -38,6 +38,14 @@ Release channels have their own copy of this changelog:
 #### Changes
 
 * Changed the default account storage file format to SplitFile.
+* Added `--shred-receiver-address`: send a copy of every shred this validator broadcasts as leader
+  to extra IPv4 `host:port` destinations (compatible with the Jito-Agave flag). Each address costs
+  one more copy of the leader's shred stream; there is no built-in limit. With XDP transmit the
+  copies are best effort: a transmit queue sends them only when it has no other packet waiting,
+  the copies of data shreds first, and drops copies when too many wait, those of coding shreds
+  first. Reported as `mirrored_packets` / `dropped_packets_mirrored` in
+  `broadcast-transmit-shreds-stats`; `dropped_packets_mirrored_data` counts the dropped copies of
+  data shreds (always 0 without XDP).
 
 ### CLI
 
