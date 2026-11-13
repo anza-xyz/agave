@@ -170,7 +170,6 @@ impl BroadcastStageType {
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
     ) -> BroadcastStage {
-        let migration_status = bank_forks.read().unwrap().migration_status();
         match self {
             BroadcastStageType::Standard => BroadcastStage::new(
                 sock,
@@ -179,12 +178,7 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                StandardBroadcastRun::new(
-                    shred_version,
-                    migration_status,
-                    votor_event_sender,
-                    leader_schedule_cache,
-                ),
+                StandardBroadcastRun::new(shred_version, votor_event_sender, leader_schedule_cache),
                 xdp_sender,
             ),
 
@@ -195,12 +189,7 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                BroadcastDuplicatesRun::new(
-                    shred_version,
-                    config.clone(),
-                    migration_status,
-                    votor_event_sender,
-                ),
+                BroadcastDuplicatesRun::new(shred_version, config.clone(), votor_event_sender),
                 xdp_sender,
             ),
         }
@@ -571,7 +560,6 @@ impl<T> From<crossbeam_channel::SendError<T>> for Error {
 pub mod test {
     use {
         super::*,
-        agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::bounded,
         solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -714,12 +702,7 @@ pub mod test {
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            StandardBroadcastRun::new(
-                0,
-                Arc::new(MigrationStatus::default()),
-                votor_event_sender,
-                leader_schedule_cache,
-            ),
+            StandardBroadcastRun::new(0, votor_event_sender, leader_schedule_cache),
             None,
         );
 
