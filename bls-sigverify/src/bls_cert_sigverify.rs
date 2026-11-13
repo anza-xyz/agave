@@ -31,13 +31,13 @@ pub(super) struct CertPayload {
 
 struct CertVerifyOutcome {
     verified_cert: Option<Certificate>,
-    failures: Vec<(BlsCertVerifyError, Pubkey)>,
+    pubkeys_to_ban: Vec<(Pubkey, BlsCertVerifyError)>,
+    num_tried: usize,
 }
 
 /// Verifies certificates and sends the verified certificates to the consensus pool.
 ///
 /// Additionally inserts valid [`CertificateType`]s into `verified_certs_set`.
-/// Any certificate that fails verification will have its sender banlisted.
 ///
 /// Function expects that the caller has already filtered any certs that appear in the
 /// [`verified_certs_set`] and grouped certs with the same [`CertificateType`]. Each group is
@@ -88,7 +88,7 @@ pub(super) fn verify_and_send_certificates(
 /// Verifies certificates in `cert_groups`, stores a local copy, and prepares them for forwarding.
 ///
 /// The valid certs are inserted into the [`verified_certs_set`].
-/// Invalid cert senders are banlisted.
+///
 /// Returns a list of [`Certificate`]s constructed from the valid certs.
 fn verify_cert_groups(
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
@@ -110,18 +110,13 @@ fn verify_cert_groups(
 
     let mut certs = Vec::new();
     for (num_certs, outcome) in results {
-        let num_certs_attempted = if outcome.verified_cert.is_some() {
-            outcome.failures.len().saturating_add(1)
-        } else {
-            outcome.failures.len()
-        };
-        stats.certs_to_sig_verify += num_certs_attempted as u64;
-        stats.redundant_certs_skipped += num_certs.saturating_sub(num_certs_attempted) as u64;
+        stats.certs_to_sig_verify += outcome.num_tried as u64;
+        stats.redundant_certs_skipped += num_certs.saturating_sub(outcome.num_tried) as u64;
 
-        for (err, sender_identity_pubkey) in outcome.failures {
+        for (pubkey, err) in outcome.pubkeys_to_ban {
             stats.banning_validator += 1;
-            ban_sender.ban(sender_identity_pubkey, BAN_TIMEOUT);
-            info!("bls_cert_sigverify: banned sender={sender_identity_pubkey} due to error {err}");
+            ban_sender.ban(pubkey, BAN_TIMEOUT);
+            info!("bls_cert_sigverify: banned sender={pubkey} due to error {err}");
             stats.certificate_verification_failed += 1;
         }
 
@@ -142,23 +137,37 @@ fn verify_cert_group(
     root_bank: &Bank,
     thread_pool: &ThreadPool,
 ) -> CertVerifyOutcome {
-    let mut failures = Vec::new();
+    let mut num_tried = 0usize;
+    let mut pubkeys_to_ban = Vec::new();
 
     for cert_payload in certs {
+        num_tried = num_tried.saturating_add(1);
+        // solana-bls-signatures 4.0.2 (used in agave-4.5) rejects certs if these flags are set
+        // whereas 4.0.0 (used in agave-4.4) does not.  Without this check, validators that have not
+        // migrated from 4.4 to 4.5 can be incorrectly banned.  To facilitate migration, skip banning
+        // these validators in 4.5.  This check can be removed in 5.0.
+        let signature_has_compression_or_sort_flag = cert_payload.cert.signature.0[0] & 0xA0 != 0;
+        if signature_has_compression_or_sort_flag {
+            continue;
+        }
         match verify_cert(cert_payload.cert, root_bank, thread_pool) {
             Ok(cert) => {
                 return CertVerifyOutcome {
                     verified_cert: Some(cert),
-                    failures,
+                    pubkeys_to_ban,
+                    num_tried,
                 };
             }
-            Err(err) => failures.push((err, cert_payload.sender_identity_pubkey)),
+            Err(err) => {
+                pubkeys_to_ban.push((cert_payload.sender_identity_pubkey, err));
+            }
         }
     }
 
     CertVerifyOutcome {
         verified_cert: None,
-        failures,
+        pubkeys_to_ban,
+        num_tried,
     }
 }
 
