@@ -47,8 +47,9 @@ static NUM_ACCOUNTS_HASHER_THREADS: LazyLock<NonZeroUsize> = LazyLock::new(|| {
 const MAX_BYTES_SEEN_ACCOUNTS_FREELIST: usize = 10_000_000;
 
 /// Cut off-chain updates into short chunks to limit the hashers' idle wait at the start
-/// of a burst near the freeze.
-const OFF_CHAIN_CHUNK_LEN: usize = 8;
+/// of a burst near the freeze. Each chunk loads its accounts in one step and sends their
+/// states in one job per mix direction.
+const OFF_CHAIN_CHUNK_LEN: usize = 16;
 
 impl Bank {
     /// Enqueues the accounts lt hash updates for `accounts` to the accounts hasher threads.
@@ -140,9 +141,10 @@ impl Bank {
             }
         }
 
-        // The count equals the sum of the updates spawned (one per account) below.
+        // Add the prev and curr states of each account to the pending count (the skipped ones
+        // are subtracted at the end of `send_chunked()`).
         self.accounts_lt_hash_async_progress
-            .add_deduped_count(accounts.len());
+            .add_deduped_count(2 * accounts.len());
 
         // A closure that does the loading and spawning for one chunk, so code is
         // shared whether using the thread_pool_for_loading_accounts or not.
@@ -261,7 +263,9 @@ pub struct AccountsLtHashAsyncProgress {
     //  │0      │6 <-- unaligned │2054     │2176   │2182            │4230     │4352
     //
     accumulators: [Mutex<CachePadded<LtHash>>; MAX_ACCOUNTS_HASHER_THREADS],
-    num_updates_pending: AtomicUsize,
+    /// States not hashed yet, two per update. `finish()` waits for this to reach zero.
+    num_states_pending: AtomicUsize,
+    /// Updates sent for hashing, reported in the freeze metrics.
     num_updates_total: AtomicU64,
     /// Flag to indicate if the bank has reached the end of the slot.
     /// When true, this causes the manager to send account updates to
@@ -275,7 +279,7 @@ impl AccountsLtHashAsyncProgress {
     pub fn new() -> Self {
         Self {
             accumulators: array::from_fn(|_| Mutex::new(CachePadded::new(LtHash::identity()))),
-            num_updates_pending: AtomicUsize::new(0),
+            num_states_pending: AtomicUsize::new(0),
             num_updates_total: AtomicU64::new(0),
             is_at_end_of_slot: AtomicBool::new(false),
         }
@@ -291,11 +295,12 @@ impl AccountsLtHashAsyncProgress {
         max_updates_count: usize,
         updates: impl IntoIterator<Item = AccountsLtHashUpdate>,
     ) {
-        // Count the upper bound before queueing, so a worker cannot drive the pending
-        // count below zero. Updating the counter per call rather than per account
-        // minimizes contention among the threads sharing the counter.
-        self.num_updates_pending
-            .fetch_add(max_updates_count, Ordering::Relaxed);
+        // Account for both states of all queued updates in the pending count before queueing
+        // (`send_chunked()` subtracts the skipped ones), so a worker cannot drive it below zero.
+        // Updating the counter once rather than per account minimizes contention among the
+        // threads sharing the counter.
+        self.num_states_pending
+            .fetch_add(2 * max_updates_count, Ordering::Relaxed);
         let manager = accounts_lt_hash_manager();
         let mut num_enqueued = 0;
         for update in updates {
@@ -307,8 +312,8 @@ impl AccountsLtHashAsyncProgress {
         }
         let num_skipped = max_updates_count - num_enqueued;
         if num_skipped > 0 {
-            self.num_updates_pending
-                .fetch_sub(num_skipped, Ordering::Relaxed);
+            self.num_states_pending
+                .fetch_sub(2 * num_skipped, Ordering::Relaxed);
         }
 
         // Wake up the manager in case updates were enqueued and banks are waiting.
@@ -317,18 +322,20 @@ impl AccountsLtHashAsyncProgress {
         }
     }
 
-    /// Adds `count` to the pending updates count.
+    /// Adds `count` to the pending states count.
     ///
     /// Off-chain callers call this once before their series of `send_chunked()`
-    /// calls, with the sum of their updates.
+    /// calls, with two states per update, similarly to `enqueue_for_dedup()` for queued
+    /// updates.
     fn add_deduped_count(&self, count: usize) {
-        self.num_updates_pending.fetch_add(count, Ordering::Relaxed);
+        self.num_states_pending.fetch_add(count, Ordering::Relaxed);
     }
 
-    /// Spawns `updates` for asynchronous hashing, as jobs of `chunk_len` updates.
+    /// Spawns `updates` for asynchronous hashing, as jobs of `chunk_len` account states
+    /// that share a mix direction.
     ///
     /// Returns without waiting for the hashing. `updates` must hold each account at
-    /// most once and be counted as pending already.
+    /// most once and be counted as pending twice, once per state.
     ///
     /// Off-chain callers skip the queue, so the manager neither dedups nor delays their
     /// updates. They must call this only before the first `enqueue_for_dedup()` or
@@ -339,44 +346,61 @@ impl AccountsLtHashAsyncProgress {
         updates: impl IntoIterator<Item = AccountsLtHashUpdate>,
         chunk_len: usize,
     ) {
-        let mut chunk = Vec::new();
         let mut num_updates = 0;
-        for mut update in updates {
+        let mut num_skipped_states = 0;
+        let mut chunks = [
+            (Vec::new(), MixDirection::Out),
+            (Vec::new(), MixDirection::In),
+        ];
+        for update in updates {
             num_updates += 1;
-            if update.should_split() {
-                // Hash the prev version in a job of its own, so another worker shares the
-                // account. It counts as one more pending update.
-                self.num_updates_pending.fetch_add(1, Ordering::Relaxed);
-                Arc::clone(self).send_chunk(thread_pool, vec![update.take_prev()]);
-            }
-            if chunk.is_empty() {
-                chunk.reserve_exact(chunk_len);
-            }
-            chunk.push(update);
-            if chunk.len() == chunk_len {
-                Arc::clone(self).send_chunk(thread_pool, mem::take(&mut chunk));
+            let AccountsLtHashUpdate {
+                address,
+                prev_account,
+                curr_account,
+            } = update;
+            for ((chunk, mix), account) in chunks.iter_mut().zip([prev_account, curr_account]) {
+                let Some(account) = account else {
+                    num_skipped_states += 1;
+                    continue;
+                };
+                if chunk.is_empty() {
+                    chunk.reserve_exact(chunk_len);
+                }
+                chunk.push(AccountState { address, account });
+                if chunk.len() == chunk_len {
+                    Arc::clone(self).send_chunk(thread_pool, *mix, mem::take(chunk));
+                }
             }
         }
         self.num_updates_total
             .fetch_add(num_updates, Ordering::Relaxed);
-        if !chunk.is_empty() {
-            Arc::clone(self).send_chunk(thread_pool, chunk);
+        for (chunk, mix) in chunks {
+            if !chunk.is_empty() {
+                Arc::clone(self).send_chunk(thread_pool, mix, chunk);
+            }
+        }
+        if num_skipped_states > 0 {
+            self.num_states_pending
+                .fetch_sub(num_skipped_states, Ordering::Relaxed);
         }
     }
 
-    /// Sends `updates` to `thread_pool` as one job.
+    /// Sends `states` to `thread_pool` as one job.
     fn send_chunk(
         self: Arc<Self>,
         thread_pool: &WorkerPool<AccountsLtHashChunk>,
-        updates: Vec<AccountsLtHashUpdate>,
+        mix: MixDirection,
+        states: Vec<AccountState>,
     ) {
         thread_pool.send(AccountsLtHashChunk {
             async_progress: self,
-            updates,
+            mix,
+            states,
         });
     }
 
-    /// Waits for all pending updates to complete, then mixes the results into `lt_hash`.
+    /// Waits for all pending states to complete, then mixes the results into `lt_hash`.
     ///
     /// Returns the number of updates hashed.
     ///
@@ -386,7 +410,7 @@ impl AccountsLtHashAsyncProgress {
         // Signal end of slot, so the manager wakes up and spawns queued updates
         // without waiting out its dedup interval.
         self.set_is_at_end_of_slot();
-        while self.num_updates_pending.load(Ordering::Relaxed) > 0 {
+        while self.num_states_pending.load(Ordering::Relaxed) > 0 {
             // Spin, do not yield! This is called by Bank::freeze() and we want to be fast.
             hint::spin_loop();
         }
@@ -398,24 +422,15 @@ impl AccountsLtHashAsyncProgress {
         self.num_updates_total.load(Ordering::Relaxed)
     }
 
-    /// Processes `update` and mixes the result into `accum_lt_hash`.
+    /// Processes `state` and mixes the result into or out of `accum_lt_hash`.
     ///
     /// Note: Since an LtHash is large, `accum_lt_hash` is passed as an in-out parameter.
     /// This it to avoid Rust compiler bug that fails to perform return value optimization.
-    fn process(accum_lt_hash: &mut LtHash, update: &AccountsLtHashUpdate) {
-        let AccountsLtHashUpdate {
-            address,
-            prev_account,
-            curr_account,
-            has_large_version: _,
-        } = update;
-        if let Some(prev_account) = prev_account {
-            let prev_lt_hash = AccountsDb::lt_hash_account(prev_account, address);
-            accum_lt_hash.mix_out(&prev_lt_hash.0);
-        }
-        if let Some(curr_account) = curr_account {
-            let curr_lt_hash = AccountsDb::lt_hash_account(curr_account, address);
-            accum_lt_hash.mix_in(&curr_lt_hash.0);
+    fn process(accum_lt_hash: &mut LtHash, state: &AccountState, mix: MixDirection) {
+        let lt_hash = AccountsDb::lt_hash_account(&state.account, &state.address);
+        match mix {
+            MixDirection::In => accum_lt_hash.mix_in(&lt_hash.0),
+            MixDirection::Out => accum_lt_hash.mix_out(&lt_hash.0),
         }
     }
 
@@ -445,18 +460,16 @@ impl AccountsLtHashAsyncProgress {
     }
 }
 
-/// Derives the chunk size from the number of updates to spawn.
-fn chunk_len(num_updates: usize) -> usize {
+/// Returns how many states to put in each chunk, given the states to send in both mix
+/// directions.
+fn chunk_len(num_states: usize) -> usize {
     /// One chunk keeps every worker busy, and a second one lets work-stealing
     /// rebalance a chunk full of large accounts.
     const CHUNKS_PER_THREAD: usize = 2;
-    num_updates
+    num_states
         .div_ceil(NUM_ACCOUNTS_HASHER_THREADS.get() * CHUNKS_PER_THREAD)
         .max(1)
 }
-
-/// Accounts at least this large take longer to hash than an extra spawn.
-const SPLIT_ACCOUNT_DATA_LEN: usize = 16 * 1024;
 
 /// Returns the global accounts lt hash manager.
 ///
@@ -577,6 +590,9 @@ struct BanksUpdates {
 struct BankUpdates {
     async_progress: Arc<AccountsLtHashAsyncProgress>,
     dedup_map: ahash::HashMap<Pubkey, AccountsLtHashUpdate>,
+    /// Duplicate updates skipped in this round, to be subtracted after all updates get sent
+    /// through `send_all()`.
+    num_duplicates: usize,
 }
 
 impl BanksUpdates {
@@ -604,6 +620,7 @@ impl BanksUpdates {
                 self.banks.push(BankUpdates {
                     async_progress,
                     dedup_map: self.dedup_map_freelist.pop().unwrap_or_default(),
+                    num_duplicates: 0,
                 });
                 self.banks.last_mut().expect("just pushed")
             }
@@ -613,15 +630,9 @@ impl BanksUpdates {
                 entry.insert(update);
             }
             Entry::Occupied(mut entry) => {
-                // The duplicate never becomes a job, so drop its pending count.
-                bank.async_progress
-                    .num_updates_pending
-                    .fetch_sub(1, Ordering::Relaxed);
+                bank.num_duplicates += 1;
                 let held = entry.get_mut();
                 held.curr_account = update.curr_account;
-                // Keeping the held flag may split an update whose large version was
-                // overwritten, which costs one extra job.
-                held.has_large_version |= update.has_large_version;
             }
         }
     }
@@ -629,12 +640,20 @@ impl BanksUpdates {
     /// Spawns every bank's updates in chunks and empties every bank.
     fn send_all(&mut self, thread_pool: &WorkerPool<AccountsLtHashChunk>) {
         for mut bank in self.banks.drain(..) {
-            let chunk_len = chunk_len(bank.dedup_map.len());
+            let num_updates = bank.dedup_map.len();
             bank.async_progress.send_chunked(
                 thread_pool,
                 bank.dedup_map.drain().map(|(_, update)| update),
-                chunk_len,
+                // Each update holds up to two states, one per mix direction.
+                chunk_len(2 * num_updates),
             );
+            // Subtract two states per duplicate: `enqueue_for_dedup()` counted them, but
+            // duplicates were never included in jobs.
+            if bank.num_duplicates > 0 {
+                bank.async_progress
+                    .num_states_pending
+                    .fetch_sub(2 * bank.num_duplicates, Ordering::Relaxed);
+            }
             self.dedup_map_freelist.push(bank.dedup_map);
         }
     }
@@ -655,9 +674,6 @@ struct AccountsLtHashUpdate {
     address: Pubkey,
     prev_account: Option<AccountSharedData>,
     curr_account: Option<AccountSharedData>,
-    /// Whether a version's data reaches `SPLIT_ACCOUNT_DATA_LEN`. The producer sets it
-    /// while it holds the accounts in cache, so dispatch never reads account data.
-    has_large_version: bool,
 }
 
 impl AccountsLtHashUpdate {
@@ -666,32 +682,25 @@ impl AccountsLtHashUpdate {
         prev_account: Option<AccountSharedData>,
         curr_account: Option<AccountSharedData>,
     ) -> Self {
-        let is_large = |account: &Option<AccountSharedData>| {
-            account
-                .as_ref()
-                .is_some_and(|account| account.data().len() >= SPLIT_ACCOUNT_DATA_LEN)
-        };
         Self {
             address,
-            has_large_version: is_large(&prev_account) || is_large(&curr_account),
             prev_account,
             curr_account,
         }
     }
+}
 
-    fn should_split(&self) -> bool {
-        self.has_large_version && self.prev_account.is_some() && self.curr_account.is_some()
-    }
+/// One state of an account, to be mixed into or out of a bank's lt hash.
+struct AccountState {
+    address: Pubkey,
+    account: AccountSharedData,
+}
 
-    /// Moves the prev version into an update of its own and leaves the curr version.
-    fn take_prev(&mut self) -> Self {
-        Self {
-            address: self.address,
-            prev_account: self.prev_account.take(),
-            curr_account: None,
-            has_large_version: false,
-        }
-    }
+/// Whether a state mixes into or out of the lt hash.
+#[derive(Clone, Copy)]
+enum MixDirection {
+    In,
+    Out,
 }
 
 /// Get the freelist of hashsets to use for seen accounts.
@@ -822,18 +831,19 @@ struct FreelistStats {
     capacity_bytes: usize,
 }
 
-/// A chunk of updates from one bank, to be hashed on a worker.
+/// A chunk of account states from one bank to hash on a worker, all sharing a mix direction.
 struct AccountsLtHashChunk {
     async_progress: Arc<AccountsLtHashAsyncProgress>,
-    updates: Vec<AccountsLtHashUpdate>,
+    mix: MixDirection,
+    states: Vec<AccountState>,
 }
 
 impl AccountsLtHashChunk {
-    /// Hashes the updates into the accumulator of the worker with `worker_id`.
+    /// Hashes the states into the accumulator of the worker with `worker_id`.
     fn hash(&self, worker_id: usize) {
         let mut accumulator = self.async_progress.accumulators[worker_id].lock().unwrap();
-        for update in &self.updates {
-            AccountsLtHashAsyncProgress::process(&mut accumulator, update);
+        for state in &self.states {
+            AccountsLtHashAsyncProgress::process(&mut accumulator, state, self.mix);
         }
     }
 }
@@ -841,12 +851,12 @@ impl AccountsLtHashChunk {
 impl Drop for AccountsLtHashChunk {
     fn drop(&mut self) {
         // The chunk drops after `hash()` releases the accumulator, so `finish()` cannot
-        // observe zero pending updates until they are accumulated. A panic while hashing
+        // observe zero pending states until they are accumulated. A panic while hashing
         // poisons the accumulator instead, so `finish()` panics rather than waiting
         // forever.
         self.async_progress
-            .num_updates_pending
-            .fetch_sub(self.updates.len(), Ordering::Relaxed);
+            .num_states_pending
+            .fetch_sub(self.states.len(), Ordering::Relaxed);
     }
 }
 
@@ -1403,12 +1413,13 @@ mod tests {
         let async_progress2 = Arc::new(AccountsLtHashAsyncProgress::new());
         let mut banks_updates = BanksUpdates::default();
 
+        // Account for two states per queued update, as `enqueue_for_dedup()` does.
         async_progress1
-            .num_updates_pending
-            .fetch_add(2, Ordering::Relaxed);
+            .num_states_pending
+            .fetch_add(4, Ordering::Relaxed);
         async_progress2
-            .num_updates_pending
-            .fetch_add(1, Ordering::Relaxed);
+            .num_states_pending
+            .fetch_add(2, Ordering::Relaxed);
 
         banks_updates.insert(QueuedAccountsLtHashUpdate {
             async_progress: Arc::clone(&async_progress1),
@@ -1449,78 +1460,19 @@ mod tests {
         assert_eq!(update.prev_account.as_ref().unwrap().lamports(), 11);
         assert_eq!(update.curr_account.as_ref().unwrap().lamports(), 13);
 
+        assert_eq!(bank1.num_duplicates, 1);
         assert_eq!(
-            async_progress1.num_updates_pending.load(Ordering::Relaxed),
-            1
+            async_progress1.num_states_pending.load(Ordering::Relaxed),
+            4
         );
-        assert_eq!(
-            async_progress2.num_updates_pending.load(Ordering::Relaxed),
-            1
-        );
-    }
 
-    #[test]
-    fn test_split_large_account_update() {
-        let owner = Pubkey::default();
-        let update = |prev_len, curr_len| {
-            AccountsLtHashUpdate::new(
-                Pubkey::new_unique(),
-                Some(AccountSharedData::new_with_data(
-                    1,
-                    vec![0; prev_len],
-                    &owner,
-                )),
-                Some(AccountSharedData::new_with_data(
-                    2,
-                    vec![0; curr_len],
-                    &owner,
-                )),
-            )
-        };
-        assert!(!update(0, SPLIT_ACCOUNT_DATA_LEN - 1).should_split());
-        assert!(update(0, SPLIT_ACCOUNT_DATA_LEN).should_split());
-        assert!(update(SPLIT_ACCOUNT_DATA_LEN, 0).should_split());
-
-        let mut curr_half = update(SPLIT_ACCOUNT_DATA_LEN, SPLIT_ACCOUNT_DATA_LEN + 1);
-        let mut expected_lt_hash = LtHash::identity();
-        AccountsLtHashAsyncProgress::process(&mut expected_lt_hash, &curr_half);
-        let prev_half = curr_half.take_prev();
-        assert!(prev_half.curr_account.is_none() && !prev_half.should_split());
-        assert!(curr_half.prev_account.is_none() && !curr_half.should_split());
-
-        let mut lt_hash = LtHash::identity();
-        AccountsLtHashAsyncProgress::process(&mut lt_hash, &prev_half);
-        AccountsLtHashAsyncProgress::process(&mut lt_hash, &curr_half);
-        assert_eq!(lt_hash, expected_lt_hash);
-    }
-
-    #[test]
-    fn test_dedup_keeps_large_version() {
-        let owner = Pubkey::default();
-        let version = |data_len| {
-            Some(AccountSharedData::new_with_data(
-                1,
-                vec![0; data_len],
-                &owner,
-            ))
-        };
-        // A large held prev version and a large newer curr version both survive the merge.
-        for (held_prev_len, newer_curr_len) in
-            [(SPLIT_ACCOUNT_DATA_LEN, 0), (0, SPLIT_ACCOUNT_DATA_LEN)]
-        {
-            let address = Pubkey::new_unique();
-            let async_progress = Arc::new(AccountsLtHashAsyncProgress::new());
-            let mut banks_updates = BanksUpdates::default();
-            for (prev_len, curr_len) in [(held_prev_len, 0), (0, newer_curr_len)] {
-                async_progress
-                    .num_updates_pending
-                    .fetch_add(1, Ordering::Relaxed);
-                banks_updates.insert(QueuedAccountsLtHashUpdate {
-                    async_progress: Arc::clone(&async_progress),
-                    inner: AccountsLtHashUpdate::new(address, version(prev_len), version(curr_len)),
-                });
+        banks_updates.send_all(&accounts_lt_hash_manager().thread_pool);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        for async_progress in [&async_progress1, &async_progress2] {
+            while async_progress.num_states_pending.load(Ordering::Relaxed) > 0 {
+                assert!(Instant::now() < deadline, "states stay pending");
+                thread::yield_now();
             }
-            assert!(banks_updates.banks[0].dedup_map[&address].should_split());
         }
     }
 
@@ -1591,10 +1543,17 @@ mod tests {
                 .collect();
             // Hash the same updates serially, for reference.
             for update in &updates {
-                AccountsLtHashAsyncProgress::process(&mut expected_lt_hash, update);
+                if let Some(prev_account) = &update.prev_account {
+                    let lt_hash = AccountsDb::lt_hash_account(prev_account, &update.address);
+                    expected_lt_hash.mix_out(&lt_hash.0);
+                }
+                if let Some(curr_account) = &update.curr_account {
+                    let lt_hash = AccountsDb::lt_hash_account(curr_account, &update.address);
+                    expected_lt_hash.mix_in(&lt_hash.0);
+                }
             }
             if spawn {
-                async_progress.add_deduped_count(updates.len());
+                async_progress.add_deduped_count(2 * updates.len());
                 async_progress.send_chunked(
                     &accounts_lt_hash_manager().thread_pool,
                     updates,
