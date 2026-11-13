@@ -56,8 +56,8 @@ where
 #[derive(Clone, Debug)]
 pub struct WorkerPoolConfig {
     /// Names the workers `{thread_name_prefix}{worker_id}`, with the id zero-padded to the digits of
-    /// the largest id. Each name must fit in the [`MAX_THREAD_NAME_LEN`] bytes of a Linux thread
-    /// name.
+    /// the largest id. The prefix is truncated, so each name fits in the [`MAX_THREAD_NAME_LEN`]
+    /// bytes of a Linux thread name.
     pub thread_name_prefix: &'static str,
     pub num_workers: NonZeroUsize,
     /// Number of jobs the queue holds before [`WorkerPool::send`] blocks.
@@ -95,8 +95,6 @@ impl<J: Send + 'static> WorkerPool<J> {
     /// Spawns the workers. Each worker runs its own handler from `make_job_handler` to process jobs.
     ///
     /// Returns the error of the first thread that fails to spawn.
-    ///
-    /// Panics if a worker name exceeds [`MAX_THREAD_NAME_LEN`].
     pub fn spawn(
         config: WorkerPoolConfig,
         make_job_handler: impl MakeJobHandler<J>,
@@ -109,11 +107,8 @@ impl<J: Send + 'static> WorkerPool<J> {
         } = config;
         let largest_id = num_workers.get().saturating_sub(1);
         let id_width = largest_id.to_string().len();
-        let longest_thread_name = format!("{thread_name_prefix}{largest_id}");
-        assert!(
-            longest_thread_name.len() <= MAX_THREAD_NAME_LEN,
-            "thread name {longest_thread_name} exceeds {MAX_THREAD_NAME_LEN} bytes",
-        );
+        let thread_name_prefix = &thread_name_prefix[..thread_name_prefix
+            .floor_char_boundary(MAX_THREAD_NAME_LEN.saturating_sub(id_width))];
         let (job_sender, job_receiver) = bounded::<J>(job_queue_capacity.get());
         let worker_handles = (0..num_workers.get())
             .map(|worker_id| {
@@ -298,32 +293,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_worker_pool_pads_worker_ids_to_largest_id() {
+    fn worker_thread_name(thread_name_prefix: &'static str, num_workers: usize) -> (usize, String) {
         let (result_sender, result_receiver) = mpsc::channel();
-        let num_workers = NonZeroUsize::new(11).unwrap();
-        let config = WorkerPoolConfig::new("solTestPool", num_workers);
+        let config =
+            WorkerPoolConfig::new(thread_name_prefix, NonZeroUsize::new(num_workers).unwrap());
         let pool = WorkerPool::spawn(config, report_job_handler(result_sender)).unwrap();
         pool.send(0);
         pool.join().unwrap();
         let (_, worker_id, thread_name) = result_receiver.recv().unwrap();
-        assert_eq!(thread_name, Some(format!("solTestPool{worker_id:02}")));
+        (worker_id, thread_name.unwrap())
     }
 
     #[test]
-    fn test_worker_pool_fits_long_prefix_to_few_workers() {
-        let config = WorkerPoolConfig::new("solTestPoolMax", NonZeroUsize::new(10).unwrap());
-        WorkerPool::spawn(config, |_| |()| {})
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "thread name solTestPoolMax10 exceeds 15 bytes")]
-    fn test_worker_pool_rejects_truncated_thread_names() {
-        let config = WorkerPoolConfig::new("solTestPoolMax", NonZeroUsize::new(11).unwrap());
-        let _ = WorkerPool::spawn(config, |_| |()| {});
+    fn test_worker_pool_truncates_prefix_to_fit_padded_worker_ids() {
+        let (worker_id, thread_name) = worker_thread_name("solTestPoolMax", 10);
+        assert_eq!(thread_name, format!("solTestPoolMax{worker_id}"));
+        let (worker_id, thread_name) = worker_thread_name("solTestPoolMax", 11);
+        assert_eq!(thread_name, format!("solTestPoolMa{worker_id:02}"));
     }
 
     #[test]
