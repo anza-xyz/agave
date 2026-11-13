@@ -77,15 +77,23 @@ mod serde_snapshot_tests {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
         };
-        let (accounts_db, _) = reconstruct_accountsdb_from_fields(
-            snapshot_accounts_db_fields,
-            account_paths,
-            storage_and_next_append_vec_id,
-            None,
-            false,
+        let mut accounts_db = AccountsDb::new_with_config(
+            account_paths.to_vec(),
             accounts_db_config,
             None,
             Arc::default(),
+        );
+        accounts_db.initialize_storages(
+            storage_and_next_append_vec_id.storage,
+            storage_and_next_append_vec_id
+                .next_append_vec_id
+                .into_inner(),
+        );
+        let (accounts_db, _) = reconstruct_accountsdb_from_fields(
+            snapshot_accounts_db_fields,
+            accounts_db,
+            None,
+            false,
         )?;
         Ok(accounts_db)
     }

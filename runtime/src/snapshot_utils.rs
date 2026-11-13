@@ -41,7 +41,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsFileId, AtomicAccountsFileId},
+        accounts_db::{AccountsDb, AccountsFileId, AtomicAccountsFileId},
         utils::{ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
@@ -249,6 +249,7 @@ pub struct UnpackedSnapshotsDirAndVersion {
 
 /// Helper type for passing around account storage map and next append vec id
 /// for reconstructing accounts from a snapshot
+#[cfg(test)]
 pub(crate) struct StorageAndNextAccountsFileId {
     pub storage: AccountStorageMap,
     pub next_append_vec_id: AtomicAccountsFileId,
@@ -1438,13 +1439,14 @@ fn prune_stale_storages(
 
 /// Performs the common tasks when deserializing a snapshot
 ///
-/// Handles reading the snapshot file and version file,
-/// then returning those fields plus the rebuilt storages.
+/// Handles reading the snapshot file and version file, then returning those fields plus the
+/// accounts db from `new_accounts_db` with the rebuilt storages.  `new_accounts_db` runs while
+/// another thread opens the storage files.
 pub(crate) fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
-    next_append_vec_id: Arc<AtomicAccountsFileId>,
-) -> Result<(AccountStorageMap, BankFieldsToDeserialize, AccountsDbFields)> {
+    new_accounts_db: impl FnOnce() -> AccountsDb,
+) -> Result<(AccountsDb, BankFieldsToDeserialize, AccountsDbFields)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
     // it is a programmer error if `snapshot_info` is incompatible
     debug_assert!(is_bank_snapshot_loadable(snapshot_info.fastboot_version.as_ref()).unwrap());
@@ -1494,6 +1496,8 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         account_paths,
     );
 
+    let mut accounts_db = new_accounts_db();
+    let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
         |SnapshotFieldsBundle {
              bank_fields,
@@ -1503,13 +1507,17 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
          }| {
             let storage = SnapshotStorageRebuilder::rebuild_storages_from_local_state(
                 append_vec_files.into_iter().chain(file_receiver),
-                next_append_vec_id,
+                next_append_vec_id.clone(),
                 obsolete_accounts
                     .map(|accounts| accounts.into_hashmap())
                     .unwrap_or_default(),
                 storages_map,
             )?;
-            Ok((storage, bank_fields, accounts_db_fields))
+            let next_append_vec_id = Arc::try_unwrap(next_append_vec_id)
+                .expect("rebuilder should have dropped its next id handle")
+                .into_inner();
+            accounts_db.initialize_storages(storage, next_append_vec_id);
+            Ok((accounts_db, bank_fields, accounts_db_fields))
         },
     );
 
