@@ -1157,8 +1157,10 @@ impl Validator {
 
         let mut block_commitment_cache = BlockCommitmentCache::default();
         let bank_forks_guard = bank_forks.read().unwrap();
+        let working_bank = bank_forks_guard.working_bank();
         block_commitment_cache.initialize_slots(
-            bank_forks_guard.working_bank().slot(),
+            working_bank.slot(),
+            working_bank.bank_id(),
             bank_forks_guard.root(),
         );
         drop(bank_forks_guard);
