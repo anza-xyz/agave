@@ -42,4 +42,19 @@ impl PinnedXdpSender {
             tx::BytesTxPacket::new(self.src_addr, addr, None, payload),
         )
     }
+
+    /// Like [`PinnedXdpSender::try_send_low_priority`], for a packet that gives way to those as
+    /// well. See [`tx::XdpSender::try_send_lowest_priority`].
+    #[inline]
+    pub fn try_send_lowest_priority(
+        &self,
+        sender_index: usize,
+        addr: impl Into<tx::XdpAddrs>,
+        payload: Bytes,
+    ) -> Result<(), tx::TrySendError<tx::BytesTxPacket>> {
+        self.sender.try_send_lowest_priority(
+            sender_index,
+            tx::BytesTxPacket::new(self.src_addr, addr, None, payload),
+        )
+    }
 }
