@@ -413,7 +413,6 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    #[cfg(test)]
     pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<rocksdb::DBRawIterator<'_>> {
         Ok(self.db.raw_iterator_cf(cf))
     }
@@ -766,21 +765,46 @@ where
         &self,
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let start_key: <C as Column>::Key;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
+        let mut raw_iter = self.backend.raw_iterator_cf(self.handle())?;
+        let direction = match iterator_mode {
+            IteratorMode::Start => {
+                raw_iter.seek_to_first();
+                IteratorDirection::Forward
+            }
+            IteratorMode::End => {
+                raw_iter.seek_to_last();
+                IteratorDirection::Reverse
+            }
             IteratorMode::From(start, direction) => {
-                start_key = <C as Column>::key(&start);
-                RocksIteratorMode::From(start_key.as_ref(), direction)
+                let start_key = <C as Column>::key(&start);
+                match direction {
+                    IteratorDirection::Forward => raw_iter.seek(start_key.as_ref()),
+                    IteratorDirection::Reverse => raw_iter.seek_for_prev(start_key.as_ref()),
+                }
+                direction
             }
         };
 
-        let iter = self.backend.iterator_cf(self.handle(), iterator_mode);
-        Ok(iter.map(|pair| {
-            let (key, value) = pair.unwrap();
-            (C::index(&key), value)
-        }))
+        let mut done = false;
+        let iter = std::iter::from_fn(move || {
+            if done {
+                return None;
+            }
+            if let Some((key, value)) = raw_iter.item() {
+                let item = (C::index(key), Box::from(value));
+                match direction {
+                    IteratorDirection::Forward => raw_iter.next(),
+                    IteratorDirection::Reverse => raw_iter.prev(),
+                }
+                Some(item)
+            } else {
+                done = true;
+                raw_iter.status().unwrap();
+                None
+            }
+        });
+
+        Ok(iter)
     }
 
     #[cfg(test)]
@@ -1451,5 +1475,65 @@ pub mod tests {
 
         // The deprecated column should have been dropped by Rocks::open()
         assert!(!is_program_costs_column_present(db_path));
+    }
+
+    #[test]
+    fn test_ledger_column_iter() {
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path();
+        let options = BlockstoreOptions {
+            access_type: AccessType::Primary,
+            ..BlockstoreOptions::default()
+        };
+        let rocks = Arc::new(Rocks::open(db_path.to_path_buf(), options).unwrap());
+        let column: LedgerColumn<columns::Root> = rocks.column();
+
+        column.put_bytes(1, &[10]).unwrap();
+        column.put_bytes(3, &[30]).unwrap();
+        column.put_bytes(5, &[50]).unwrap();
+
+        let items: Vec<_> = column.iter(IteratorMode::Start).unwrap().collect();
+        assert_eq!(
+            items,
+            vec![
+                (1, Box::from([10].as_slice())),
+                (3, Box::from([30].as_slice())),
+                (5, Box::from([50].as_slice())),
+            ]
+        );
+
+        let items: Vec<_> = column.iter(IteratorMode::End).unwrap().collect();
+        assert_eq!(
+            items,
+            vec![
+                (5, Box::from([50].as_slice())),
+                (3, Box::from([30].as_slice())),
+                (1, Box::from([10].as_slice())),
+            ]
+        );
+
+        let items: Vec<_> = column
+            .iter(IteratorMode::From(3, IteratorDirection::Forward))
+            .unwrap()
+            .collect();
+        assert_eq!(
+            items,
+            vec![
+                (3, Box::from([30].as_slice())),
+                (5, Box::from([50].as_slice())),
+            ]
+        );
+
+        let items: Vec<_> = column
+            .iter(IteratorMode::From(3, IteratorDirection::Reverse))
+            .unwrap()
+            .collect();
+        assert_eq!(
+            items,
+            vec![
+                (3, Box::from([30].as_slice())),
+                (1, Box::from([10].as_slice())),
+            ]
+        );
     }
 }
