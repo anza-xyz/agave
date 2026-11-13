@@ -872,6 +872,102 @@ fn tx_loop_sends_low_priority_packets_when_nothing_else_waits() {
 
 #[test]
 #[ignore = "requires root and network namespace privileges"]
+fn tx_loop_sends_lowest_priority_packets_after_the_low_priority_ones() {
+    const PACKETS_OF_EACH_KIND: usize = 40;
+    // More low priority packets are queued right after the loop is done with this lowest
+    // priority packet.
+    const LAST_LOWEST_PRIORITY_PACKET_BEFORE_MORE: usize = 9;
+    const MORE_LOW_PRIORITY_PACKETS: usize = 8;
+
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+    let capture = PacketSocket::bind(links.right_if_index).expect("bind raw packet receiver");
+    capture
+        .set_receive_buffer(8 << 20)
+        .expect("grow the receive buffer of the raw packet receiver");
+
+    let low_priority_payload = |i: usize| Bytes::from(format!("low-priority-{i:03}"));
+    let lowest_priority_payload = |i: usize| Bytes::from(format!("lowest-priority-{i:03}"));
+
+    // The lowest priority packets are queued first.
+    let (sender, receiver) = tx_loop::channel(1, PACKETS_OF_EACH_KIND);
+    for i in 0..PACKETS_OF_EACH_KIND {
+        sender
+            .try_send_lowest_priority(tx_loop_packet(
+                &links,
+                links.right_ip,
+                lowest_priority_payload(i),
+            ))
+            .expect("queue lowest priority packet");
+    }
+    for i in 0..PACKETS_OF_EACH_KIND {
+        sender
+            .try_send_low_priority(tx_loop_packet(
+                &links,
+                links.right_ip,
+                low_priority_payload(i),
+            ))
+            .expect("queue low priority packet");
+    }
+
+    // The loop queues the later low priority packets itself, with this sender. The test holds it
+    // so that it can end the loop even when the loop never gets to that point.
+    let more_low_priority =
+        PACKETS_OF_EACH_KIND..PACKETS_OF_EACH_KIND.saturating_add(MORE_LOW_PRIORITY_PACKETS);
+    let loop_sender = Mutex::new(Some(sender.clone()));
+    let mismatch = std::thread::scope(|scope| {
+        let (links, loop_sender) = (&links, &loop_sender);
+        let trigger = lowest_priority_payload(LAST_LOWEST_PRIORITY_PACKET_BEFORE_MORE);
+        let more = more_low_priority.clone();
+        scope.spawn(move || {
+            run_tx_loop(links, receiver, |item| {
+                if item.payload() == &trigger {
+                    let sender = loop_sender.lock().unwrap().take();
+                    let sender = sender.expect("the trigger is sent once");
+                    for i in more.clone() {
+                        sender
+                            .try_send_low_priority(tx_loop_packet(
+                                links,
+                                links.right_ip,
+                                low_priority_payload(i),
+                            ))
+                            .expect("queue low priority packet");
+                    }
+                }
+            });
+        });
+
+        // Every low priority packet leaves before the first lowest priority one, and those that
+        // arrive later go ahead of the lowest priority packets that still wait.
+        let first_lowest_priority = 0..=LAST_LOWEST_PRIORITY_PACKET_BEFORE_MORE;
+        let rest_lowest_priority =
+            LAST_LOWEST_PRIORITY_PACKET_BEFORE_MORE.saturating_add(1)..PACKETS_OF_EACH_KIND;
+        let wire_order = (0..PACKETS_OF_EACH_KIND)
+            .map(low_priority_payload)
+            .chain(first_lowest_priority.map(lowest_priority_payload))
+            .chain(more_low_priority.map(low_priority_payload))
+            .chain(rest_lowest_priority.map(lowest_priority_payload));
+        let mut buf = [0u8; 2048];
+        let mismatch = wire_order.enumerate().find_map(|(position, expected)| {
+            capture
+                .recv_matching_udp(
+                    &mut buf,
+                    &tx_loop_frame(links, expected.as_ref()),
+                    Duration::from_secs(3),
+                )
+                .err()
+                .map(|err| format!("frame {position} on the wire is not {expected:?}: {err}"))
+        });
+        // Ends the loop.
+        drop(loop_sender.lock().unwrap().take());
+        drop(sender);
+        mismatch
+    });
+    assert_eq!(mismatch, None);
+}
+
+#[test]
+#[ignore = "requires root and network namespace privileges"]
 fn tx_loop_holds_low_priority_packets_while_frames_wait_on_the_device() {
     // In copy mode the kernel takes at most 32 frames from the TX ring per kick, so most of these
     // are still in the ring when the loop has written the last one.

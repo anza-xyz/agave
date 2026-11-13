@@ -341,8 +341,33 @@ impl XdpSender {
         }
     }
 
+    /// Like [`XdpSender::try_send_low_priority`], for a packet that gives way to those as well:
+    /// the queue sends it only when no low priority packet waits either. The two kinds wait
+    /// apart, so a queue that can send the low priority ones alone refuses only these and keeps
+    /// its room for the low priority ones.
+    #[inline]
+    pub fn try_send_lowest_priority(
+        &self,
+        sender_index: usize,
+        packet: BytesTxPacket,
+    ) -> Result<(), TrySendError<BytesTxPacket>> {
+        #[cfg(target_os = "linux")]
+        {
+            let idx = sender_index
+                .checked_rem(self.senders.len())
+                .expect("XdpSender::senders should not be empty");
+            self.senders[idx].try_send_lowest_priority(packet)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = sender_index;
+            Err(TrySendError::Disconnected(packet))
+        }
+    }
+
     /// Returns a sender with the receivers a TX loop would drain, one per queue, for tests that
-    /// need no device. A queue holds `capacity` packets and as many low priority ones.
+    /// need no device. A queue holds `capacity` packets and as many low priority ones of each
+    /// kind.
     #[cfg(all(target_os = "linux", feature = "dev-context-only-utils"))]
     pub fn with_receivers(
         queue_count: usize,
@@ -597,10 +622,10 @@ impl TransmitterBuilder {
     #[cfg(target_os = "linux")]
     pub fn build(self) -> (Transmitter, XdpSender) {
         const DROP_CHANNEL_CAP: usize = 1_000_000;
-        // How many low priority packets wait for a queue that has other packets to send. Kept
-        // much shorter than the default `tx_channel_cap`, so that a queue that cannot keep up
-        // refuses new ones instead of building a long backlog. The top-level README.md quotes
-        // this number.
+        // How many low priority packets, and as many lowest priority ones, wait for a queue that
+        // has other packets to send. Kept much shorter than the default `tx_channel_cap`, so that
+        // a queue that cannot keep up refuses new ones instead of building a long backlog. The
+        // top-level README.md quotes this number.
         const LOW_PRIORITY_TX_CHANNEL_CAP: usize = 4096;
 
         let Self {
@@ -924,6 +949,33 @@ mod tests {
         assert!(matches!(receivers[2].try_recv(), Err(TryRecvError::Empty)));
         assert!(receivers[2].try_recv_low_priority(|| true).is_some());
         assert!(receivers[0].try_recv_low_priority(|| true).is_some());
+        assert!(receivers[1].try_recv_low_priority(|| true).is_none());
+    }
+
+    #[test]
+    fn lowest_priority_packets_have_their_own_room() {
+        let (sender, receivers) = sender_with_receivers(3);
+        let subset = sender.subset(&[2, 0]).unwrap();
+
+        // A queue full of low priority packets still takes a lowest priority one, and the reverse.
+        subset.try_send_low_priority(0, packet()).unwrap();
+        subset.try_send_lowest_priority(0, packet()).unwrap();
+        assert!(matches!(
+            subset.try_send_lowest_priority(0, packet()),
+            Err(TrySendError::Full(_))
+        ));
+        subset.try_send_lowest_priority(1, packet()).unwrap();
+        subset.try_send_low_priority(1, packet()).unwrap();
+
+        for queue in [2, 0] {
+            assert!(matches!(
+                receivers[queue].try_recv(),
+                Err(TryRecvError::Empty)
+            ));
+            assert!(receivers[queue].try_recv_low_priority(|| true).is_some());
+            assert!(receivers[queue].try_recv_low_priority(|| true).is_some());
+            assert!(receivers[queue].try_recv_low_priority(|| true).is_none());
+        }
         assert!(receivers[1].try_recv_low_priority(|| true).is_none());
     }
 }
