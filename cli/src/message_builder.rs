@@ -72,9 +72,9 @@ impl MessageBuilder {
             }
             ComputeUnitLimit::Default => u32::try_from(self.instructions.len())
                 .unwrap_or(u32::MAX)
-                .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
-                .min(MAX_COMPUTE_UNIT_LIMIT),
-        };
+                .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
+        }
+        .min(MAX_COMPUTE_UNIT_LIMIT);
         let config = TransactionConfig {
             priority_fee: self
                 .compute_unit_price
@@ -138,6 +138,27 @@ mod tests {
         assert_eq!(
             message.account_keys[usize::from(message.instructions[2].program_id_index)],
             Pubkey::from(memo_program_id().to_bytes())
+        );
+    }
+
+    #[test]
+    fn builder_caps_static_limit_before_calculating_fee() {
+        let message = MessageBuilder::new(vec![])
+            .with_compute_unit_config(&ComputeUnitConfig {
+                compute_unit_price: Some(1_000_000),
+                compute_unit_limit: ComputeUnitLimit::Static(u32::MAX),
+            })
+            .build(&Pubkey::new_unique());
+        let VersionedMessage::V1(message) = message else {
+            unreachable!()
+        };
+        assert_eq!(
+            message.config.compute_unit_limit,
+            Some(MAX_COMPUTE_UNIT_LIMIT)
+        );
+        assert_eq!(
+            message.config.priority_fee,
+            Some(u64::from(MAX_COMPUTE_UNIT_LIMIT))
         );
     }
 
