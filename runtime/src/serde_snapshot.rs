@@ -7,12 +7,19 @@ use std::{
     ffi::{CStr, CString},
     path::Path,
 };
+#[cfg(test)]
+use {
+    crate::snapshot_utils::StorageAndNextAccountsFileId,
+    solana_accounts_db::{
+        accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
+    },
+    std::{path::PathBuf, sync::atomic::AtomicBool},
+};
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
-        snapshot_utils::StorageAndNextAccountsFileId,
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -21,12 +28,9 @@ use {
     smallvec::SmallVec,
     solana_accounts_db::{
         accounts::Accounts,
-        accounts_db::{
-            AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
-        },
+        accounts_db::{AccountsDb, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo},
         accounts_file::AccountsFile,
         accounts_hash::AccountsLtHash,
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
         blockhash_queue::BlockhashQueue,
     },
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -42,12 +46,8 @@ use {
     std::{
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
-        path::PathBuf,
         result::Result,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, atomic::Ordering},
         thread,
         time::Instant,
     },
@@ -589,20 +589,28 @@ where
     R: Read,
 {
     let (bank_fields, accounts_db_fields) = fields_from_streams(snapshot_streams)?;
+    let mut accounts_db = AccountsDb::new_with_config(
+        account_paths.to_vec(),
+        accounts_db_config,
+        accounts_update_notifier,
+        exit,
+    );
+    accounts_db.initialize_storages(
+        storage_and_next_append_vec_id.storage,
+        storage_and_next_append_vec_id
+            .next_append_vec_id
+            .into_inner(),
+    );
     let (bank, info) = reconstruct_bank_from_fields(
         bank_fields,
         accounts_db_fields,
         genesis_config,
         runtime_config,
-        account_paths,
-        storage_and_next_append_vec_id,
+        accounts_db,
         debug_keys,
         None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
         verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
     )?;
     Ok((
         bank,
@@ -734,21 +742,16 @@ pub(crate) struct ReconstructedBankInfo {
     pub(crate) calculated_capitalization: u64,
 }
 
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn reconstruct_bank_from_fields(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields,
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+    accounts_db: AccountsDb,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
 ) -> Result<(Bank, ReconstructedBankInfo), SnapshotError> {
     let mut bank_fields = bank_fields.collapse_into();
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
@@ -763,13 +766,9 @@ pub(crate) fn reconstruct_bank_from_fields(
         })?;
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
-        account_paths,
-        storage_and_next_append_vec_id,
+        accounts_db,
         limit_load_slot_count_from_snapshot,
         verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
     )?;
     bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
@@ -897,21 +896,10 @@ pub struct ReconstructedAccountsDbInfo {
 
 fn reconstruct_accountsdb_from_fields(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+    accounts_db: AccountsDb,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), SnapshotError> {
-    let mut accounts_db = AccountsDb::new_with_config(
-        account_paths.to_vec(),
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
-    );
-
     let snapshot_bank_hash_info = snapshot_accounts_db_fields.into_bank_hash_info();
 
     // Ensure all account paths exist
@@ -919,29 +907,6 @@ fn reconstruct_accountsdb_from_fields(
         std::fs::create_dir_all(path)
             .unwrap_or_else(|err| panic!("Failed to create directory {}: {}", path.display(), err));
     }
-
-    let StorageAndNextAccountsFileId {
-        storage,
-        next_append_vec_id,
-    } = storage_and_next_append_vec_id;
-
-    assert!(
-        !storage.is_empty(),
-        "At least one storage entry must exist from deserializing stream"
-    );
-
-    let next_append_vec_id = next_append_vec_id.load(Ordering::Acquire);
-    let max_append_vec_id = next_append_vec_id - 1;
-    assert!(
-        max_append_vec_id <= AccountsFileId::MAX / 2,
-        "Storage id {max_append_vec_id} larger than allowed max"
-    );
-
-    // Process deserialized data, set necessary fields in self
-    accounts_db.storage.initialize(storage);
-    accounts_db
-        .next_id
-        .store(next_append_vec_id, Ordering::Release);
 
     info!("Building accounts index...");
     let start = Instant::now();
