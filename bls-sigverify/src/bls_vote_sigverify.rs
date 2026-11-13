@@ -6,7 +6,6 @@ use {
         stats::{SigVerifyVoteStats, VoteSenderStats, VoteVerificationStats},
     },
     agave_votor_messages::wire::VotePayloadToSign,
-    agave_votor_transport::endpoint::BanSender,
     rayon::{
         ThreadPool,
         iter::{IntoParallelRefMutIterator, ParallelIterator},
@@ -29,7 +28,6 @@ pub(super) fn verify_and_send_votes(
     root_bank: &Bank,
     my_pubkey: &Pubkey,
     leader_schedule: &LeaderScheduleCache,
-    ban_sender: &BanSender,
     thread_pool: &ThreadPool,
     channels: &SigVerifierChannels,
 ) -> Result<SigVerifyVoteStats, SigVerifyVoteError> {
@@ -48,7 +46,7 @@ pub(super) fn verify_and_send_votes(
             .fold(
                 || (Saturating(0), VoteVerificationStats::default()),
                 |(mut total_votes_to_verify, mut vote_verification_stats), (_, batch)| {
-                    let (votes_to_verify, stats) = batch.verify(ban_sender, thread_pool);
+                    let (votes_to_verify, stats) = batch.verify(thread_pool);
                     total_votes_to_verify += votes_to_verify;
                     vote_verification_stats.merge(stats);
                     (total_votes_to_verify, vote_verification_stats)
@@ -67,7 +65,7 @@ pub(super) fn verify_and_send_votes(
     stats.votes_to_sig_verify += votes_to_verify;
     stats.vote_verification_stats.merge(vote_verification_stats);
     let mut sender_stats = VoteSenderStats::default();
-    for (_, batch) in unverified_votes.drain() {
+    for batch in unverified_votes.values_mut() {
         batch.process(
             root_bank,
             leader_schedule,
