@@ -201,7 +201,7 @@ solana-fee-structure = "4.0.0"
 solana-hash = "4.3.0"
 solana-instruction = { workspace = true, features = ["wincode"] }
 solana-instruction-error = "3.1.0"
-solana-keypair = "4.0.0"
+solana-keypair = "4.0.1"
 solana-loader-v3-interface = { version = "9.0.0", features = ["wincode"] }
 solana-message = "6.0.0"
 solana-program-binaries = { workspace = true, features = ["agave-unstable-api"] }
