@@ -275,6 +275,7 @@ impl RpcSender for MockSender {
                             return_data: OptionSerializer::Skip,
                             compute_units_consumed: OptionSerializer::Skip,
                             cost_units: OptionSerializer::Skip,
+                            loaded_accounts_data_size: OptionSerializer::Skip,
                         }),
                 },
                 block_time: Some(1628633791),
