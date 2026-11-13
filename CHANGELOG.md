@@ -45,6 +45,12 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+### solana-client
+
+#### Breaking
+
+* All mechanisms for sending transactions via UDP have been removed since Alpenglow nodes do not have any open UDP ports for transactions.
+
 ## 4.5.0
 
 ### RPC
