@@ -15,11 +15,15 @@ use {
         },
     },
     agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
-    agave_votor_messages::consensus_message::BlockId,
+    agave_votor_messages::{
+        certificate::{CertSignature, CertificateType},
+        consensus_message::BlockId,
+    },
     rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
-    solana_entry::entry::{
-        entries_to_verification_data, entry_views_to_verification_data, next_entry_mut,
+    solana_entry::{
+        block_component::VotesAggregate,
+        entry::{entries_to_verification_data, entry_views_to_verification_data, next_entry_mut},
     },
     solana_genesis_utils::{MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, open_genesis_config},
     solana_hash::Hash,
@@ -8610,4 +8614,181 @@ fn test_connectivity_does_not_propagate_through_incomplete_slot() {
     // Children stay disconnected since parent 48 is incomplete
     assert!(!blockstore.meta(60).unwrap().unwrap().is_connected());
     assert!(!blockstore.meta(70).unwrap().unwrap().is_connected());
+}
+
+/// Shred version of the footer shreds written by `insert_block_with_footer`.
+const TEST_FOOTER_SHRED_VERSION: u16 = 4_242;
+
+fn create_finalization_certificate(slot: Slot, slow: bool) -> BlockFinalizationCert {
+    // Real signatures: the certificate forwarder decompresses them.
+    let aggregate = |message: &[u8]| {
+        VotesAggregate::from_cert_signature(CertSignature {
+            signature: solana_bls_signatures::Keypair::new().sign(message).into(),
+            bitmap: vec![0, 3, 0, 0b101],
+        })
+    };
+    BlockFinalizationCert {
+        slot,
+        block_id: BlockId::new_unique(),
+        final_aggregate: aggregate(b"final"),
+        notar_aggregate: slow.then(|| aggregate(b"notar")),
+    }
+}
+
+#[test_case(false; "fast")]
+#[test_case(true; "slow")]
+fn test_get_block_footer_certificates(slow: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 10;
+    let certificate = create_finalization_certificate(slot - 1, slow);
+    let block = Block {
+        slot: slot - 1,
+        block_id: certificate.block_id,
+    };
+    let last_index =
+        blockstore.insert_block_with_footer(slot, Some(certificate), TEST_FOOTER_SHRED_VERSION);
+
+    let forwarded = blockstore
+        .get_block_footer_certificates(slot, last_index)
+        .unwrap();
+    let cert_types: Vec<_> = forwarded.iter().map(|cert| cert.cert_type).collect();
+    if slow {
+        assert_eq!(
+            cert_types,
+            vec![
+                CertificateType::Notarize(block),
+                CertificateType::Finalize(slot - 1)
+            ]
+        );
+    } else {
+        assert_eq!(cert_types, vec![CertificateType::FinalizeFast(block)]);
+    }
+    assert!(
+        forwarded
+            .iter()
+            .all(|cert| cert.shred_version == TEST_FOOTER_SHRED_VERSION)
+    );
+
+    // A footer without a finalization certificate forwards nothing.
+    let slot = 20;
+    let last_index = blockstore.insert_block_with_footer(slot, None, TEST_FOOTER_SHRED_VERSION);
+    assert!(
+        blockstore
+            .get_block_footer_certificates(slot, last_index)
+            .unwrap()
+            .is_empty()
+    );
+
+    // No footer before the final FEC set: entries there, or another block marker, forward nothing.
+    let fec_set_size = DATA_SHREDS_PER_FEC_BLOCK as u32;
+    let ticks = || create_ticks(1, 0, Hash::new_unique());
+    for (slot, mut shreds) in [
+        (30, create_entry_batch_shreds(30, 29, ticks(), 0, false)),
+        (
+            40,
+            create_block_header_shreds(40, 39, BlockId::new_unique()),
+        ),
+    ] {
+        shreds.extend(create_entry_batch_shreds(
+            slot,
+            slot - 1,
+            ticks(),
+            fec_set_size,
+            true,
+        ));
+        blockstore
+            .insert_shreds(data_shreds(shreds), false)
+            .unwrap();
+        let last_index = blockstore.meta(slot).unwrap().unwrap().last_index.unwrap();
+        assert!(
+            blockstore
+                .get_block_footer_certificates(slot, last_index)
+                .unwrap()
+                .is_empty(),
+            "slot {slot}"
+        );
+    }
+}
+
+#[test_case(false; "fast")]
+#[test_case(true; "slow")]
+fn test_get_rooted_block_footer_finalization_certificate(slow: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let slot = 10;
+    let certificate = create_finalization_certificate(slot - 1, slow);
+    blockstore.insert_block_with_footer(slot, Some(certificate.clone()), TEST_FOOTER_SHRED_VERSION);
+
+    // A full block that is not rooted is not served.
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(slot),
+        Err(BlockstoreError::SlotNotRooted)
+    );
+
+    blockstore.set_roots(std::iter::once(&slot)).unwrap();
+    assert_eq!(
+        blockstore
+            .get_rooted_block_footer_finalization_certificate(slot)
+            .unwrap(),
+        Some((certificate, TEST_FOOTER_SHRED_VERSION))
+    );
+}
+
+#[test]
+fn test_get_rooted_block_footer_finalization_certificate_none_and_errors() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+
+    // A footer without a finalization certificate.
+    let slot = 10;
+    blockstore.insert_block_with_footer(slot, None, TEST_FOOTER_SHRED_VERSION);
+    blockstore.set_roots(std::iter::once(&slot)).unwrap();
+    assert_eq!(
+        blockstore
+            .get_rooted_block_footer_finalization_certificate(slot)
+            .unwrap(),
+        None
+    );
+
+    // A slot at or below the cleanup watermark is cleaned up.
+    *blockstore.lowest_cleanup_slot.write().unwrap() = slot;
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(slot),
+        Err(BlockstoreError::SlotCleanedUp)
+    );
+    *blockstore.lowest_cleanup_slot.write().unwrap() = 0;
+
+    // A rooted block without a footer: a single entry batch ends the slot.
+    let slot = 20;
+    let shreds = create_entry_batch_shreds(
+        slot,
+        slot - 1,
+        create_ticks(1, 0, Hash::new_unique()),
+        0,
+        true,
+    );
+    blockstore
+        .insert_shreds(data_shreds(shreds), false)
+        .unwrap();
+    blockstore.set_roots(std::iter::once(&slot)).unwrap();
+    assert_eq!(
+        blockstore
+            .get_rooted_block_footer_finalization_certificate(slot)
+            .unwrap(),
+        None
+    );
+
+    // A slot the blockstore never saw is not rooted.
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(30),
+        Err(BlockstoreError::SlotNotRooted)
+    );
+
+    // A rooted slot whose block is not in the blockstore is unavailable.
+    blockstore.set_roots(std::iter::once(&40)).unwrap();
+    assert_matches!(
+        blockstore.get_rooted_block_footer_finalization_certificate(40),
+        Err(BlockstoreError::SlotUnavailable)
+    );
 }

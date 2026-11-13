@@ -1876,6 +1876,32 @@ impl RpcClient {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
     }
 
+    /// Returns the finalization certificate carried in the footer of the rooted block at `slot`.
+    ///
+    /// The certificate finalizes an earlier slot, often but not always `slot - 1`. Returns `None`
+    /// when the block has no footer, its footer carries no finalization certificate, or the node
+    /// cannot read the block.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgBlockFooterCert`] RPC method.
+    ///
+    /// [`getAgBlockFooterCert`]: https://solana.com/docs/rpc/http/getagblockfootercert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let slot = rpc_client.get_slot()?;
+    /// let cert = rpc_client.get_ag_block_footer_cert(slot)?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_ag_block_footer_cert(&self, slot: Slot) -> ClientResult<Option<RpcBlockFooterCert>> {
+        self.invoke((self.rpc_client.as_ref()).get_ag_block_footer_cert(slot))
+    }
+
     /// Returns the Validator Admission Ticket (VAT) active-set rank map for the epoch
     /// containing `slot`, with an optional identity filter.
     ///
@@ -4811,6 +4837,45 @@ mod tests {
             ErrorKind::RpcError(RpcError::RpcResponseError { code, message, .. })
                 if *code == -32602 && message == "unexpected slot"
         );
+        server.close();
+    }
+
+    #[test]
+    fn test_get_ag_block_footer_cert_http() {
+        let expected = RpcBlockFooterCert {
+            footer_slot: 100,
+            slot: 99,
+            block_id: Hash::new_unique().to_string(),
+            shred_version: 42,
+            final_aggregate: RpcVotesAggregate {
+                signature: "final".to_string(),
+                bitmap: "1LUx".to_string(),
+            },
+            notar_aggregate: None,
+        };
+        let expected_json = serde_json::to_value(&expected).unwrap();
+        let mut io = IoHandler::default();
+        io.add_sync_method("getAgBlockFooterCert", move |params: Params| {
+            let params: Vec<Value> = params.parse()?;
+            assert_eq!(params.len(), 1, "only the slot is sent");
+            match params[0].as_u64().unwrap() {
+                100 => Ok(expected_json.clone()),
+                200 => Ok(Value::Null),
+                _ => Err(Error::invalid_params("unexpected slot")),
+            }
+        });
+        let server = ServerBuilder::new(io)
+            .start_http(&"127.0.0.1:0".parse().unwrap())
+            .unwrap();
+        let rpc_client = RpcClient::new(format!("http://{}", server.address()));
+        assert_eq!(
+            rpc_client.get_ag_block_footer_cert(100).unwrap(),
+            Some(expected),
+        );
+        assert_eq!(rpc_client.get_ag_block_footer_cert(200).unwrap(), None);
+
+        let error = rpc_client.get_ag_block_footer_cert(300).unwrap_err();
+        assert_eq!(error.request(), Some(&RpcRequest::GetAgBlockFooterCert));
         server.close();
     }
 
