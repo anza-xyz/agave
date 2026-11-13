@@ -44,8 +44,8 @@ Release channels have their own copy of this changelog:
   copies are best effort: a transmit queue sends them only when it has no other packet waiting,
   the copies of data shreds first, and drops copies when too many wait, those of coding shreds
   first. Reported as `mirrored_packets` / `dropped_packets_mirrored` in
-  `broadcast-transmit-shreds-stats`; with XDP transmit `dropped_packets_mirrored_data` counts the
-  dropped copies of data shreds (always 0 without XDP).
+  `broadcast-transmit-shreds-stats`; `dropped_packets_mirrored_data` counts the dropped copies of
+  data shreds (always 0 without XDP).
 
 ### CLI
 

@@ -653,10 +653,7 @@ pub fn broadcast_shreds(
                 transmit_stats.mirrored_packets += addrs.len();
                 let (idx, payload) = (num_packets + idx, shred.payload().bytes.clone());
                 // A receiver needs no coding shred of a set whose data shreds
-                // all arrive, so the copies of data shreds go first and wait
-                // apart: a queue that cannot send every copy drops copies of
-                // coding shreds, and still has room for those of data shreds
-                // while it can send those alone.
+                // all arrive, so the copies of coding shreds give way.
                 let sent = if shred.is_data() {
                     s.try_send_low_priority(idx, Arc::clone(addrs), payload)
                 } else {
@@ -1009,7 +1006,6 @@ pub mod test {
         let copies_per_call = payloads.len() * RECEIVERS;
         let is_coding = |payload: &[u8]| get_shred_type(payload).unwrap() == ShredType::Code;
         // Half the shreds of a call are data shreds.
-        let coding_copies_per_call = copies_per_call / 2;
         assert_eq!(
             payloads.iter().filter(|payload| is_coding(payload)).count() * 2,
             payloads.len()
@@ -1091,10 +1087,7 @@ pub mod test {
         }
         let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
         assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
-        assert_eq!(
-            transmit_stats.dropped_packets_mirrored,
-            coding_copies_per_call
-        );
+        assert_eq!(transmit_stats.dropped_packets_mirrored, copies_per_call / 2);
         assert_eq!(transmit_stats.dropped_packets_mirrored_data, 0);
     }
 
