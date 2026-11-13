@@ -10,10 +10,10 @@ use {
     solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_cost_model::cost_model::CostModel,
     solana_fee_structure::FeeDetails,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, node::NodeMultihoming},
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
-    solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
+    solana_net_utils::token_bucket::TokenBucket,
     solana_perf::packet,
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
@@ -54,10 +54,9 @@ mod packet_container;
 /// [`ForwardingClientConfig`] is the config for `tpu-client-next` instance.
 pub struct ForwardingClientConfig<'a> {
     pub stake_identity: &'a Keypair,
-    pub tpu_client_sockets: Box<[UdpSocket]>,
+    pub tpu_client_socket: UdpSocket,
     pub runtime_handle: RuntimeHandle,
     pub cancel: CancellationToken,
-    pub node_multihoming: Arc<NodeMultihoming>,
 }
 
 /// Maximum forwarding rate in bytes per second.
@@ -160,49 +159,30 @@ pub(crate) fn spawn_forwarding_stage(
 
     let ForwardingClientConfig {
         stake_identity,
-        tpu_client_sockets,
+        tpu_client_socket,
         runtime_handle,
         cancel,
-        node_multihoming,
     } = tpu_forwarding_client_config;
 
-    // Create TPU clients for each socket provided.
-    // Number of clients is same as number of bind IP addresses.
-    let non_vote_clients: Box<[TpuClientNextClient]> = tpu_client_sockets
-        .into_vec()
-        .into_iter()
-        .map(|socket| {
-            TpuClientNextClient::new(
-                runtime_handle.clone(),
-                forward_address_getter.clone(),
-                Some(stake_identity),
-                socket,
-                cancel.clone(),
-            )
-        })
-        .collect();
+    let non_vote_client = TpuClientNextClient::new(
+        runtime_handle,
+        forward_address_getter,
+        Some(stake_identity),
+        tpu_client_socket,
+        cancel,
+    );
     let forwarding_stage = ForwardingStage::new(
         receiver,
         vote_client,
-        non_vote_clients.clone(),
+        non_vote_client.clone(),
         sharable_banks,
-        Some(node_multihoming.bind_ip_addrs.clone()),
     );
     SpawnForwardingStageResult {
         join_handle: Builder::new()
             .name("solFwdStage".to_string())
             .spawn(move || forwarding_stage.run())
             .unwrap(),
-        client_updater: Arc::new(UpdateHandles(non_vote_clients))
-            as Arc<dyn NotifyKeyUpdate + Send + Sync>,
-    }
-}
-
-/// Local struct to be able to update keys on all clients at once
-struct UpdateHandles(Box<[TpuClientNextClient]>);
-impl NotifyKeyUpdate for UpdateHandles {
-    fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        self.0.iter().try_for_each(|client| client.update_key(key))
+        client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
     }
 }
 
@@ -211,10 +191,9 @@ struct ForwardingStage<VoteClient: ForwardingClient, NonVoteClient: ForwardingCl
     packet_container: PacketContainer,
     sharable_banks: SharableBanks,
     vote_client: VoteClient,
-    non_vote_clients: Box<[NonVoteClient]>,
+    non_vote_client: NonVoteClient,
     data_budget: TokenBucket,
     metrics: ForwardingStageMetrics,
-    bind_ip_addrs: Option<Arc<BindIpAddrs>>,
 }
 
 impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
@@ -223,9 +202,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
     fn new(
         receiver: Receiver<(BankingPacketBatch, bool)>,
         vote_client: VoteClient,
-        non_vote_clients: Box<[NonVoteClient]>,
+        non_vote_client: NonVoteClient,
         sharable_banks: SharableBanks,
-        bind_ip_addrs: Option<Arc<BindIpAddrs>>,
     ) -> Self {
         let data_budget = TokenBucket::new(
             MAX_BYTES_PER_SECOND,
@@ -236,11 +214,10 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
             receiver,
             packet_container: PacketContainer::with_capacity(4 * 4096),
             sharable_banks,
-            non_vote_clients,
+            non_vote_client,
             vote_client,
             data_budget,
             metrics: ForwardingStageMetrics::default(),
-            bind_ip_addrs,
         }
     }
 
@@ -360,16 +337,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         let mut non_vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
         let mut vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
 
-        // determine the client to use for next batch based on current active interface
-        // use primary interface bind (index 0) if not in multihoming context.
-        let active_non_vote_client = {
-            let active_index = self
-                .bind_ip_addrs
-                .as_ref()
-                .map(|binds| binds.active_index())
-                .unwrap_or(0);
-            &self.non_vote_clients[active_index]
-        };
         // Loop through packets creating batches of packets to forward.
         while let Some(packet) = self.packet_container.pop_max() {
             // If it exceeds our data-budget, drop.
@@ -399,7 +366,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                 non_vote_batch.push(packet_data_vec);
                 send_batch_if_full(
                     &mut non_vote_batch,
-                    active_non_vote_client,
+                    &self.non_vote_client,
                     &mut self.metrics.non_votes_forwarded,
                     &mut self.metrics.non_votes_dropped_on_send,
                 );
@@ -421,7 +388,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         if !non_vote_batch.is_empty() {
             let num_non_votes = non_vote_batch.len();
             self.metrics.non_votes_forwarded += num_non_votes;
-            if active_non_vote_client
+            if self
+                .non_vote_client
                 .send_transactions_in_batch(non_vote_batch)
                 .is_err()
             {
@@ -870,9 +838,8 @@ mod tests {
         let mut forwarding_stage = ForwardingStage::new(
             packet_batch_receiver,
             vote_mock_client.clone(),
-            Box::new([non_vote_mock_client.clone()]),
+            non_vote_mock_client.clone(),
             sharable_banks,
-            None,
         );
 
         // Send packet batches.

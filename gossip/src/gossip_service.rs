@@ -13,9 +13,7 @@ use {
     crossbeam_channel::Sender,
     solana_keypair::Keypair,
     solana_net_utils::{
-        DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace,
-        TrySendError,
-        multihomed_sockets::{BindIpAddrs, MultihomedSocketProvider, SocketProvider},
+        DEFAULT_IP_ECHO_SERVER_THREADS, PinnedXdpSender as XdpSender, SocketAddrSpace, TrySendError,
     },
     solana_perf::packet::PacketBatch,
     solana_pubkey::Pubkey,
@@ -51,7 +49,7 @@ impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         mut epoch_specs: Option<Box<dyn EpochSpecs>>,
-        gossip_sockets: Arc<[UdpSocket]>,
+        gossip_socket: Arc<UdpSocket>,
         xdp_sender: Option<XdpSender>,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
@@ -61,18 +59,15 @@ impl GossipService {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_INGRESS_CHANNEL_CAPACITY);
         trace!(
-            "GossipService: id: {}, listening on primary interface: {:?}, all available \
-             interfaces: {:?}",
+            "GossipService: id: {}, listening on: {:?}",
             cluster_info.id(),
-            gossip_sockets[0].local_addr().unwrap(),
-            gossip_sockets,
+            gossip_socket.local_addr().unwrap(),
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
-        let t_receiver = streamer::receiver_atomic(
+        let t_receiver = streamer::receiver(
             "solRcvrGossip".to_string(),
-            gossip_sockets.clone(),
-            cluster_info.bind_ip_addrs(),
+            gossip_socket.clone(),
             exit.clone(),
             request_sender,
             gossip_receiver_stats.clone(),
@@ -104,8 +99,7 @@ impl GossipService {
         let gossip_responder_socket = match xdp_sender {
             Some(xdp_sender) => GossipResponderSocket::Xdp(xdp_sender),
             None => GossipResponderSocket::Udp {
-                sockets: gossip_sockets.clone(),
-                bind_ip_addrs: cluster_info.bind_ip_addrs(),
+                socket: gossip_socket,
                 socket_addr_space,
             },
         };
@@ -338,12 +332,12 @@ pub fn make_node(
             .map(ContactInfo::new_gossip_entry_point)
             .collect::<Vec<_>>(),
     );
-    let gossip_sockets = Arc::new([gossip_socket]);
+    let gossip_socket = Arc::new(gossip_socket);
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_sockets,
+        gossip_socket,
         None,
         None,
         should_check_duplicate_instance,
@@ -355,8 +349,7 @@ pub fn make_node(
 
 enum GossipResponderSocket {
     Udp {
-        sockets: Arc<[UdpSocket]>,
-        bind_ip_addrs: Arc<BindIpAddrs>,
+        socket: Arc<UdpSocket>,
         socket_addr_space: SocketAddrSpace,
     },
     Xdp(XdpSender),
@@ -372,13 +365,15 @@ fn run_responder(
         .name(format!("solRspndr{name}"))
         .spawn(move || match socket {
             GossipResponderSocket::Udp {
-                sockets,
-                bind_ip_addrs,
+                socket,
                 socket_addr_space,
             } => responder_loop(
                 name,
                 r,
-                GossipUdpSocketProvider::new(sockets, bind_ip_addrs, socket_addr_space),
+                GossipUdpSocketSender {
+                    socket,
+                    socket_addr_space,
+                },
                 stats_reporter_sender,
             ),
             GossipResponderSocket::Xdp(xdp_sender) => {
@@ -388,29 +383,15 @@ fn run_responder(
         .unwrap()
 }
 
-struct GossipUdpSocketProvider {
-    socket_provider: MultihomedSocketProvider,
+struct GossipUdpSocketSender {
+    socket: Arc<UdpSocket>,
     socket_addr_space: SocketAddrSpace,
 }
 
-impl GossipUdpSocketProvider {
-    pub fn new(
-        sockets: Arc<[UdpSocket]>,
-        bind_ip_addrs: Arc<BindIpAddrs>,
-        socket_addr_space: SocketAddrSpace,
-    ) -> Self {
-        Self {
-            socket_provider: MultihomedSocketProvider::new(sockets, bind_ip_addrs),
-            socket_addr_space,
-        }
-    }
-}
-
-impl ResponseSender for GossipUdpSocketProvider {
+impl ResponseSender for GossipUdpSocketSender {
     fn send_batch(&self, batch: PacketBatch) -> std::result::Result<(), SendPktsError> {
         let packets = filter_packets_by_socket_addr_space(batch.iter(), &self.socket_addr_space);
-        let sock = self.socket_provider.current_socket_ref();
-        batch_send(sock, packets.collect::<Vec<_>>()).map(|_num_sent| ())
+        batch_send(&self.socket, packets.collect::<Vec<_>>()).map(|_num_sent| ())
     }
 }
 

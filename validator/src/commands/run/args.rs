@@ -607,11 +607,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host)
             .default_value(&default_args.bind_address)
-            .multiple(true)
-            .help(
-                "Repeatable. IP addresses to bind the validator ports on. First is primary (used \
-                 on startup), the rest may be switched to during operation.",
-            ),
+            .help("IP address to bind the validator ports to"),
     )
     .arg(
         Arg::with_name("rpc_bind_address")
@@ -899,6 +895,42 @@ mod tests {
             [&["run_command"], &args[..]].concat(),
             expected_args,
         );
+    }
+
+    #[test]
+    fn test_bind_address_accepts_one_ip() {
+        let default_args = DefaultArgs::default();
+        let matches = add_args(App::new("agave-validator"), &default_args)
+            .get_matches_from_safe(["agave-validator", "--bind-address", "127.0.0.1"])
+            .unwrap();
+        assert_eq!(matches.value_of("bind_address"), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn test_bind_address_rejects_multiple_ips() {
+        let default_args = DefaultArgs::default();
+        for args in [
+            vec![
+                "agave-validator",
+                "--bind-address",
+                "127.0.0.1",
+                "--bind-address",
+                "127.0.0.2",
+            ],
+            vec![
+                "agave-validator",
+                "--bind-address",
+                "127.0.0.1",
+                "127.0.0.2",
+            ],
+            vec!["agave-validator", "--bind-address", "127.0.0.1,127.0.0.2"],
+        ] {
+            assert!(
+                add_args(App::new("agave-validator"), &default_args)
+                    .get_matches_from_safe(args)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

@@ -4,7 +4,6 @@
 pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
-pub mod multihomed_sockets;
 pub mod pinned_xdp_sender;
 pub mod quic_socket;
 pub mod socket_addr_space;

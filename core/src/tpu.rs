@@ -172,10 +172,6 @@ impl Tpu {
             ..
         } = banking_channels;
 
-        // We check on validator startup that XDP is not mixed with multihoming, so by construction
-        // at this moment all the transactions_quic_sockets and transactions_forwards_quic_sockets
-        // have the same bind IP:PORT.
-
         // Streamer for TPU
         let transactions_quic_sockets =
             into_quic_sockets(transactions_quic_sockets, quic_xdp_sender.as_ref());

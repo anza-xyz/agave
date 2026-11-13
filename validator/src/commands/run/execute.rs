@@ -53,7 +53,6 @@ use {
         shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
-    solana_net_utils::multihomed_sockets::BindIpAddrs,
     solana_pubkey::Pubkey,
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::runtime_config::RuntimeConfig,
@@ -147,14 +146,11 @@ pub fn execute(
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
 
-    let bind_addresses = {
-        let parsed = matches
-            .values_of("bind_address")
-            .expect("bind_address should always be present due to default")
-            .map(solana_net_utils::parse_host)
-            .collect::<Result<Vec<_>, _>>()?;
-        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
-    };
+    let bind_ip_addr = solana_net_utils::parse_host(
+        matches
+            .value_of("bind_address")
+            .expect("bind_address should always be present due to default"),
+    )?;
 
     let entrypoint_addrs = run_args.entrypoints;
     for addr in &entrypoint_addrs {
@@ -167,14 +163,14 @@ pub fn execute(
     // the link is down this query fails against every entrypoint.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_ip_addr));
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<XdpConfig> = if operation == Operation::Initialize {
         None
     } else {
-        args::xdp_config::new_config(matches, &bind_addresses)?
+        args::xdp_config::new_config(matches)?
     };
 
     let dynamic_port_range =
@@ -191,8 +187,8 @@ pub fn execute(
 
     let advertised_ip = if let Some(cli_ip) = advertised_ip {
         cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
-        bind_addresses.active()
+    } else if !bind_ip_addr.is_unspecified() && !bind_ip_addr.is_loopback() {
+        bind_ip_addr
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
         order.shuffle(&mut rng());
@@ -204,24 +200,21 @@ pub fn execute(
                 info!(
                     "Contacting {entrypoint_addr} to determine the validator's public IP address"
                 );
-                solana_net_utils::get_public_ip_addr_with_binding(
-                    entrypoint_addr,
-                    bind_addresses.active(),
-                )
-                .map_or_else(
-                    |err| {
-                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                        None
-                    },
-                    Some,
-                )
+                solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_ip_addr)
+                    .map_or_else(
+                        |err| {
+                            warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                            None
+                        },
+                        Some,
+                    )
             })
             .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
+        solana_net_utils::find_available_port_in_range(bind_ip_addr, (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
 
@@ -249,12 +242,6 @@ pub fn execute(
         })
         .transpose()?;
 
-    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
-        Err(String::from(
-            "--public-tvu-address can not be used in a multihoming context",
-        ))?;
-    }
-
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
     let num_votor_quic_endpoints = value_t_or_exit!(matches, "num_votor_endpoints", NonZeroUsize);
     if num_votor_quic_endpoints.get() > MAX_ENDPOINTS {
@@ -267,7 +254,7 @@ pub fn execute(
         advertised_ip,
         gossip_port,
         port_range: dynamic_port_range,
-        bind_ip_addrs: bind_addresses.clone(),
+        bind_ip_addr,
         public_tpu_addr,
         public_tpu_forwards_addr,
         public_tvu_addr,
@@ -295,7 +282,7 @@ pub fn execute(
         };
         capabilities::restrict(config.primordial_caps, needs_sys_nice, xdp_mode, || {
             xdp_transmit_config.map(|xdp_config| {
-                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+                xdp::build_xdp_transmit_setup(xdp_config, bind_ip_addr, exit.clone())
             })
         })?
         .transpose()?
@@ -382,32 +369,13 @@ pub fn execute(
             .collect(),
     ));
 
-    if bind_addresses.len() > 1 {
-        for (flag, msg) in [
-            (
-                "advertised_ip",
-                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-                 validator will advertise the first --bind-address as this node's public IP \
-                 address.",
-            ),
-            (
-                "public_tpu_addr",
-                "--public-tpu-address can not be used in a multihoming context",
-            ),
-        ] {
-            if matches.is_present(flag) {
-                Err(String::from(msg))?;
-            }
-        }
-    }
-
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
     } else if private_rpc {
         solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
-        bind_addresses.active()
+        bind_ip_addr
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);

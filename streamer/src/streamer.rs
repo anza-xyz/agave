@@ -11,13 +11,7 @@ use {
         Receiver, RecvTimeoutError, SendError, Sender, TryRecvError, TrySendError,
     },
     solana_measure::measure::Measure,
-    solana_net_utils::{
-        SocketAddrSpace,
-        multihomed_sockets::{
-            BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider,
-            SocketProvider,
-        },
-    },
+    solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     std::{
         cmp::Reverse,
@@ -196,8 +190,8 @@ impl StreamerReceiveStats {
 
 pub type Result<T> = std::result::Result<T, StreamerError>;
 
-fn recv_loop<P: SocketProvider>(
-    provider: &mut P,
+fn recv_loop(
+    socket: &UdpSocket,
     exit: &AtomicBool,
     packet_batch_sender: &impl ChannelSend<PacketBatch>,
     stats: &StreamerReceiveStats,
@@ -216,7 +210,6 @@ fn recv_loop<P: SocketProvider>(
         Ok(())
     }
 
-    let mut socket = provider.current_socket_ref();
     setup_socket(socket)?;
     #[cfg(unix)]
     let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
@@ -273,16 +266,6 @@ fn recv_loop<P: SocketProvider>(
                 break;
             }
         }
-
-        if let CurrentSocket::Changed(s) = provider.current_socket() {
-            socket = s;
-            setup_socket(socket)?;
-
-            #[cfg(unix)]
-            {
-                poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
-            }
-        }
     }
 }
 
@@ -299,36 +282,8 @@ pub fn receiver(
     Builder::new()
         .name(thread_name)
         .spawn(move || {
-            let mut provider = FixedSocketProvider::new(socket);
             let _ = recv_loop(
-                &mut provider,
-                &exit,
-                &packet_batch_sender,
-                &stats,
-                coalesce,
-                is_staked_service,
-            );
-        })
-        .unwrap()
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn receiver_atomic(
-    thread_name: String,
-    sockets: Arc<[UdpSocket]>,
-    bind_ip_addrs: Arc<BindIpAddrs>,
-    exit: Arc<AtomicBool>,
-    packet_batch_sender: impl ChannelSend<PacketBatch>,
-    stats: Arc<StreamerReceiveStats>,
-    coalesce: Option<Duration>,
-    is_staked_service: bool,
-) -> JoinHandle<()> {
-    Builder::new()
-        .name(thread_name)
-        .spawn(move || {
-            let mut provider = MultihomedSocketProvider::new(sockets, bind_ip_addrs);
-            let _ = recv_loop(
-                &mut provider,
+                &socket,
                 &exit,
                 &packet_batch_sender,
                 &stats,
