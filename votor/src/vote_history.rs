@@ -330,6 +330,9 @@ impl VoteHistory {
 
 #[derive(Error, Debug)]
 pub enum VoteHistoryError {
+    #[error("Vote history worker channel disconnected")]
+    WorkerDisconnected,
+
     #[error("IO Error: {0}")]
     IoError(#[from] std::io::Error),
 

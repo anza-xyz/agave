@@ -59,7 +59,6 @@ use {
         slot_clock::SharedAlpenglowSlotClock,
         timer_manager::TimerManager,
         vote_history::VoteHistory,
-        vote_history_storage::VoteHistoryStorage,
         voting_service::BLSOp,
         voting_utils::VotingContext,
     },
@@ -123,7 +122,6 @@ pub struct VotorConfig {
     pub vote_account: Pubkey,
     pub wait_to_vote_slot: Option<Slot>,
     pub vote_history: VoteHistory,
-    pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub generated_cert_types: Arc<GeneratedCertTypes>,
 
     // Shared state
@@ -165,7 +163,6 @@ pub(crate) struct SharedContext {
     pub(crate) alpenglow_slot_clock: SharedAlpenglowSlotClock,
     pub(crate) leader_window_info_sender: Sender<LeaderWindowInfo>,
     pub(crate) highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
-    pub(crate) vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub(crate) repair_event_sender: RepairEventSender,
     pub(crate) latest_switch_request: LatestSwitchRequest,
 }
@@ -185,7 +182,6 @@ impl Votor {
             vote_account,
             wait_to_vote_slot,
             vote_history,
-            vote_history_storage,
             authorized_voter_keypairs,
             blockstore,
             bank_forks,
@@ -227,7 +223,6 @@ impl Votor {
             alpenglow_slot_clock,
             highest_parent_ready,
             leader_window_info_sender,
-            vote_history_storage: vote_history_storage.clone(),
             repair_event_sender: repair_event_sender.clone(),
             latest_switch_request,
         };
@@ -239,7 +234,6 @@ impl Votor {
             vote_account_pubkey: vote_account,
             identity_keypair,
             authorized_voter_keypairs,
-            vote_history_storage,
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: own_reward_aggregates_sender,

@@ -31,7 +31,7 @@ use {
         slot_clock::SharedAlpenglowSlotClock,
         vote_history::VoteHistory,
         vote_history_storage::VoteHistoryStorage,
-        voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
+        voting_service::{start_voting_service, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
     agave_votor_messages::consensus_message::Block,
@@ -102,7 +102,7 @@ pub struct Tvu {
     replay_stage: ReplayStage,
     blockstore_cleanup_service: BlockstoreCleanupService,
     cost_update_service: CostUpdateService,
-    bls_voting_service: BLSVotingService,
+    voting_service: JoinHandle<()>,
     peer_list_service: PeerListService,
     drop_bank_service: DropBankService,
     bls_sigverifier: JoinHandle<()>,
@@ -458,7 +458,6 @@ impl Tvu {
             vote_account: *vote_account,
             wait_to_vote_slot,
             vote_history,
-            vote_history_storage: vote_history_storage.clone(),
             generated_cert_types,
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             blockstore: blockstore.clone(),
@@ -527,11 +526,13 @@ impl Tvu {
             replay_arena: tvu_config.replay_arena,
         };
 
-        let bls_voting_service = BLSVotingService::new(
+        let voting_service = start_voting_service(
+            exit.clone(),
             bls_receiver,
             cluster_info.clone(),
             votor_egress,
             highest_finalized,
+            vote_history_storage,
         );
 
         let cost_update_service = CostUpdateService::new(cost_update_receiver);
@@ -554,7 +555,7 @@ impl Tvu {
             replay_stage,
             blockstore_cleanup_service,
             cost_update_service,
-            bls_voting_service,
+            voting_service,
             peer_list_service,
             drop_bank_service,
             bls_sigverifier,
@@ -575,7 +576,7 @@ impl Tvu {
         self.blockstore_cleanup_service.join()?;
         self.replay_stage.join()?;
         self.cost_update_service.join()?;
-        self.bls_voting_service.join()?;
+        self.voting_service.join()?;
         self.drop_bank_service.join()?;
         if let Some(rt) = self.votor_transport_runtime.take() {
             rt.block_on(self.votor_transport_endpoint.join());

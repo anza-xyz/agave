@@ -13,6 +13,7 @@ use {
         root_utils::{self, RootContext},
         timer_manager::TimerManager,
         vote_history::{VoteHistory, VoteHistoryError},
+        vote_history_storage::{SavedVoteHistory, SavedVoteHistoryVersions},
         voting_service::BLSOp,
         voting_utils::{
             VoteError, VotingContext, create_and_send_own_vote_message,
@@ -26,7 +27,7 @@ use {
         migration::MigrationStatus,
         vote::Vote,
     },
-    crossbeam_channel::select,
+    crossbeam_channel::{Sender, bounded, select},
     parking_lot::RwLock,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -684,10 +685,8 @@ impl EventHandler {
         // - set-identity during normal operation, vote_history == my_pubkey != new_pubkey
         if local_context.my_pubkey != new_pubkey || vctx.vote_history.node_pubkey != new_pubkey {
             let my_old_pubkey = vctx.vote_history.node_pubkey;
+            vctx.vote_history = restore_vote_history(&vctx.bls_sender, new_pubkey)?;
             local_context.my_pubkey = new_pubkey;
-            vctx.vote_history =
-                VoteHistory::restore(ctx.vote_history_storage.as_ref(), &local_context.my_pubkey)
-                    .unwrap_or_else(|_| VoteHistory::new(new_pubkey, 0));
             vctx.identity_keypair = new_identity;
             warn!(
                 "set-identity: from {my_old_pubkey} to {}",
@@ -934,9 +933,14 @@ impl EventHandler {
                 refreshed_votes.push(Arc::new(vote_msg));
             }
         }
+        let saved_vote_history = Box::new(SavedVoteHistoryVersions::from(SavedVoteHistory::new(
+            &voting_context.vote_history,
+            &voting_context.identity_keypair,
+        )?));
         if !refreshed_votes.is_empty() {
             votes.push(BLSOp::RefreshVotes {
                 votes: refreshed_votes,
+                saved_vote_history,
             });
         }
         Ok(())
@@ -1022,6 +1026,26 @@ impl EventHandler {
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_event_handler.join()
     }
+}
+
+fn restore_vote_history(
+    sender: &Sender<BLSOp>,
+    pubkey: Pubkey,
+) -> Result<VoteHistory, VoteHistoryError> {
+    let (reply_sender, reply_receiver) = bounded(1);
+    sender
+        .send(BLSOp::LoadVoteHistory {
+            pubkey,
+            reply_sender,
+        })
+        .map_err(|_| VoteHistoryError::WorkerDisconnected)?;
+    let history = reply_receiver
+        .recv()
+        .map_err(|_| VoteHistoryError::WorkerDisconnected)?;
+    Ok(match history {
+        Ok(h) => *h,
+        Err(_) => VoteHistory::new(pubkey, 0),
+    })
 }
 
 /// Sends a repair event to the block ID repair service.
@@ -1237,7 +1261,6 @@ mod tests {
             cluster_info: cluster_info.clone(),
             alpenglow_slot_clock,
             bank_forks: bank_forks.clone(),
-            vote_history_storage: vote_history_storage.clone(),
             leader_window_info_sender,
             blockstore: blockstore.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
@@ -1257,7 +1280,6 @@ mod tests {
             vote_account_pubkey: my_vote_keypair.pubkey(),
             wait_to_vote_slot: None,
             authorized_voter_keypairs: Arc::new(RwLock::new(vec![Arc::new(my_vote_keypair)])),
-            vote_history_storage: vote_history_storage.clone(),
             derived_bls_keypairs: HashMap::new(),
             own_vote_sender,
             own_reward_sender: reward_aggregates_sender,
@@ -1449,15 +1471,35 @@ mod tests {
         }
 
         fn send_set_identity_event(&mut self) {
-            let mut new_ops = EventHandler::handle_event(
-                VotorEvent::SetIdentity,
-                &self.timer_manager,
-                &self.shared_context,
-                &mut self.voting_context,
-                &self.root_context,
-                &mut self.local_context,
-            )
-            .unwrap();
+            let needs_restore = self.local_context.my_pubkey != self.cluster_info.id()
+                || self.voting_context.vote_history.node_pubkey != self.cluster_info.id();
+            let receiver = self.bls_receiver.clone();
+            let storage = self.vote_history_storage.clone();
+            let mut new_ops = thread::scope(|scope| {
+                if needs_restore {
+                    scope.spawn(move || {
+                        let BLSOp::LoadVoteHistory {
+                            pubkey,
+                            reply_sender,
+                        } = receiver.recv().unwrap()
+                        else {
+                            panic!("expected a history load request");
+                        };
+                        reply_sender
+                            .send(VoteHistory::restore(storage.as_ref(), &pubkey).map(Box::new))
+                            .unwrap();
+                    });
+                }
+                EventHandler::handle_event(
+                    VotorEvent::SetIdentity,
+                    &self.timer_manager,
+                    &self.shared_context,
+                    &mut self.voting_context,
+                    &self.root_context,
+                    &mut self.local_context,
+                )
+                .unwrap()
+            });
             self.bls_ops.append(&mut new_ops);
         }
 
@@ -1503,13 +1545,15 @@ mod tests {
                         found |= !keep;
                         keep
                     }
-                    BLSOp::RefreshVotes { votes } => {
+                    BLSOp::RefreshVotes { votes, .. } => {
                         let previous_len = votes.len();
                         votes.retain(|vote| vote.as_ref() != &expected_message);
                         found |= votes.len() != previous_len;
                         !votes.is_empty()
                     }
-                    BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
+                    BLSOp::PushCertificates { .. }
+                    | BLSOp::RefreshCertificates { .. }
+                    | BLSOp::LoadVoteHistory { .. } => true,
                 });
                 assert!(found, "Did not find expected vote: {expected_message:?}");
             }
@@ -1539,13 +1583,15 @@ mod tests {
                     found |= !keep;
                     keep
                 }
-                BLSOp::RefreshVotes { votes } => {
+                BLSOp::RefreshVotes { votes, .. } => {
                     let previous_len = votes.len();
                     votes.retain(|vote| vote.as_ref() != &expected_message);
                     found |= votes.len() != previous_len;
                     !votes.is_empty()
                 }
-                BLSOp::PushCertificates { .. } | BLSOp::RefreshCertificates { .. } => true,
+                BLSOp::PushCertificates { .. }
+                | BLSOp::RefreshCertificates { .. }
+                | BLSOp::LoadVoteHistory { .. } => true,
             });
             assert!(found, "Did not find expected vote: {expected_message:?}");
             // Also check own_vote_receiver
@@ -2447,6 +2493,40 @@ mod tests {
 
         for file in files_to_remove {
             let _ = remove_file(file);
+        }
+    }
+
+    #[test]
+    fn test_set_identity_fails_when_history_worker_disconnects() {
+        for disconnect_after_request in [false, true] {
+            let mut context = setup();
+            let old_history = context.voting_context.vote_history.clone();
+            let old_pubkey = context.local_context.my_pubkey;
+            context.cluster_info.set_keypair(Arc::new(Keypair::new()));
+            let (sender, receiver) = bounded(1);
+            context.voting_context.bls_sender = sender;
+            thread::scope(|scope| {
+                if disconnect_after_request {
+                    scope.spawn(move || {
+                        let request = receiver.recv().unwrap();
+                        assert!(matches!(request, BLSOp::LoadVoteHistory { .. }));
+                        drop(request);
+                    });
+                } else {
+                    drop(receiver);
+                }
+                assert!(matches!(
+                    EventHandler::handle_set_identity(
+                        &context.shared_context,
+                        &mut context.voting_context,
+                        &mut context.local_context,
+                    ),
+                    Err(VoteHistoryError::WorkerDisconnected)
+                ));
+            });
+            assert_eq!(context.local_context.my_pubkey, old_pubkey);
+            assert_eq!(context.voting_context.identity_keypair.pubkey(), old_pubkey);
+            assert_eq!(context.voting_context.vote_history, old_history);
         }
     }
 
