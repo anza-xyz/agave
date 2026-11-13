@@ -536,9 +536,11 @@ fn next_broadcast_leader_pubkey(
 /// only when it has nothing else to send, a bounded number of frames at a
 /// time, so the turbine packets wait behind a bounded number of copy frames
 /// whatever the number of receivers, and the copies are dropped when the
-/// queue's low priority channel is full. The copies are counted apart from
-/// the turbine packets, and a receiver that cannot be reached never fails
-/// the turbine broadcast.
+/// queue's low priority channel is full. The copies of data shreds go ahead
+/// of those of coding shreds and wait apart from them, so a queue that
+/// cannot send every copy drops copies of coding shreds first and sends the
+/// rest of them late. The copies are counted apart from the turbine packets,
+/// and a receiver that cannot be reached never fails the turbine broadcast.
 #[allow(clippy::too_many_arguments)]
 pub fn broadcast_shreds(
     socket: BroadcastSocket,
@@ -645,18 +647,26 @@ pub fn broadcast_shreds(
                 receivers
                     .xdp_items
                     .iter()
-                    .flat_map(|addrs| shreds.iter().map(move |shred| (shred.payload(), addrs)))
+                    .flat_map(|addrs| shreds.iter().map(move |shred| (shred, addrs)))
             });
-            for (idx, (payload, addrs)) in copies.enumerate() {
+            for (idx, (shred, addrs)) in copies.enumerate() {
                 transmit_stats.mirrored_packets += addrs.len();
-                if s.try_send_low_priority(
-                    num_packets + idx,
-                    Arc::clone(addrs),
-                    payload.bytes.clone(),
-                )
-                .is_err()
-                {
+                let (idx, payload) = (num_packets + idx, shred.payload().bytes.clone());
+                // A receiver needs no coding shred of a set whose data shreds
+                // all arrive, so the copies of data shreds go first and wait
+                // apart: a queue that cannot send every copy drops copies of
+                // coding shreds, and still has room for those of data shreds
+                // while it can send those alone.
+                let sent = if shred.is_data() {
+                    s.try_send_low_priority(idx, Arc::clone(addrs), payload)
+                } else {
+                    s.try_send_lowest_priority(idx, Arc::clone(addrs), payload)
+                };
+                if sent.is_err() {
                     transmit_stats.dropped_packets_mirrored += addrs.len();
+                    if shred.is_data() {
+                        transmit_stats.dropped_packets_mirrored_data += addrs.len();
+                    }
                 }
             }
         }
@@ -879,7 +889,7 @@ pub mod test {
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = create_ticks(1, 0, Hash::default());
-        let mut shreds = shredder.make_merkle_shreds_from_entries(
+        let (mut shreds, mut coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries,
             true,
@@ -888,10 +898,13 @@ pub mod test {
             0,
             &mut ProcessShredsStats::default(),
         );
-        assert!(shreds.len() > 8);
-        // Keep the copies well inside a default socket receive buffer, so the
-        // tests do not depend on the host's rmem_default.
-        shreds.truncate(8);
+        // Four shreds of each kind, data first as a leader broadcasts them:
+        // few enough to keep the copies well inside a default socket receive
+        // buffer, so the tests do not depend on the host's rmem_default.
+        assert!(shreds.len() > 4 && coding_shreds.len() > 4);
+        shreds.truncate(4);
+        coding_shreds.truncate(4);
+        shreds.append(&mut coding_shreds);
         let payloads = shreds
             .iter()
             .map(|shred| shred.payload().to_vec())
@@ -966,8 +979,9 @@ pub mod test {
 
     /// On the XDP arm the turbine packets and the copies wait apart on a TX
     /// queue: the copies are low priority, one item per shred for up to
-    /// SHRED_RECEIVERS_PER_XDP_ITEM receivers, and a full low priority
-    /// channel drops copies without failing the turbine broadcast.
+    /// SHRED_RECEIVERS_PER_XDP_ITEM receivers, those of data shreds ahead of
+    /// those of coding shreds, and a queue with no room left drops copies,
+    /// counted by kind, without failing the turbine broadcast.
     #[cfg(target_os = "linux")]
     #[test]
     fn test_shred_receiver_copies_are_low_priority_on_xdp() {
@@ -976,6 +990,7 @@ pub mod test {
                 transmitter::XdpSender as QueuesSender,
                 tx_loop::{Receiver as _, TxPacket as _},
             },
+            solana_ledger::shred::{ShredType, wire::get_shred_type},
             std::net::{Ipv4Addr, SocketAddrV4},
         };
         const QUEUES: usize = 2;
@@ -992,21 +1007,21 @@ pub mod test {
         let turbine_peer = localhost(9000);
         let (broadcast, payloads) = leader_broadcast(Some(turbine_peer));
         let copies_per_call = payloads.len() * RECEIVERS;
-        // Each channel holds one call's share of the copies and no more.
+        let is_coding = |payload: &[u8]| get_shred_type(payload).unwrap() == ShredType::Code;
+        // Half the shreds of a call are data shreds.
+        let coding_copies_per_call = copies_per_call / 2;
+        assert_eq!(
+            payloads.iter().filter(|payload| is_coding(payload)).count() * 2,
+            payloads.len()
+        );
+        // Each channel holds one call's share of the copies of each kind and
+        // no more.
         let items_per_call = payloads.len() * RECEIVERS.div_ceil(SHRED_RECEIVERS_PER_XDP_ITEM);
-        let (sender, queues) = QueuesSender::with_receivers(QUEUES, items_per_call / QUEUES);
+        let items_of_a_kind_per_queue = items_per_call / 2 / QUEUES;
+        let (sender, queues) = QueuesSender::with_receivers(QUEUES, items_of_a_kind_per_queue);
         let sender = XdpSender::new(sender, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8001));
-
-        // The copies of the first call fill the low priority channels, so
-        // those of the second are dropped, and counted for every receiver.
-        // The turbine packets go out both times.
-        for dropped in [0, copies_per_call] {
-            let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
-            assert_eq!(transmit_stats.total_packets, payloads.len());
-            assert_eq!(transmit_stats.dropped_packets_xdp, 0);
-            assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
-            assert_eq!(transmit_stats.dropped_packets_mirrored, dropped);
-            // What the TX loops would send first: only turbine packets.
+        // What the TX loops would send first: only turbine packets.
+        let turbine_packets = || {
             let mut sent = HashSet::new();
             for queue in &queues {
                 while let Ok(packet) = queue.try_recv() {
@@ -1014,19 +1029,32 @@ pub mod test {
                     sent.insert(packet.payload().to_vec());
                 }
             }
-            assert_eq!(sent, payloads);
+            sent
+        };
+
+        // The copies of the first call fill the low priority channels, so
+        // those of the second are dropped, and counted for every receiver,
+        // those of data shreds apart. The turbine packets go out both times.
+        for dropped in [0, copies_per_call] {
+            let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+            assert_eq!(transmit_stats.total_packets, payloads.len());
+            assert_eq!(transmit_stats.dropped_packets_xdp, 0);
+            assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
+            assert_eq!(transmit_stats.dropped_packets_mirrored, dropped);
+            assert_eq!(transmit_stats.dropped_packets_mirrored_data, dropped / 2);
+            assert_eq!(turbine_packets(), payloads);
         }
 
         // The copies of the first call: every shred once for every receiver.
         let mut copies = HashSet::new();
         for queue in &queues {
             let mut queue_copies = 0;
-            let mut first_addrs = Vec::new();
+            let mut items = Vec::new();
             while let Some(packet) = queue.try_recv_low_priority(|| true) {
                 let addrs = packet.dst_addrs().as_ref();
                 assert!(addrs.len() <= SHRED_RECEIVERS_PER_XDP_ITEM);
                 queue_copies += addrs.len();
-                first_addrs.push(addrs[0]);
+                items.push((is_coding(packet.payload()), addrs[0]));
                 for addr in addrs {
                     assert!(copies.insert((packet.payload().to_vec(), *addr)));
                 }
@@ -1034,10 +1062,11 @@ pub mod test {
             // Like the turbine packets, the copies spread evenly over the TX
             // queues.
             assert_eq!(queue_copies, copies_per_call / QUEUES);
-            // The receiver addresses ascend, so this is the order given: the
-            // groups listed last are queued last, and a channel that fills
-            // up refuses them first.
-            assert!(first_addrs.is_sorted());
+            // A queue sends the copies of data shreds before those of coding
+            // shreds. Within each kind the receiver addresses ascend, so this
+            // is the order given: the groups listed last are queued last, and
+            // a channel that fills up refuses them first.
+            assert!(items.is_sorted());
         }
         let expected: HashSet<_> = payloads
             .iter()
@@ -1048,6 +1077,25 @@ pub mod test {
             })
             .collect();
         assert_eq!(copies, expected);
+
+        // A queue that has sent the copies of data shreds has room for those
+        // of the next call, whatever copies of coding shreds still wait on
+        // it: only the copies of coding shreds are dropped.
+        broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+        assert_eq!(turbine_packets(), payloads);
+        for queue in &queues {
+            for _ in 0..items_of_a_kind_per_queue {
+                let packet = queue.try_recv_low_priority(|| true).unwrap();
+                assert!(!is_coding(packet.payload()));
+            }
+        }
+        let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+        assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
+        assert_eq!(
+            transmit_stats.dropped_packets_mirrored,
+            coding_copies_per_call
+        );
+        assert_eq!(transmit_stats.dropped_packets_mirrored_data, 0);
     }
 
     #[test]

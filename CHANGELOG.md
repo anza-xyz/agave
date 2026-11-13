@@ -42,8 +42,10 @@ Release channels have their own copy of this changelog:
   to extra IPv4 `host:port` destinations (compatible with the Jito-Agave flag). Each address costs
   one more copy of the leader's shred stream; there is no built-in limit. With XDP transmit the
   copies are best effort: a transmit queue sends them only when it has no other packet waiting,
-  and drops them when too many wait. Reported as `mirrored_packets` / `dropped_packets_mirrored`
-  in `broadcast-transmit-shreds-stats`.
+  the copies of data shreds first, and drops copies when too many wait, those of coding shreds
+  first. Reported as `mirrored_packets` / `dropped_packets_mirrored` in
+  `broadcast-transmit-shreds-stats`; with XDP transmit `dropped_packets_mirrored_data` counts the
+  dropped copies of data shreds (always 0 without XDP).
 
 ### CLI
 

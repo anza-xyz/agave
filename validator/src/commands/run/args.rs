@@ -645,8 +645,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  limit. Copies follow the kernel routing table rather than --bind-address; with \
                  XDP they leave through the XDP interface, so loopback or other-interface \
                  receivers need --no-xdp. With XDP the copies are best effort: a transmit queue \
-                 sends them only when it has no other packet waiting, and drops them when too \
-                 many wait.",
+                 sends them only when it has no other packet waiting, the copies of data shreds \
+                 first, and drops copies when too many wait, those of coding shreds first.",
             ),
     )
     .arg(
