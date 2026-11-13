@@ -87,6 +87,7 @@ struct Serializer {
 impl Serializer {
     fn new(
         size: usize,
+        region_capacity: usize,
         start_addr: u64,
         abi: ABI,
         virtual_address_space_adjustments: bool,
@@ -94,7 +95,7 @@ impl Serializer {
     ) -> Serializer {
         Serializer {
             buffer: AlignedMemory::with_capacity(size),
-            regions: Vec::new(),
+            regions: Vec::with_capacity(region_capacity),
             region_start: 0,
             vaddr: start_addr,
             abi,
@@ -359,11 +360,15 @@ fn serialize_parameters_for_abiv0(
 
     // Calculate size in order to alloc once
     let mut size = size_of::<u64>();
+    let mut region_capacity = 1;
     for account in &accounts {
         size += 1; // dup
         match account {
             SerializeAccount::Duplicate(_) => {}
             SerializeAccount::Account(_, account) => {
+                if virtual_address_space_adjustments {
+                    region_capacity += 1 + usize::from(!account.get_data().is_empty());
+                }
                 size += size_of::<u8>() // is_signer
                 + size_of::<u8>() // is_writable
                 + size_of::<Pubkey>() // key
@@ -384,6 +389,7 @@ fn serialize_parameters_for_abiv0(
 
     let mut s = Serializer::new(
         size,
+        region_capacity,
         MM_INPUT_START,
         ABI_VERSION,
         virtual_address_space_adjustments,
@@ -509,11 +515,15 @@ fn serialize_parameters_for_abiv1(
     let mut accounts_metadata = Vec::with_capacity(accounts.len());
     // Calculate size in order to alloc once
     let mut size = size_of::<u64>();
+    let mut region_capacity = 1;
     for account in &accounts {
         size += 1; // dup
         match account {
             SerializeAccount::Duplicate(_) => size += 7, // padding to 64-bit aligned
             SerializeAccount::Account(_, account) => {
+                if virtual_address_space_adjustments {
+                    region_capacity += 2;
+                }
                 let data_len = account.get_data().len();
                 size += size_of::<u8>() // is_signer
                 + size_of::<u8>() // is_writable
@@ -549,6 +559,7 @@ fn serialize_parameters_for_abiv1(
 
     let mut s = Serializer::new(
         size,
+        region_capacity,
         MM_INPUT_START,
         ABI_VERSION,
         virtual_address_space_adjustments,
