@@ -2094,6 +2094,10 @@ impl JsonRpcRequestProcessor {
             .map_or(highest_complete_transaction_history_root, |bank| {
                 bank.slot()
             });
+        // Avoid an unbounded history scan before the first supermajority root.
+        if highest_super_majority_root == 0 {
+            return Err(RpcCustomError::BlockStatusNotAvailableYet { slot: highest_slot }.into());
+        }
         // Above the complete transaction-history root, only expose signatures from the current
         // confirmed bank. Its notification is dependency-gated on the corresponding TSS batch.
         let is_visible = |slot: Slot, signature: &Signature| {
@@ -8515,6 +8519,46 @@ pub mod tests {
             let result: Value = parse_success_result(rpc.handle_request_sync(request));
             assert!(!result.is_null());
         }
+    }
+
+    #[test_case("confirmed", false; "confirmed")]
+    #[test_case("confirmed", true; "confirmed_with_before")]
+    #[test_case("finalized", false; "finalized")]
+    #[test_case("finalized", true; "finalized_with_before")]
+    fn test_get_signatures_for_address_waits_for_first_root(commitment: &str, with_before: bool) {
+        let rpc = RpcHandler::start();
+        let slot = 1;
+        let bank = rpc.advance_bank_to_confirmed_slot(slot);
+        let signatures = rpc.create_test_transactions_and_populate_blockstore();
+        // Retained history exists in Blockstore but is absent from the bank's status cache.
+        bank.clear_slot_signatures(slot);
+        rpc.meta.optimistically_confirmed_bank.write().unwrap().bank = bank;
+        rpc.max_complete_and_rooted_transaction_status_slot
+            .store(slot, Ordering::SeqCst);
+        let before = with_before.then(|| signatures[1].to_string());
+        let request = || {
+            create_test_request(
+                "getSignaturesForAddress",
+                Some(json!([
+                    rpc.mint_keypair.pubkey().to_string(),
+                    {"commitment": commitment, "before": before, "limit": 1},
+                ])),
+            )
+        };
+
+        assert_eq!(
+            parse_failure_response(rpc.handle_request_sync(request())).0,
+            JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
+        );
+
+        rpc.block_commitment_cache
+            .write()
+            .unwrap()
+            .set_highest_super_majority_root(slot);
+        let results: Vec<Value> = parse_success_result(rpc.handle_request_sync(request()));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["signature"], signatures[0].to_string());
+        assert_eq!(results[0]["slot"], slot);
     }
 
     #[test]
