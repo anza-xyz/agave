@@ -14,25 +14,20 @@ use {
         result::{Error, Result},
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
-    rayon::{ThreadPool, prelude::*},
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_db::{DBPinnableSlice, WriteBatch},
-        blockstore_meta::BlockLocation,
-        shred::{
-            self, Shred,
-            filter::{RetransmitSender, ShredRecoveryContext},
-        },
+        shred::filter::{RetransmitSender, ShredRecoveryContext},
+        sigverify_shreds::VerifiedShred,
     },
     solana_measure::measure::Measure,
     solana_net_utils::PinnedXdpSender,
-    solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::SharableBanks,
     std::{
         net::UdpSocket,
         sync::{
             Arc, RwLock,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicBool, Ordering},
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -42,9 +37,8 @@ use {
 #[derive(Default)]
 struct WindowServiceMetrics {
     run_insert_count: u64,
-    num_repairs: AtomicUsize,
+    num_repairs: usize,
     num_shreds_received: usize,
-    handle_packets_elapsed_us: u64,
     shred_receiver_elapsed_us: u64,
     num_errors: u64,
     num_errors_blockstore: u64,
@@ -59,13 +53,8 @@ impl WindowServiceMetrics {
     fn report_metrics(&self) {
         datapoint_info!(
             Self::NAME,
-            (
-                "handle_packets_elapsed_us",
-                self.handle_packets_elapsed_us,
-                i64
-            ),
             ("run_insert_count", self.run_insert_count as i64, i64),
-            ("num_repairs", self.num_repairs.load(Ordering::Relaxed), i64),
+            ("num_repairs", self.num_repairs, i64),
             ("num_shreds_received", self.num_shreds_received, i64),
             (
                 "shred_receiver_elapsed_us",
@@ -120,8 +109,7 @@ fn run_check_duplicate(
 
 #[allow(clippy::too_many_arguments)]
 fn run_insert<'db, F>(
-    thread_pool: &ThreadPool,
-    verified_receiver: &Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+    verified_receiver: &Receiver<Vec<VerifiedShred>>,
     blockstore: &'db Blockstore,
     shred_recovery_context: &mut ShredRecoveryContext,
     pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -141,25 +129,10 @@ where
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
-    let handle_shred = |(shred, repair, block_location): (shred::Payload, bool, BlockLocation)| {
-        if repair {
-            ws_metrics.num_repairs.fetch_add(1, Ordering::Relaxed);
-        }
-        let shred = Shred::new_from_serialized_shred(shred).ok()?;
-        // Compute the Merkle root here while in the thread pool so the serial insertion
-        // path can reuse it.
-        let merkle_root = shred.merkle_root().ok();
-        Some((shred, repair, block_location, merkle_root))
-    };
-    let now = Instant::now();
-    let shreds: Vec<_> = thread_pool.install(|| {
-        shreds
-            .into_par_iter()
-            .with_min_len(32)
-            .filter_map(handle_shred)
-            .collect()
-    });
-    ws_metrics.handle_packets_elapsed_us += now.elapsed().as_micros() as u64;
+    ws_metrics.num_repairs += shreds
+        .iter()
+        .filter(|verified_shred| verified_shred.is_repaired)
+        .count();
     ws_metrics.num_shreds_received += shreds.len();
     let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
@@ -179,7 +152,7 @@ where
 }
 
 pub struct WindowServiceChannels {
-    pub verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+    pub verified_receiver: Receiver<Vec<VerifiedShred>>,
     pub retransmit_sender: RetransmitSender,
     pub completed_data_sets_sender: Option<CompletedDataSetsSender>,
     pub repair_service_channels: RepairServiceChannels,
@@ -188,7 +161,7 @@ pub struct WindowServiceChannels {
 
 impl WindowServiceChannels {
     pub fn new(
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+        verified_receiver: Receiver<Vec<VerifiedShred>>,
         retransmit_sender: RetransmitSender,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         repair_service_channels: RepairServiceChannels,
@@ -306,7 +279,7 @@ impl WindowService {
         blockstore: Arc<Blockstore>,
         sharable_banks: SharableBanks,
         shred_version: u16,
-        verified_receiver: Receiver<Vec<(shred::Payload, /*is_repaired:*/ bool, BlockLocation)>>,
+        verified_receiver: Receiver<Vec<VerifiedShred>>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
         retransmit_sender: RetransmitSender,
@@ -314,15 +287,6 @@ impl WindowService {
         Builder::new()
             .name("solWinInsert".to_string())
             .spawn(move || {
-                let thread_pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(get_thread_count().min(8))
-                    // Use the current thread as one of the workers. This reduces overhead when the
-                    // pool is used to process a small number of shreds, since they'll be processed
-                    // directly on the current thread.
-                    .use_current_thread()
-                    .thread_name(|i| format!("solWinInsert{i:02}"))
-                    .build()
-                    .unwrap();
                 let handle_duplicate = |possible_duplicate_shred| {
                     let _ = check_duplicate_sender.send(possible_duplicate_shred);
                 };
@@ -343,7 +307,6 @@ impl WindowService {
                     shred_recovery_context.maybe_update(sharable_banks.root());
 
                     if let Err(e) = run_insert(
-                        &thread_pool,
                         &verified_receiver,
                         &blockstore,
                         &mut shred_recovery_context,
@@ -413,7 +376,7 @@ mod test {
         solana_ledger::{
             blockstore::{Blockstore, make_many_slot_entries},
             get_tmp_ledger_path_auto_delete,
-            shred::{ProcessShredsStats, Shredder, filter::new_dummy_retransmit_sender},
+            shred::{ProcessShredsStats, Shred, Shredder, filter::new_dummy_retransmit_sender},
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
