@@ -1034,9 +1034,9 @@ dependencies = [
 
 [[package]]
 name = "aya-build"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "609b414caa508f04d2dbbc9481ad6869f43ab9ab1dc9abd237fca27c0818f663"
+checksum = "a356366c974ffb737700f9691962d7aabe52b3843702e381773afef5a0f51c9f"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -1046,9 +1046,9 @@ dependencies = [
 
 [[package]]
 name = "aya-ebpf"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eace5970943931fea46a8cbdca208a8f6a9e0413d85a5a6c4e168f0b909570bc"
+checksum = "7998c4bcc24fb07447fe3018679f7ee1402ac9f27771753bb8890fc17ed967f4"
 dependencies = [
  "aya-build",
  "aya-ebpf-bindings",
@@ -1059,9 +1059,9 @@ dependencies = [
 
 [[package]]
 name = "aya-ebpf-bindings"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf1f19286ebbda6673099b68d049034838f08e4939cef66c998a8d3e62825d76"
+checksum = "1f524fa99b4f6a4304d6f69a8f2591a716bfe3d82ca6b21e56561c262b6777a4"
 dependencies = [
  "aya-build",
  "aya-ebpf-cty",
@@ -1069,23 +1069,22 @@ dependencies = [
 
 [[package]]
 name = "aya-ebpf-cty"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0884264bc8a51a49fed03df8feada3a21d703cf501dae33c28bdba5d2313ef33"
+checksum = "8b5264d5e8093e23c4ec11bfddf9c5d29adb70bd22d0af684af65dd25616d517"
 dependencies = [
  "aya-build",
 ]
 
 [[package]]
 name = "aya-ebpf-macros"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23e3a7f86e914df106dd00f9d757bc93f7d5c93380c51eead23d8d2ccd15a87a"
+checksum = "4d4de6938af16fd321f0f9a9fa2a0ba6777bd2665b7b09d3ab68a40c1e592631"
 dependencies = [
  "proc-macro2",
- "proc-macro2-diagnostics",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -4531,18 +4530,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "proc-macro2-diagnostics"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
- "version_check",
 ]
 
 [[package]]
