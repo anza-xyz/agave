@@ -117,7 +117,6 @@ use {
         account_loader::{
             FeesOnlyTransaction, LoadedTransaction, NoOpTransaction, TRANSACTION_ACCOUNT_BASE_SIZE,
         },
-        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
@@ -167,6 +166,8 @@ use {
     test_case::{test_case, test_matrix},
     wincode::{SchemaRead, SchemaWrite},
 };
+
+const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_util creates config with no tx fee and no rent

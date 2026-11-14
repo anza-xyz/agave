@@ -177,7 +177,6 @@ use {
     solana_svm::{
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
-        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -3499,9 +3498,8 @@ impl Bank {
         let account = AccountSharedData::from(Account {
             lamports,
             owner,
-            data: vec![],
             executable: true,
-            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
+            ..Account::default()
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }
@@ -6714,7 +6712,7 @@ impl Bank {
             data: name.as_bytes().to_vec(),
             owner: solana_sdk_ids::native_loader::id(),
             executable: true,
-            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
+            ..Account::default()
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }

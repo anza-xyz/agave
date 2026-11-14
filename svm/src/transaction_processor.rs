@@ -4,7 +4,7 @@ use {
             AccountLoader, CheckedTransactionDetails, FeesOnlyTransaction, LoadedTransaction,
             NoOpTransaction, TransactionCheckResult, TransactionLoadResult,
             TransactionValidationResult, ValidatedTransactionDetails, fee_payer_load_filter,
-            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
+            load_transaction, validate_fee_payer,
         },
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
@@ -546,7 +546,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 tx,
                 validate_result,
                 &mut error_metrics,
-                &environment.rent,
             ));
             load_us = load_us.saturating_add(single_load_us);
 
@@ -833,9 +832,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    // Loads transaction fee payer, collects rent if necessary, then calculates
-    // transaction fees, and deducts them from the fee payer balance. If the
-    // account is not found or has insufficient funds, an error is returned.
+    // Loads transaction fee payer, calculates transaction fees, and deducts
+    // them from the fee payer balance. If the account is not found or has
+    // insufficient funds, an error is returned.
     fn validate_transaction_fee_payer<CB: TransactionProcessingCallback>(
         account_loader: &mut AccountLoader<CB>,
         message: &impl SVMMessage,
@@ -855,9 +854,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             return Err(TransactionError::InvalidAccountForFee);
         };
 
-        let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
-        update_rent_exempt_status_for_account(rent, &mut loaded_fee_payer.account);
-
         let fee_payer_index = 0;
         validate_fee_payer(
             &mut loaded_fee_payer.account,
@@ -873,7 +869,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             nonce_info,
             *fee_payer_address,
             loaded_fee_payer.account.clone(),
-            fee_payer_loaded_rent_epoch,
         );
 
         Ok(ValidatedTransactionDetails {
@@ -1475,10 +1470,9 @@ mod tests {
             },
             nonce_info::NonceInfo,
             program_loader::test_utils::*,
-            rent_calculator::RENT_EXEMPT_RENT_EPOCH,
             rollback_accounts::RollbackAccounts,
         },
-        solana_account::{Account, WritableAccount},
+        solana_account::WritableAccount,
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
@@ -2566,7 +2560,6 @@ mod tests {
             &Hash::new_unique(),
         ));
         let fee_payer_address = message.fee_payer();
-        let current_epoch = 42;
         let rent = Rent::default();
         let min_balance = rent.minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
@@ -2578,12 +2571,7 @@ mod tests {
              starting balance is more than the min balance"
         );
 
-        let fee_payer_rent_epoch = current_epoch;
-        let fee_payer_account = AccountSharedData::from(Account {
-            lamports: starting_balance,
-            rent_epoch: fee_payer_rent_epoch,
-            ..Account::default()
-        });
+        let fee_payer_account = AccountSharedData::empty(starting_balance, &Pubkey::default());
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
         let mock_bank = MockBankCallback {
@@ -2613,11 +2601,8 @@ mod tests {
                 &mut error_counters,
             );
 
-        let post_validation_fee_payer_account = AccountSharedData::from(Account {
-            lamports: 0,
-            rent_epoch: RENT_EXEMPT_RENT_EPOCH,
-            ..Account::from(fee_payer_account.clone())
-        });
+        let mut post_validation_fee_payer_account = fee_payer_account.clone();
+        post_validation_fee_payer_account.set_lamports(0);
 
         assert_eq!(
             result,
@@ -2626,7 +2611,6 @@ mod tests {
                     None, // nonce
                     *fee_payer_address,
                     post_validation_fee_payer_account.clone(),
-                    fee_payer_rent_epoch
                 ),
                 compute_budget: compute_budget_and_limits.budget,
                 loaded_accounts_bytes_limit: compute_budget_and_limits
@@ -3044,7 +3028,6 @@ mod tests {
                         Some(future_nonce),
                         *fee_payer_address,
                         post_validation_fee_payer_account.clone(),
-                        0, // fee_payer_rent_epoch
                     ),
                     compute_budget: compute_budget_and_limits.budget,
                     loaded_accounts_bytes_limit: compute_budget_and_limits
