@@ -24,6 +24,7 @@ use {
             merkle::{ErasureBatch, FecSetViolation},
             merkle_tree::{MerkleTree, get_proof_size},
         },
+        shredder::Deshredder,
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
     },
@@ -132,6 +133,8 @@ const GENESIS_BLOCK_MARKER_SHRED_INDEX: u64 = DATA_SHREDS_PER_FEC_BLOCK as u64;
 // and misses is also expensive because it would involve malicious leader giving
 // up their future leader slots.
 const UPDATE_PARENT_SHRED_PARENT_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(16).unwrap();
+// RocksDB trims this at a scan's upper bound as long as it has a block cache.
+const MAX_SCAN_READAHEAD_SIZE: usize = 2 << 20;
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
@@ -5273,32 +5276,36 @@ impl Blockstore {
         else {
             return Ok(vec![]);
         };
-        let indices = u64::from(start)..u64::from(end);
-        let keys = indices.clone().map(|index| (slot, index));
-        let keys = self.data_shred_cf.multi_get_keys(keys);
-        let mut shreds =
-            self.data_shred_cf
-                .multi_get_bytes(&keys)
-                .zip(indices)
-                .map(|(shred, index)| {
-                    shred?.ok_or_else(|| {
-                        maybe_print_error(index);
-                        BlockstoreError::MissingShred(slot, index)
-                    })
-                });
+        // A scan searches several SST files to find where the range starts, and may read
+        // one block from each and verify its checksum. Some of those blocks hold only other
+        // slots. If one is corrupt the scan fails, so this can return a RocksDB error even
+        // when every shred in this range is intact.
+        let mut scan = self.data_shred_cf.scan_range(
+            (slot, u64::from(start))..(slot, u64::from(end)),
+            MAX_SCAN_READAHEAD_SIZE,
+        );
+        let invalid_shred_data = |e| {
+            BlockstoreError::InvalidShredData(format!(
+                "could not reconstruct data buffer from shreds: {e}"
+            ))
+        };
         completed_ranges
             .iter()
-            .map(|Range { start, end }| end - start)
-            .map(|num_shreds| {
-                shreds
-                    .by_ref()
-                    .take(num_shreds as usize)
-                    .process_results(|shreds| Shredder::deshred(shreds))?
-                    .map_err(|e| {
-                        BlockstoreError::InvalidShredData(format!(
-                            "could not reconstruct data buffer from shreds: {e}"
-                        ))
-                    })
+            .map(|range| {
+                let mut deshredder = Deshredder::default();
+                for index in range.clone().map(u64::from) {
+                    if let Some((entry_index, shred)) = scan.next_entry()?
+                        && entry_index == (slot, index)
+                    {
+                        deshredder.push(shred).map_err(invalid_shred_data)?;
+                    } else {
+                        maybe_print_error(index);
+                        return Err(BlockstoreError::MissingShred(slot, index));
+                    }
+                }
+                deshredder
+                    .finish()
+                    .map_err(invalid_shred_data)
                     .and_then(&mut deserialize)
             })
             .flatten_ok()
