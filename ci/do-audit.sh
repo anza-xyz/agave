@@ -207,6 +207,39 @@ default_cargo_audit_extra_args=(
   # Agave Ok:  build-time only, via prost-build, which parses doc comments from Agave's
   # checked-in .proto files. Never used on untrusted input.
   --ignore RUSTSEC-2026-0433
+
+  # Crate:     quinn-proto
+  # Version:   0.11.18
+  # Title:     MAX_STREAM_DATA frame can open streams beyond the stream limit
+  # ID:        RUSTSEC-2026-0523
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0523
+  # Solution:  Upgrade to >=0.11.19
+  # Agave Ok:  upstream quinn-proto is only in Reqwest's disabled HTTP/3 deps. The active
+  # anza-quinn-proto 0.11.18-issue2860.1 lacks the fix, but Agave never accepts
+  # peer-initiated bidirectional streams (no accept_bi), so no streams are materialized.
+  --ignore RUSTSEC-2026-0523
+
+  # Crate:     quinn-proto
+  # Version:   0.11.18
+  # Title:     Long Retry token can panic or exhaust memory in a QUIC client
+  # ID:        RUSTSEC-2026-0524
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0524
+  # Solution:  Upgrade to >=0.11.19
+  # Agave Ok:  active QUIC uses anza-quinn-proto 0.11.18-issue2860.1 with the fix.
+  # Upstream quinn-proto remains only in Reqwest's disabled HTTP/3 dependencies.
+  --ignore RUSTSEC-2026-0524
+
+  # Crate:     quinn-udp
+  # Version:   0.5.5 (0.5.14 in dev-bins, 0.5.4 in programs/sbf)
+  # Title:     Receive loop can spin after a truncated datagram
+  # ID:        RUSTSEC-2026-0538
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0538
+  # Solution:  Upgrade to >=0.5.16
+  # Agave Ok:  only the single-recvmsg fallback (macOS, OpenBSD, Solaris) is affected; Linux
+  # uses recvmmsg. 0.5.5 also checks recvmsg errors before MSG_TRUNC, so it predates the bug.
+  # On macOS, agave-ledger-tool (dev-bins) links 0.5.14 via solana-core but never opens a
+  # QUIC socket.
+  --ignore RUSTSEC-2026-0538
 )
 
 xtask_cargo_audit_extra_args=(
@@ -233,6 +266,36 @@ xtask_cargo_audit_extra_args=(
   # The crypto-bigint advisory documented above also affects xtask, via octocrab's
   # jsonwebtoken. xtask authenticates with a personal token and never signs JWTs.
   --ignore RUSTSEC-2026-0387
+
+  # Crate:     quinn-proto
+  # Version:   0.11.18
+  # Title:     MAX_STREAM_DATA frame can open streams beyond the stream limit
+  # ID:        RUSTSEC-2026-0523
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0523
+  # Solution:  Upgrade to >=0.11.19
+  # Agave Ok:  only in xtask's lockfile as an optional dep of Reqwest's HTTP/3 feature, which
+  # xtask does not enable, so upstream Quinn and quinn-proto are never built.
+  --ignore RUSTSEC-2026-0523
+
+  # Crate:     quinn-proto
+  # Version:   0.11.18
+  # Title:     Long Retry token can panic or exhaust memory in a QUIC client
+  # ID:        RUSTSEC-2026-0524
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0524
+  # Solution:  Upgrade to >=0.11.19
+  # Agave Ok:  only in xtask's lockfile as an optional dep of Reqwest's HTTP/3 feature, which
+  # xtask does not enable, so upstream Quinn and quinn-proto are never built.
+  --ignore RUSTSEC-2026-0524
+
+  # Crate:     quinn-udp
+  # Version:   0.5.14
+  # Title:     Receive loop can spin after a truncated datagram
+  # ID:        RUSTSEC-2026-0538
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0538
+  # Solution:  Upgrade to >=0.5.16
+  # Agave Ok:  only in xtask's lockfile as an optional dep of Reqwest's HTTP/3 feature, which
+  # xtask does not enable, so upstream Quinn and quinn-udp are never built.
+  --ignore RUSTSEC-2026-0538
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"
