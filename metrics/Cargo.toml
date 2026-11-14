@@ -33,7 +33,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 bencher = { workspace = true }
-env_logger = { workspace = true }
+env_logger = { workspace = true, features = ["auto-color"] }
 rand = { workspace = true }
 serial_test = { workspace = true }
 solana-metrics = { path = ".", features = ["agave-unstable-api"] }

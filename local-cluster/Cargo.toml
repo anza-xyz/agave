@@ -83,6 +83,7 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 serial_test = { workspace = true }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-download-utils = { path = "../download-utils", features = ["agave-unstable-api"] }

@@ -183,7 +183,7 @@ stable-abi = []
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
+agave-logger = { workspace = true, features = ["auto-color"] }
 agave-reserved-account-keys = { workspace = true }
 agave-validator = { workspace = true }
 borsh = { workspace = true }

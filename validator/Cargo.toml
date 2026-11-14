@@ -104,6 +104,7 @@ caps = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 pretty_assertions = { workspace = true }

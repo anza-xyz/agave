@@ -184,6 +184,7 @@ jemalloc-ctl = { workspace = true }
 sysctl = { workspace = true }
 
 [dev-dependencies]
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
 bitvec = { workspace = true }
