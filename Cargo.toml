@@ -208,7 +208,7 @@ new_without_default = "allow"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
-additive-fft-reed-solomon = "0.3"
+additive-fft-reed-solomon = "0.3.1"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-cert-verify = { path = "bls-cert-verify", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
 agave-bls-sigverify = { path = "bls-sigverify", version = "=4.5.0-alpha.2", features = ["agave-unstable-api"] }
