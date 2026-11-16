@@ -889,7 +889,9 @@ fn do_main(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
             .serialize();
             let signature = keypair.try_sign_message(&simple_message)?;
             let pubkey_bs58 = matches.try_get_one::<String>("pubkey")?.unwrap();
-            let pubkey = bs58::decode(pubkey_bs58).into_vec().unwrap();
+            let pubkey = bs58::decode(pubkey_bs58)
+                .into_vec()
+                .map_err(|err| format!("Invalid public key {pubkey_bs58}: {err}"))?;
             if signature.verify(&pubkey, &simple_message) {
                 println!("Verification for public key: {pubkey_bs58}: Success");
             } else {
@@ -1022,6 +1024,12 @@ mod tests {
 
         let expected = format!("Verification for public key: {incorrect_pubkey}: Failed");
         assert_eq!(result, expected);
+
+        // fail case with a public key that is not valid base58
+        let result = process_test_command(&["solana-keygen", "verify", "0OIl", &keypair_path])
+            .unwrap_err()
+            .to_string();
+        assert!(result.starts_with("Invalid public key 0OIl"), "{result}");
 
         // fail case using a config file
         let result = process_test_command(&[
