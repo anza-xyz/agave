@@ -18,7 +18,8 @@ use {
     solana_clock::Slot,
     std::{
         collections::HashMap,
-        sync::{Arc, atomic::Ordering},
+        path::PathBuf,
+        sync::Arc,
         time::{Duration, Instant},
     },
 };
@@ -92,142 +93,6 @@ impl SnapshotStorageRebuilder {
         Ok(rebuilder.storage)
     }
 
-    /// Rebuilds the account storages from local state.
-    pub(crate) fn rebuild_storages_from_local_state(
-        files: impl IntoIterator<Item = FileInfo>,
-        next_append_vec_id: Arc<AtomicAccountsFileId>,
-        mut obsolete_accounts: HashMap<Slot, SerdeObsoleteAccounts>,
-        mut expected_storages: HashMap<(Slot, AccountsFileId), StorageListItem>,
-    ) -> Result<AccountStorageMap, SnapshotError> {
-        let mut rebuilder = Self::new(next_append_vec_id);
-        let mut split_files_with_data = HashMap::new();
-        let mut previous_log_time = Instant::now();
-
-        for file_info in files {
-            rebuilder.maybe_log_progress(&mut previous_log_time);
-            let filename = file_info.path.file_name().unwrap().to_str().unwrap();
-            if let Some(ParsedStorageFilename { slot, id, format }) =
-                parse_storage_filename(filename)
-            {
-                let expected_storage = expected_storages.get(&(slot, id)).ok_or_else(|| {
-                    SnapshotError::RebuildStorages(format!(
-                        "unexpected storage file '{}'",
-                        file_info.path.display(),
-                    ))
-                })?;
-
-                // verify the storage file format matches what we're expecting
-                match (expected_storage, &format) {
-                    (StorageListItem::AppendVec { .. }, ParsedStorageFormat::AppendVec) => {
-                        // all good
-                    }
-                    (StorageListItem::Split { .. }, ParsedStorageFormat::Split(..)) => {
-                        // all good
-                    }
-                    _ => {
-                        // format mismatch between expected and actual
-                        return Err(SnapshotError::RebuildStorages(format!(
-                            "storage file format mismatch! slot: {slot}, id: {id}, actual: \
-                             {format:?}, expected: {expected_storage:?}"
-                        )));
-                    }
-                }
-
-                // Look up this `file_info` in the list of expected storages.
-                // If we have all the files to open the storage, proceed with opening.
-                // Otherwise, continue to the next item in `files`.
-                // E.g. this happens for a SplitFile with both meta and data files, but
-                // we've only seen one of the two files so far.
-                let file_infos = match expected_storage {
-                    StorageListItem::AppendVec { .. } => {
-                        // AppendVec only has one file, proceed with opening.
-                        (file_info, None)
-                    }
-                    StorageListItem::Split {
-                        has_data_file: false,
-                        ..
-                    } => {
-                        // SplitFile without data only has one file, proceed with opening.
-                        (file_info, None)
-                    }
-                    StorageListItem::Split {
-                        has_data_file: true,
-                        ..
-                    } => {
-                        // SplitFile with data has two files, so must ensure
-                        // we've seen both files before opening.
-                        let Some(other) = split_files_with_data.remove(&(slot, id)) else {
-                            // This is the first file seen for this SplitFile (with data).
-                            // Remember it for next time and then continue to the next file.
-                            split_files_with_data.insert((slot, id), file_info);
-                            continue;
-                        };
-                        // If we're here, then we have both files and can open the SplitFile.
-                        // Figure out which file is the meta and which is the data.
-                        let ParsedStorageFormat::Split(split_format) = &format else {
-                            unreachable!();
-                        };
-                        match split_format {
-                            ParsedSplit::Meta => (file_info, Some(other)),
-                            ParsedSplit::Data => (other, Some(file_info)),
-                        }
-                    }
-                };
-
-                // If we got here then `file_infos` can be used to open an AccountStorageEntry.
-                // Grab ObsoleteAccounts (if any) for this storage entry now.
-                let obsolete_accounts = obsolete_accounts
-                    .remove(&slot)
-                    .map(|accounts| accounts.into_tuple());
-                let obsolete_accounts =
-                    if let Some((obsolete_accounts, obsolete_id, _bytes)) = obsolete_accounts {
-                        if obsolete_id != id {
-                            return Err(SnapshotError::MismatchedAccountsFileId(id, obsolete_id));
-                        }
-                        obsolete_accounts
-                    } else {
-                        ObsoleteAccounts::default()
-                    };
-                let accounts_file = match expected_storage {
-                    StorageListItem::AppendVec { .. } => {
-                        AccountsFile::open_append_vec(file_infos.0)?
-                    }
-                    StorageListItem::Split { .. } => {
-                        AccountsFile::open_split(file_infos.0, file_infos.1)?
-                    }
-                };
-                let storage_entry =
-                    AccountStorageEntry::new_existing(slot, id, accounts_file, obsolete_accounts);
-
-                // Keep track of the highest append_vec_id in the system, so the future append_vecs
-                // can be assigned to unique IDs.  This is only needed when loading from local
-                // state.  When loading from a snapshot archive, the max of the appendvec IDs is
-                // updated in remap_append_vec_file(), which is not in the from_local_state route.
-                rebuilder
-                    .next_append_vec_id
-                    .fetch_max(id + 1, Ordering::Relaxed);
-                rebuilder.insert_storage(slot, Arc::new(storage_entry))?;
-                rebuilder.processed_slot_count += 1;
-                expected_storages.remove(&(slot, id));
-            }
-        }
-
-        if !expected_storages.is_empty() || !split_files_with_data.is_empty() {
-            // we didn't see all the files that we were told to expect, or
-            // we didn't see both meta and data files for these SplitFiles...
-            return Err(SnapshotError::RebuildStorages(format!(
-                "num expected storages that were missing files and not rebuilt: {} (e.g. {:?}), \
-                 num split storages that were missing one of their files: {} (e.g. {:?})",
-                expected_storages.len(),
-                expected_storages.iter().next(),
-                split_files_with_data.len(),
-                split_files_with_data.iter().next(),
-            )));
-        }
-
-        Ok(rebuilder.storage)
-    }
-
     /// Logs the progress of rebuilding storages, if it has been
     /// `PROGRESS_LOG_INTERVAL` since the previous log.
     fn maybe_log_progress(&self, previous_log_time: &mut Instant) {
@@ -256,6 +121,52 @@ impl SnapshotStorageRebuilder {
         } else {
             Ok(())
         }
+    }
+}
+
+/// A storage from local state for index generation to open
+pub(crate) struct StorageToOpen {
+    /// The AppendVec file or the SplitFile meta file
+    pub(crate) path: PathBuf,
+    pub(crate) item: StorageListItem,
+    pub(crate) obsolete_accounts: Option<SerdeObsoleteAccounts>,
+}
+
+impl StorageToOpen {
+    pub(crate) fn open(self) -> Result<AccountStorageEntry, SnapshotError> {
+        let (slot, id) = self.item.slot_and_id();
+        let obsolete_accounts = match self.obsolete_accounts.map(|accounts| accounts.into_tuple()) {
+            Some((_, obsolete_id, _)) if obsolete_id != id => {
+                return Err(SnapshotError::MismatchedAccountsFileId(id, obsolete_id));
+            }
+            Some((obsolete_accounts, ..)) => obsolete_accounts,
+            None => ObsoleteAccounts::default(),
+        };
+        let open_file = |path: PathBuf| {
+            FileInfo::new_from_path(&path).map_err(|err| {
+                SnapshotError::RebuildStorages(format!(
+                    "failed to open storage file '{}': {err}",
+                    path.display(),
+                ))
+            })
+        };
+        let accounts_file = match self.item {
+            StorageListItem::AppendVec { .. } => {
+                AccountsFile::open_append_vec(open_file(self.path)?)?
+            }
+            StorageListItem::Split { has_data_file, .. } => {
+                let data_file = has_data_file
+                    .then(|| open_file(self.path.with_extension("data")))
+                    .transpose()?;
+                AccountsFile::open_split(open_file(self.path)?, data_file)?
+            }
+        };
+        Ok(AccountStorageEntry::new_existing(
+            slot,
+            id,
+            accounts_file,
+            obsolete_accounts,
+        ))
     }
 }
 
@@ -400,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rebuild_storages_from_local_state_good() {
+    fn test_storage_to_open() {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // create split file, meta-only
@@ -464,90 +375,56 @@ mod tests {
             ))
             .unwrap();
 
-        let files = [
+        let storages_list = StoragesList::new_from_storages(&[split1, split2, av3]);
+        let paths = [
             path1.with_added_extension("meta"),
-            path2.with_added_extension("data"),
             path2.with_added_extension("meta"),
             path3,
-        ]
-        .into_iter()
-        .map(|path| FileInfo::new_from_path(path).unwrap());
-        let storages_list = StoragesList::new_from_storages(&[split1, split2, av3]);
-        let storages_map = storages_list_to_map(&storages_list);
-
-        let next_id = Arc::new(AtomicAccountsFileId::new(0));
-        let storages = SnapshotStorageRebuilder::rebuild_storages_from_local_state(
-            files,
-            next_id.clone(),
-            HashMap::new(),
-            storages_map,
-        )
-        .unwrap();
-        assert_eq!(next_id.load(Ordering::Relaxed), 9);
-        assert_eq!(storages.len(), 3);
-        assert_eq!(storages.get(&slot1).unwrap().id(), id1);
-        assert_eq!(storages.get(&slot2).unwrap().id(), id2);
-        assert_eq!(storages.get(&slot3).unwrap().id(), id3);
+        ];
+        for (path, item) in paths.into_iter().zip(storages_list.items.iter().copied()) {
+            let storage = StorageToOpen {
+                path,
+                item,
+                obsolete_accounts: None,
+            }
+            .open()
+            .unwrap();
+            assert_eq!((storage.slot(), storage.id()), item.slot_and_id());
+        }
     }
 
     #[test]
-    #[should_panic(expected = "expected storages that were missing files and not rebuilt")]
-    fn test_rebuild_storages_from_local_state_bad_no_files() {
-        SnapshotStorageRebuilder::rebuild_storages_from_local_state(
-            [],
-            Arc::new(AtomicAccountsFileId::new(0)),
-            HashMap::new(),
-            HashMap::from([(
-                (123, 456),
-                StorageListItem::AppendVec { slot: 123, id: 456 },
-            )]),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "expected storages that were missing files and not rebuilt")]
-    fn test_rebuild_storages_from_local_state_bad_missing_split_data() {
+    #[should_panic(expected = "failed to open storage file")]
+    fn test_storage_to_open_missing_split_data() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("123.456.meta");
         fs::write(&path, b"junk").unwrap();
-        let meta = FileInfo::new_from_path(&path).unwrap();
-        SnapshotStorageRebuilder::rebuild_storages_from_local_state(
-            [meta],
-            Arc::new(AtomicAccountsFileId::new(0)),
-            HashMap::new(),
-            HashMap::from([(
-                (123, 456),
-                StorageListItem::Split {
-                    slot: 123,
-                    id: 456,
-                    has_data_file: true,
-                },
-            )]),
-        )
+        StorageToOpen {
+            path,
+            item: StorageListItem::Split {
+                slot: 123,
+                id: 456,
+                has_data_file: true,
+            },
+            obsolete_accounts: None,
+        }
+        .open()
         .unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "expected storages that were missing files and not rebuilt")]
-    fn test_rebuild_storages_from_local_state_bad_missing_split_meta() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("123.456.data");
-        fs::write(&path, b"junk").unwrap();
-        let data = FileInfo::new_from_path(&path).unwrap();
-        SnapshotStorageRebuilder::rebuild_storages_from_local_state(
-            [data],
-            Arc::new(AtomicAccountsFileId::new(0)),
-            HashMap::new(),
-            HashMap::from([(
-                (123, 456),
-                StorageListItem::Split {
-                    slot: 123,
-                    id: 456,
-                    has_data_file: true,
-                },
-            )]),
-        )
-        .unwrap();
+    fn test_storage_to_open_mismatched_obsolete_accounts_id() {
+        let storage = StorageToOpen {
+            path: PathBuf::from("123.456"),
+            item: StorageListItem::AppendVec { slot: 123, id: 456 },
+            obsolete_accounts: Some(SerdeObsoleteAccounts {
+                id: 789,
+                ..SerdeObsoleteAccounts::default()
+            }),
+        };
+        assert!(matches!(
+            storage.open(),
+            Err(SnapshotError::MismatchedAccountsFileId(456, 789))
+        ));
     }
 }
