@@ -334,7 +334,7 @@ impl AccountsFile {
         Ok(())
     }
 
-    /// Returns the number of bytes requried to store an account with the pass in data_len.
+    /// Returns the number of bytes required to store an account with the pass in data_len.
     ///
     /// Note, this is the size to store accounts into AppendVec format.
     pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {

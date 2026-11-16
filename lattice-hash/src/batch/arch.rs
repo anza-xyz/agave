@@ -185,13 +185,13 @@ unsafe fn compress_pre<L: Lanes>(
 ///
 /// # Safety
 /// Must be called from a context where `L`'s target feature is enabled.
-/// `batch.len()` must equal `L::N`. Each `batch.lanes[l]` must be zero-padded to
+/// `batch.lanes.len()` must equal `L::N`. Each `batch.lanes[l]` must be zero-padded to
 /// its block boundary and hold at least `ceil(batch.lengths[l]/64)*16` `u32`
 /// words (i.e. `ceil(batch.lengths[l]/64)` full 64-byte blocks).
 #[inline(always)]
 unsafe fn compress_batch<L: Lanes>(batch: Batch<'_>, acc: &mut LtHash) {
     let n = L::N;
-    debug_assert_eq!(batch.len(), n);
+    debug_assert_eq!(batch.lanes.len(), n);
     let sub_blocks = NUM_BLOCK_WORDS / n; // AVX2: 2 tiles of 8 words; AVX512: 1 tile of 16
 
     let zero = unsafe { L::splat(0) };
