@@ -186,6 +186,24 @@ impl AccountStorage {
         AccountStorageIter::new(self)
     }
 
+    /// Makes sure `store` is in the map, adding it if its slot has no storage yet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot of `store` holds a different storage.
+    pub(crate) fn ensure_inserted(&self, store: &Arc<AccountStorageEntry>) {
+        match self.get_slot_storage_entry_shrinking_in_progress_ok(store.slot()) {
+            Some(existing) => assert!(
+                Arc::ptr_eq(&existing, store),
+                "slot {} holds storage {}, so storage {} can't be added to it",
+                store.slot(),
+                existing.id(),
+                store.id(),
+            ),
+            None => self.insert(Arc::clone(store)),
+        }
+    }
+
     pub(crate) fn insert(&self, store: Arc<AccountStorageEntry>) {
         assert!(
             self.no_shrink_in_progress(),
@@ -455,7 +473,7 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
         if position < self.orderer.entries_len() {
             // SAFETY: We have ensured `position` is in range.
             let original_index = self.orderer.original_index(position);
-            let storage = &self.orderer[position];
+            let storage = &self.orderer.storages[original_index];
             Some(NextItem {
                 position,
                 original_index,
@@ -490,7 +508,7 @@ pub struct NextItem<'a> {
     /// The index into the original storages slice at this position
     pub original_index: usize,
     /// The storage itself
-    pub storage: &'a AccountStorageEntry,
+    pub storage: &'a Arc<AccountStorageEntry>,
 }
 
 /// Select the `nth` (`0 <= nth < range.len()`) value from a `range`, choosing values alternately
@@ -725,6 +743,25 @@ mod tests {
         assert_eq!(id_shrunk, storage.map.get(&slot).unwrap().id());
         assert!(storage.shrink_in_progress_map.read().unwrap().is_empty());
         storage.shrinking_in_progress(slot, sample.clone(), sample);
+    }
+
+    #[test]
+    fn test_ensure_inserted() {
+        let (_temp_dir, sample) = new_test_storage();
+        let storage = AccountStorage::default();
+        storage.ensure_inserted(&sample);
+        storage.ensure_inserted(&sample);
+        assert_eq!(storage.all_storages().len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "slot 0 holds storage 1, so storage 2 can't be added to it")]
+    fn test_ensure_inserted_other_storage_in_slot() {
+        let (_temp_dir1, sample) = new_test_storage_with(0, 1);
+        let (_temp_dir2, other) = new_test_storage_with(0, 2);
+        let storage = AccountStorage::default();
+        storage.ensure_inserted(&sample);
+        storage.ensure_inserted(&other);
     }
 
     #[test]
