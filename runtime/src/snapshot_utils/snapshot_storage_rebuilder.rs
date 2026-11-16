@@ -271,13 +271,7 @@ pub(super) fn storages_list_to_map(
     storages_list
         .items
         .iter()
-        .map(|item| {
-            let key = match item {
-                StorageListItem::AppendVec { slot, id } => (*slot, *id),
-                StorageListItem::Split { slot, id, .. } => (*slot, *id),
-            };
-            (key, *item)
-        })
+        .map(|item| (item.slot_and_id(), *item))
         .collect()
 }
 

@@ -32,6 +32,14 @@ pub enum StorageListItem {
 
 const _: () = assert!(size_of::<StorageListItem>() == 16);
 
+impl StorageListItem {
+    pub fn slot_and_id(&self) -> (Slot, AccountsFileId) {
+        match *self {
+            Self::AppendVec { slot, id } | Self::Split { slot, id, .. } => (slot, id),
+        }
+    }
+}
+
 /// On-disk format of the storages list file.
 ///
 /// Written next to the bank snapshot on graceful exit to record which storages in the account
