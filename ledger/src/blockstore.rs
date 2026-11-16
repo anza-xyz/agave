@@ -5288,7 +5288,8 @@ impl Blockstore {
         completed_ranges
             .iter()
             .map(|range| {
-                let mut deshredder = Deshredder::default();
+                let mut deshredder =
+                    Deshredder::with_expected_shreds(NonZeroUsize::new(range.len()));
                 for index in range.clone().map(u64::from) {
                     if let Some((entry_index, shred)) = scan.next_entry()?
                         && entry_index == (slot, index)

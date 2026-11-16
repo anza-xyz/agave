@@ -5,7 +5,7 @@ use {
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    std::{fmt::Debug, time::Instant},
+    std::{fmt::Debug, num::NonZeroUsize, time::Instant},
 };
 
 #[derive(Debug)]
@@ -239,9 +239,20 @@ pub(crate) struct Deshredder {
     data: Vec<u8>,
     prev_index: Option<u32>,
     data_complete: bool,
+    num_shreds_to_reserve: Option<NonZeroUsize>,
 }
 
 impl Deshredder {
+    /// Expects a batch of `expected_shreds` shreds, so that a dense batch can
+    /// be buffered without growing in steps. Without a count, the buffer grows
+    /// on demand.
+    pub(crate) fn with_expected_shreds(expected_shreds: Option<NonZeroUsize>) -> Self {
+        Self {
+            num_shreds_to_reserve: expected_shreds,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn push(&mut self, shred: &[u8]) -> Result<(), Error> {
         // No trailing shreds if we have already observed
         // DATA_COMPLETE_SHRED.
@@ -257,11 +268,25 @@ impl Deshredder {
         {
             return Err(Error::from(TooFewDataShards));
         }
-        self.data.extend_from_slice(shred::layout::get_data(shred)?);
+        let data = shred::layout::get_data(shred)?;
+        self.reserve_for_dense_batch(data);
+        self.data.extend_from_slice(data);
         let flags = shred::layout::get_flags(shred)?;
         self.data_complete = flags.contains(ShredFlags::DATA_COMPLETE_SHRED);
         self.prev_index = Some(index);
         Ok(())
+    }
+
+    /// Reserves all shreds if `data` (typically the second shred) holds at least
+    /// as much as the shreds buffered so far, i.e. the batch has more than one
+    /// full shred.
+    fn reserve_for_dense_batch(&mut self, data: &[u8]) {
+        if !self.data.is_empty()
+            && data.len() >= self.data.len()
+            && let Some(num_shreds) = self.num_shreds_to_reserve.take()
+        {
+            self.data.reserve_exact((num_shreds.get() - 1) * data.len());
+        }
     }
 
     pub(crate) fn finish(self) -> Result<Vec<u8>, Error> {
