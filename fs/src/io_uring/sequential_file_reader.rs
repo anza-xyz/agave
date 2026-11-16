@@ -12,6 +12,7 @@ use {
     std::{
         collections::VecDeque,
         fs::{File, OpenOptions},
+        hint,
         io::{self, BufRead, Read},
         marker::PhantomData,
         mem,
@@ -35,6 +36,9 @@ const DEFAULT_MAX_IOWQ_WORKERS: u32 = 2;
 // This is conservative read size alignment for use with direct IO, some block devices may have
 // relaxed requirements, but detecting it is not trivial.
 const DIRECT_IO_READ_LEN_ALIGNMENT: IoSize = 4096;
+// Completion queue polls before blocking on a pending read, covering a few microseconds:
+// longer than reads served from the device cache, shorter than a context switch pair.
+const WAIT_SPINS: u32 = 64;
 
 /// Utility for building `SequentialFileReader` with specified tuning options.
 pub struct SequentialFileReaderBuilder<'sp> {
@@ -325,13 +329,12 @@ impl<'a> SequentialFileReader<'a> {
                 .find_map(|f| f.start_buf_index)
                 .unwrap_or(state.next_read_buf_index);
             let num_bufs = self.ring.context().len();
+            let mut num_waits = 0;
             loop {
                 self.ring.process_completions()?;
                 let current_buf = self.ring.context_mut().get_mut(state.current_buf_index);
                 if current_buf.is_reading() {
-                    // Still no data, wait for more completions, but submit in case there are queued
-                    // entries in the submission queue.
-                    self.ring.submit()?;
+                    Self::wait_for_completion(&mut self.ring, &mut num_waits)?;
                     continue;
                 }
                 current_buf.transition_to_uninit();
@@ -379,6 +382,26 @@ impl<'a> SequentialFileReader<'a> {
         Ok(())
     }
 
+    /// Continues waiting for a pending read, between checks of the completion queue.
+    ///
+    /// The first call submits queued reads, the next `WAIT_SPINS` calls only pause, and later
+    /// calls block until the kernel completes a read, so a long wait doesn't keep a CPU busy.
+    /// `num_waits` counts the calls.
+    fn wait_for_completion(
+        ring: &mut Ring<BuffersState, ReadOp>,
+        num_waits: &mut u32,
+    ) -> io::Result<()> {
+        if *num_waits == 0 {
+            ring.submit()?;
+        } else if *num_waits <= WAIT_SPINS {
+            hint::spin_loop();
+        } else {
+            ring.submit_and_wait(1, None)?;
+        }
+        *num_waits = num_waits.saturating_add(1);
+        Ok(())
+    }
+
     fn wait_current_buf_full(&mut self) -> io::Result<bool> {
         if self
             .state
@@ -389,6 +412,7 @@ impl<'a> SequentialFileReader<'a> {
             return Ok(false);
         }
         let num_bufs = self.ring.context().len();
+        let mut num_waits = 0;
         loop {
             self.ring.process_completions()?;
 
@@ -428,13 +452,10 @@ impl<'a> SequentialFileReader<'a> {
 
                     // A buffer was freed, so try to queue up next read.
                     self.try_schedule_new_ops()?;
+                    num_waits = 0;
                 }
 
-                ReadBufState::Reading => {
-                    // Still no data, wait for more completions, but submit in case there are queued
-                    // entries in the submission queue.
-                    self.ring.submit()?
-                }
+                ReadBufState::Reading => Self::wait_for_completion(&mut self.ring, &mut num_waits)?,
 
                 ReadBufState::Uninit(_) => unreachable!("should be initialized"),
             }
