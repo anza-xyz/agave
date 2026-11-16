@@ -8,7 +8,7 @@ use {
         compute_budget::{
             ComputeUnitConfig, set_compute_unit_limit, simulate_and_update_compute_unit_limit,
         },
-        feature::{CliFeatureStatus, status_from_account},
+        feature::{CliFeatureStatus, get_feature_is_active, status_from_account},
         message_builder::MessageBuilder,
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
@@ -2606,6 +2606,7 @@ const MAX_WRITE_BYTES: usize = PACKET_DATA_SIZE - 16;
 /// Builds write messages for the parts of `program_data` that differ from the buffer.
 #[allow(clippy::too_many_arguments)]
 fn build_write_messages(
+    unbound_loader_v3_instruction_data: bool,
     program_data: &[u8],
     buffer_program_data: &[u8],
     buffer_pubkey: &Pubkey,
@@ -2632,9 +2633,12 @@ fn build_write_messages(
             .build(fee_payer)
     };
 
-    // Each write is capped, so pack as many as fit and split the room evenly.
-    let writes_per_message =
-        calculate_max_chunk_size(create_msg(&[(0, &[])])).div_ceil(MAX_WRITE_BYTES);
+    // Without SIMD-0648 each write is capped, so pack as many as fit and split the room evenly.
+    let writes_per_message = if unbound_loader_v3_instruction_data {
+        1
+    } else {
+        calculate_max_chunk_size(create_msg(&[(0, &[])])).div_ceil(MAX_WRITE_BYTES)
+    };
     let chunk_size = calculate_max_chunk_size(create_msg(&vec![(0, &[][..]); writes_per_message]))
         .checked_div(writes_per_message)
         .unwrap_or_default();
@@ -2649,6 +2653,16 @@ fn build_write_messages(
         })
         .collect::<Vec<_>>();
     writes.chunks(writes_per_message).map(create_msg).collect()
+}
+
+async fn is_unbound_loader_v3_instruction_data_active(
+    rpc_client: &RpcClient,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    get_feature_is_active(
+        rpc_client,
+        &agave_feature_set::unbound_loader_v3_instruction_data::id(),
+    )
+    .await
 }
 
 pub fn calculate_max_chunk_size(baseline_msg: VersionedMessage) -> usize {
@@ -2719,6 +2733,7 @@ async fn do_process_program_deploy(
     };
 
     let write_messages = build_write_messages(
+        is_unbound_loader_v3_instruction_data_active(&rpc_client).await?,
         program_data,
         &buffer_program_data,
         buffer_pubkey,
@@ -2845,6 +2860,7 @@ async fn do_process_write_buffer(
     };
 
     let write_messages = build_write_messages(
+        is_unbound_loader_v3_instruction_data_active(&rpc_client).await?,
         program_data,
         &buffer_program_data,
         buffer_pubkey,
@@ -2961,6 +2977,7 @@ async fn do_process_program_upgrade(
             };
 
             let write_messages = build_write_messages(
+                is_unbound_loader_v3_instruction_data_active(&rpc_client).await?,
                 program_data,
                 &buffer_program_data,
                 &buffer_signer.pubkey(),
@@ -3485,13 +3502,20 @@ mod tests {
         serde_json::Value,
         solana_cli_output::OutputFormat,
         solana_keypair::write_keypair_file,
+        test_case::test_case,
     };
 
-    #[test]
-    fn test_build_write_messages() {
+    #[test_case(false, 4, PACKET_DATA_SIZE; "capped")]
+    #[test_case(true, 1, MAX_TRANSACTION_SIZE; "SIMD-0648")]
+    fn test_build_write_messages(
+        unbound_loader_v3_instruction_data: bool,
+        writes_per_message: usize,
+        max_instruction_data_len: usize,
+    ) {
         let program_data = (0..100_000).map(|i| i as u8).collect::<Vec<_>>();
         let build = |buffer: &[u8]| {
             build_write_messages(
+                unbound_loader_v3_instruction_data,
                 &program_data,
                 buffer,
                 &Pubkey::new_unique(),
@@ -3508,7 +3532,7 @@ mod tests {
         let mut buffer = vec![0; program_data.len()];
         let messages = build(&buffer);
         for message in &messages {
-            assert!(message.instructions().len() <= 4);
+            assert!(message.instructions().len() <= writes_per_message);
             let transaction = VersionedTransaction {
                 signatures: vec![
                     Signature::default();
@@ -3520,14 +3544,14 @@ mod tests {
                 wincode::serialized_size(&transaction).unwrap() as usize <= MAX_TRANSACTION_SIZE
             );
             for instruction in message.instructions() {
-                assert!(instruction.data.len() <= PACKET_DATA_SIZE);
+                assert!(instruction.data.len() <= max_instruction_data_len);
                 let offset =
                     u32::from_le_bytes(instruction.data[4..8].try_into().unwrap()) as usize;
                 let bytes = &instruction.data[16..];
                 buffer[offset..offset.saturating_add(bytes.len())].copy_from_slice(bytes);
             }
         }
-        assert_eq!(messages[0].instructions().len(), 4);
+        assert_eq!(messages[0].instructions().len(), writes_per_message);
         assert_eq!(buffer, program_data);
 
         // Data already in the buffer is not rewritten.
