@@ -1223,6 +1223,21 @@ struct SnapshotFieldsBundle {
 fn snapshot_fields_from_files(file_receiver: &Receiver<FileInfo>) -> Result<SnapshotFieldsBundle> {
     let (snapshot_version, snapshot_bank, append_vec_files) =
         get_version_and_snapshot_files(file_receiver)?;
+    let (snapshot_version, bank_fields, accounts_db_fields) =
+        snapshot_fields_from_version_and_bank_files(snapshot_version, snapshot_bank)?;
+
+    Ok(SnapshotFieldsBundle {
+        snapshot_version,
+        bank_fields,
+        accounts_db_fields,
+        append_vec_files,
+    })
+}
+
+fn snapshot_fields_from_version_and_bank_files(
+    snapshot_version: FileInfo,
+    snapshot_bank: FileInfo,
+) -> Result<(SnapshotVersion, BankFieldsToDeserialize, AccountsDbFields)> {
     let snapshot_version_str = snapshot_version_from_file(snapshot_version)?;
     let snapshot_version = snapshot_version_str.parse().map_err(|err| {
         IoError::other(format!(
@@ -1234,13 +1249,7 @@ fn snapshot_fields_from_files(file_receiver: &Receiver<FileInfo>) -> Result<Snap
     let (bank_fields, accounts_db_fields) = match snapshot_version {
         SnapshotVersion::V1_2_0 => serde_snapshot::fields_from_stream(&mut snapshot_stream)?,
     };
-
-    Ok(SnapshotFieldsBundle {
-        snapshot_version,
-        bank_fields,
-        accounts_db_fields,
-        append_vec_files,
-    })
+    Ok((snapshot_version, bank_fields, accounts_db_fields))
 }
 
 /// BankSnapshotInfo::new_from_dir() requires a few meta files to accept a snapshot dir
