@@ -10,7 +10,7 @@ fn main() {}
 #[cfg(not(feature = "shuttle-test"))]
 mod bench {
     use {
-        criterion::{Criterion, criterion_group},
+        criterion::{BenchmarkId, Criterion, criterion_group},
         solana_account::{Account, AccountSharedData},
         solana_program_runtime::{abi::ABI, serialization::serialize_parameters},
         solana_pubkey::Pubkey,
@@ -112,6 +112,52 @@ mod bench {
             ));
         }
 
+        create_transaction_context(transaction_accounts, instruction_accounts)
+    }
+
+    /// An instruction with `num_unique_accounts` distinct accounts of `data_len` bytes each and
+    /// no duplicates, every other one writable.
+    fn create_inputs_with_unique_accounts(
+        owner: Pubkey,
+        num_unique_accounts: u16,
+        data_len: usize,
+    ) -> TransactionContext<'static> {
+        let program_id = solana_pubkey::new_rand();
+        let mut transaction_accounts = vec![(
+            program_id,
+            AccountSharedData::from(Account {
+                lamports: 0,
+                data: vec![],
+                owner,
+                executable: true,
+                rent_epoch: 0,
+            }),
+        )];
+        transaction_accounts.extend((1..=num_unique_accounts).map(|lamports| {
+            (
+                solana_pubkey::new_rand(),
+                AccountSharedData::from(Account {
+                    lamports: u64::from(lamports),
+                    data: vec![1u8; data_len],
+                    owner,
+                    executable: false,
+                    rent_epoch: 100,
+                }),
+            )
+        }));
+        let instruction_accounts = (1..=num_unique_accounts)
+            .zip([false, true].into_iter().cycle())
+            .map(|(index_in_transaction, is_writable)| {
+                InstructionAccount::new(index_in_transaction, false, is_writable)
+            })
+            .collect();
+        create_transaction_context(transaction_accounts, instruction_accounts)
+    }
+
+    fn create_transaction_context(
+        transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
+        instruction_accounts: Vec<InstructionAccount>,
+    ) -> TransactionContext<'static> {
         let mut transaction_context =
             TransactionContext::new(transaction_accounts, Rent::default(), 1, 1, 1);
         let instruction_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
@@ -240,6 +286,39 @@ mod bench {
         });
     }
 
+    fn bench_serialize_aligned_unique_accounts(c: &mut Criterion) {
+        let mut group = c.benchmark_group("serialize_aligned_unique_accounts");
+        for (num_unique_accounts, data_len) in [(1, 0), (8, 0), (8, 1024), (32, 0), (32, 10240)] {
+            let transaction_context =
+                create_inputs_with_unique_accounts(bpf_loader::id(), num_unique_accounts, data_len);
+            let instruction_context = transaction_context
+                .get_current_instruction_context()
+                .unwrap();
+            for (mode, virtual_address_space_adjustments, account_data_direct_mapping) in [
+                ("copy", false, false),
+                ("copy_vas", true, false),
+                ("direct_mapping", true, true),
+            ] {
+                group.bench_function(
+                    BenchmarkId::new(mode, format!("{num_unique_accounts}x{data_len}B")),
+                    |b| {
+                        b.iter(|| {
+                            let _ = serialize_parameters(
+                                &instruction_context,
+                                ABI::V1,
+                                virtual_address_space_adjustments,
+                                account_data_direct_mapping,
+                                true, // direct_account_pointers_in_program_input
+                            )
+                            .unwrap();
+                        });
+                    },
+                );
+            }
+        }
+        group.finish();
+    }
+
     criterion_group!(
         benches,
         bench_serialize_unaligned,
@@ -247,7 +326,8 @@ mod bench {
         bench_serialize_aligned,
         bench_serialize_aligned_copy_account_data,
         bench_serialize_unaligned_max_accounts,
-        bench_serialize_aligned_max_accounts
+        bench_serialize_aligned_max_accounts,
+        bench_serialize_aligned_unique_accounts
     );
 }
 
