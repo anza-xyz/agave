@@ -32,7 +32,7 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            AccountStorage, AccountStorageMap, AccountStoragesOrderer, NextItem, ShrinkInProgress,
+            AccountStorage, AccountStorageMap, AccountStoragesOrderer, ShrinkInProgress,
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
@@ -311,8 +311,8 @@ struct IndexGenerationAccumulator {
     num_accounts: u64,
     accounts_data_len: u64,
     all_accounts_are_zero_lamports_slots: u64,
-    /// List of slots with only zero lamports accounts and indices into `storages` used in `generate_index`
-    slots_with_only_zero_lamport_accounts: Vec<(Slot, usize)>,
+    /// List of slots with only zero lamports accounts
+    slots_with_only_zero_lamport_accounts: Vec<Slot>,
     /// Number of accounts in this slot that didn't already exist in the index
     num_did_not_exist: u64,
     /// Number of accounts in this slot that already existed, and were in-mem
@@ -330,6 +330,8 @@ struct IndexGenerationAccumulator {
     num_zero_lamport_pubkeys: u64,
     /// Accounts with one of the requested owners seen by this thread
     pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
+    max_slot: Option<Slot>,
+    max_id: Option<AccountsFileId>,
     slot_arena: IndexGenerationSlotArena,
 }
 impl IndexGenerationAccumulator {
@@ -347,6 +349,8 @@ impl IndexGenerationAccumulator {
             num_obsolete_accounts_skipped: 0,
             num_zero_lamport_pubkeys: 0,
             pubkeys_by_owner: ahash::HashMap::new(),
+            max_slot: None,
+            max_id: None,
             slot_arena: IndexGenerationSlotArena::default(),
         }
     }
@@ -366,6 +370,8 @@ impl IndexGenerationAccumulator {
             .expect("capitalization cannot overflow");
         self.num_obsolete_accounts_skipped += other.num_obsolete_accounts_skipped;
         self.num_zero_lamport_pubkeys += other.num_zero_lamport_pubkeys;
+        self.max_slot = self.max_slot.max(other.max_slot);
+        self.max_id = self.max_id.max(other.max_id);
         for (owner, mut pubkeys) in other.pubkeys_by_owner.drain() {
             self.pubkeys_by_owner
                 .entry(owner)
@@ -936,13 +942,17 @@ impl AccountsDb {
             !storage.is_empty(),
             "At least one storage entry must exist from deserializing stream"
         );
-        let max_id = next_id - 1;
+        self.raise_next_id_above(next_id - 1);
+        self.storage.initialize(storage);
+    }
+
+    /// Raises `next_id` above `max_id`, panicking if that leaves the supported id range.
+    fn raise_next_id_above(&self, max_id: AccountsFileId) {
         assert!(
             max_id <= AccountsFileId::MAX / 2,
             "Storage id {max_id} larger than allowed max"
         );
-        self.storage.initialize(storage);
-        self.next_id.store(next_id, Ordering::Release);
+        self.next_id.fetch_max(max_id + 1, Ordering::Release);
     }
 
     pub fn bank_hash_details_dir(&self) -> &Path {
@@ -4473,9 +4483,9 @@ impl AccountsDb {
 
     /// Generates the index for `storages`, queuing each batch of files for read-ahead before
     /// scanning it.
-    fn generate_index_for_storages<'a>(
+    fn generate_index_for_storages(
         &self,
-        storages: impl Iterator<Item = NextItem<'a>>,
+        storages: impl Iterator<Item = Arc<AccountStorageEntry>>,
         files_per_batch: usize,
         accum: &mut IndexGenerationAccumulator,
         num_processed: &AtomicU64,
@@ -4489,13 +4499,31 @@ impl AccountsDb {
         let mut buf_reader =
             storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
                 .expect("create storage reader");
-        let mut open_files = Vec::with_capacity(files_per_batch);
         for batch in &storages.chunks(files_per_batch) {
-            open_files.clear();
-            open_files.extend(batch.map(|item| {
-                let file = item.storage.accounts.open_file_for_bulk_read(use_direct_io);
-                (item, file.expect("open storage file"))
-            }));
+            let batch: Vec<_> = batch.collect();
+            for storage in &batch {
+                // Only the storages restored from a snapshot archive are in the map already.
+                let in_map = self
+                    .storage
+                    .get_slot_storage_entry_shrinking_in_progress_ok(storage.slot());
+                match in_map {
+                    Some(existing) => assert!(
+                        Arc::ptr_eq(&existing, storage),
+                        "slot {} holds storage {}, so storage {} can't be added to it",
+                        storage.slot(),
+                        existing.id(),
+                        storage.id(),
+                    ),
+                    None => self.storage.insert(Arc::clone(storage)),
+                }
+            }
+            let open_files: Vec<_> = batch
+                .iter()
+                .map(|storage| {
+                    let file = storage.accounts.open_file_for_bulk_read(use_direct_io);
+                    (storage.as_ref(), file.expect("open storage file"))
+                })
+                .collect();
             // Re-binding scopes the reader's file borrows to this batch.
             let mut reader = buf_reader.rebind().expect("rebind storage reader");
             for (_, file) in &open_files {
@@ -4505,19 +4533,13 @@ impl AccountsDb {
                     .add_file_to_prefetch(file, read_limit)
                     .expect("prefetch storage file");
             }
-            for (item, file) in &open_files {
+            for (storage, file) in &open_files {
                 // A split file without a data file has nothing to read through the reader.
                 if let Some(file) = file {
                     let (file, read_limit) = (file.as_ref(), file.read_limit());
                     reader.set_file(file, read_limit).expect("set storage file");
                 }
-                self.generate_index_for_slot(
-                    &mut reader,
-                    accum,
-                    item.original_index,
-                    item.storage,
-                    owners,
-                );
+                self.generate_index_for_slot(&mut reader, accum, storage, owners);
                 num_processed.fetch_add(1, Ordering::Relaxed);
             }
             buf_reader = reader.rebind().expect("rebind storage reader");
@@ -4529,12 +4551,13 @@ impl AccountsDb {
         &self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         accum: &mut IndexGenerationAccumulator,
-        storage_index: usize,
         storage: &'a AccountStorageEntry,
         owners: &[Pubkey],
     ) {
         let slot = storage.slot();
         let store_id = storage.id();
+        accum.max_slot = accum.max_slot.max(Some(slot));
+        accum.max_id = accum.max_id.max(Some(store_id));
 
         let mut capitalization = 0_u64;
         let mut accounts_data_len = 0;
@@ -4669,9 +4692,7 @@ impl AccountsDb {
         accum.num_obsolete_accounts_skipped += num_obsolete_accounts_skipped;
         if all_accounts_are_zero_lamports {
             accum.all_accounts_are_zero_lamports_slots += 1;
-            accum
-                .slots_with_only_zero_lamport_accounts
-                .push((slot, storage_index));
+            accum.slots_with_only_zero_lamport_accounts.push(slot);
         }
     }
 
@@ -4681,25 +4702,48 @@ impl AccountsDb {
         verify: bool,
         owners: &[Pubkey],
     ) -> IndexGenerationInfo {
-        let mut total_time = Measure::start("generate_index");
-
         let mut storages = self.storage.all_storages();
-        storages.sort_unstable_by_key(|storage| storage.slot());
         if let Some(limit) = limit_load_slot_count_from_snapshot {
-            storages.truncate(limit); // get rid of the newer slots and keep just the older
+            storages.sort_unstable_by_key(|storage| storage.slot());
+            // get rid of the newer slots and keep just the older
+            for storage in storages.split_off(limit.min(storages.len())) {
+                self.storage.remove(&storage.slot(), false);
+            }
         }
-        let num_storages = storages.len();
+        let storages_src =
+            AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
+        self.generate_index_from(
+            storages.len(),
+            || storages_src.next().map(|item| Arc::clone(item.storage)),
+            verify,
+            owners,
+        )
+    }
 
-        // `storages` is sorted by slot, so the last one is the highest root.
-        if let Some(storage) = storages.last() {
-            self.max_root.fetch_max(storage.slot(), Ordering::Relaxed);
-        }
+    /// Generates the index from the storages that `next_storage` returns, until it returns `None`.
+    ///
+    /// Every index generation thread calls `next_storage` repeatedly, so it runs concurrently and
+    /// must return each storage once. The returned storages that are not in `self.storage` yet get
+    /// added to it, and `next_id` is raised above their ids. `self.storage` must not hold any other
+    /// storages. `num_storages` must be the number of storages it returns in total, as it sizes the
+    /// batches of the scan threads and the progress report.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `next_storage` returns a different number of storages than `num_storages`, or if
+    /// `verify` finds other storages in `self.storage`.
+    pub fn generate_index_from(
+        &self,
+        num_storages: usize,
+        next_storage: impl Fn() -> Option<Arc<AccountStorageEntry>> + Sync,
+        verify: bool,
+        owners: &[Pubkey],
+    ) -> IndexGenerationInfo {
+        let mut total_time = Measure::start("generate_index");
 
         self.accounts_index.set_startup(Startup::Startup);
 
         let mut total_accum = IndexGenerationAccumulator::new();
-        let storages_orderer =
-            AccountStoragesOrderer::with_random_order(&storages).into_concurrent_consumer();
         let exit_logger = AtomicBool::new(false);
         let num_processed = AtomicU64::new(0);
         let num_threads = num_cpus::get();
@@ -4716,7 +4760,7 @@ impl AccountsDb {
                         .spawn_scoped(s, || {
                             let mut thread_accum = IndexGenerationAccumulator::new();
                             self.generate_index_for_storages(
-                                storages_orderer.iter(),
+                                iter::from_fn(&next_storage),
                                 files_per_batch,
                                 &mut thread_accum,
                                 &num_processed,
@@ -4759,6 +4803,12 @@ impl AccountsDb {
                 };
                 total_accum.accumulate(thread_accum);
             }
+            // The logger only stops once all the expected storages are processed.
+            let num_scanned = num_processed.load(Ordering::Relaxed);
+            if num_scanned != num_storages as u64 {
+                exit_logger.store(true, Ordering::Relaxed);
+                panic!("scanned {num_scanned} storages instead of the {num_storages} expected");
+            }
             // Make sure to join the logger thread *after* the main threads.
             // This way, if a main thread errors, we won't spin indefinitely
             // waiting for the logger thread to finish (it never will).
@@ -4766,6 +4816,14 @@ impl AccountsDb {
             logger_thread_handle.join().expect("join thread");
         });
         index_time.stop();
+
+        let max_slot = total_accum.max_slot;
+        if let Some(max_slot) = max_slot {
+            self.max_root.fetch_max(max_slot, Ordering::Relaxed);
+        }
+        if let Some(max_id) = total_accum.max_id {
+            self.raise_next_id_above(max_id);
+        }
 
         {
             // Update the index stats now.
@@ -4793,7 +4851,7 @@ impl AccountsDb {
         if verify {
             info!("Verifying index...");
             let start = Instant::now();
-            storages.par_iter().for_each(|storage| {
+            self.storage.all_storages().par_iter().for_each(|storage| {
                 let store_id = storage.id();
                 let slot = storage.slot();
                 storage
@@ -4957,7 +5015,7 @@ impl AccountsDb {
         // it is known that it was already obsolete at that time, it must hold true that it will
         // still be obsolete if a newer snapshot is created, since a newer snapshot will always
         // be performed on a slot greater than the current slot
-        let slot_marked_obsolete = storages.last().unwrap().slot();
+        let slot_marked_obsolete = max_slot.expect("must scan at least one storage");
         let obsolete_account_stats =
             self.mark_obsolete_accounts_at_startup(slot_marked_obsolete, unique_pubkeys_by_bin);
 

@@ -98,7 +98,7 @@ fn generate_index_for_storage(
 ) {
     let mut reader = accounts_file::new_scan_accounts_reader();
     storage.accounts.set_file_on_reader(&mut reader).unwrap();
-    db.generate_index_for_slot(&mut reader, accum, 0, storage, &[]);
+    db.generate_index_for_slot(&mut reader, accum, storage, &[]);
 }
 
 #[test]
@@ -190,6 +190,37 @@ fn test_generate_index_with_direct_io() {
         buffered.calculated_accounts_lt_hash
     );
     assert_eq!(direct_alive, buffered_alive);
+}
+
+#[test]
+#[should_panic(expected = "scanned 0 storages instead of the 2 expected")]
+fn test_generate_index_from_unexpected_number_of_storages() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    db.generate_index_from(2, || None, false, &[]);
+}
+
+#[test]
+fn test_generate_index_with_load_limit() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    let account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
+    let pubkeys: Vec<_> = (0..3).map(|_| Pubkey::new_unique()).collect();
+    for (slot, pubkey) in pubkeys.iter().enumerate() {
+        let slot = slot as Slot;
+        let store = db.create_store(slot, 1000);
+        store
+            .write_accounts(&(slot, &[(pubkey, &account)][..]))
+            .unwrap();
+        db.storage.insert(Arc::new(store));
+    }
+
+    db.generate_index(Some(2), true, &[]);
+
+    // The oldest two storages are indexed, and the newest is dropped from the storage map.
+    assert!(db.accounts_index.contains(&pubkeys[0]));
+    assert!(db.accounts_index.contains(&pubkeys[1]));
+    assert!(!db.accounts_index.contains(&pubkeys[2]));
+    assert_eq!(db.storage.all_slots().len(), 2);
+    assert!(db.storage.get_slot_storage_entry(2).is_none());
 }
 
 #[test]
