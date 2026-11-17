@@ -37,7 +37,6 @@ solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
-solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-instruction-error = { workspace = true }
 solana-packet = { workspace = true, features = ["wincode"] }
@@ -45,14 +44,12 @@ solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["curve25519"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-slot-hashes = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["wincode"] }
 solana-vote-interface = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-feature-set = { path = "../../feature-set", features = ["agave-unstable-api"] }
 agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
 arbitrary = { workspace = true }
 criterion = { workspace = true }
@@ -67,7 +64,6 @@ solana-program-runtime = { path = "../../program-runtime", features = ["agave-un
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-sdk-ids = { workspace = true }
-solana-sha256-hasher = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["wincode"] }
 solana-svm-feature-set = { path = "../../svm-feature-set", features = ["agave-unstable-api"] }
 solana-system-program = { path = "../system", features = ["agave-unstable-api"] }
@@ -79,10 +75,6 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "vote_instructions"
-harness = false
-
-[[bench]]
-name = "process_vote"
 harness = false
 
 [lints]

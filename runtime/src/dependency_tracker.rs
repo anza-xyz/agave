@@ -51,6 +51,12 @@ impl DependencyTracker {
     pub fn get_current_declared_work(&self) -> u64 {
         self.work_id.load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    /// Get the last work id in the processed prefix, or None before any work completes.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn get_current_processed_work(&self) -> Option<u64> {
+        *self.processed_work_id.lock().unwrap()
+    }
 }
 
 #[cfg(test)]

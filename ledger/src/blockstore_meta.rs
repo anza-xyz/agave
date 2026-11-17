@@ -699,8 +699,8 @@ impl SlotMeta {
     }
 
     pub(crate) fn update_from_parent_info(&mut self, parent_info: ParentInfo) {
-        self.parent_slot = Some(parent_info.parent_slot);
-        self.parent_block_id = parent_info.parent_block_id;
+        self.parent_slot = Some(parent_info.parent_block.slot);
+        self.parent_block_id = parent_info.parent_block.block_id.to_hash();
         self.replay_fec_set_index = parent_info.replay_fec_set_index;
     }
 

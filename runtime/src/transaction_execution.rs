@@ -51,7 +51,6 @@ pub enum TransactionStatusMessage {
     Freeze(Arc<Bank>),
     Rooted {
         slot: Slot,
-        bank_id: BankId,
     },
     PurgeTransactionHistory {
         slot: Slot,
@@ -304,10 +303,10 @@ impl TransactionStatusSender {
     }
 
     pub fn send_transaction_status_rooted_message(&self, bank: &Arc<Bank>) {
-        if let Err(e) = self.sender.send(TransactionStatusMessage::Rooted {
-            slot: bank.slot(),
-            bank_id: bank.bank_id(),
-        }) {
+        if let Err(e) = self
+            .sender
+            .send(TransactionStatusMessage::Rooted { slot: bank.slot() })
+        {
             let slot = bank.slot();
             warn!("Slot {slot} transaction_status send rooted message failed: {e:?}");
         }

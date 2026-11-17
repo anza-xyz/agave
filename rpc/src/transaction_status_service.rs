@@ -13,7 +13,7 @@ use {
     solana_clock::Slot,
     solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::{
-        bank::{Bank, BankId, KeyedRewardsAndNumPartitions},
+        bank::{Bank, KeyedRewardsAndNumPartitions},
         dependency_tracker::DependencyTracker,
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionStatusBatch, TransactionStatusMessage,
@@ -25,7 +25,7 @@ use {
         map_inner_instructions,
     },
     std::{
-        collections::HashSet,
+        collections::BTreeSet,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -77,62 +77,35 @@ impl TransactionStatusServiceConfig {
     }
 }
 
-/// Advances transaction history availability once the same bank has been frozen and rooted.
-#[derive(Default)]
-struct RootedTransactionStatusTracker {
-    frozen_banks: HashSet<(Slot, BankId)>,
-    rooted_banks: HashSet<(Slot, BankId)>,
+// Work ids are reserved before batches are sent, so parallel senders can enqueue
+// them out of order. Only advance the shared tracker over a completed prefix.
+struct TransactionStatusDependencies {
+    tracker: Arc<DependencyTracker>,
+    next_work_id: u64,
+    completed_out_of_order: BTreeSet<u64>,
 }
 
-impl RootedTransactionStatusTracker {
-    fn record_frozen(
-        &mut self,
-        slot: Slot,
-        bank_id: BankId,
-        max_complete_and_rooted_transaction_status_slot: &AtomicU64,
-    ) -> Option<Slot> {
-        self.frozen_banks.insert((slot, bank_id));
-        self.update_max_complete_and_rooted_slot(
-            slot,
-            bank_id,
-            max_complete_and_rooted_transaction_status_slot,
-        )
+impl TransactionStatusDependencies {
+    fn new(tracker: Arc<DependencyTracker>) -> Self {
+        Self {
+            tracker,
+            next_work_id: 1,
+            completed_out_of_order: BTreeSet::new(),
+        }
     }
 
-    fn record_rooted(
-        &mut self,
-        slot: Slot,
-        bank_id: BankId,
-        max_complete_and_rooted_transaction_status_slot: &AtomicU64,
-    ) -> Option<Slot> {
-        self.rooted_banks.insert((slot, bank_id));
-        self.update_max_complete_and_rooted_slot(
-            slot,
-            bank_id,
-            max_complete_and_rooted_transaction_status_slot,
-        )
-    }
-
-    /// Returns the new maximum complete-and-rooted slot when this bank advances it.
-    fn update_max_complete_and_rooted_slot(
-        &mut self,
-        slot: Slot,
-        bank_id: BankId,
-        max_complete_and_rooted_transaction_status_slot: &AtomicU64,
-    ) -> Option<Slot> {
-        let bank = (slot, bank_id);
-        if !self.frozen_banks.contains(&bank) || !self.rooted_banks.contains(&bank) {
-            return None;
+    fn mark_processed(&mut self, work_id: u64) {
+        if work_id != self.next_work_id {
+            self.completed_out_of_order.insert(work_id);
+            return;
         }
 
-        let previous_max_complete_and_rooted_slot =
-            max_complete_and_rooted_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
-        let updated_max_complete_and_rooted_slot = previous_max_complete_and_rooted_slot.max(slot);
-        self.frozen_banks
-            .retain(|(slot, _)| *slot > updated_max_complete_and_rooted_slot);
-        self.rooted_banks
-            .retain(|(slot, _)| *slot > updated_max_complete_and_rooted_slot);
-        (slot > previous_max_complete_and_rooted_slot).then_some(slot)
+        self.next_work_id += 1;
+        while self.completed_out_of_order.remove(&self.next_work_id) {
+            self.next_work_id += 1;
+        }
+        self.tracker
+            .mark_this_and_all_previous_work_processed(self.next_work_id - 1);
     }
 }
 
@@ -199,8 +172,10 @@ impl TransactionStatusService {
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
                 let mut metrics = Metrics::new();
-                let mut rooted_transaction_status_tracker =
-                    RootedTransactionStatusTracker::default();
+                let mut dependency_tracker = config
+                    .dependency_tracker
+                    .clone()
+                    .map(TransactionStatusDependencies::new);
                 info!("{} has started", Self::NAME);
                 loop {
                     let message = if tss_shutdown.load(Ordering::Relaxed) {
@@ -227,9 +202,9 @@ impl TransactionStatusService {
                         message,
                         &max_complete_transaction_status_slot,
                         &max_complete_and_rooted_transaction_status_slot,
-                        &mut rooted_transaction_status_tracker,
                         &blockstore,
                         &config,
+                        dependency_tracker.as_mut(),
                     ) {
                         Ok(bank_frozen) => {
                             // Only check for metrics submissions when a
@@ -262,9 +237,9 @@ impl TransactionStatusService {
         transaction_status_message: TransactionStatusMessage,
         max_complete_transaction_status_slot: &Arc<AtomicU64>,
         max_complete_and_rooted_transaction_status_slot: &Arc<AtomicU64>,
-        rooted_transaction_status_tracker: &mut RootedTransactionStatusTracker,
         blockstore: &Blockstore,
         config: &TransactionStatusServiceConfig,
+        dependency_tracker: Option<&mut TransactionStatusDependencies>,
     ) -> Result</*bank_frozen:*/ bool> {
         match transaction_status_message {
             TransactionStatusMessage::Batch((
@@ -401,10 +376,10 @@ impl TransactionStatusService {
                     blockstore.write_batch(batch)?;
                 }
 
-                if let Some(dependency_tracker) = config.dependency_tracker.as_ref()
+                if let Some(dependency_tracker) = dependency_tracker
                     && let Some(work_id) = work_id
                 {
-                    dependency_tracker.mark_this_and_all_previous_work_processed(work_id);
+                    dependency_tracker.mark_processed(work_id);
                 }
 
                 Ok(false)
@@ -415,26 +390,33 @@ impl TransactionStatusService {
                 }
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
-                let completed_slot = rooted_transaction_status_tracker.record_frozen(
-                    bank.slot(),
-                    bank.bank_id(),
-                    max_complete_and_rooted_transaction_status_slot,
-                );
-                Self::notify_transaction_history_complete(
-                    completed_slot,
-                    &config.transaction_history_notification_sender,
-                );
 
                 Ok(true)
             }
-            TransactionStatusMessage::Rooted { slot, bank_id } => {
-                let completed_slot = rooted_transaction_status_tracker.record_rooted(
-                    slot,
-                    bank_id,
-                    max_complete_and_rooted_transaction_status_slot,
-                );
+            TransactionStatusMessage::Rooted { slot } => {
+                // This value marks the highest root whose transaction history is complete
+                //
+                // 1. Replay only roots frozen banks
+                // 2. A bank being frozen means transaction execution is complete and transaction
+                //    status messages will have already been queued
+                // 3. A bank is only created when its direct parent is already frozen; it is also
+                //    true that a new parent via UpdateParent is already frozen
+                // 4. In the event of an UpdateParent, a `PurgeTransactionHistory` message is
+                //    queued before any post-UpdateParent transaction status messages. This ensures
+                //    the old state is properly cleared before the new state is written
+                // 5. TransactionStatusService processes the queue in FIFO order
+                //
+                // Applying the transitive property to the points above, a `Rooted` message implies
+                // the complete and current transaction history is present for the rooted slot as
+                // well as all ancestors
+                //
+                // Transaction history requests can be gated upon whether the requested slot is less
+                // than or equal to this atomic. Frozen banks with a larger slot number on alternate
+                // forks don't impact things because the non-canonical fork(s) will never send a
+                // Rooted message by definition
+                max_complete_and_rooted_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
                 Self::notify_transaction_history_complete(
-                    completed_slot,
+                    slot,
                     &config.transaction_history_notification_sender,
                 );
                 Ok(false)
@@ -485,10 +467,10 @@ impl TransactionStatusService {
     }
 
     fn notify_transaction_history_complete(
-        slot: Option<Slot>,
+        slot: Slot,
         notification_sender: &Option<Sender<TimestampedNotificationEntry>>,
     ) {
-        if let (Some(slot), Some(notification_sender)) = (slot, notification_sender) {
+        if let Some(notification_sender) = notification_sender {
             let _ = notification_sender
                 .send(NotificationEntry::TransactionHistoryComplete(slot).into());
         }
@@ -629,44 +611,79 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_rooted_transaction_status_tracker() {
-        let max_complete_and_rooted_slot = AtomicU64::new(0);
-        let mut tracker = RootedTransactionStatusTracker::default();
-        let bank_id = BankId::new(1);
+    fn test_rooted_advances_complete_root() {
+        let genesis_config = create_genesis_config(2).genesis_config;
+        let (parent, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = Arc::new(Bank::new_from_parent(parent, SlotLeader::default(), 1));
+        bank.freeze();
 
-        assert_eq!(
-            tracker.record_frozen(1, bank_id, &max_complete_and_rooted_slot),
-            None
-        );
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let max_complete_slot = Arc::new(AtomicU64::default());
+        let max_complete_and_rooted_slot = Arc::new(AtomicU64::default());
+        let (notification_sender, notification_receiver) = bounded(2);
+        let config = TransactionStatusServiceConfig {
+            transaction_history_notification_sender: Some(notification_sender),
+            ..TransactionStatusServiceConfig::default_for_tests()
+        };
+
+        TransactionStatusService::write_transaction_status_batch(
+            TransactionStatusMessage::Freeze(bank),
+            &max_complete_slot,
+            &max_complete_and_rooted_slot,
+            &blockstore,
+            &config,
+            None,
+        )
+        .unwrap();
+        assert_eq!(max_complete_slot.load(Ordering::SeqCst), 1);
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 0);
+        assert!(notification_receiver.is_empty());
 
-        assert_eq!(
-            tracker.record_rooted(1, BankId::new(2), &max_complete_and_rooted_slot),
-            None
-        );
-        assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 0);
-
-        assert_eq!(
-            tracker.record_rooted(1, bank_id, &max_complete_and_rooted_slot),
-            Some(1)
-        );
+        TransactionStatusService::write_transaction_status_batch(
+            TransactionStatusMessage::Rooted { slot: 1 },
+            &max_complete_slot,
+            &max_complete_and_rooted_slot,
+            &blockstore,
+            &config,
+            None,
+        )
+        .unwrap();
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 1);
-        assert!(tracker.frozen_banks.is_empty());
-        assert!(tracker.rooted_banks.is_empty());
+        assert!(matches!(
+            notification_receiver.recv().unwrap().entry,
+            NotificationEntry::TransactionHistoryComplete(1)
+        ));
+    }
 
-        let bank_id = BankId::new(3);
-        assert_eq!(
-            tracker.record_rooted(2, bank_id, &max_complete_and_rooted_slot),
-            None
-        );
-        assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            tracker.record_frozen(2, bank_id, &max_complete_and_rooted_slot),
-            Some(2)
-        );
-        assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 2);
-        assert!(tracker.frozen_banks.is_empty());
-        assert!(tracker.rooted_banks.is_empty());
+    #[test]
+    fn test_transaction_status_dependencies_contiguous_completion() {
+        let tracker = Arc::new(DependencyTracker::default());
+        let mut dependencies = TransactionStatusDependencies::new(tracker.clone());
+        for _ in 0..8 {
+            tracker.declare_work();
+        }
+        assert_eq!(tracker.get_current_processed_work(), None);
+
+        // Leave several gaps, then fill them out of order. Each gap must stop
+        // the shared completion marker even if later work is already done.
+        for (work_id, expected) in [
+            (5, None),
+            (3, None),
+            (1, Some(1)),
+            (7, Some(1)),
+            (2, Some(3)),
+            (6, Some(3)),
+            (4, Some(7)),
+            (8, Some(8)),
+        ] {
+            dependencies.mark_processed(work_id);
+            assert_eq!(
+                tracker.get_current_processed_work(),
+                expected,
+                "after completing work id {work_id}",
+            );
+        }
     }
 
     fn build_test_transaction_legacy() -> Transaction {

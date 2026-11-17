@@ -72,7 +72,6 @@ pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
     let environment_config = EnvironmentConfig::new(
         blockhash,
         blockhash_lamports_per_signature,
-        false,
         callback,
         &instr_context.feature_set,
         program_runtime_environments,
@@ -109,7 +108,6 @@ pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContext
     let environment_config = EnvironmentConfig::new(
         nonce_fields.blockhash,
         nonce_fields.blockhash_lamports_per_signature,
-        false,
         callback,
         feature_set,
         program_runtime_environments,

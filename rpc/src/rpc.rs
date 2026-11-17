@@ -4931,7 +4931,7 @@ pub mod tests {
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
-        solana_account::{Account, state_traits::StateMutWincode as _},
+        solana_account::{Account, WritableAccount, state_traits::StateMutWincode as _},
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
@@ -4998,10 +4998,10 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
         },
-        solana_vote_interface::state::VoteStateV4,
-        solana_vote_program::{
-            vote_instruction,
-            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteInit, VoteStateVersions},
+        solana_vote_interface::state::{LandedVote, Lockout, VoteStateV4},
+        solana_vote_program::vote_state::{
+            MAX_LOCKOUT_HISTORY, VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteInit, VoteStateVersions,
+            handler::{VoteStateHandler, VoteStateVersionsInline},
         },
         spl_token_2022_interface::{
             extension::{
@@ -5013,7 +5013,7 @@ pub mod tests {
         },
         std::{
             borrow::Cow,
-            collections::{HashMap, HashSet},
+            collections::{HashMap, HashSet, VecDeque},
             net::Ipv4Addr,
         },
         test_case::test_case,
@@ -6635,12 +6635,7 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::new_with_shared_data(
-            42,
-            Arc::new(data.clone()),
-            &Pubkey::default(),
-            false,
-        );
+        let account = AccountSharedData::new_with_data(42, data.clone(), &Pubkey::default());
         bank.store_account(&pubkey, &account);
 
         let request = create_test_request(
@@ -6688,7 +6683,7 @@ pub mod tests {
     fn test_encode_account_does_not_throw_when_slice_larger_than_account() {
         let data = vec![42; 5];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6705,7 +6700,7 @@ pub mod tests {
     fn test_encode_account_throws_when_data_too_large_to_base58_encode() {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let _ = encode_account(&account, &pubkey, UiAccountEncoding::Base58, None).unwrap();
     }
 
@@ -6714,7 +6709,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6732,7 +6727,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6750,7 +6745,7 @@ pub mod tests {
      {
         let data = vec![42; MAX_BASE58_BYTES + 1];
         let pubkey = Pubkey::new_unique();
-        let account = AccountSharedData::new_with_shared_data(42, Arc::new(data), &pubkey, false);
+        let account = AccountSharedData::new_with_data(42, data, &pubkey);
         let result = encode_account(
             &account,
             &pubkey,
@@ -6772,12 +6767,7 @@ pub mod tests {
         let pubkey = Pubkey::new_unique();
         let address = pubkey.to_string();
         let data = vec![1, 2, 3, 4, 5];
-        let account = AccountSharedData::new_with_shared_data(
-            42,
-            Arc::new(data.clone()),
-            &Pubkey::default(),
-            false,
-        );
+        let account = AccountSharedData::new_with_data(42, data.clone(), &Pubkey::default());
         bank.store_account(&pubkey, &account);
 
         // Test 3 accounts, one empty, one non-existent, and one with data
@@ -7431,11 +7421,10 @@ pub mod tests {
             },
             &mut mint_data,
         );
-        let account = AccountSharedData::new_with_shared_data(
+        let account = AccountSharedData::new_with_data(
             mint_rent_exempt_amount,
-            Arc::new(mint_data.into()),
+            mint_data.into(),
             &spl_token_interface::id(),
-            false,
         );
         bank.store_account(&mint_pubkey, &account);
 
@@ -7458,11 +7447,10 @@ pub mod tests {
             },
             &mut token_account_data,
         );
-        let account = AccountSharedData::new_with_shared_data(
+        let account = AccountSharedData::new_with_data(
             token_account_rent_exempt_amount,
-            Arc::new(token_account_data.into()),
+            token_account_data.into(),
             &spl_token_interface::id(),
-            false,
         );
         bank.store_account(&token_account_pubkey, &account);
 
@@ -9202,34 +9190,29 @@ pub mod tests {
             }
         }
 
+        let credits_per_slot = VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
         let mut advance_bank = || {
+            let vote_slot = bank.slot();
             bank.freeze();
-
-            // Votes
-            let instructions = [
-                vote_instruction::tower_sync(
-                    &leader_vote_keypair.pubkey(),
-                    &leader_vote_keypair.pubkey(),
-                    TowerSync::new_from_slot(bank.slot(), bank.hash()),
-                ),
-                vote_instruction::tower_sync(
-                    &alice_vote_keypair.pubkey(),
-                    &alice_vote_keypair.pubkey(),
-                    TowerSync::new_from_slot(bank.slot(), bank.hash()),
-                ),
-            ];
-
             bank = rpc.advance_bank_to_confirmed_slot(bank.slot() + 1);
-
-            let transaction = Transaction::new_signed_with_payer(
-                &instructions,
-                Some(&rpc.mint_keypair.pubkey()),
-                &[&rpc.mint_keypair, leader_vote_keypair, &alice_vote_keypair],
-                bank.last_blockhash(),
-            );
-
-            bank.process_transaction(&transaction)
-                .expect("process transaction");
+            for vote_pubkey in [leader_vote_keypair.pubkey(), alice_vote_keypair.pubkey()] {
+                let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
+                let vote_state = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey)
+                    .expect("deserialize vote state");
+                let mut vote_state = VoteStateHandler::try_new_from_vote_state_versions(
+                    VoteStateVersionsInline::V4(vote_state),
+                )
+                .expect("create vote state handler");
+                vote_state.set_votes(VecDeque::from([LandedVote {
+                    latency: 1,
+                    lockout: Lockout::new(vote_slot),
+                }]));
+                vote_state.increment_credits(bank.epoch(), credits_per_slot);
+                vote_state
+                    .serialize_into(vote_account.data_as_mut_slice())
+                    .expect("serialize vote state");
+                bank.store_account(&vote_pubkey, &vote_account);
+            }
         };
 
         // Advance bank to the next epoch
@@ -9260,12 +9243,8 @@ pub mod tests {
             .find(|x| x.vote_pubkey == leader_vote_keypair.pubkey().to_string())
             .unwrap();
         assert_ne!(leader_info.activated_stake, 0);
-        // Subtract one because the last vote always carries over to the next epoch
-        // Each slot earned maximum credits
-        let credits_per_slot =
-            solana_vote_program::vote_state::VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
-        let expected_credits =
-            (TEST_SLOTS_PER_EPOCH - MAX_LOCKOUT_HISTORY as u64 - 1) * credits_per_slot;
+        // Subtract one because the final vote lands in the next epoch.
+        let expected_credits = (TEST_SLOTS_PER_EPOCH - 1) * credits_per_slot;
         assert_eq!(
             leader_info.epoch_credits,
             vec![

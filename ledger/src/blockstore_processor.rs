@@ -2534,10 +2534,7 @@ pub mod tests {
         solana_pubkey::Pubkey,
         solana_runtime::{
             bank::bank_hash_details::SlotDetails,
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_tower_leader,
-                create_genesis_config_with_tower_vote_accounts,
-            },
+            genesis_utils::create_genesis_config_with_tower_leader,
             installed_scheduler_pool::{
                 InstalledSchedulerPool, MockInstalledScheduler, MockUninstalledScheduler,
                 SchedulerAborted, SchedulingContext,
@@ -2551,10 +2548,10 @@ pub mod tests {
         solana_transaction::{Transaction, sanitized::MessageHash},
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_pool::DefaultSchedulerPool,
-        solana_vote::{vote_account::VoteAccount, vote_transaction},
+        solana_vote::vote_account::VoteAccount,
         solana_vote_program::{
             self,
-            vote_state::{MAX_LOCKOUT_HISTORY, TowerSync, VoteStateV4, VoteStateVersions},
+            vote_state::{VoteStateV4, VoteStateVersions},
         },
         std::{
             assert_matches,
@@ -4643,225 +4640,6 @@ pub mod tests {
                 assert!(parent_bank.is_frozen());
             }
         }
-    }
-
-    fn make_slot_with_vote_tx(
-        blockstore: &Blockstore,
-        ticks_per_slot: u64,
-        tx_landed_slot: Slot,
-        parent_slot: Slot,
-        parent_blockhash: &Hash,
-        vote_tx: Transaction,
-        slot_leader_keypair: &Arc<Keypair>,
-    ) {
-        // Add votes to `last_slot` so that `root` will be confirmed
-        let vote_entry = next_entry(parent_blockhash, 1, vec![vote_tx]);
-        let mut entries = create_ticks(ticks_per_slot, 0, vote_entry.hash);
-        entries.insert(0, vote_entry);
-        blockstore
-            .write_entries(
-                tx_landed_slot,
-                0,
-                0,
-                ticks_per_slot,
-                Some(parent_slot),
-                true,
-                slot_leader_keypair,
-                entries,
-                0,
-            )
-            .unwrap();
-    }
-
-    fn run_test_process_blockstore_with_supermajority_root(
-        blockstore_root: Option<Slot>,
-        blockstore_access_type: AccessType,
-    ) {
-        agave_logger::setup();
-        /*
-            Build fork structure:
-                 slot 0
-                   |
-                 slot 1 <- (blockstore root)
-                 /    \
-            slot 2    |
-               |      |
-            slot 4    |
-                    slot 5
-                      |
-                `expected_root_slot`
-                     /    \
-                  ...    minor fork
-                  /
-            `last_slot`
-                 |
-            `really_last_slot`
-        */
-        let starting_fork_slot = 5;
-        let mut main_fork = tr(starting_fork_slot);
-        let mut main_fork_ref = main_fork.root_mut().get_mut();
-
-        // Make enough slots to make a root slot > blockstore_root
-        let expected_root_slot = starting_fork_slot + blockstore_root.unwrap_or(0);
-        let really_expected_root_slot = expected_root_slot + 1;
-        let last_main_fork_slot = expected_root_slot + MAX_LOCKOUT_HISTORY as u64 + 1;
-        let really_last_main_fork_slot = last_main_fork_slot + 1;
-
-        // Make `minor_fork`
-        let last_minor_fork_slot = really_last_main_fork_slot + 1;
-        let minor_fork = tr(last_minor_fork_slot);
-
-        // Make 'main_fork`
-        for slot in starting_fork_slot + 1..last_main_fork_slot {
-            if slot - 1 == expected_root_slot {
-                main_fork_ref.push_front(minor_fork.clone());
-            }
-            main_fork_ref.push_front(tr(slot));
-            main_fork_ref = main_fork_ref.front_mut().unwrap().get_mut();
-        }
-        let forks = tr(0) / (tr(1) / (tr(2) / (tr(4))) / main_fork);
-        let validator_keypairs = ValidatorVoteKeypairs::new_rand();
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_tower_vote_accounts(
-                10_000,
-                &[&validator_keypairs],
-                vec![100],
-            );
-        let ticks_per_slot = genesis_config.ticks_per_slot();
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        blockstore.add_tree(forks, false, true, ticks_per_slot, genesis_config.hash());
-
-        if let Some(blockstore_root) = blockstore_root {
-            blockstore
-                .set_roots(std::iter::once(&blockstore_root))
-                .unwrap();
-        }
-
-        let opts = ProcessOptions {
-            run_verification: true,
-            ..ProcessOptions::default()
-        };
-
-        let (bank_forks, ..) = test_process_blockstore_with_custom_options(
-            &genesis_config,
-            &blockstore,
-            &opts,
-            blockstore_access_type.clone(),
-        );
-        let bank_forks = bank_forks.read().unwrap();
-
-        // prepare to add votes
-        let last_vote_bank_hash = bank_forks.get(last_main_fork_slot - 1).unwrap().hash();
-        let last_vote_blockhash = bank_forks
-            .get(last_main_fork_slot - 1)
-            .unwrap()
-            .last_blockhash();
-        let tower_sync = TowerSync::new_from_slot(last_main_fork_slot - 1, last_vote_bank_hash);
-        let vote_tx = vote_transaction::new_tower_sync_transaction(
-            tower_sync,
-            last_vote_blockhash,
-            &validator_keypairs.node_keypair,
-            &validator_keypairs.vote_keypair,
-            &validator_keypairs.vote_keypair,
-            None,
-        );
-
-        // Add votes to `last_slot` so that `root` will be confirmed
-        let leader_keypair = Arc::new(validator_keypairs.node_keypair);
-        make_slot_with_vote_tx(
-            &blockstore,
-            ticks_per_slot,
-            last_main_fork_slot,
-            last_main_fork_slot - 1,
-            &last_vote_blockhash,
-            vote_tx,
-            &leader_keypair,
-        );
-
-        let (bank_forks, ..) = test_process_blockstore_with_custom_options(
-            &genesis_config,
-            &blockstore,
-            &opts,
-            blockstore_access_type.clone(),
-        );
-        let bank_forks = bank_forks.read().unwrap();
-
-        assert_eq!(bank_forks.root(), expected_root_slot);
-        assert_eq!(
-            bank_forks.frozen_banks().count() as u64,
-            last_minor_fork_slot - really_expected_root_slot + 1
-        );
-
-        // Minor fork at `last_main_fork_slot + 1` was above the `expected_root_slot`
-        // so should not have been purged
-        //
-        // Fork at slot 2 was purged because it was below the `expected_root_slot`
-        for slot in 0..=last_minor_fork_slot {
-            // this slot will be created below
-            if slot == really_last_main_fork_slot {
-                continue;
-            }
-            if slot >= expected_root_slot {
-                let bank = bank_forks.get(slot).unwrap();
-                assert_eq!(bank.slot(), slot);
-                assert!(bank.is_frozen());
-            } else {
-                assert!(bank_forks.get(slot).is_none());
-            }
-        }
-
-        // really prepare to add votes
-        let last_vote_bank_hash = bank_forks.get(last_main_fork_slot).unwrap().hash();
-        let last_vote_blockhash = bank_forks
-            .get(last_main_fork_slot)
-            .unwrap()
-            .last_blockhash();
-        let tower_sync = TowerSync::new_from_slot(last_main_fork_slot, last_vote_bank_hash);
-        let vote_tx = vote_transaction::new_tower_sync_transaction(
-            tower_sync,
-            last_vote_blockhash,
-            &leader_keypair,
-            &validator_keypairs.vote_keypair,
-            &validator_keypairs.vote_keypair,
-            None,
-        );
-
-        // Add votes to `really_last_slot` so that `root` will be confirmed again
-        make_slot_with_vote_tx(
-            &blockstore,
-            ticks_per_slot,
-            really_last_main_fork_slot,
-            last_main_fork_slot,
-            &last_vote_blockhash,
-            vote_tx,
-            &leader_keypair,
-        );
-
-        let (bank_forks, ..) = test_process_blockstore_with_custom_options(
-            &genesis_config,
-            &blockstore,
-            &opts,
-            blockstore_access_type,
-        );
-        let bank_forks = bank_forks.read().unwrap();
-
-        assert_eq!(bank_forks.root(), really_expected_root_slot);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_without_blockstore_root() {
-        run_test_process_blockstore_with_supermajority_root(None, AccessType::Primary);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_without_blockstore_root_readonly_access() {
-        run_test_process_blockstore_with_supermajority_root(None, AccessType::ReadOnly);
-    }
-
-    #[test]
-    fn test_process_blockstore_with_supermajority_root_with_blockstore_root() {
-        run_test_process_blockstore_with_supermajority_root(Some(1), AccessType::Primary)
     }
 
     #[test]

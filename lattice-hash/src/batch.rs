@@ -38,7 +38,7 @@ const MAX_LANES: usize = 16;
 type LaneBuf = [u32; NUM_CHUNK_WORDS];
 
 /// A read-only, matched view of one full-or-partial batch's staged lanes: for
-/// each `l < len()`, `lanes[l]` is a zero-padded chunk buffer holding a message
+/// each `l < lanes.len()`, `lanes[l]` is a zero-padded chunk buffer holding a message
 /// of real byte length `lengths[l]` (`<= CHUNK_LEN`). `lanes.len() ==
 /// lengths.len()`. Produced by [`Staging::batch`], consumed by the mix-in
 /// functions and the `blake3` fallback in [`Accumulator::flush`].
@@ -46,12 +46,6 @@ type LaneBuf = [u32; NUM_CHUNK_WORDS];
 struct Batch<'a> {
     lanes: &'a [LaneBuf],
     lengths: &'a [usize],
-}
-
-impl Batch<'_> {
-    fn len(&self) -> usize {
-        self.lanes.len()
-    }
 }
 
 /// The staged lanes of one pending batch and their metadata, kept together so the
@@ -147,6 +141,32 @@ impl Staging {
         self.count == 0
     }
 
+    fn is_full(&self) -> bool {
+        self.count == self.lanes.len()
+    }
+
+    /// Returns whether a padded SIMD pass is estimated to be faster than serial hashing.
+    fn padded_pass_is_faster(&self) -> bool {
+        let lengths = &self.lengths[..self.count];
+        // Serial hashing is proportional to the total length.
+        let total_len: usize = lengths.iter().sum();
+        // A SIMD pass costs as much as its longest message.
+        let max_len = lengths.iter().copied().max().unwrap_or(0);
+        // Nanoseconds on a Zen 5 core with AVX-512, which also hold for AVX2.
+        total_len.strict_add(self.count.strict_mul(250)) > max_len.strict_add(2900)
+    }
+
+    /// Returns the number of free lanes, which were padded with empty messages.
+    fn pad_with_empty_messages(&mut self) -> u16 {
+        let num_pads = self.lanes.len().strict_sub(self.count) as u16;
+        for lane in &mut self.lanes[self.count..] {
+            lane[..BLOCK_LEN / 4].fill(0);
+        }
+        self.lengths[self.count..self.lanes.len()].fill(0);
+        self.count = self.lanes.len();
+        num_pads
+    }
+
     fn clear(&mut self) {
         self.count = 0;
     }
@@ -174,6 +194,10 @@ impl core::fmt::Debug for Staging {
 /// buffer contract documented on `arch`'s `compress_batch`.
 type BatchMixInFn = unsafe fn(batch: Batch<'_>, acc: &mut LtHash);
 
+/// The lattice hash of the empty message, which pads a partial batch.
+static EMPTY_MESSAGE_LT_HASH: std::sync::LazyLock<LtHash> =
+    std::sync::LazyLock::new(|| LtHash::with(&blake3::Hasher::new()));
+
 /// Streaming accumulator for the lattice hash of many messages.
 ///
 /// Feed each message either whole with [`add_message`](Self::add_message), or in
@@ -198,13 +222,10 @@ pub struct Accumulator {
     acc: LtHash,
     /// The pending batch's staged lane buffers and their metadata.
     staging: Staging,
-    /// Messages per full batch = SIMD lane count of the selected backend (1 when
-    /// there is no SIMD backend). A batch flushes once this many messages are staged.
-    num_available_lanes: usize,
     /// The SIMD backend used for a full batch, or `None` when the CPU has none.
     batch_mix_in_fn: Option<BatchMixInFn>,
     /// Hashes the messages that skip the SIMD kernel: one that overflows a single chunk
-    /// (`> CHUNK_LEN`), and each message on the non-SIMD / partial-tail path in `flush`.
+    /// (`> CHUNK_LEN`), and each message of a batch that `flush` hashes serially.
     hasher: BufferingHasher,
     /// Set when the in-progress message overflowed one chunk and is being
     /// streamed into `hasher` rather than staged for the SIMD batch;
@@ -217,7 +238,6 @@ impl core::fmt::Debug for Accumulator {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Accumulator")
             .field("acc", &self.acc)
-            .field("num_available_lanes", &self.num_available_lanes)
             .field("staging", &self.staging)
             .field("cur_spilled", &self.cur_spilled)
             .finish_non_exhaustive()
@@ -245,7 +265,6 @@ impl Accumulator {
         Self {
             acc: LtHash::identity(),
             staging: Staging::new(num_available_lanes),
-            num_available_lanes,
             batch_mix_in_fn,
             hasher: BufferingHasher::default(),
             cur_spilled: false,
@@ -322,20 +341,26 @@ impl Accumulator {
     }
 
     /// Run the staged messages into `acc`, then reset the stage. A full batch on
-    /// a SIMD backend goes through the vector kernel; anything else — no SIMD
-    /// backend, or a partial tail that doesn't fill every lane — falls back to the
-    /// `blake3` crate.
+    /// a SIMD backend goes through the vector kernel, and so does a partial batch when
+    /// a padded pass is faster; anything else falls back to the `blake3` crate.
     fn flush(&mut self) {
-        let batch = self.staging.batch();
         if let Some(simd) = self
             .batch_mix_in_fn
-            .filter(|_| batch.len() == self.num_available_lanes)
+            .filter(|_| self.staging.is_full() || self.staging.padded_pass_is_faster())
         {
+            let num_pads = self.staging.pad_with_empty_messages();
             // SAFETY: a SIMD backend exists only when its target feature was
-            // detected, and `filter` guarantees a full batch
-            // (`batch.len() == num_available_lanes == L::N`).
-            unsafe { simd(batch, &mut self.acc) };
+            // detected, and the padding fills every lane (`batch.lanes.len() == L::N`).
+            unsafe { simd(self.staging.batch(), &mut self.acc) };
+            if num_pads > 0 {
+                // Mixing in adds the hashes' u16 elements pairwise with wrapping, so subtracting
+                // `num_pads` times the empty message's hash leaves only the staged messages.
+                for (element, pad_element) in self.acc.0.iter_mut().zip(&EMPTY_MESSAGE_LT_HASH.0) {
+                    *element = element.wrapping_sub(pad_element.wrapping_mul(num_pads));
+                }
+            }
         } else {
+            let batch = self.staging.batch();
             for (lane, &len) in batch.lanes.iter().zip(batch.lengths) {
                 let bytes: &[u8] = bytemuck::cast_slice(lane.as_slice());
                 self.hasher.reset();
@@ -512,6 +537,17 @@ mod tests {
         msgs[3] = (0..5000u32).map(|i| i as u8).collect(); // > CHUNK_LEN
         msgs[30] = (0..1500u32).map(|i| (i * 3) as u8).collect(); // > CHUNK_LEN
         assert_matches_oracle(&msgs, "fixed 35 + oversized");
+    }
+
+    #[test]
+    fn partial_batch_fill_levels() {
+        // Short messages flush serially at low fill levels, long ones through a padded pass.
+        for len in [0, 73, CHUNK_LEN] {
+            for count in 1..MAX_LANES {
+                let msgs: Vec<_> = (0u8..).take(count).map(|byte| vec![byte; len]).collect();
+                assert_matches_oracle(&msgs, &format!("len={len} count={count}"));
+            }
+        }
     }
 
     /// Counts bracketing both the 8- and 16-lane batch boundaries, plus several

@@ -187,7 +187,6 @@ impl Bank {
                 EnvironmentConfig::new(
                     Hash::default(),
                     0,
-                    false,
                     &MockCallback {},
                     &feature_set,
                     &program_runtime_environments,

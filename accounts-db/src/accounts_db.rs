@@ -929,9 +929,11 @@ impl AccountsDb {
         &self.bank_hash_details_dir
     }
 
-    /// Returns true if there is an accounts update notifier.
+    /// Returns true if the notifier needs runtime account updates.
     pub fn has_accounts_update_notifier(&self) -> bool {
-        self.accounts_update_notifier.is_some()
+        self.accounts_update_notifier
+            .as_ref()
+            .is_some_and(|notifier| notifier.account_notifications_enabled())
     }
 
     fn next_id(&self) -> AccountsFileId {
@@ -4726,7 +4728,7 @@ impl AccountsDb {
                             );
                             last_update = now;
                         }
-                        thread::sleep(Duration::from_millis(500))
+                        thread::park_timeout(Duration::from_millis(500));
                     }
                 })
                 .expect("spawn thread");
@@ -4740,6 +4742,7 @@ impl AccountsDb {
             // Make sure to join the logger thread *after* the main threads.
             // This way, if a main thread errors, we won't spin indefinitely
             // waiting for the logger thread to finish (it never will).
+            logger_thread_handle.thread().unpark();
             logger_thread_handle.join().expect("join thread");
         });
         index_time.stop();
