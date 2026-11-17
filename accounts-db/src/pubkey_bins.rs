@@ -184,7 +184,7 @@ mod tests {
         for num_bins in [1 << 10, 1 << 14, 1 << 19, 1 << MAX_BINS_POW2] {
             let bin_calculator1 =
                 PubkeyBinCalculatorBuilder::with_bins(NonZeroUsize::new(num_bins).unwrap());
-            // second bin calculator that exercies cloning
+            // second bin calculator that exercises cloning
             let bin_calculator2 = bin_calculator1.clone();
             for i_pubkey in 0..1_000 {
                 let pubkey = solana_pubkey::new_rand();

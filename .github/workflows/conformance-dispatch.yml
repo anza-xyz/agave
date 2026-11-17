@@ -13,10 +13,14 @@ on:
       - "ci/build-conformance.sh"
       - "ci/download-test-vectors.sh"
       - "ci/test-conformance.sh"
+  push:
+    branches:
+      - master
+      - v[0-9]+.[0-9]+
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect:
@@ -43,8 +47,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          if [[ -n $PR_NUMBER ]]; then
+            scope=(--pr-number "$PR_NUMBER")
+          else
+            scope=(--all)
+          fi
           entries=$(cargo run --quiet --manifest-path ci/xtask/Cargo.toml -- \
-            conformance-table --pr-number "$PR_NUMBER")
+            conformance-table "${scope[@]}")
           echo "entries=$entries" >> "$GITHUB_OUTPUT"
 
   build:

@@ -98,9 +98,6 @@ impl GeyserPluginService {
         let account_data_notifications_enabled =
             plugin_manager.load().account_data_notifications_enabled()
                 || geyser_plugin_always_enabled;
-        let account_data_snapshot_notifications_enabled = plugin_manager
-            .load()
-            .account_data_snapshot_notifications_enabled();
         let transaction_notifications_enabled =
             plugin_manager.load().transaction_notifications_enabled()
                 || geyser_plugin_always_enabled;
@@ -113,13 +110,19 @@ impl GeyserPluginService {
                 || plugin_manager.load().block_footer_notifications_enabled()
                 || geyser_plugin_always_enabled;
 
-        let accounts_update_notifier: Option<AccountsUpdateNotifier> =
-            if account_data_notifications_enabled {
-                let accounts_update_notifier = AccountsUpdateNotifierImpl::new(
-                    plugin_manager.clone(),
-                    account_data_snapshot_notifications_enabled,
-                );
-                Some(Arc::new(accounts_update_notifier))
+        // Keep the notifier for bank creation even when no plugin subscribes to accounts.
+        // With dynamic loading enabled, it must also exist before the first plugin is loaded.
+        let accounts_update_notifier =
+            if plugin_manager.load().plugins().next().is_some() || geyser_plugin_always_enabled {
+                let snapshot_notifications_enabled = account_data_notifications_enabled
+                    && plugin_manager
+                        .load()
+                        .account_data_snapshot_notifications_enabled();
+                Some(Arc::new(AccountsUpdateNotifierImpl::new(
+                    Arc::clone(&plugin_manager),
+                    account_data_notifications_enabled,
+                    snapshot_notifications_enabled,
+                )) as AccountsUpdateNotifier)
             } else {
                 None
             };
@@ -418,6 +421,18 @@ mod tests {
         drop(slot_sender);
         service.join().unwrap();
         assert!(manager.load().plugins().next().is_none());
+    }
+
+    #[test]
+    fn test_service_without_plugins_keeps_notifier_for_dynamic_loading() {
+        let (sender, receiver) = unbounded();
+        let service = GeyserPluginService::new(receiver, true, &[]).unwrap();
+        let notifier = service.get_accounts_update_notifier().unwrap();
+        assert!(notifier.account_notifications_enabled());
+        assert!(!notifier.snapshot_notifications_enabled());
+        drop(notifier);
+        drop(sender);
+        service.join().unwrap();
     }
 
     #[test]
