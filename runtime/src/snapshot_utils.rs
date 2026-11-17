@@ -77,7 +77,10 @@ pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 
 pub const MAX_STORAGES_LIST_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MiB
 /// The file holds a handful of scalars; this conservative bound limits the impact of bad state.
 pub const MAX_STARTUP_HINTS_FILE_SIZE: u64 = 4096;
-pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
+/// Limit the size of the bank snapshot and status cache files.
+/// A mainnet snapshot at slot 452539277 has a 15 MB status cache and a 173 MB bank file, mostly
+/// legacy stakes, without which (from v5.0) it takes 14 MB.
+pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 /// Buffer size for reading auxiliary per-snapshot files (obsolete accounts, storages list).
 /// Sized to allow several concurrent reads at the default io-uring reader read size (1MiB).

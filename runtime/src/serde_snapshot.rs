@@ -73,15 +73,26 @@ pub(crate) use {
     storages_list::{LegacyStoragesList, StorageListItem, StoragesList},
 };
 
-const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
 type SnapshotConfig<const PREALLOCATION_SIZE_LIMIT: usize> =
     wincode::config::Configuration<true, PREALLOCATION_SIZE_LIMIT>;
 
-pub(crate) const BANK_SNAPSHOT_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
-pub(crate) const STATUS_CACHE_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
-pub(crate) const OBSOLETE_ACCOUNTS_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
-pub(crate) const STORAGES_LIST_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
-pub(crate) const STARTUP_HINTS_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
+// Each limit caps the in-memory size of a single collection. Current sizes come from a mainnet
+// snapshot at slot 452539277.
+/// Stake delegations from older writers are the largest, at 133 MB for 1.39M stake accounts
+/// (96 B each) in the manifest's stakes field, so the limit allows 11M stake accounts. Current
+/// writers leave that field empty.
+pub(crate) const BANK_SNAPSHOT_CONFIG: SnapshotConfig<{ 1 << 30 }> = SnapshotConfig::new();
+/// One blockhash's statuses in one slot are the largest, at 66 KB for 1178 statuses (56 B each),
+/// so the limit allows 19M statuses per slot under a single blockhash.
+pub(crate) const STATUS_CACHE_CONFIG: SnapshotConfig<{ 1 << 30 }> = SnapshotConfig::new();
+/// The list of storages is the largest, at 20.6 MB for 430k storages (48 B each), so the limit
+/// allows 5.6M storages. Each storage's list of obsolete accounts (24 B each) has its own limit
+/// of 11M accounts.
+pub(crate) const OBSOLETE_ACCOUNTS_CONFIG: SnapshotConfig<{ 256 << 20 }> = SnapshotConfig::new();
+/// The list takes 6.9 MB for 430k storages (16 B each), so the limit allows 4.2M storages.
+pub(crate) const STORAGES_LIST_CONFIG: SnapshotConfig<{ 64 << 20 }> = SnapshotConfig::new();
+/// The list takes 16 B for its single hint, so the limit allows 8k hints.
+pub(crate) const STARTUP_HINTS_CONFIG: SnapshotConfig<{ 128 << 10 }> = SnapshotConfig::new();
 
 /// A slot paired with its account storage entries; only kept to name the wire shape of the
 /// no-longer-used storage entries map in [`AccountsDbFields`] and [`SerializableAccountsDb`].
