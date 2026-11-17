@@ -47,6 +47,7 @@ use {
     wincode::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         adapter::{DefaultOnEmptyRead, DiscardSeq},
+        config::Config,
         io::{Reader, std_write::WriteAdapter},
         len::BincodeLen,
     },
@@ -73,7 +74,14 @@ pub(crate) use {
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
-type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
+type SnapshotConfig<const PREALLOCATION_SIZE_LIMIT: usize> =
+    wincode::config::Configuration<true, PREALLOCATION_SIZE_LIMIT>;
+
+pub(crate) const BANK_SNAPSHOT_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
+pub(crate) const STATUS_CACHE_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
+pub(crate) const OBSOLETE_ACCOUNTS_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
+pub(crate) const STORAGES_LIST_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
+pub(crate) const STARTUP_HINTS_CONFIG: SnapshotConfig<MAX_STREAM_SIZE> = SnapshotConfig::new();
 
 /// A slot paired with its account storage entries; only kept to name the wire shape of the
 /// no-longer-used storage entries map in [`AccountsDbFields`] and [`SerializableAccountsDb`].
@@ -390,20 +398,20 @@ impl SnapshotAccountsDbFields {
     }
 }
 
-pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> WriteResult<()>
+pub(crate) fn serialize_into<T, C>(writer: impl Write, value: &T, config: C) -> WriteResult<()>
 where
-    W: Write,
-    T: SchemaWrite<MaxStreamSizeConfig, Src = T>,
+    T: SchemaWrite<C, Src = T>,
+    C: Config,
 {
-    wincode::config::serialize_into(WriteAdapter::new(writer), value, MaxStreamSizeConfig::new())
+    wincode::config::serialize_into(WriteAdapter::new(writer), value, config)
 }
 
-pub(crate) fn deserialize_wincode_from<'a, R, T>(reader: R) -> ReadResult<T>
+pub(crate) fn deserialize_from<'a, T, C>(reader: impl Reader<'a>, config: C) -> ReadResult<T>
 where
-    R: Reader<'a>,
-    T: SchemaReadOwned<MaxStreamSizeConfig, Dst = T>,
+    T: SchemaReadOwned<C, Dst = T>,
+    C: Config,
 {
-    wincode::config::deserialize_from(reader, MaxStreamSizeConfig::new())
+    wincode::config::deserialize_from(reader, config)
 }
 
 /// Extra fields that are deserialized from the end of snapshots.
@@ -526,7 +534,8 @@ impl DeserializableBankSnapshot {
 pub(crate) fn fields_from_stream<R: Read>(
     snapshot_stream: &mut BufReader<R>,
 ) -> wincode::ReadResult<(BankFieldsToDeserialize, AccountsDbFields)> {
-    deserialize_wincode_from::<_, DeserializableBankSnapshot>(snapshot_stream)?.into_fields()
+    deserialize_from::<DeserializableBankSnapshot, _>(snapshot_stream, BANK_SNAPSHOT_CONFIG)?
+        .into_fields()
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -659,7 +668,7 @@ pub fn serialize_bank_snapshot_into(
     };
     // The caller reports the time spent here, e.g. as `bank_serialize_us` in the
     // `snapshot_bank` datapoint.
-    serialize_into(stream, &snapshot)
+    serialize_into(stream, &snapshot, BANK_SNAPSHOT_CONFIG)
 }
 
 // Serializable counterpart of `AccountsDbFields`. Sync fields with `AccountsDbFields`!

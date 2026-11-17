@@ -1,7 +1,10 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
-    crate::{bank::Bank, serde_snapshot::deserialize_wincode_from},
+    crate::{
+        bank::Bank,
+        serde_snapshot::{STARTUP_HINTS_CONFIG, deserialize_from},
+    },
     log::*,
     wincode::{ReadError, ReadResult, SchemaRead, SchemaWrite, io::Reader},
 };
@@ -49,7 +52,7 @@ impl StartupHints {
     /// `None` when the hints came from a newer version: wincode cannot read past a tag it does
     /// not know, so the whole lot is dropped rather than partially decoded.
     pub(crate) fn read_from<'a>(reader: impl Reader<'a>) -> ReadResult<Option<Self>> {
-        match deserialize_wincode_from(reader) {
+        match deserialize_from(reader, STARTUP_HINTS_CONFIG) {
             Ok(startup_hints) => Ok(Some(startup_hints)),
             Err(ReadError::InvalidTagEncoding(tag)) => {
                 warn!("ignoring startup hints: unknown hint {tag}");
@@ -70,11 +73,10 @@ impl StartupHints {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::serde_snapshot::serialize_into};
+    use super::*;
 
     fn roundtrip(hints: &StartupHints) -> StartupHints {
-        let mut buf = Vec::new();
-        serialize_into(&mut buf, hints).unwrap();
+        let buf = wincode::config::serialize(hints, STARTUP_HINTS_CONFIG).unwrap();
         StartupHints::read_from(buf.as_slice()).unwrap().unwrap()
     }
 

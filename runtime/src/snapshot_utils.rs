@@ -5,8 +5,10 @@ use {
         bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, LegacyObsoleteAccountsMap,
-            LegacyStoragesList, SerdeObsoleteAccountsMap, SnapshotAccountsDbFields,
+            LegacyStoragesList, OBSOLETE_ACCOUNTS_CONFIG, STARTUP_HINTS_CONFIG,
+            STORAGES_LIST_CONFIG, SerdeObsoleteAccountsMap, SnapshotAccountsDbFields,
             SnapshotBankFields, SnapshotStreams, StartupHints, StorageListItem, StoragesList,
+            deserialize_from, serialize_into,
         },
         snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
@@ -709,7 +711,12 @@ fn serialize_obsolete_accounts(
         maximum_obsolete_accounts_file_size,
     );
 
-    serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map).map_err(|err| {
+    serialize_into(
+        &mut file_stream,
+        obsolete_accounts_map,
+        OBSOLETE_ACCOUNTS_CONFIG,
+    )
+    .map_err(|err| {
         IoError::other(format!(
             "unable to serialize obsolete accounts to file '{}': {err}",
             obsolete_accounts_path.display(),
@@ -745,10 +752,10 @@ fn deserialize_obsolete_accounts(
     }
 
     let obsolete_accounts = if fastboot_version.major >= 4 {
-        serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?
+        deserialize_from(obsolete_accounts_reader, OBSOLETE_ACCOUNTS_CONFIG)?
     } else {
         let legacy: LegacyObsoleteAccountsMap =
-            serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?;
+            deserialize_from(obsolete_accounts_reader, OBSOLETE_ACCOUNTS_CONFIG)?;
         SerdeObsoleteAccountsMap::try_from(legacy)?
     };
     Ok(obsolete_accounts)
@@ -775,7 +782,7 @@ fn serialize_storages_list_to_snapshot(
         large_file_buf_writer(&storages_list_path, io_setup)?,
         MAX_STORAGES_LIST_FILE_SIZE,
     );
-    serde_snapshot::serialize_into(&mut file_stream, &storages_list).map_err(|err| {
+    serialize_into(&mut file_stream, &storages_list, STORAGES_LIST_CONFIG).map_err(|err| {
         IoError::other(format!(
             "unable to serialize storages list to file '{}': {err}",
             storages_list_path.display(),
@@ -807,10 +814,10 @@ fn deserialize_storages_list(
     }
 
     let storages_list = if fastboot_version.major >= 5 {
-        serde_snapshot::deserialize_wincode_from(storages_list_reader)?
+        deserialize_from(storages_list_reader, STORAGES_LIST_CONFIG)?
     } else {
         let legacy: LegacyStoragesList =
-            serde_snapshot::deserialize_wincode_from(storages_list_reader)?;
+            deserialize_from(storages_list_reader, STORAGES_LIST_CONFIG)?;
         StoragesList::from(legacy)
     };
     Ok(storages_list)
@@ -828,7 +835,7 @@ pub fn write_startup_hints_to_snapshot(
         large_file_buf_writer(&startup_hints_path, io_setup)?,
         MAX_STARTUP_HINTS_FILE_SIZE,
     );
-    serde_snapshot::serialize_into(&mut file_stream, startup_hints).map_err(|err| {
+    serialize_into(&mut file_stream, startup_hints, STARTUP_HINTS_CONFIG).map_err(|err| {
         IoError::other(format!(
             "unable to serialize startup hints to file '{}': {err}",
             startup_hints_path.display(),
@@ -1827,7 +1834,7 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
-        crate::serde_snapshot::{StorageListItem, deserialize_wincode_from, serialize_into},
+        crate::serde_snapshot::BANK_SNAPSHOT_CONFIG,
         agave_snapshots::{
             paths::{
                 full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,
@@ -1854,7 +1861,7 @@ mod tests {
             expected_consumed_size,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &2323_u32)?;
+                serialize_into(stream, &2323_u32, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         )
@@ -1871,7 +1878,7 @@ mod tests {
             expected_consumed_size - 1,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &2323_u32)?;
+                serialize_into(stream, &2323_u32, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         );
@@ -1889,7 +1896,7 @@ mod tests {
             expected_consumed_size,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &expected_data)?;
+                serialize_into(stream, &expected_data, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         )
@@ -1904,8 +1911,9 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size,
             |stream| {
-                Ok(deserialize_wincode_from::<_, u32>(
+                Ok(deserialize_from::<u32, _>(
                     &mut *stream.full_snapshot_stream,
+                    BANK_SNAPSHOT_CONFIG,
                 )?)
             },
         )
@@ -1924,7 +1932,7 @@ mod tests {
             expected_consumed_size,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &expected_data)?;
+                serialize_into(stream, &expected_data, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         )
@@ -1939,8 +1947,9 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size - 1,
             |stream| {
-                Ok(deserialize_wincode_from::<_, u32>(
+                Ok(deserialize_from::<u32, _>(
                     &mut *stream.full_snapshot_stream,
+                    BANK_SNAPSHOT_CONFIG,
                 )?)
             },
         );
@@ -1960,7 +1969,11 @@ mod tests {
             |stream| {
                 // Write two u32s (in one call, since the wincode writer finalizes on finish) so
                 // the file has trailing bytes left over after a single-u32 deserialize.
-                serialize_into(&mut *stream, &(expected_data, expected_data))?;
+                serialize_into(
+                    &mut *stream,
+                    &(expected_data, expected_data),
+                    BANK_SNAPSHOT_CONFIG,
+                )?;
                 Ok(())
             },
         )
@@ -1975,8 +1988,9 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size * 2,
             |stream| {
-                Ok(deserialize_wincode_from::<_, u32>(
+                Ok(deserialize_from::<u32, _>(
                     &mut *stream.full_snapshot_stream,
+                    BANK_SNAPSHOT_CONFIG,
                 )?)
             },
         );

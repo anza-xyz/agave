@@ -7,7 +7,12 @@ use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(not(feature = "shuttle-test"))]
 use std::sync::Mutex;
 use {
-    crate::{bank::BankSlotDelta, serde_snapshot, snapshot_utils, status_cache::KeySlice},
+    crate::{
+        bank::BankSlotDelta,
+        serde_snapshot::{STATUS_CACHE_CONFIG, deserialize_from, serialize_into},
+        snapshot_utils,
+        status_cache::KeySlice,
+    },
     agave_fs::io_setup::IoSetupState,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -90,7 +95,11 @@ pub fn serialize_status_cache_into(
     stream: &mut dyn Write,
     slot_deltas: &[BankSlotDelta],
 ) -> wincode::WriteResult<()> {
-    serde_snapshot::serialize_into(stream, &to_snapshot_slot_deltas(slot_deltas))
+    serialize_into(
+        stream,
+        &to_snapshot_slot_deltas(slot_deltas),
+        STATUS_CACHE_CONFIG,
+    )
 }
 
 /// Deserializes the status cache from file at `status_cache_path`
@@ -101,7 +110,7 @@ pub fn deserialize_status_cache(
 ) -> agave_snapshots::Result<Vec<BankSlotDelta>> {
     snapshot_utils::deserialize_snapshot_data_file(status_cache_path, |stream| {
         let snapshot_slot_deltas: Vec<SerdeBankSlotDelta> =
-            serde_snapshot::deserialize_wincode_from(stream)?;
+            deserialize_from(stream, STATUS_CACHE_CONFIG)?;
 
         let slot_deltas = snapshot_slot_deltas
             .into_iter()
