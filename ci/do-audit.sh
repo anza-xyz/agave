@@ -72,6 +72,16 @@ default_cargo_audit_extra_args=(
   # uses recvmmsg. On macOS, agave-ledger-tool (dev-bins) links it via solana-core but
   # never opens a QUIC socket.
   --ignore RUSTSEC-2026-0538
+
+  # Crate:     libz-sys
+  # Version:   1.1.31
+  # Title:     libs-sys: heap buffer overflow
+  # Date:      2026-11-11
+  # ID:        RUSTSEC-2026-0544
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0544
+  # Solution:  Upgrade to >=1.1.33
+  # Agave Ok:  optional rocksdb zlib dep, not built; the bug is in the gzFile API rocksdb never calls.
+  --ignore RUSTSEC-2026-0544
 )
 
 xtask_cargo_audit_extra_args=(
