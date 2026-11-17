@@ -9,9 +9,7 @@ use {
     solana_pubkey::{PUBKEY_BYTES, Pubkey},
     solana_signature::{SIGNATURE_BYTES, Signature},
     solana_storage_proto::convert::generated,
-    wincode::{
-        ReadError, SchemaRead, SchemaReadOwned, SchemaWrite, config::DefaultConfig, io::Reader,
-    },
+    wincode::{SchemaReadOwned, SchemaWrite, config::DefaultConfig},
 };
 
 pub(crate) const DEPRECATED_PROGRAM_COSTS_COLUMN_NAME: &str = "program_costs";
@@ -269,20 +267,6 @@ macro_rules! convert_column_key_bytes_to_index {
     ($k:ident, $($a:literal..$b:literal => $f:expr),* $(,)?) => {{
         ($($f(<[u8; $b-$a]>::try_from(&$k[$a..$b]).unwrap())),*)
     }};
-}
-
-// TODO: replace with dedicated wincode API on wincode>=0.5.1
-fn deserialize_reject_trailing<'de, T>(src: &'de [u8]) -> Result<T>
-where
-    T: SchemaRead<'de, DefaultConfig, Dst = T>,
-{
-    let mut reader = src;
-    let value = <T as SchemaRead<'de, DefaultConfig>>::get(reader.by_ref())?;
-    if reader.is_empty() {
-        Ok(value)
-    } else {
-        Err(ReadError::Custom("trailing bytes").into())
-    }
 }
 
 pub trait Column {
@@ -604,7 +588,7 @@ impl TypedColumn for columns::Index {
 
     #[inline]
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        deserialize_reject_trailing(data)
+        Ok(wincode::deserialize_exact(data)?)
     }
 }
 

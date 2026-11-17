@@ -19,9 +19,10 @@ rustdoc-args = ["--cfg=docsrs"]
 agave-unstable-api = []
 
 [dependencies]
+agave-shred-wire-format = { workspace = true }
 agave-votor = { workspace = true }
 agave-votor-messages = { workspace = true }
-agave-wake-channel = { workspace = true }
+agave-worker-pool = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
@@ -61,9 +62,8 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { workspace = true }
+agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "../votor-messages", features = ["dev-context-only-utils"] }
-assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }

@@ -20,20 +20,18 @@ agave-unstable-api = []
 dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]
 
 [dependencies]
-agave-banking-stage-ingress-types = { workspace = true }
 agave-jemalloc = { workspace = true, features = ["metrics"] }
-assert_matches = { workspace = true }
+agave-wake-channel = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-queue = { workspace = true }
 crossbeam-utils = { workspace = true }
 dashmap = { workspace = true }
-derive-where = { workspace = true }
 derive_more = { workspace = true }
 log = { workspace = true }
 scopeguard = { workspace = true }
 solana-clock = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-metrics = { workspace = true }
-solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
@@ -45,7 +43,6 @@ static_assertions = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
-assert_matches = { workspace = true }
 jemallocator = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { path = "../entry", features = ["agave-unstable-api"] }

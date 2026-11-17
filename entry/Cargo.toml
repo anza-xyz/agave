@@ -21,9 +21,7 @@ name = "solana_entry"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = [
-    "agave-votor-messages/dev-context-only-utils",
-]
+dev-context-only-utils = ["agave-votor-messages/dev-context-only-utils"]
 
 [dependencies]
 agave-transaction-view = { workspace = true }
@@ -54,9 +52,7 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
-assert_matches = { workspace = true }
 criterion = { workspace = true }
-proptest = { workspace = true }
 rand = { workspace = true }
 solana-entry = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-keypair = { workspace = true }

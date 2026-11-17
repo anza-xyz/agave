@@ -1,8 +1,6 @@
 use {
     agave_reserved_account_keys::ReservedAccountKeys,
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_view::SanitizedTransactionView,
     solana_address_lookup_table_interface::{
         self as address_lookup_table, instruction::ProgramInstruction,
     },
@@ -23,7 +21,7 @@ pub fn scan_transaction<D>(
     transaction: &SanitizedTransactionView<D>,
 ) -> ScannedLookupTableExtensions
 where
-    D: TransactionData,
+    D: AsRef<[u8]>,
 {
     // Accumulate accounts from account lookup table extension instructions
     let mut accounts = Vec::new();

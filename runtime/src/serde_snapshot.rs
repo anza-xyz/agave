@@ -13,8 +13,6 @@ use {
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
         snapshot_utils::StorageAndNextAccountsFileId,
-        stake_account::StakeAccount,
-        stakes::{DeserializableDelegationStakes, Stakes},
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -41,7 +39,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
     std::{
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
@@ -54,7 +51,7 @@ use {
         thread,
         time::Instant,
     },
-    types::{SerdeAccountsLtHash, UnusedRentCollector},
+    types::{SerdeAccountsLtHash, UnusedRentCollector, UnusedStakes},
     wincode::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         adapter::{DefaultOnEmptyRead, DiscardSeq},
@@ -200,7 +197,7 @@ struct DeserializableVersionedBank {
     _unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: DeserializableDelegationStakes,
+    _unused_stakes: UnusedStakes,
     _unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -237,7 +234,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             fee_rate_governor: dvb.fee_rate_governor,
             epoch_schedule: dvb.epoch_schedule,
             inflation: dvb.inflation,
-            stakes: dvb.stakes,
             is_delta: dvb.is_delta,
             versioned_epoch_stakes: vec![], // populated from ExtraFieldsToDeserialize
             accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
@@ -290,7 +286,7 @@ struct SerializableVersionedBank {
     unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: Stakes<StakeAccount<Delegation>>,
+    unused_stakes: UnusedStakes,
     unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -327,7 +323,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             unused_rent_collector: UnusedRentCollector::zeroed(),
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
-            stakes: rhs.stakes,
+            unused_stakes: UnusedStakes::default(),
             unused_accounts: UnusedAccounts::default(),
             unused_epoch_stakes: HashMap::default(),
             is_delta: rhs.is_delta,
@@ -481,7 +477,7 @@ pub struct ExtraFieldsToSerialize {
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
 /// the parts sequentially, matching separate reads).
 ///
-/// Its abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
+/// Its abi digest must equal [`SerializableBankSnapshot`]'s, so the read and write
 /// wire formats can't diverge.
 #[cfg_attr(
     feature = "stable-abi",
@@ -789,6 +785,7 @@ pub(crate) fn reconstruct_bank_from_fields(
         leader_for_tests,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
+        reconstructed_accounts_db_info.pubkeys_by_owner,
         epoch_stakes,
     );
 
@@ -892,6 +889,9 @@ pub struct ReconstructedAccountsDbInfo {
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
     pub calculated_capitalization: u64,
+    /// Stake and vote program accounts found while building the index,
+    /// keyed by owner.
+    pub pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
     pub bank_hash_stats: BankHashStats,
 }
 
@@ -949,7 +949,18 @@ fn reconstruct_accountsdb_from_fields(
         accounts_data_len,
         calculated_accounts_lt_hash,
         calculated_capitalization,
-    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
+        pubkeys_by_owner,
+    } = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayonGenIndex{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+        .install(|| {
+            accounts_db.generate_index(
+                limit_load_slot_count_from_snapshot,
+                verify_index,
+                &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
+            )
+        });
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     Ok((
@@ -958,6 +969,7 @@ fn reconstruct_accountsdb_from_fields(
             accounts_data_len,
             calculated_accounts_lt_hash,
             calculated_capitalization,
+            pubkeys_by_owner,
             bank_hash_stats: snapshot_bank_hash_info.stats,
         },
     ))

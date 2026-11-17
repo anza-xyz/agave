@@ -395,6 +395,46 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     }
 }
 
+/// this tuple contains a single different source slot that applies to all accounts
+/// accounts are StoredAccountInfo
+impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        let stored_account_info = self.1[index];
+        let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
+        callback(account_for_storage)
+    }
+    fn account_for_geyser<Ret>(
+        &self,
+        _index: usize,
+        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        unimplemented!();
+    }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].is_zero_lamport()
+    }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].data.len()
+    }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        self.1[index].pubkey()
+    }
+    fn slot(&self, _index: usize) -> Slot {
+        // same other slot for all accounts
+        self.2
+    }
+    fn target_slot(&self) -> Slot {
+        self.0
+    }
+    fn len(&self) -> usize {
+        self.1.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -514,47 +554,6 @@ mod tests {
         }
     }
 
-    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
-    /// this tuple contains a single different source slot that applies to all accounts
-    /// accounts are StoredAccountInfo
-    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
-        fn account<Ret>(
-            &self,
-            index: usize,
-            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-        ) -> Ret {
-            let stored_account_info = self.1[index];
-            let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
-            callback(account_for_storage)
-        }
-        fn account_for_geyser<Ret>(
-            &self,
-            _index: usize,
-            _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
-        ) -> Ret {
-            unimplemented!();
-        }
-        fn is_zero_lamport(&self, index: usize) -> bool {
-            self.1[index].is_zero_lamport()
-        }
-        fn data_len(&self, index: usize) -> usize {
-            self.1[index].data.len()
-        }
-        fn pubkey(&self, index: usize) -> &Pubkey {
-            self.1[index].pubkey()
-        }
-        fn slot(&self, _index: usize) -> Slot {
-            // same other slot for all accounts
-            self.2
-        }
-        fn target_slot(&self) -> Slot {
-            self.0
-        }
-        fn len(&self) -> usize {
-            self.1.len()
-        }
-    }
-
     fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
         assert_eq!(a.len(), b.len());
@@ -581,12 +580,9 @@ mod tests {
                     let mut raw4 = Vec::new();
                     for entry in 0..entries {
                         let pk = Pubkey::from([entry; 32]);
-                        let account = AccountSharedData::create_from_existing_shared_data(
+                        let account = AccountSharedData::empty(
                             (entry as u64) * starting_slot,
-                            Arc::new(Vec::default()),
-                            Pubkey::default(),
-                            false,
-                            0,
+                            &Pubkey::default(),
                         );
 
                         raw.push((pk, account.clone(), starting_slot % max_slots));
@@ -691,13 +687,7 @@ mod tests {
             let mut raw2 = Vec::new();
             for entry in 0..entries {
                 let pk = Pubkey::from([entry; 32]);
-                let account = AccountSharedData::create_from_existing_shared_data(
-                    entry as u64,
-                    Arc::new(Vec::default()),
-                    Pubkey::default(),
-                    false,
-                    0,
-                );
+                let account = AccountSharedData::empty(entry as u64, &Pubkey::default());
                 raw.push((pk, account.clone()));
             }
 

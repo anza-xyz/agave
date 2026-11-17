@@ -1,6 +1,6 @@
 use {
     crate::rent_calculator::{
-        RentState, check_rent_state, get_post_exec_account_rent_state,
+        RentState, check_rent_state, get_account_rent_state, get_post_exec_account_rent_state,
         get_pre_exec_account_rent_state,
     },
     solana_account::ReadableAccount,
@@ -21,7 +21,6 @@ impl TransactionAccountStateInfo {
         transaction_context: &TransactionContext,
         message: &impl SVMMessage,
         rent: &Rent,
-        relax_post_exec_min_balance_check: bool,
     ) -> Vec<Self> {
         iter_writable_accounts(transaction_context, message)
             .map(|acct_ref| {
@@ -33,7 +32,6 @@ impl TransactionAccountStateInfo {
                         balance,
                         data_size,
                         rent.minimum_balance(data_size),
-                        relax_post_exec_min_balance_check, // SIMD-0392 enabled. Assume `RentPaying` is impossible
                     );
 
                     WritableTransactionAccountStateInfo {
@@ -53,7 +51,6 @@ impl TransactionAccountStateInfo {
         message: &impl SVMMessage,
         pre_exec_state_infos: &[TransactionAccountStateInfo],
         rent: &Rent,
-        relax_post_exec_min_balance_check: bool,
     ) -> Vec<Self> {
         debug_assert_eq!(pre_exec_state_infos.len(), message.account_keys().len());
 
@@ -76,21 +73,24 @@ impl TransactionAccountStateInfo {
                     let pre_balance = pre_exec_state_info.balance;
 
                     // Criteria for rent-exempt relaxation as specified by SIMD-392
-                    let relax_rent_exempt_criteria = relax_post_exec_min_balance_check
-                        && pre_exec_state_info.data_size >= data_size
+                    let rent_state = if pre_exec_state_info.data_size >= data_size
                         && *pre_state == RentState::RentExempt
-                        && pre_exec_state_info.owner == owner;
-
-                    // Post-exec owner is currently not consumed by any caller.
-                    Some(WritableTransactionAccountStateInfo {
-                        rent_state: get_post_exec_account_rent_state(
+                        && pre_exec_state_info.owner == owner
+                    {
+                        get_post_exec_account_rent_state(
                             balance,
                             data_size,
                             min_balance,
                             pre_state,
                             pre_balance,
-                            relax_rent_exempt_criteria,
-                        ),
+                        )
+                    } else {
+                        get_account_rent_state(balance, data_size, min_balance)
+                    };
+
+                    // Post-exec owner is currently not consumed by any caller.
+                    Some(WritableTransactionAccountStateInfo {
+                        rent_state,
                         balance,
                         data_size,
                         owner,
@@ -223,8 +223,7 @@ mod test {
         let default_owner = Pubkey::default();
 
         let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20, 2);
-        let result =
-            TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent, true);
+        let result = TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent);
         assert_eq!(
             result,
             vec![
@@ -249,41 +248,6 @@ mod test {
         );
 
         // no post-exec in this test
-    }
-
-    #[test]
-    fn test_pre_exec_legacy_rent_paying() {
-        let rent = Rent::default();
-        let account = Pubkey::new_unique();
-        let program = Pubkey::new_unique();
-        let other_account = Pubkey::new_unique();
-
-        let data_len = 64;
-        let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full - 1;
-        // account must be both initialized and have a sub-exempt balance
-        assert!(pre_balance > 0);
-
-        let sanitized_message = sanitized_msg_for(program, account, other_account);
-        let tx_accounts = vec![
-            (
-                account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
-            ),
-            (program, AccountSharedData::default()),
-            (other_account, AccountSharedData::default()),
-        ];
-        let context = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
-        let pre =
-            TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent, false);
-
-        assert_eq!(
-            pre[0].info.as_ref().map(|info| &info.rent_state),
-            Some(&RentState::RentPaying {
-                data_size: data_len,
-                lamports: pre_balance
-            })
-        );
     }
 
     #[test]
@@ -324,7 +288,7 @@ mod test {
 
         let context = TransactionContext::new(transaction_accounts, rent.clone(), 20, 20, 2);
         let _result =
-            TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent, true);
+            TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent);
     }
 
     #[test]
@@ -344,21 +308,19 @@ mod test {
         let tx_accounts = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(
+                    pre_balance,
+                    vec![0; data_len],
+                    &Pubkey::default(),
+                ),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
         ];
         let context = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
-        let pre =
-            TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent, true);
-        let post = TransactionAccountStateInfo::new_post_exec(
-            &context,
-            &sanitized_message,
-            &pre,
-            &rent,
-            true,
-        );
+        let pre = TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent);
+        let post =
+            TransactionAccountStateInfo::new_post_exec(&context, &sanitized_message, &pre, &rent);
 
         assert_eq!(
             pre[0].info.as_ref().map(|info| &info.rent_state),
@@ -368,56 +330,6 @@ mod test {
             post[0].info.as_ref().map(|info| &info.rent_state),
             Some(&RentState::RentExempt)
         );
-    }
-
-    #[test]
-    fn test_post_exec_legacy_ignores_pre_balance() {
-        let rent = Rent::default();
-        let account = Pubkey::new_unique();
-        let program = Pubkey::new_unique();
-        let other_account = Pubkey::new_unique();
-
-        let data_len = 64;
-        let min_full = rent.minimum_balance(data_len);
-        let pre_balance = min_full - 5;
-        // account must be both initialized and have a sub-exempt balance
-        assert!(pre_balance > 0);
-
-        let sanitized_message = sanitized_msg_for(program, account, other_account);
-        let tx_accounts = vec![
-            (
-                account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
-            ),
-            (program, AccountSharedData::default()),
-            (other_account, AccountSharedData::default()),
-        ];
-        let context = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 2);
-        let pre =
-            TransactionAccountStateInfo::new_pre_exec(&context, &sanitized_message, &rent, false);
-        let post = TransactionAccountStateInfo::new_post_exec(
-            &context,
-            &sanitized_message,
-            &pre,
-            &rent,
-            false,
-        );
-
-        assert_eq!(
-            pre[0].info.as_ref().map(|info| &info.rent_state),
-            Some(&RentState::RentPaying {
-                data_size: data_len,
-                lamports: pre_balance
-            })
-        );
-        assert_eq!(
-            post[0].info.as_ref().map(|info| &info.rent_state),
-            Some(&RentState::RentPaying {
-                data_size: data_len,
-                lamports: pre_balance
-            })
-        );
-        assert!(post[1].info.as_ref().is_none());
     }
 
     #[test]
@@ -437,18 +349,18 @@ mod test {
         let mut tx_accounts = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(
+                    pre_balance,
+                    vec![0; data_len],
+                    &Pubkey::default(),
+                ),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts.clone(), rent.clone(), 20, 20, 2);
-        let pre = TransactionAccountStateInfo::new_pre_exec(
-            &context_pre,
-            &sanitized_message,
-            &rent,
-            true,
-        );
+        let pre =
+            TransactionAccountStateInfo::new_pre_exec(&context_pre, &sanitized_message, &rent);
 
         // post: drop balance by 1 (below minimum balance)
         let post_balance = pre_balance - 1;
@@ -461,7 +373,6 @@ mod test {
             &sanitized_message,
             &pre,
             &rent,
-            true,
         );
 
         assert_eq!(
@@ -506,24 +417,24 @@ mod test {
         let tx_accounts_pre = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; pre_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts_pre, rent.clone(), 20, 20, 2);
-        let pre = TransactionAccountStateInfo::new_pre_exec(
-            &context_pre,
-            &sanitized_message,
-            &rent,
-            true,
-        );
+        let pre =
+            TransactionAccountStateInfo::new_pre_exec(&context_pre, &sanitized_message, &rent);
 
         // post: size increased; balance unchanged => should require full min for new size
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(
+                    pre_balance,
+                    vec![0; post_len],
+                    &Pubkey::default(),
+                ),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -534,7 +445,6 @@ mod test {
             &sanitized_message,
             &pre,
             &rent,
-            true,
         );
 
         assert_eq!(
@@ -560,7 +470,7 @@ mod test {
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(post_min, post_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(post_min, vec![0; post_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -571,7 +481,6 @@ mod test {
             &sanitized_message,
             &pre,
             &rent,
-            true,
         );
 
         assert_eq!(
@@ -604,24 +513,24 @@ mod test {
         let tx_accounts_pre = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, pre_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(pre_balance, vec![0; pre_len], &Pubkey::default()),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts_pre, pre_rent.clone(), 20, 20, 2);
-        let pre = TransactionAccountStateInfo::new_pre_exec(
-            &context_pre,
-            &sanitized_message,
-            &pre_rent,
-            true,
-        );
+        let pre =
+            TransactionAccountStateInfo::new_pre_exec(&context_pre, &sanitized_message, &pre_rent);
 
         // post: size decreased; rent increased => should still not require top-up
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, post_len, &Pubkey::default()),
+                AccountSharedData::new_with_data(
+                    pre_balance,
+                    vec![0; post_len],
+                    &Pubkey::default(),
+                ),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -632,7 +541,6 @@ mod test {
             &sanitized_message,
             &pre,
             &post_rent,
-            true,
         );
 
         assert_eq!(
@@ -667,24 +575,20 @@ mod test {
         let tx_accounts_pre = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &owner_pre),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &owner_pre),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
         ];
         let context_pre = TransactionContext::new(tx_accounts_pre, rent.clone(), 20, 20, 2);
-        let pre = TransactionAccountStateInfo::new_pre_exec(
-            &context_pre,
-            &sanitized_message,
-            &rent,
-            true,
-        );
+        let pre =
+            TransactionAccountStateInfo::new_pre_exec(&context_pre, &sanitized_message, &rent);
 
         // post: owner changed; balance/size unchanged => should require full min
         let tx_accounts_post = vec![
             (
                 account,
-                AccountSharedData::new(pre_balance, data_len, &owner_post),
+                AccountSharedData::new_with_data(pre_balance, vec![0; data_len], &owner_post),
             ),
             (program, AccountSharedData::default()),
             (other_account, AccountSharedData::default()),
@@ -695,7 +599,6 @@ mod test {
             &sanitized_message,
             &pre,
             &rent,
-            true,
         );
 
         assert_eq!(

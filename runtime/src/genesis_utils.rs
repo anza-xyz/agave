@@ -17,9 +17,7 @@ use {
     },
     bitvec::vec::BitVec,
     log::*,
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
-    },
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_bls_signatures::{
         BLS_SIGNATURE_AFFINE_SIZE, Pubkey as BLSPubkey, Signature as BLSSignature,
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
@@ -43,7 +41,7 @@ use {
     solana_sysvar::epoch_rewards,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     solana_vote_program::vote_state,
-    std::{borrow::Borrow, sync::Arc},
+    std::borrow::Borrow,
     wincode::{SchemaRead, SchemaWrite},
 };
 
@@ -140,6 +138,18 @@ pub fn create_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
         mint_lamports,
         &solana_pubkey::new_rand(), // validator_pubkey
         0,                          // validator_stake_lamports
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub fn create_genesis_config_with_default_rent(mint_lamports: u64) -> GenesisConfigInfo {
+    create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
+        Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap(),
+        mint_lamports,
+        &solana_pubkey::new_rand(), // validator_pubkey
+        0,                          // validator_stake_lamports
+        &FeatureSet::all_enabled(),
+        Rent::default(),
     )
 }
 
@@ -295,6 +305,7 @@ pub fn create_genesis_config_with_tower_leader(
         validator_pubkey,
         validator_stake_lamports,
         &feature_set,
+        Rent::free(),
     )
 }
 
@@ -310,6 +321,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         validator_pubkey,
         validator_stake_lamports,
         &FeatureSet::all_enabled(),
+        Rent::free(),
     )
 }
 
@@ -319,6 +331,7 @@ fn create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
     feature_set: &FeatureSet,
+    rent: Rent,
 ) -> GenesisConfigInfo {
     // Use deterministic keypair so we don't get confused by randomness in tests
     let voting_keypair = Keypair::from_seed(&[
@@ -344,7 +357,7 @@ fn create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
-        Rent::free(),               // most tests don't expect rent
+        rent,
         ClusterType::Development,
         feature_set,
         vec![],
@@ -473,7 +486,7 @@ pub(crate) fn create_validator(
         stake_lamports,
     );
 
-    let node_account = AccountSharedData::new(node_lamports, 0, &system_program::id());
+    let node_account = AccountSharedData::empty(node_lamports, &system_program::id());
 
     vec![
         (vote_pubkey, vote_account),
@@ -516,7 +529,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
 
     initial_accounts.push((
         *mint_pubkey,
-        AccountSharedData::new(mint_lamports, 0, &system_program::id()),
+        AccountSharedData::empty(mint_lamports, &system_program::id()),
     ));
     let mut validator_accounts = create_validator(
         &rent,
@@ -672,13 +685,7 @@ pub fn add_genesis_epoch_rewards_account(genesis_config: &mut GenesisConfig) -> 
     let data = vec![0; epoch_rewards::SIZE];
     let lamports = std::cmp::max(genesis_config.rent.minimum_balance(data.len()), 1);
 
-    let account = AccountSharedData::create_from_existing_shared_data(
-        lamports,
-        Arc::new(data),
-        sysvar::id(),
-        false,
-        u64::MAX,
-    );
+    let account = AccountSharedData::new_with_data(lamports, data, &sysvar::id());
 
     genesis_config.add_account(epoch_rewards::id(), account);
 
@@ -692,25 +699,24 @@ pub fn create_lockup_stake_account(
     rent: &Rent,
     lamports: u64,
 ) -> AccountSharedData {
-    let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
-
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
     assert!(
         lamports >= rent_exempt_reserve,
         "lamports: {lamports} is less than rent_exempt_reserve {rent_exempt_reserve}"
     );
 
-    stake_account
-        .set_state(&StakeStateV2::Initialized(Meta {
+    AccountSharedData::new_data_with_space(
+        lamports,
+        &StakeStateV2::Initialized(Meta {
             authorized: *authorized,
             lockup: *lockup,
             #[expect(deprecated)]
             rent_exempt_reserve,
-        }))
-        .expect("set_state");
-
-    stake_account
+        }),
+        StakeStateV2::size_of(),
+        &stake_program::id(),
+    )
+    .expect("stake state fits StakeStateV2::size_of()")
 }
 
 #[cfg(test)]

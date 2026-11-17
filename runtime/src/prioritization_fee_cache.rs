@@ -225,10 +225,12 @@ impl PrioritizationFeeCache {
 
                 let transaction_configuration =
                     sanitized_transaction.transaction_configuration(&bank.feature_set);
-                let lock_result = validate_account_locks(
-                    sanitized_transaction.account_keys(),
-                    bank.get_transaction_account_lock_limit(),
-                );
+                let limits = bank.get_transaction_account_lock_limits();
+                let Ok(limit) = limits.for_version(sanitized_transaction.version()) else {
+                    continue;
+                };
+                let lock_result =
+                    validate_account_locks(sanitized_transaction.account_keys(), limit);
 
                 if transaction_configuration.is_err() || lock_result.is_err() {
                     continue;

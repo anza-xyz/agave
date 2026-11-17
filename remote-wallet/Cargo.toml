@@ -42,7 +42,7 @@ log = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 parking_lot = { workspace = true }
-rusb = { workspace = true, optional = true }
+rusb = { workspace = true, optional = true, features = ["vendored"] }
 semver = { workspace = true }
 serde_json = { workspace = true, optional = true }
 solana-derivation-path = { workspace = true }
@@ -57,7 +57,6 @@ ur-registry = { workspace = true, optional = true }
 uriparse = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 serial_test = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 

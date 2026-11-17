@@ -40,7 +40,7 @@ fn bench_write_accounts_file(c: &mut Criterion) {
         let accounts: Vec<_> = std::iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(lamports, space, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(lamports, vec![0; space], &Pubkey::new_unique()),
             )
         })
         .take(accounts_count)
@@ -169,7 +169,10 @@ fn bench_get_account_shared_data(c: &mut Criterion) {
             BenchmarkId::new("append_vec_file_get_account_shared_data", data_size),
             |b| {
                 b.iter_with_large_drop(|| {
-                    _ = append_vec_file.get_account_shared_data(0).unwrap();
+                    _ = append_vec_file
+                        .get_account_shared_data_if(0, |_, _, _| true)
+                        .unwrap()
+                        .unwrap();
                 });
             },
         );

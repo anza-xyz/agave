@@ -18,7 +18,6 @@ pub mod crds_value;
 pub mod duplicate_shred;
 pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
-pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
 pub mod gossip_service;
@@ -35,10 +34,6 @@ pub mod weighted_shuffle;
 
 #[macro_use]
 extern crate log;
-
-#[cfg(test)]
-#[macro_use]
-extern crate assert_matches;
 
 #[macro_use]
 extern crate solana_metrics;

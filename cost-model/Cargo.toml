@@ -32,19 +32,19 @@ dev-context-only-utils = [
 agave-feature-set = { workspace = true }
 ahash = { workspace = true }
 log = { workspace = true }
-solana-bincode = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-hash = { workspace = true, optional = true }
 solana-message = { workspace = true, optional = true }
-solana-packet = { workspace = true }
+solana-packet = { workspace = true, features = ["wincode"] }
 solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-system-interface = { workspace = true }
+solana-system-interface = { workspace = true, features = ["wincode"] }
 solana-transaction = { workspace = true, optional = true }
 solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
+wincode = { workspace = true }
 
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }

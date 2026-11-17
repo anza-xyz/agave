@@ -472,7 +472,7 @@ mod tests {
         let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 0,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             },
         );
         s.send((bank1.clone(), (RecorderMessage::Marker(marker), max_tick)))
@@ -514,7 +514,7 @@ mod tests {
         let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 0,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             },
         );
         s.send((bank1.clone(), (RecorderMessage::Marker(marker), 2)))
@@ -589,7 +589,7 @@ mod tests {
         let marker = solana_entry::block_component::VersionedBlockMarker::from_block_header(
             solana_entry::block_component::BlockHeaderV1 {
                 parent_slot: 1,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             },
         );
         s.send((bank2.clone(), (RecorderMessage::Marker(marker), 3)))

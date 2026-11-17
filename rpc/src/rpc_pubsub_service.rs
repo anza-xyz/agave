@@ -40,7 +40,6 @@ pub const DEFAULT_WORKER_THREADS: usize = 1;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
-    pub enable_vote_subscription: bool,
     pub max_active_subscriptions: usize,
     pub queue_capacity_items: usize,
     pub queue_capacity_bytes: usize,
@@ -52,7 +51,6 @@ impl PubSubConfig {
     pub const fn default_for_tests() -> Self {
         Self {
             enable_block_subscription: false,
-            enable_vote_subscription: false,
             max_active_subscriptions: DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS,
             queue_capacity_items: DEFAULT_TEST_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_TEST_QUEUE_CAPACITY_BYTES,
@@ -120,7 +118,6 @@ struct SentNotificationStats {
     num_slot: AtomicUsize,
     num_slots_updates: AtomicUsize,
     num_root: AtomicUsize,
-    num_vote: AtomicUsize,
     num_block: AtomicUsize,
     total_creation_to_queue_time_us: AtomicU64,
     last_report: AtomicInterval,
@@ -164,11 +161,6 @@ impl SentNotificationStats {
                 (
                     "num_root",
                     self.num_root.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
-                    "num_vote",
-                    self.num_vote.swap(0, Ordering::Relaxed) as i64,
                     i64
                 ),
                 (
@@ -218,9 +210,6 @@ fn increment_sent_notification_stats(
         }
         SubscriptionParams::Root => {
             stats.num_root.fetch_add(1, Ordering::Relaxed);
-        }
-        SubscriptionParams::Vote => {
-            stats.num_vote.fetch_add(1, Ordering::Relaxed);
         }
         SubscriptionParams::Block(_) => {
             stats.num_block.fetch_add(1, Ordering::Relaxed);
@@ -320,7 +309,6 @@ pub fn test_connection(
     let rpc_impl = RpcSolPubSubImpl::new(
         PubSubConfig {
             enable_block_subscription: true,
-            enable_vote_subscription: true,
             ..PubSubConfig::default_for_tests()
         },
         subscriptions.control().clone(),

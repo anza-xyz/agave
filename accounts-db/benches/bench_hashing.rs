@@ -41,7 +41,7 @@ fn bench_hash_account(c: &mut Criterion) {
     for data_size in DATA_SIZES {
         let num_bytes = META_SIZE.checked_add(data_size).unwrap();
         group.throughput(Throughput::Bytes(num_bytes as u64));
-        let account = AccountSharedData::new(lamports, data_size, &owner);
+        let account = AccountSharedData::new_with_data(lamports, vec![0; data_size], &owner);
         group.bench_function(BenchmarkId::new("lattice", data_size), |b| {
             b.iter(|| AccountsDb::lt_hash_account(&account, &address));
         });

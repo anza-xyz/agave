@@ -38,6 +38,7 @@ use {
             Arc,
             atomic::{AtomicU64, Ordering},
         },
+        thread,
     },
     wincode::{
         SchemaRead,
@@ -1221,13 +1222,14 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
 /// The default number of threads to use for rocksdb compaction in the rocksdb
 /// low priority threadpool
 pub fn default_num_compaction_threads() -> NonZeroUsize {
-    NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero")
+    thread::available_parallelism().unwrap_or(NonZeroUsize::MIN)
 }
 
 /// The default number of threads to use for rocksdb memtable flushes in the
 /// rocksdb high priority threadpool
 pub fn default_num_flush_threads() -> NonZeroUsize {
-    NonZeroUsize::new((num_cpus::get() / 4).max(1)).expect("thread count is non-zero")
+    let num_cpus = thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    NonZeroUsize::new(num_cpus / 4).unwrap_or(NonZeroUsize::MIN)
 }
 
 // Returns whether automatic compactions should be disabled for the entire

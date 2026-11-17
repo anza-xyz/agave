@@ -30,7 +30,7 @@ fn test_bpf_loader_invoke_main() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/sbpfv3_return_ok.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::new(1, 0, &loader_id);
+    let parameter_account = AccountSharedData::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -120,7 +120,7 @@ fn test_bpf_loader_serialize_unaligned() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/noop_unaligned.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::new(1, 0, &loader_id);
+    let parameter_account = AccountSharedData::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -158,7 +158,7 @@ fn test_bpf_loader_serialize_aligned() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/noop_aligned.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::new(1, 0, &loader_id);
+    let parameter_account = AccountSharedData::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,

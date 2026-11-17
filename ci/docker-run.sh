@@ -55,50 +55,6 @@ if [[ -n $CI ]]; then
       --label "buildkite_job=${BUILDKITE_JOB_ID:-unknown}"
     )
 
-    # I hate buildkite-esque echo is leaking into this generic shell wrapper.
-    # but it's easiest to notify to users, and properly guarded under $BUILDKITE_ env
-    # (2 is chosen for third time's the charm).
-    if [[ $BUILDKITE_RETRY_COUNT -ge 2 ]]; then
-      # Disable sccache to create a clean-room environment to preclude any
-      # sccache-related bugs
-      echo "--- $0 ... (with sccache being DISABLED due to many (${BUILDKITE_RETRY_COUNT}) retries)"
-    else
-      echo "--- $0 ... (with sccache enabled with prefix: $SCCACHE_KEY_PREFIX)"
-
-      # sccache
-      ARGS+=(
-        --env "RUSTC_WRAPPER=/usr/local/cargo/bin/sccache"
-      )
-      # local disk storage for sccache (experimental; only used by dcou for now)
-      mkdir -p "$HOME/.cache/sccache-for-docker"
-      CONTAINER_HOME="/"
-      ARGS+=(
-        --volume "$HOME/.cache/sccache-for-docker:$CONTAINER_HOME/.cache/sccache"
-      )
-
-      # s3
-      if [ -n "$AWS_ACCESS_KEY_ID" ]; then
-        ARGS+=(
-          --env AWS_ACCESS_KEY_ID
-          --env AWS_SECRET_ACCESS_KEY
-          --env SCCACHE_BUCKET
-          --env SCCACHE_REGION
-          --env SCCACHE_S3_KEY_PREFIX
-        )
-      fi
-
-      # gcs
-      if [ -n "$SCCACHE_GCS_KEY_PATH" ]; then
-        ARGS+=(
-          --env SCCACHE_GCS_KEY_PATH
-          --volume "$SCCACHE_GCS_KEY_PATH:$SCCACHE_GCS_KEY_PATH"
-          --env SCCACHE_GCS_BUCKET
-          --env SCCACHE_GCS_RW_MODE
-          --env SCCACHE_GCS_KEY_PREFIX
-        )
-      fi
-    fi
-
     # Disable seccomp to allow io_uring operations (https://github.com/moby/moby/pull/46762)
     ARGS+=(--security-opt seccomp=unconfined)
     # Adjust memlock limit to let io_uring register buffers

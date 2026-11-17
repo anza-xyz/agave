@@ -19,11 +19,11 @@
 //
 // CrdsData variant indices:
 //   0 = LegacyContactInfo    (deprecated)
-//   1 = Vote(u8, Vote)
-//   2 = LowestSlot(u8, LowestSlot)
+//   1 = Vote                 (deprecated; former payload was u8 + Vote)
+//   2 = LowestSlot          (deprecated)
 //   3 = LegacySnapshotHashes (deprecated)
 //   4 = AccountsHashes       (deprecated)
-//   5 = EpochSlots(u8, EpochSlots)
+//   5 = EpochSlots          (deprecated)
 //   6 = LegacyVersion        (deprecated)
 //   7 = Version              (deprecated)
 //   8 = NodeInstance          (deprecated)
@@ -151,29 +151,6 @@ pub(crate) fn make_snapshot_hashes_crds_data(
     buf
 }
 
-/// Build an EpochSlots CrdsData (variant 5).
-pub(crate) fn make_epoch_slots_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
-    // EpochSlots is serialized by wincode. Build and serialize.
-    use solana_gossip::{crds_data::CrdsData, epoch_slots::EpochSlots};
-    let es = EpochSlots::new(solana_pubkey::Pubkey::from(*from), wallclock);
-    wincode::serialize(&CrdsData::EpochSlots(index, es)).unwrap()
-}
-
-/// Build a LowestSlot CrdsData (variant 2).
-pub(crate) fn make_lowest_slot_crds_data(
-    index: u8,
-    from: &[u8; 32],
-    lowest: u64,
-    wallclock: u64,
-) -> Vec<u8> {
-    use solana_gossip::crds_data::{CrdsData, LowestSlot};
-    let ls = LowestSlot::new(solana_pubkey::Pubkey::from(*from), lowest, wallclock);
-    let mut data = wincode::serialize(&CrdsData::LowestSlot(0, ls)).unwrap();
-    // Patch the index byte (offset 4 in the serialized CrdsData)
-    data[4] = index;
-    data
-}
-
 /// Build a PullRequest (variant 0) from raw CrdsFilter + CrdsValue bytes.
 pub(crate) fn make_pull_request_bytes(filter_bytes: &[u8], value_bytes: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -192,26 +169,6 @@ pub(crate) fn make_crds_filter_bytes() -> Vec<u8> {
     let filter = CrdsFilter::new_rand(5_697, 128);
     assert_eq!(filter.get_mask_bits(), 6);
     wincode::serialize(&filter).unwrap()
-}
-
-/// Build a Vote CrdsData (variant 1).
-/// The inner Transaction is complex; we construct and serialize via Rust objects.
-pub(crate) fn make_vote_crds_data(index: u8, from: &[u8; 32], wallclock: u64) -> Vec<u8> {
-    use {
-        solana_gossip::crds_data::{CrdsData, Vote as CrdsVote},
-        solana_keypair::Keypair,
-        solana_signer::Signer,
-        solana_vote_program::{vote_instruction, vote_state::Vote},
-    };
-    let keypair = Keypair::new_from_array(*from);
-    let vote = Vote::new(vec![1], solana_hash::Hash::default());
-    let vote_ix = vote_instruction::vote(&keypair.pubkey(), &keypair.pubkey(), vote);
-    let mut vote_tx =
-        solana_transaction::Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-    vote_tx.partial_sign(&[&keypair], solana_hash::Hash::default());
-    let crds_vote = CrdsVote::new(solana_pubkey::Pubkey::from(*from), vote_tx, wallclock)
-        .expect("valid vote tx");
-    wincode::serialize(&CrdsData::Vote(index, crds_vote)).unwrap()
 }
 
 /// Build a DuplicateShred CrdsData (variant 9).

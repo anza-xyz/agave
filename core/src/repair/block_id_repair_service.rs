@@ -303,13 +303,12 @@ impl BlockIdRepairService {
             .name("solBlockIdRep".to_string())
             .spawn(move || {
                 info!("BlockIdRepairService started");
-                let (sharable_banks, migration_status) = {
-                    let bank_forks_r = context.repair_info.bank_forks.read().unwrap();
-                    (
-                        bank_forks_r.sharable_banks(),
-                        bank_forks_r.migration_status(),
-                    )
-                };
+                let sharable_banks = context
+                    .repair_info
+                    .bank_forks
+                    .read()
+                    .unwrap()
+                    .sharable_banks();
                 let mut state = RepairState {
                     // One day we'll actually split out the build request functionality from the full ServeRepair :'(
                     serve_repair: ServeRepair::new(
@@ -317,7 +316,6 @@ impl BlockIdRepairService {
                         sharable_banks.clone(),
                         context.repair_info.repair_whitelist.clone(),
                         Box::new(StandardRepairHandler::new(context.blockstore.clone())),
-                        migration_status,
                     ),
                     peers_cache: LruCache::new(REPAIR_PEERS_CACHE_CAPACITY),
                     outstanding_requests: OutstandingBlockIdRepairs::default(),
@@ -1060,13 +1058,12 @@ mod tests {
     use {
         super::*,
         crate::repair::request_response::RequestResponse as _,
+        agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, ping_pong::Ping},
         solana_hash::Hash,
         solana_keypair::{Keypair, Signer},
         solana_ledger::{
-            blockstore::Blockstore,
-            get_tmp_ledger_path_auto_delete,
-            shred::merkle_tree::{MerkleTree, SIZE_OF_MERKLE_PROOF_ENTRY},
+            blockstore::Blockstore, get_tmp_ledger_path_auto_delete, shred::merkle_tree::MerkleTree,
         },
         solana_net_utils::SocketAddrSpace,
         solana_perf::packet::BytesPacket,

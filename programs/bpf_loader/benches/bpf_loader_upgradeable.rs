@@ -50,15 +50,15 @@ mod bench {
             let transaction_accounts = vec![
                 (
                     buffer_address,
-                    AccountSharedData::new(
+                    AccountSharedData::new_with_data(
                         ACCOUNT_BALANCE,
-                        UpgradeableLoaderState::size_of_buffer(PROGRAM_BUFFER_SIZE),
+                        vec![0; UpgradeableLoaderState::size_of_buffer(PROGRAM_BUFFER_SIZE)],
                         &loader_address,
                     ),
                 ),
                 (
                     authority_address,
-                    AccountSharedData::new(ACCOUNT_BALANCE, 0, &loader_address),
+                    AccountSharedData::empty(ACCOUNT_BALANCE, &loader_address),
                 ),
             ];
 
@@ -78,7 +78,7 @@ mod bench {
                 is_writable: false,
             });
             self.instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
         }
 
         fn prep_write(&mut self) {
@@ -95,7 +95,7 @@ mod bench {
                 })
                 .unwrap();
 
-            self.instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+            self.instruction_data = wincode::serialize(&UpgradeableLoaderInstruction::Write {
                 offset: 0,
                 bytes: vec![64; PROGRAM_BUFFER_SIZE],
             })
@@ -124,14 +124,14 @@ mod bench {
                 .unwrap();
             self.transaction_accounts.push((
                 new_authority_address,
-                AccountSharedData::new(ACCOUNT_BALANCE, 0, &self.loader_address),
+                AccountSharedData::empty(ACCOUNT_BALANCE, &self.loader_address),
             ));
             let instruction = if checked {
                 UpgradeableLoaderInstruction::SetAuthorityChecked
             } else {
                 UpgradeableLoaderInstruction::SetAuthority
             };
-            self.instruction_data = bincode::serialize(&instruction).unwrap();
+            self.instruction_data = wincode::serialize(&instruction).unwrap();
         }
 
         fn prep_close(&mut self) {
@@ -150,7 +150,7 @@ mod bench {
             self.transaction_accounts
                 .push(self.transaction_accounts[1].clone());
             self.instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+                wincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
         }
 
         fn run(&self) {

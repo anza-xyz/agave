@@ -133,9 +133,9 @@ pub fn any_plugin_opts_in(plugin_manager: &GeyserPluginHost) -> bool {
 /// 1. Creates a bounded channel of the requested capacity.
 /// 2. Attaches the sender to `cluster_info`'s underlying CRDS table so
 ///    every accepted contact info insert produces a snapshot event.
-/// 3. Walks the current CRDS state (filtered to the local shred
-///    version, matching the convention used by `getClusterNodes`) and
-///    captures it as the initial replay set.
+/// 3. Walks the current CRDS state (every contact info, including spies
+///    and nodes with a different shred version) and captures it as the
+///    initial replay set.
 /// 4. Spawns the dispatch thread, which will deliver the initial set
 ///    with `is_startup=true` before transitioning to live updates.
 ///
@@ -153,9 +153,9 @@ pub fn attach(
     let (sender, receiver) = channel(capacity);
     cluster_info.set_contact_info_sender(sender);
     let initial_state: Vec<ContactInfoSnapshot> = cluster_info
-        .all_peers()
+        .contact_infos(|info| Some(ContactInfoSnapshot::from(info)))
         .into_iter()
-        .map(|(info, _)| ContactInfoSnapshot::from(&info))
+        .map(|(snapshot, _)| snapshot)
         .collect();
     Some(ContactInfoNotifier::spawn(
         plugin_manager,

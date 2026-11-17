@@ -24,6 +24,7 @@ pub struct StakeReward {
     pub stake_pubkey: Pubkey,
     pub stake_reward_info: StakeRewardInfo,
     pub stake_account: AccountSharedData,
+    pub block_reward_lamports: u64,
 }
 
 impl StakeReward {
@@ -118,6 +119,7 @@ impl StakeReward {
 
         let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
         let reward_lamports: i64 = rng.random_range(1..200);
+        let block_reward_lamports: u64 = rng.random_range(1..200);
         let validator_stake_account = create_stake_account(
             &validator_staking_keypair.pubkey(),
             &validator_voting_keypair.pubkey(),
@@ -134,8 +136,8 @@ impl StakeReward {
                 post_balance: 0,         /* unused atm */
                 commission_bps: Some(0), /* unused but tests require some value */
             },
-
             stake_account: validator_stake_account,
+            block_reward_lamports,
         }
     }
 
@@ -154,15 +156,12 @@ fn create_stake_account(
     rent: &Rent,
     lamports: u64,
 ) -> AccountSharedData {
-    let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
-
     let vote_state =
         vote_state::VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
     let credits_observed = vote_state.credits();
     let last_epoch = vote_state.epoch_credits.last().map(|c| c.0).unwrap_or(0);
 
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
     let stake_amount = lamports
         .checked_sub(rent_exempt_reserve)
         .expect("lamports >= rent_exempt_reserve");
@@ -189,9 +188,11 @@ fn create_stake_account(
         credits_observed,
     };
 
-    stake_account
-        .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-        .expect("set_state");
-
-    stake_account
+    AccountSharedData::new_data_with_space(
+        lamports,
+        &StakeStateV2::Stake(meta, stake, StakeFlags::empty()),
+        StakeStateV2::size_of(),
+        &stake_program::id(),
+    )
+    .expect("failed to create stake account")
 }

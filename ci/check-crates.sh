@@ -12,7 +12,7 @@ fi
 
 if ! command -v toml &>/dev/null; then
   echo "not found toml-cli"
-  cargo install toml-cli
+  cargo install toml-cli@0.2.3 --locked
 fi
 
 declare skip_patterns=(

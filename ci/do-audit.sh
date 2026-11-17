@@ -25,6 +25,8 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2022-0093
   # URL:       https://rustsec.org/advisories/RUSTSEC-2022-0093
   # Solution:  Upgrade to >=2
+  # Note:      dev-dependency of agave-precompiles only; the ed25519 precompile
+  #            test compares against the exact dalek version it used to call.
   --ignore RUSTSEC-2022-0093
 
   # Crate:     idna
@@ -45,16 +47,20 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2024-0344
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0344
   # Solution:  Upgrade to >=4.1.3
+  # Note:      pulled in by the ed25519-dalek 1.0.1 dev-dependency above.
   --ignore RUSTSEC-2024-0344
 
-  # Crate:     tonic
-  # Version:   0.9.2
-  # Title:     Remotely exploitable Denial of Service in Tonic
-  # Date:      2024-10-01
-  # ID:        RUSTSEC-2024-0376
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
-  # Solution:  Upgrade to >=0.12.3
-  --ignore RUSTSEC-2024-0376
+  # Crate:     crypto-bigint
+  # Version:   0.5.5
+  # Title:     Multiple timing variability issues in operations intended to be constant-time
+  # Date:      2026-10-23
+  # ID:        RUSTSEC-2026-0387
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0387
+  # Solution:  Upgrade to >=0.7.6
+  # Agave Ok:  only reached through k256 in solana-secp256k1-program and
+  # solana-secp256k1-recover, which verify and recover over public data.
+  # The fix needs those SDK crates to move to elliptic-curve 0.14.
+  --ignore RUSTSEC-2026-0387
 )
 
 xtask_cargo_audit_extra_args=(

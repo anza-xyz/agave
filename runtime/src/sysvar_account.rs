@@ -2,8 +2,7 @@
 use qualifier_attr::qualifiers;
 use {
     solana_account::{
-        AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
-        state_traits::StateMutWincode,
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode,
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
@@ -37,8 +36,12 @@ fn required_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize {
         .max(serialized_len)
 }
 
+// Initial balance of a nonexistent sysvar account before Bank raises it to rent-exemption
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) fn create_account<T>(sysvar: &T, fields: InheritableAccountFields) -> AccountSharedData
+pub(crate) const RENT_UNADJUSTED_INITIAL_BALANCE: u64 = 1;
+
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) fn create_account<T>(sysvar: &T, lamports: u64) -> AccountSharedData
 where
     T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
         + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
@@ -46,16 +49,13 @@ where
 {
     let serialized_len = wincode::config::serialized_size(sysvar, solana_account::WINCODE_CONFIG)
         .expect("failed to get serialized sysvar size") as usize;
-    let (lamports, rent_epoch) = fields;
-    let mut account = AccountSharedData::new_data_with_space(
+    AccountSharedData::new_data_with_space(
         lamports,
         sysvar,
         required_data_len(&T::id(), serialized_len),
         &sysvar::id(),
     )
-    .unwrap_or_else(|err| panic!("failed to serialize sysvar {}: {err}", T::id()));
-    account.set_rent_epoch(rent_epoch);
-    account
+    .unwrap_or_else(|err| panic!("failed to serialize sysvar {}: {err}", T::id()))
 }
 
 pub(crate) fn from_account<T>(account: &AccountSharedData) -> Option<T>

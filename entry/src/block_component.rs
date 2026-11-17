@@ -251,7 +251,7 @@ pub struct BlockFooterV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockHeaderV1 {
     pub parent_slot: Slot,
-    pub parent_block_id: Hash,
+    pub parent_block_id: BlockId,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
@@ -544,7 +544,7 @@ impl BlockComponent {
     pub(crate) const ENTRY_COUNT_SIZE: usize = 8;
     pub(crate) const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
-    pub fn new_block_header(parent_slot: Slot, parent_block_id: Hash) -> Self {
+    pub fn new_block_header(parent_slot: Slot, parent_block_id: BlockId) -> Self {
         let header = BlockHeaderV1 {
             parent_slot,
             parent_block_id,
@@ -868,7 +868,7 @@ mod tests {
     fn round_trips() {
         let header = BlockHeaderV1 {
             parent_slot: 12345,
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
         };
         let bytes = wincode::serialize(&header).unwrap();
         assert_eq!(
@@ -917,7 +917,7 @@ mod tests {
     fn length_prefixed_rejects_inner_size_mismatch() {
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 12345,
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
         });
         let prefixed = LengthPrefixed::new(header);
         let mut bytes = wincode::serialize(&prefixed).unwrap();

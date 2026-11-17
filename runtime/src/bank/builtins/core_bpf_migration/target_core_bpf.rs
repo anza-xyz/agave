@@ -31,7 +31,7 @@ impl TargetCoreBpf {
 
         // The program account should exist.
         let program_account = bank
-            .get_account_with_fixed_root(program_address)
+            .get_account(program_address)
             .ok_or(CoreBpfMigrationError::AccountNotFound(*program_address))?;
 
         // The program account should be owned by the upgradeable loader.
@@ -59,11 +59,9 @@ impl TargetCoreBpf {
         }
 
         // The program data account should exist.
-        let program_data_account = bank
-            .get_account_with_fixed_root(&program_data_address)
-            .ok_or(CoreBpfMigrationError::ProgramHasNoDataAccount(
-                *program_address,
-            ))?;
+        let program_data_account = bank.get_account(&program_data_address).ok_or(
+            CoreBpfMigrationError::ProgramHasNoDataAccount(*program_address),
+        )?;
 
         // The program data account should be owned by the upgradeable loader.
         if program_data_account.owner() != &bpf_loader_upgradeable::id() {
@@ -94,16 +92,15 @@ impl TargetCoreBpf {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::bank::tests::create_simple_test_bank, assert_matches::assert_matches,
-        solana_account::WritableAccount, solana_sdk_ids::bpf_loader_upgradeable,
+        super::*, crate::bank::tests::create_simple_test_bank, solana_account::WritableAccount,
+        solana_sdk_ids::bpf_loader_upgradeable, std::assert_matches,
     };
 
     fn store_account(bank: &Bank, address: &Pubkey, data: &[u8], owner: &Pubkey, executable: bool) {
         let space = data.len();
         let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-        let mut account = AccountSharedData::new(lamports, space, owner);
+        let mut account = AccountSharedData::new_with_data(lamports, data.to_vec(), owner);
         account.set_executable(executable);
-        account.data_as_mut_slice().copy_from_slice(data);
         bank.store_account_and_update_capitalization(address, &account);
     }
 

@@ -17,6 +17,7 @@ impl Debug for Ancestors {
 }
 
 /// Pairs each slot with a bank id equal to it
+#[cfg(feature = "dev-context-only-utils")]
 impl From<Vec<Slot>> for Ancestors {
     fn from(source: Vec<Slot>) -> Ancestors {
         Ancestors::from(

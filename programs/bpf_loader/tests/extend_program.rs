@@ -10,7 +10,7 @@ use {
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, extend_program},
         state::UpgradeableLoaderState,
     },
-    solana_program_runtime::program_cache_entry::ProgramCacheEntry,
+    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sbpf::program::BuiltinFunctionDefinition,
@@ -36,7 +36,11 @@ fn process_instruction(
         &instruction.data,
         transaction_accounts,
         instruction.accounts,
-        loader_v3_features,
+        // SIMD-0685 removes ExtendProgram, which these tests exercise.
+        LoaderV3Features {
+            remove_extend_program: false,
+            ..loader_v3_features
+        },
         expected_result,
         |invoke_context| {
             invoke_context.program_cache_for_tx_batch.replenish(
@@ -79,13 +83,13 @@ fn get_accounts(
         programdata,
         (
             *payer_address,
-            AccountSharedData::new(10_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(10_000_000_000, &system_program::id()),
         ),
         (sysvar::clock::id(), create_clock_account(1)),
         (sysvar::rent::id(), create_sysvar_account(&Rent::default())),
         (
             system_program::id(),
-            AccountSharedData::new(0, 0, &native_loader::id()),
+            AccountSharedData::empty(0, &native_loader::id()),
         ),
     ]
 }
@@ -352,15 +356,15 @@ fn test_extend_program_with_invalid_payer() {
     transaction_accounts.extend([
         (
             payer_with_sufficient_funds,
-            AccountSharedData::new(10_000_000_000, 0, &system_program::id()),
+            AccountSharedData::empty(10_000_000_000, &system_program::id()),
         ),
         (
             payer_with_insufficient_funds,
-            AccountSharedData::new(rent.minimum_balance(0), 0, &system_program::id()),
+            AccountSharedData::empty(rent.minimum_balance(0), &system_program::id()),
         ),
         (
             payer_with_invalid_owner,
-            AccountSharedData::new(10_000_000_000, 0, &id()),
+            AccountSharedData::empty(10_000_000_000, &id()),
         ),
     ]);
 
@@ -1084,4 +1088,19 @@ fn test_extend_program_near_max_headroom_requirement() {
             programdata_len + (headroom as usize),
         );
     }
+}
+
+#[test]
+fn test_extend_program_simd_0685() {
+    // With SIMD-0685 enabled, the instruction should be rejected.
+    let instruction = extend_program(&Pubkey::new_unique(), None, MINIMUM_EXTEND_PROGRAM_BYTES);
+    process_instruction_with_setup(
+        &instruction.program_id,
+        &instruction.data,
+        Vec::new(),
+        Vec::new(),
+        LoaderV3Features::all_enabled(),
+        Err(InstructionError::InvalidInstructionData),
+        |_invoke_context| {},
+    );
 }

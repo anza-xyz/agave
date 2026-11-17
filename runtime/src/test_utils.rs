@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
     rand::Rng,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_bls_signatures::{
         keypair::Keypair as BLSKeypair, pubkey::PubkeyCompressed as BLSPubkeyCompressed,
     },
@@ -27,8 +27,6 @@ where
     F: Fn(u64) -> u64,
 {
     let owner = solana_sdk_ids::vote::id();
-    let mut account = AccountSharedData::new(lamports, VoteStateV4::size_of(), &owner);
-
     let bls_pubkey_compressed = set_bls_pubkey.then(|| {
         let bls_pubkey: BLSPubkeyCompressed = (*BLSKeypair::new().public).into();
         let bls_pubkey_buffer = wincode::serialize(&bls_pubkey).unwrap();
@@ -39,18 +37,17 @@ where
         authorized_voters: AuthorizedVoters::new(0, Pubkey::new_unique()),
         authorized_withdrawer: Pubkey::new_unique(),
         bls_pubkey_compressed,
-        pending_delegator_rewards: pending_delegator_rewards_from_account_lamports(
-            account.lamports(),
-        ),
+        pending_delegator_rewards: pending_delegator_rewards_from_account_lamports(lamports),
         ..VoteStateV4::default()
     };
 
-    VoteStateV4::serialize(
+    AccountSharedData::new_data_with_space(
+        lamports,
         &VoteStateVersions::V4(Box::new(vote_state)),
-        account.data_as_mut_slice(),
+        VoteStateV4::size_of(),
+        &owner,
     )
-    .unwrap();
-    account
+    .unwrap()
 }
 
 #[cfg(feature = "dev-context-only-utils")]

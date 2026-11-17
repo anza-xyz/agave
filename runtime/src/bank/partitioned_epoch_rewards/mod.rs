@@ -459,15 +459,14 @@ mod tests {
             bank_forks::BankForks,
             block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
             genesis_utils::{
-                GenesisConfigInfo, ValidatorVoteKeypairs, activate_all_features,
-                create_genesis_config_with_leader, create_genesis_config_with_tower_vote_accounts,
+                GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_leader,
+                create_genesis_config_with_tower_vote_accounts,
                 create_genesis_config_with_vote_accounts, deactivate_features,
             },
             runtime_config::RuntimeConfig,
             stake_utils,
             sysvar_account::from_account,
         },
-        assert_matches::assert_matches,
         rand::Rng,
         rayon::ThreadPoolBuilder,
         solana_account::{
@@ -489,14 +488,13 @@ mod tests {
         solana_stake_interface::{stake_flags::StakeFlags, state::StakeStateV2},
         solana_system_transaction as system_transaction,
         solana_sysvar::epoch_rewards::{self, EpochRewards},
-        solana_vote::vote_transaction,
-        solana_vote_interface::state::{MAX_LOCKOUT_HISTORY, VoteStateV4, VoteStateVersions},
-        solana_vote_program::vote_state::{self, TowerSync, handler::VoteStateHandler},
+        solana_vote_interface::state::{VoteStateV4, VoteStateVersions},
+        solana_vote_program::vote_state::handler::VoteStateHandler,
         std::{
+            assert_matches,
             collections::HashSet,
             sync::{Arc, RwLock},
         },
-        test_case::test_case,
     };
 
     impl PartitionedStakeReward {
@@ -622,13 +620,11 @@ mod tests {
     pub(super) fn create_default_reward_bank(
         expected_num_delegations: usize,
         advance_num_slots: u64,
-        is_alpenglow: bool,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         create_reward_bank_with_specific_stakes(
             vec![2_000_000_000; expected_num_delegations],
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
             advance_num_slots,
-            is_alpenglow,
         )
     }
 
@@ -641,7 +637,6 @@ mod tests {
             vec![2_000_000_000; expected_num_delegations],
             stake_account_stores_per_block,
             advance_num_slots,
-            false,
         )
     }
 
@@ -649,7 +644,6 @@ mod tests {
         stakes: Vec<u64>,
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
-        is_alpenglow: bool,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
         // Disable slot time reduction features as they will override the custom
         // stores per block provided in this test helper.
@@ -660,15 +654,7 @@ mod tests {
 
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = if is_alpenglow {
-            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes)
-        } else {
-            create_genesis_config_with_tower_vote_accounts(
-                1_000_000_000,
-                &validator_keypairs,
-                stakes,
-            )
-        };
+        } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
         deactivate_features(&mut genesis_config, &features_to_deactivate);
 
@@ -728,7 +714,7 @@ mod tests {
         vote_address: &Pubkey,
         modify_fn: &dyn Fn(&mut VoteStateV4),
     ) {
-        let mut vote_account = bank.get_account_with_fixed_root(vote_address).unwrap();
+        let mut vote_account = bank.get_account(vote_address).unwrap();
         let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
         let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
             panic!("unexpected version");
@@ -1036,11 +1022,9 @@ mod tests {
                 VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
             );
             vote_state.set_commission(commission);
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                vote_state::process_slot_vote_unchecked(&mut vote_state, i as u64);
-                let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
-                vote_account.set_state(&versioned).unwrap();
-            }
+            vote_state.increment_credits(bank.epoch(), 42);
+            let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
+            vote_account.set_state(&versioned).unwrap();
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
         }
     }
@@ -1194,9 +1178,8 @@ mod tests {
         assert_eq!(bank.get_reward_distribution_num_blocks(&rewards), 1);
     }
 
-    #[test_case(true; "alpenglow")]
-    #[test_case(false; "towerbft")]
-    fn test_rewards_computation_and_partitioned_distribution_one_block(is_alpenglow: bool) {
+    #[test]
+    fn test_rewards_computation_and_partitioned_distribution_one_block() {
         agave_logger::setup();
 
         let starting_slot = SLOTS_PER_EPOCH - 1;
@@ -1206,7 +1189,7 @@ mod tests {
                 ..
             },
             bank_forks,
-        ) = create_default_reward_bank(100, starting_slot - 1, is_alpenglow);
+        ) = create_default_reward_bank(100, starting_slot - 1);
 
         // simulate block progress
         for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
@@ -1248,7 +1231,7 @@ mod tests {
                 // VAT is transferred to the incinerator at the epoch boundary, so it does not
                 // change capitalization until the bank is frozen. Alpenglow's two epoch metadata
                 // accounts do change capitalization when their balances change, however.
-                let expected_post_cap = if is_alpenglow {
+                let expected_post_cap = {
                     let parent_metadata_lamports = previous_bank
                         .get_balance(&VOTE_REWARD_ACCOUNT_ADDR)
                         .checked_add(RewardEpochDelegatedStakes::account_lamports_for_tests(
@@ -1266,21 +1249,15 @@ mod tests {
                         .unwrap()
                         .checked_add(current_metadata_lamports)
                         .unwrap()
-                } else {
-                    pre_cap
                 };
                 assert_eq!(post_cap, expected_post_cap);
 
                 let incinerator_lamports = curr_bank.get_balance(&incinerator::id());
-                let expected_vat_burn = if is_alpenglow {
-                    RewardEpochDelegatedStakes::get(&curr_bank)
-                        .unwrap()
-                        .delegated_stakes
-                        .len() as u64
-                        * curr_bank.current_slot_params().vat_to_burn_per_epoch()
-                } else {
-                    0
-                };
+                let expected_vat_burn = RewardEpochDelegatedStakes::get(&curr_bank)
+                    .unwrap()
+                    .delegated_stakes
+                    .len() as u64
+                    * curr_bank.current_slot_params().vat_to_burn_per_epoch();
                 assert_eq!(incinerator_lamports, expected_vat_burn);
 
                 // Make a root the bank, which is the first bank in the epoch.
@@ -1350,8 +1327,6 @@ mod tests {
 
         // simulate block progress
         for slot in starting_slot..=SLOTS_PER_EPOCH.saturating_mul(2) {
-            let pre_cap = previous_bank.capitalization();
-
             let pre_sysvar_account = previous_bank
                 .get_account(&solana_sysvar::epoch_rewards::id())
                 .unwrap_or_default();
@@ -1364,6 +1339,7 @@ mod tests {
                 SlotLeader::default(),
                 slot,
             );
+            let pre_cap = previous_bank.capitalization();
             let post_cap = curr_bank.capitalization();
 
             if slot < SLOTS_PER_EPOCH {
@@ -1512,6 +1488,7 @@ mod tests {
             .extend(vec![(new_stake_address, new_stake_account)]);
 
         let (mut previous_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        populate_vote_accounts_with_votes(&previous_bank, [vote_key], 0);
         let num_slots_in_epoch = previous_bank.get_slots_in_epoch(previous_bank.epoch());
         assert_eq!(num_slots_in_epoch, 32);
 
@@ -1524,19 +1501,6 @@ mod tests {
                 SlotLeader::default(),
                 slot,
             );
-
-            // Fill bank_forks with banks with votes landing in the next slot
-            // So that rewards will be paid out at the epoch boundary, i.e. slot = 32
-            let tower_sync = TowerSync::new_from_slot(slot - 1, previous_bank.hash());
-            let vote = vote_transaction::new_tower_sync_transaction(
-                tower_sync,
-                previous_bank.last_blockhash(),
-                &validator_vote_keypairs.node_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                &validator_vote_keypairs.vote_keypair,
-                None,
-            );
-            bank.process_transaction(&vote).unwrap();
 
             // Insert a transfer transaction from the mint to new stake account
             let system_tx = system_transaction::transfer(
@@ -1563,8 +1527,11 @@ mod tests {
         let starting_slot = SLOTS_PER_EPOCH - 1;
         let num_rewards = 100;
         let stake_account_stores_per_block = 50;
-        let (RewardBank { bank, .. }, bank_forks) =
-            create_reward_bank(num_rewards, stake_account_stores_per_block, starting_slot);
+        let (RewardBank { bank, .. }, bank_forks) = create_reward_bank_with_specific_stakes(
+            vec![2_000_000_000; num_rewards],
+            stake_account_stores_per_block,
+            starting_slot,
+        );
 
         // Slot before the epoch boundary contains empty rewards (since fees are
         // off), and no partitions because not at the epoch boundary
@@ -1582,15 +1549,33 @@ mod tests {
             SlotLeader::default(),
             SLOTS_PER_EPOCH,
         );
-        // Slot at the epoch boundary contains voting rewards only, as well as partition data
         let KeyedRewardsAndNumPartitions {
             keyed_rewards,
             num_partitions,
         } = epoch_boundary_bank.get_rewards_and_num_partitions();
-        for (_pubkey, reward) in keyed_rewards.iter() {
+
+        let (vat_rewards, voting_rewards): (Vec<_>, Vec<_>) = keyed_rewards
+            .into_iter()
+            .partition(|(_, reward)| reward.reward_type == RewardType::VATDebit);
+        assert_eq!(vat_rewards.len(), num_rewards);
+        for (pubkey, reward) in vat_rewards {
+            assert_eq!(reward.reward_type, RewardType::VATDebit);
+            assert_eq!(
+                reward.lamports,
+                -(epoch_boundary_bank
+                    .current_slot_params()
+                    .vat_to_burn_per_epoch() as i64)
+            );
+            assert_eq!(
+                reward.post_balance,
+                epoch_boundary_bank.get_balance(&pubkey)
+            );
+            assert_eq!(reward.commission_bps, None);
+        }
+        assert_eq!(voting_rewards.len(), num_rewards);
+        for (_, reward) in voting_rewards {
             assert_eq!(reward.reward_type, RewardType::Voting);
         }
-        assert_eq!(keyed_rewards.len(), num_rewards);
         let expected_num_partitions = (num_rewards as u64)
             .div_ceil(epoch_boundary_bank.partitioned_rewards_stake_account_stores_per_block())
             .clamp(1, (SLOTS_PER_EPOCH / 10).max(1));
@@ -1619,8 +1604,8 @@ mod tests {
             previous_bank = partition_bank;
         }
 
-        // All rewards are recorded
-        assert_eq!(total_staking_rewards, num_rewards);
+        // Zero-lamport stake rewards in the first Alpenglow epoch are not recorded.
+        assert_eq!(total_staking_rewards, 0);
         let bank = Bank::new_from_parent(
             previous_bank,
             SlotLeader::default(),
@@ -1673,8 +1658,7 @@ mod tests {
 
     #[test]
     fn test_reward_epoch_delegated_stakes_excludes_vat() {
-        let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
-        activate_all_features(&mut genesis_config);
+        let (genesis_config, _mint_keypair) = create_genesis_config(500);
         let bank = Bank::new_for_tests(&genesis_config);
         let first_normal_slot = bank.epoch_schedule().first_normal_slot;
         let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
@@ -1983,7 +1967,7 @@ mod tests {
 
                 // All vote accounts had field reset
                 for vote_address in voters.iter() {
-                    let vote_account = curr_bank.get_account_with_fixed_root(vote_address).unwrap();
+                    let vote_account = curr_bank.get_account(vote_address).unwrap();
                     let vote_state_versions: VoteStateVersions = vote_account.state().unwrap();
                     let VoteStateVersions::V4(vote_state) = vote_state_versions else {
                         panic!("unexpected version");
@@ -2040,9 +2024,7 @@ mod tests {
                 );
 
                 for stake_address in stakers.iter() {
-                    let stake_account = curr_bank
-                        .get_account_with_fixed_root(stake_address)
-                        .unwrap();
+                    let stake_account = curr_bank.get_account(stake_address).unwrap();
                     let stake_state: StakeStateV2 = stake_account.state().unwrap();
                     let delegation = stake_state.delegation().unwrap();
                     // Check that stake accounts expected to receive a distribution, do.

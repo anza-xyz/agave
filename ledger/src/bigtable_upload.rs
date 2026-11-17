@@ -11,11 +11,13 @@ use {
     std::{
         cmp::{max, min},
         collections::HashSet,
+        num::NonZeroUsize,
         result::Result,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
         },
+        thread,
         time::{Duration, Instant},
     },
 };
@@ -30,7 +32,8 @@ pub struct ConfirmedBlockUploadConfig {
 
 impl Default for ConfirmedBlockUploadConfig {
     fn default() -> Self {
-        let num_blocks_to_upload_in_parallel = num_cpus::get() / 2;
+        let num_blocks_to_upload_in_parallel =
+            thread::available_parallelism().map_or(1, NonZeroUsize::get) / 2;
         ConfirmedBlockUploadConfig {
             force_reupload: false,
             max_num_slots_to_check: num_blocks_to_upload_in_parallel * 4,
@@ -56,7 +59,7 @@ fn maybe_convert_update_parent_to_block_header(
     // so UpdateParent becomes the effective header in Bigtable.
     VersionedBlockMarker::from_block_header(BlockHeaderV1 {
         parent_slot: update_parent.new_parent_slot,
-        parent_block_id: update_parent.new_parent_block_id.to_hash(),
+        parent_block_id: update_parent.new_parent_block_id,
     })
 }
 
@@ -392,7 +395,7 @@ mod tests {
             vec![
                 VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                     parent_slot: new_parent_slot,
-                    parent_block_id: new_parent_block_id.to_hash(),
+                    parent_block_id: new_parent_block_id,
                 }),
                 footer,
             ]

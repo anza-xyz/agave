@@ -6,7 +6,7 @@ use {
     solana_program_runtime::{
         invoke_context::InvokeContext,
         memory_context::SerializedAccountMetadata,
-        serialization::serialize_parameters,
+        serialization::{SerializationResult, serialize_parameters},
         solana_sbpf::{
             aligned_memory::AlignedMemory, ebpf::HOST_ALIGN, memory_region::MemoryRegion,
         },
@@ -36,18 +36,25 @@ pub fn push_and_serialize_parameters<'ix_data>(
         .push()
         .expect("failed to push instruction context");
 
+    let abi = invoke_context.abi();
     let instruction_context = invoke_context
         .transaction_context
         .get_current_instruction_context()
         .unwrap();
     serialize_parameters(
         &instruction_context,
+        abi,
         feature_set.virtual_address_space_adjustments,
         feature_set.account_data_direct_mapping,
         feature_set.direct_account_pointers_in_program_input,
     )
     .map(
-        |(aligned_memory, input_memory_regions, account_metadata, _instruction_data_offset)| {
+        |SerializationResult {
+             parameter_bytes: aligned_memory,
+             regions: input_memory_regions,
+             accounts_metadata: account_metadata,
+             ..
+         }| {
             SerializedParameters {
                 aligned_memory,
                 input_memory_regions,

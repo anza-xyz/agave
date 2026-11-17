@@ -1,6 +1,6 @@
 #[cfg(any(test, feature = "dev-context-only-utils"))]
 use {
-    crate::shred::Nonce,
+    agave_shred_wire_format::constants::Nonce,
     solana_perf::packet::{BytesPacket, Meta, bytes::BufMut},
 };
 use {

@@ -28,9 +28,9 @@ use {
             Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
             RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
             RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
-            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee, RpcRankMap,
+            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
             RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
-            RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
+            RpcVatActiveSetRankMap, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
     },
     solana_signature::Signature,
@@ -187,8 +187,8 @@ impl RpcSender for MockSender {
                 };
                 serde_json::to_value(Some(cert))?
             }
-            "getRankMap" => serde_json::to_value(Response::<
-                Option<RpcRankMap>,
+            "getVatActiveSetRankMap" => serde_json::to_value(Response::<
+                Option<RpcVatActiveSetRankMap>,
             > {
                 context: RpcResponseContext {
                     slot: 1,
@@ -426,7 +426,6 @@ impl RpcSender for MockSender {
                 tpu_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8862))),
                 tpu_forwards: Some(SocketAddr::from(([10, 239, 6, 48], 8857))),
                 tpu_forwards_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8863))),
-                tpu_vote: Some(SocketAddr::from(([10, 239, 6, 48], 8870))),
                 serve_repair: Some(SocketAddr::from(([10, 239, 6, 48], 8880))),
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
@@ -508,6 +507,7 @@ impl RpcSender for MockSender {
                     post_balance: 499999442500,
                     commission: None,
                     commission_bps: None,
+                    block_reward_amount: None,
                 })])?,
             "minimumLedgerSlot" => json![123],
             "getMaxRetransmitSlot" => json![123],
@@ -575,24 +575,5 @@ pub(crate) fn mock_encoded_account(pubkey: &Pubkey) -> UiAccount {
         executable: false,
         rent_epoch: 0,
         space: Some(0),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, solana_account::Account, solana_account_decoder::encode_ui_account};
-
-    #[test]
-    fn test_mock_encoded_account() {
-        let pubkey = Pubkey::from_str(PUBKEY).unwrap();
-        let account = Account {
-            lamports: 1_000_000,
-            data: vec![],
-            owner: pubkey,
-            executable: false,
-            rent_epoch: 0,
-        };
-        let expected = encode_ui_account(&pubkey, &account, UiAccountEncoding::Base64, None, None);
-        assert_eq!(expected, mock_encoded_account(&pubkey));
     }
 }

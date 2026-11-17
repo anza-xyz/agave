@@ -20,10 +20,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
     solana_account::ReadableAccount,
-    solana_account_decoder::{
-        UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
-        parse_account_data::AccountAdditionalDataV3, parse_token::UiTokenAccount,
-    },
+    solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
     solana_bls_signatures::Signature as BLSSignature,
     solana_clap_utils::keypair::SignOnly,
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -39,7 +36,7 @@ use {
     solana_signature::Signature,
     solana_stake_history::StakeHistoryItem,
     solana_stake_interface::state::{Authorized, Lockup},
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -165,57 +162,22 @@ pub struct CliAccount {
     pub use_lamports_unit: bool,
 }
 
-pub struct CliAccountNewConfig {
-    pub data_encoding: UiAccountEncoding,
-    pub additional_data: Option<AccountAdditionalDataV3>,
-    pub data_slice_config: Option<UiDataSliceConfig>,
-    pub use_lamports_unit: bool,
-}
-
-impl Default for CliAccountNewConfig {
-    fn default() -> Self {
-        Self {
-            data_encoding: UiAccountEncoding::Base64,
-            additional_data: None,
-            data_slice_config: None,
-            use_lamports_unit: false,
-        }
-    }
-}
-
 impl CliAccount {
     pub fn new<T: ReadableAccount>(address: &Pubkey, account: &T, use_lamports_unit: bool) -> Self {
-        Self::new_with_config(
-            address,
-            account,
-            &CliAccountNewConfig {
-                use_lamports_unit,
-                ..CliAccountNewConfig::default()
-            },
-        )
-    }
-
-    pub fn new_with_config<T: ReadableAccount>(
-        address: &Pubkey,
-        account: &T,
-        config: &CliAccountNewConfig,
-    ) -> Self {
-        let CliAccountNewConfig {
-            data_encoding,
-            additional_data,
-            data_slice_config,
-            use_lamports_unit,
-        } = *config;
         Self {
             keyed_account: RpcKeyedAccount {
                 pubkey: address.to_string(),
-                account: encode_ui_account(
-                    address,
-                    account,
-                    data_encoding,
-                    additional_data,
-                    data_slice_config,
-                ),
+                account: UiAccount {
+                    lamports: account.lamports(),
+                    data: UiAccountData::Binary(
+                        BASE64_STANDARD.encode(account.data()),
+                        UiAccountEncoding::Base64,
+                    ),
+                    owner: account.owner().to_string(),
+                    executable: account.executable(),
+                    rent_epoch: account.rent_epoch(),
+                    space: Some(account.data().len() as u64),
+                },
             },
             use_lamports_unit,
         }
@@ -1133,7 +1095,8 @@ impl VerboseDisplay for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         w,
-                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.17}  ◎{:<19.19}  {:>13.9}%  {:>7}  \
+                         {:>10}",
                         keyed_reward.address,
                         reward.effective_slot,
                         Utc.timestamp_opt(reward.block_time, 0).unwrap(),
@@ -1180,7 +1143,7 @@ impl fmt::Display for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  ◎{:<17.17}  ◎{:<17.17}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
                         build_balance_message(reward.amount, false, false),
                         build_balance_message(reward.post_balance, false, false),
@@ -1403,7 +1366,7 @@ fn show_epoch_rewards(
             format_as!(
                 f,
                 "{},{},{},{},{},{}%,{},{}",
-                "  {:<6}  {:<11}  {:<26}  ◎{:<17.11}  ◎{:<17.11}  {:>13.3}%  {:>14}  {:>10}",
+                "  {:<6}  {:<11}  {:<26}  ◎{:<17.17}  ◎{:<17.17}  {:>13.3}%  {:>14}  {:>10}",
                 fmt,
                 reward.epoch,
                 reward.effective_slot,
@@ -2494,50 +2457,6 @@ impl CliFees {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CliTokenAccount {
-    pub address: String,
-    #[serde(flatten)]
-    pub token_account: UiTokenAccount,
-}
-
-impl QuietDisplay for CliTokenAccount {}
-impl VerboseDisplay for CliTokenAccount {}
-
-impl fmt::Display for CliTokenAccount {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f)?;
-        writeln_name_value(f, "Address:", &self.address)?;
-        let account = &self.token_account;
-        writeln_name_value(
-            f,
-            "Balance:",
-            &account.token_amount.real_number_string_trimmed(),
-        )?;
-        let mint = format!(
-            "{}{}",
-            account.mint,
-            if account.is_native { " (native)" } else { "" }
-        );
-        writeln_name_value(f, "Mint:", &mint)?;
-        writeln_name_value(f, "Owner:", &account.owner)?;
-        writeln_name_value(f, "State:", &format!("{:?}", account.state))?;
-        if let Some(delegate) = &account.delegate {
-            writeln!(f, "Delegation:")?;
-            writeln_name_value(f, "  Delegate:", delegate)?;
-            let allowance = account.delegated_amount.as_ref().unwrap();
-            writeln_name_value(f, "  Allowance:", &allowance.real_number_string_trimmed())?;
-        }
-        writeln_name_value(
-            f,
-            "Close authority:",
-            account.close_authority.as_ref().unwrap_or(&String::new()),
-        )?;
-        Ok(())
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CliProgramId {
     pub program_id: String,
     pub signature: Option<String>,
@@ -2942,14 +2861,14 @@ pub struct ReturnSignersConfig {
 }
 
 pub fn return_signers(
-    tx: &Transaction,
+    tx: &VersionedTransaction,
     output_format: &OutputFormat,
 ) -> Result<String, Box<dyn std::error::Error>> {
     return_signers_with_config(tx, output_format, &ReturnSignersConfig::default())
 }
 
 pub fn return_signers_with_config(
-    tx: &Transaction,
+    tx: &VersionedTransaction,
     output_format: &OutputFormat,
     config: &ReturnSignersConfig,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -2957,14 +2876,17 @@ pub fn return_signers_with_config(
     Ok(output_format.formatted_string(&cli_command))
 }
 
-pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> CliSignOnlyData {
-    let message_data = tx.message_data();
+pub fn return_signers_data(
+    tx: &VersionedTransaction,
+    config: &ReturnSignersConfig,
+) -> CliSignOnlyData {
+    let message_data = tx.message.serialize();
     let mut signers = Vec::new();
     let mut absent = Vec::new();
     let mut bad_sig = Vec::new();
     tx.signatures
         .iter()
-        .zip(tx.message.account_keys.iter())
+        .zip(tx.message.static_account_keys().iter())
         .for_each(|(sig, key)| {
             if *sig == Signature::default() {
                 absent.push(key.to_string());
@@ -2981,7 +2903,7 @@ pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> Cl
     };
 
     CliSignOnlyData {
-        blockhash: tx.message.recent_blockhash.to_string(),
+        blockhash: tx.message.recent_blockhash().to_string(),
         message,
         signers,
         absent,
@@ -3146,7 +3068,7 @@ impl CliBlock {
                         "-".to_string()
                     },
                     format!(
-                        "{}◎{:<14.9}",
+                        "{}◎{:<14.14}",
                         sign,
                         build_balance_message(reward.lamports.unsigned_abs(), false, false)
                     ),
@@ -3154,7 +3076,7 @@ impl CliBlock {
                         "          -                 -".to_string()
                     } else {
                         format!(
-                            "◎{:<19.9}  {:>13.9}%",
+                            "◎{:<19.19}  {:>13.9}%",
                             build_balance_message(reward.post_balance, false, false),
                             (reward.lamports.abs() as f64
                                 / (reward.post_balance as f64 - reward.lamports as f64))
@@ -3172,7 +3094,7 @@ impl CliBlock {
             let sign = if total_rewards < 0 { "-" } else { "" };
             writeln!(
                 f,
-                "Total Rewards: {}◎{:<12.9}",
+                "Total Rewards: {}◎{:<12.12}",
                 sign,
                 build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
@@ -3693,6 +3615,7 @@ mod tests {
         let signers = vec![present.as_ref(), absent.as_ref(), bad.as_ref()];
         let blockhash = Hash::new_from_array([7u8; 32]);
         tx.try_partial_sign(&signers, blockhash).unwrap();
+        let tx = VersionedTransaction::from(tx);
         let res = return_signers(&tx, &OutputFormat::JsonCompact).unwrap();
         let sign_only = parse_sign_only_reply_string(&res);
         assert_eq!(sign_only.blockhash, blockhash);

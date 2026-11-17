@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 solana-account-info = { workspace = true }
-solana-instruction = { workspace = true }
+solana-instruction = { workspace = true, features = ["wincode"] }
 solana-msg = { workspace = true }
 solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }

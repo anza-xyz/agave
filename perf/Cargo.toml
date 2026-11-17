@@ -57,8 +57,7 @@ solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
 solana-packet = { workspace = true }
-solana-pubkey = { workspace = true, default-features = false, features = ["rand"] }
-solana-runtime-transaction = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["rand", "serde"] }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }
@@ -80,7 +79,6 @@ nix = { workspace = true, features = ["user"] }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-random = { path = "../random", features = ["agave-unstable-api"] }
-assert_matches = { workspace = true }
 bencher = { workspace = true }
 rand_chacha = { workspace = true }
 solana-perf = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }

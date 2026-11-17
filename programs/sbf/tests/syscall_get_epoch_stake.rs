@@ -3,6 +3,7 @@
 use {
     solana_instruction::{AccountMeta, Instruction},
     solana_message::Message,
+    solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, SlotLeader},
         bank_client::BankClient,
@@ -35,10 +36,11 @@ fn test_syscall_get_epoch_stake() {
     let total_stake: u64 = stakes.iter().sum();
 
     let GenesisConfigInfo {
-        genesis_config,
+        mut genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_vote_accounts(1_000_000_000, &voting_keypairs, stakes.clone());
+    genesis_config.rent = Rent::default();
 
     let mut bank = Bank::new_for_tests(&genesis_config);
 

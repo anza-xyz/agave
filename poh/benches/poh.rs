@@ -1,5 +1,3 @@
-// This bench attempts to justify the value of `solana_poh::poh_service::DEFAULT_HASHES_PER_BATCH`.
-
 use {
     bencher::{Bencher, benchmark_group, benchmark_main},
     crossbeam_channel::{Receiver, Sender, bounded, select},
@@ -12,17 +10,14 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_perf::test_tx::test_tx,
-    solana_poh::{poh_recorder::PohRecorder, poh_service::DEFAULT_HASHES_PER_BATCH},
+    solana_poh::poh_recorder::PohRecorder,
     solana_poh_config::PohConfig,
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hash,
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
         hint::black_box,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, Mutex, atomic::AtomicBool},
         thread::{self, JoinHandle},
     },
 };
@@ -70,7 +65,7 @@ impl Drop for EntryDrain {
 
 const NUM_HASHES: u64 = 30_000; // Should require ~10ms on a 2017 MacBook Pro
 
-// No locking.  Fastest.
+// No locking. Fastest.
 fn bench_poh_hash(bencher: &mut Bencher) {
     let mut poh = Poh::new(Hash::default(), None);
     bencher.iter(|| {
@@ -78,41 +73,13 @@ fn bench_poh_hash(bencher: &mut Bencher) {
     })
 }
 
-// Lock on each iteration.  Slowest.
+// Lock on each iteration. Slowest.
 fn bench_arc_mutex_poh_hash(bencher: &mut Bencher) {
     let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), None)));
     bencher.iter(|| {
         for _ in 0..NUM_HASHES {
             poh.lock().unwrap().hash(1);
         }
-    })
-}
-
-// Acquire lock every NUM_HASHES_PER_BATCH iterations.
-// Speed should be close to bench_poh_hash() if NUM_HASHES_PER_BATCH is set well.
-fn bench_arc_mutex_poh_batched_hash(bencher: &mut Bencher) {
-    let poh = Arc::new(Mutex::new(Poh::new(Hash::default(), Some(NUM_HASHES))));
-    //let exit = Arc::new(AtomicBool::new(false));
-    let exit = Arc::new(AtomicBool::new(true));
-
-    bencher.iter(|| {
-        // NOTE: This block attempts to look as close as possible to `PohService::tick_producer()`
-        loop {
-            if poh.lock().unwrap().hash(DEFAULT_HASHES_PER_BATCH) {
-                poh.lock().unwrap().tick().unwrap();
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
-            }
-        }
-    })
-}
-
-// Worst case transaction record delay due to batch hashing at NUM_HASHES_PER_BATCH
-fn bench_poh_lock_time_per_batch(bencher: &mut Bencher) {
-    let mut poh = Poh::new(Hash::default(), None);
-    bencher.iter(|| {
-        poh.hash(DEFAULT_HASHES_PER_BATCH);
     })
 }
 
@@ -188,10 +155,8 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
 
 benchmark_group!(
     benches,
-    bench_arc_mutex_poh_batched_hash,
     bench_arc_mutex_poh_hash,
     bench_poh_hash,
-    bench_poh_lock_time_per_batch,
     bench_poh_recorder_record,
     bench_poh_recorder_set_bank
 );

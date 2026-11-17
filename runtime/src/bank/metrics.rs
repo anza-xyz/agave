@@ -1,7 +1,7 @@
 use {
     crate::bank::Bank,
     solana_clock::{Epoch, Slot},
-    solana_program_runtime::loaded_programs::{ForkGraph, ProgramCache},
+    solana_program_runtime::program_cache::{fork_graph::ForkGraph, global::ProgramCache},
     std::sync::atomic::{
         AtomicU64,
         Ordering::{self, Relaxed},
@@ -20,7 +20,6 @@ pub(crate) struct NewEpochTimings {
 pub(crate) struct RewardsMetrics {
     pub(crate) calculate_points_us: AtomicU64,
     pub(crate) redeem_rewards_us: u64,
-    pub(crate) store_stake_accounts_us: AtomicU64,
     pub(crate) store_epoch_boundary_accounts_us: AtomicU64,
     pub(crate) load_and_update_epoch_boundary_accounts_us: u64,
 }
@@ -97,11 +96,6 @@ pub(crate) fn report_new_epoch_metrics(
             i64
         ),
         ("redeem_rewards_us", metrics.redeem_rewards_us, i64),
-        (
-            "store_stake_accounts_us",
-            metrics.store_stake_accounts_us.load(Relaxed),
-            i64
-        ),
         (
             "store_epoch_boundary_accounts_us",
             metrics.store_epoch_boundary_accounts_us.load(Relaxed),

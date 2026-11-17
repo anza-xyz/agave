@@ -523,8 +523,8 @@ mod tests {
                             .sum::<usize>();
                         assert_eq!(total_entries, expected_count);
                         let mut r = vec![];
-                        for bin in 0..map.num_buckets() {
-                            r.append(&mut map.buckets[bin].items());
+                        for bucket in &map.buckets {
+                            r.append(&mut bucket.items());
                         }
                         r
                     })

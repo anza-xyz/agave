@@ -124,7 +124,6 @@ wincode = { workspace = true }
 xxhash-rust = { workspace = true, optional = true, features = ["xxh64"] }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 env_logger = { workspace = true }
 libsecp256k1 = { workspace = true }
 rand = { workspace = true }

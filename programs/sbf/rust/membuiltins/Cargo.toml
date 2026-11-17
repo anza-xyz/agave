@@ -11,7 +11,7 @@ edition = { workspace = true }
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
+[target.'cfg(target_os = "solana")'.dependencies]
 solana-program-entrypoint = { workspace = true }
 solana-sbf-rust-mem-dep = { workspace = true }
 

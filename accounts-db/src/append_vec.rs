@@ -12,11 +12,15 @@ pub use meta::StoredAccountMeta;
 use meta::StoredAccountMeta;
 use {
     crate::{
-        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        account_storage::{
+            meta_entry_read::{
+                AccountFromMetaEntry, AccountMetaOwned, META_ENTRY_BUFFER_SIZE, MetaEntryBuffer,
+            },
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        },
         accounts_file::StoredAccountsInfo,
         storable_accounts::StorableAccounts,
         u64_align,
-        utils::create_account_shared_data,
     },
     agave_fs::{
         FileInfo, FileSize,
@@ -37,11 +41,12 @@ use {
         io::{self, BufWriter, Seek, SeekFrom},
         iter::ExactSizeIterator,
         mem::{self, MaybeUninit, offset_of},
+        ops::ControlFlow,
         path::{Path, PathBuf},
         range::Range,
         slice,
         sync::{
-            Arc, Mutex, MutexGuard,
+            Mutex, MutexGuard,
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
     },
@@ -185,6 +190,12 @@ pub struct AppendVec {
 }
 
 const PAGE_SIZE: usize = 4 * 1024;
+
+const _: () = const {
+    assert!(align_of::<MetaEntryBuffer>() >= align_of::<StoredMeta>());
+    assert!(align_of::<MetaEntryBuffer>() >= align_of::<AccountMeta>());
+    assert!(META_ENTRY_BUFFER_SIZE >= PAGE_SIZE);
+};
 
 pub struct AppendVecStat {
     pub files_open: AtomicU64,
@@ -554,67 +565,126 @@ impl AppendVec {
     /// return an `AccountSharedData` for an account at `logical_offset`.
     /// This fn can efficiently return exactly what is needed by a caller.
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
-    pub fn get_account_shared_data(
+    ///
+    /// `load_filter` is a predicate that determines if the account should be loaded in full.
+    /// The parameters are lamports, owner, and data length.
+    ///
+    /// Returns:
+    /// * None if there is an error reading the account.
+    /// * Some(None) if `load_filter` returns false.
+    /// * Some(Some(account)) otherwise.
+    pub fn get_account_shared_data_if(
         &self,
         logical_offset: LogicalOffset,
-    ) -> Option<AccountSharedData> {
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Option<Option<AccountSharedData>> {
+        let mut buffer = MetaEntryBuffer::new();
+        let from_meta_entry = self.read_account_from_meta_entry(logical_offset, &mut buffer)?;
+        if !from_meta_entry.passes_load_filter(load_filter) {
+            return Some(None);
+        }
+        Some(Some(match from_meta_entry {
+            AccountFromMetaEntry::Complete { account_meta, data } => {
+                account_meta.into_account_shared_data(data.to_vec())
+            }
+            AccountFromMetaEntry::Partial {
+                account_meta,
+                data_offset,
+                data_len,
+                ..
+            } => self.read_account_data(account_meta, data_offset, data_len)?,
+        }))
+    }
+
+    /// Reads and parses the meta entry of the account at `logical_offset`, into `buffer`
+    fn read_account_from_meta_entry<'a>(
+        &self,
+        logical_offset: LogicalOffset,
+        buffer: &'a mut MetaEntryBuffer,
+    ) -> Option<AccountFromMetaEntry<'a>> {
         let offset = file_offset_from_logical(logical_offset);
-        let mut buf = MaybeUninit::<[u8; PAGE_SIZE]>::uninit();
-        let bytes_read = read_into_buffer(&self.file, self.len() as FileSize, offset, unsafe {
-            &mut *buf.as_mut_ptr()
-        })
-        .ok()?;
-        // SAFETY: we only read the initialized portion.
-        let valid_bytes =
-            ValidSlice(unsafe { slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read) });
+        let bytes = self.read_meta_entry_bytes(offset, buffer)?;
+        self.account_from_meta_entry(offset, bytes)
+    }
+
+    /// Parses the account at file `offset` from `bytes`, read at `offset` by
+    /// `read_meta_entry_bytes()`: the account, or the read of the rest of its data. Panics if
+    /// `bytes` is not aligned, as `MetaEntryBuffer` is, since the meta entry's fields are read in
+    /// place.
+    fn account_from_meta_entry<'a>(
+        &self,
+        offset: FileOffset,
+        bytes: &'a [u8],
+    ) -> Option<AccountFromMetaEntry<'a>> {
+        assert!(
+            bytes.as_ptr().cast::<StoredMeta>().is_aligned(),
+            "meta entry bytes must be aligned",
+        );
+        let valid_bytes = ValidSlice(bytes);
         let (meta, next) = Self::get_type::<StoredMeta>(valid_bytes, 0)?;
         let (account_meta, next) = Self::get_type::<AccountMeta>(valid_bytes, next)?;
         let (_hash, next) = Self::get_type::<ObsoleteAccountHash>(valid_bytes, next)?;
         let data_len = meta.data_len;
-        let remaining_bytes_for_data = bytes_read - next;
+        let remaining_bytes_for_data = bytes.len() - next;
+        let account_meta = AccountMetaOwned {
+            lamports: account_meta.lamports,
+            owner: account_meta.owner,
+            executable: account_meta.executable,
+            rent_epoch: account_meta.rent_epoch,
+        };
         Some(if remaining_bytes_for_data >= data_len as usize {
             // we already read enough data to load this account
-            let (data, next) = Self::get_slice(valid_bytes, next, meta.data_len as usize)?;
-            let stored_size = next;
-            let account = StoredAccountMeta {
-                meta,
-                account_meta,
-                data,
-                offset,
-                stored_size,
-            };
-            // data is within `buf`, so just allocate a new vec for data
-            create_account_shared_data(&account)
+            let (data, _) = Self::get_slice(valid_bytes, next, data_len as usize)?;
+            AccountFromMetaEntry::Complete { account_meta, data }
         } else {
             // not enough was read from file to get `data`
             assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
-            let mut data = Vec::with_capacity(data_len as usize);
-            let slice = data.spare_capacity_mut();
             // Note here `next` is a 0-based offset from the beginning of this account.
-            // SAFETY: `read_into_buffer` will only write to uninitialized memory.
-            let bytes_read = read_into_buffer(
-                &self.file,
-                self.len() as FileSize,
-                offset + next as FileOffset,
-                unsafe {
-                    slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len as usize)
-                },
-            )
-            .ok()?;
-            if bytes_read < data_len as usize {
-                // eof or otherwise couldn't read all the data
-                return None;
+            AccountFromMetaEntry::Partial {
+                address: meta.pubkey,
+                account_meta,
+                data_offset: offset + next as FileOffset,
+                data_len: data_len as usize,
             }
-            // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
-            unsafe { data.set_len(data_len as usize) };
-            AccountSharedData::create_from_existing_shared_data(
-                account_meta.lamports,
-                Arc::new(data),
-                account_meta.owner,
-                account_meta.executable,
-                account_meta.rent_epoch,
-            )
         })
+    }
+
+    /// Reads the account's `data_len` bytes of data at `data_offset`, and returns the account with it
+    fn read_account_data(
+        &self,
+        account_meta: AccountMetaOwned,
+        data_offset: FileSize,
+        data_len: usize,
+    ) -> Option<AccountSharedData> {
+        let mut data = Vec::with_capacity(data_len);
+        let slice = data.spare_capacity_mut();
+        // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+        let bytes_read =
+            read_into_buffer(&self.file, self.len() as FileSize, data_offset, unsafe {
+                slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, data_len)
+            })
+            .ok()?;
+        if bytes_read < data_len {
+            // eof or otherwise couldn't read all the data
+            return None;
+        }
+        // SAFETY: we've just checked that `bytes_read` is at least `data_len`.
+        unsafe { data.set_len(data_len) };
+        Some(account_meta.into_account_shared_data(data))
+    }
+
+    /// Reads the meta entry at file `offset` into `buffer`, and returns the bytes read: up to a
+    /// page, and not past `len()`
+    fn read_meta_entry_bytes<'a>(
+        &self,
+        offset: FileOffset,
+        buffer: &'a mut MetaEntryBuffer,
+    ) -> Option<&'a [u8]> {
+        // SAFETY: `read_into_buffer` will only write to uninitialized memory.
+        let buffer_bytes = unsafe { buffer.bytes_mut(PAGE_SIZE) };
+        let bytes_read =
+            read_into_buffer(&self.file, self.len() as FileSize, offset, buffer_bytes).ok()?;
+        Some(&buffer_bytes[..bytes_read])
     }
 
     /// Returns the path to the file where the data is stored
@@ -645,10 +715,15 @@ impl AppendVec {
     /// * LogicalOffset: the logical offset of this account
     /// * StoredAccountInfoWithoutData: the account itself, without account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfoWithoutData<'local>),
+        mut callback: impl for<'local> FnMut(
+            LogicalOffset,
+            StoredAccountInfoWithoutData<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<()> {
         self.scan_stored_accounts_no_data(|stored_account| {
             // SAFETY: The offset in stored_account_meta is required to be a valid/aligned offset
@@ -662,7 +737,7 @@ impl AppendVec {
                 executable: stored_account.executable(),
                 rent_epoch: stored_account.rent_epoch(),
             };
-            callback(logical_offset, account);
+            callback(logical_offset, account)
         })
     }
 
@@ -673,26 +748,40 @@ impl AppendVec {
     /// * LogicalOffset: the logical offset of this account
     /// * StoredAccountInfo: the account itself, with account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    /// After an early exit, callers must reset `reader` before starting another scan.
+    ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
     pub(crate) fn scan_accounts_with<'a>(
         &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
+        mut callback: impl for<'local> FnMut(
+            LogicalOffset,
+            StoredAccountInfo<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<()> {
-        self.scan_accounts_stored_meta_with(reader, |stored_account_meta| {
+        Self::scan_accounts_stored_meta_with(reader, |stored_account_meta| {
             // SAFETY: The offset in stored_account_meta is required to be a valid/aligned offset
             // for an AppendVec entry/account, thus it is also a valid logical offset.
             let logical_offset = logical_offset_from_file(stored_account_meta.offset()).unwrap();
-            let account = StoredAccountInfo {
-                pubkey: stored_account_meta.pubkey(),
-                lamports: stored_account_meta.lamports(),
-                owner: stored_account_meta.owner(),
-                data: stored_account_meta.data(),
-                executable: stored_account_meta.executable(),
-                rent_epoch: stored_account_meta.rent_epoch(),
-            };
-            callback(logical_offset, account);
+            callback(logical_offset, stored_account_from(stored_account_meta))
+        })
+    }
+
+    /// Iterate over all accounts on `reader` and call `callback` with each.
+    ///
+    /// `callback` parameters:
+    /// * StoredAccountInfo: the account itself, with account data
+    ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    /// After an early exit, callers must reset `reader` before starting another scan.
+    pub(crate) fn scan_reader<'a>(
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> ControlFlow<()>,
+    ) -> Result<()> {
+        Self::scan_accounts_stored_meta_with(reader, |stored_account_meta| {
+            callback(stored_account_from(stored_account_meta))
         })
     }
 
@@ -703,11 +792,11 @@ impl AppendVec {
     #[cfg(feature = "dev-context-only-utils")]
     fn scan_accounts_stored_meta<'a>(
         &'a self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         let mut reader = crate::accounts_file::new_scan_accounts_reader();
         reader.set_file(&self.file, self.len() as FileSize)?;
-        self.scan_accounts_stored_meta_with(&mut reader, callback)
+        Self::scan_accounts_stored_meta_with(&mut reader, callback)
     }
 
     /// See [`scan_accounts_stored_meta`] for documentation.
@@ -715,9 +804,8 @@ impl AppendVec {
     /// This fn does not call `FileBufRead::set_file()` first, before scanning.
     /// The *caller* is responsible for setting the file.
     fn scan_accounts_stored_meta_with<'a>(
-        &'a self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         let mut min_buf_len = STORE_META_OVERHEAD;
         loop {
@@ -749,7 +837,10 @@ impl AppendVec {
                     offset,
                     stored_size,
                 };
-                callback(account);
+                let control_flow = callback(account);
+                if control_flow.is_break() {
+                    break;
+                }
                 reader.consume_or_skip(stored_size);
                 // restore default required buffer size
                 min_buf_len = STORE_META_OVERHEAD;
@@ -768,7 +859,7 @@ impl AppendVec {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn scan_accounts_stored_meta_for_store_tool(
         &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>) -> ControlFlow<()>,
     ) -> Result<()> {
         self.scan_accounts_stored_meta(callback)
     }
@@ -836,13 +927,14 @@ impl AppendVec {
     pub fn scan_pubkeys(&self, mut callback: impl FnMut(&Pubkey)) -> Result<()> {
         self.scan_stored_accounts_no_data(|account| {
             callback(account.pubkey());
+            ControlFlow::Continue(())
         })
     }
 
     /// Iterate over all accounts and call `callback` with the fixed sized portion of each account.
     fn scan_stored_accounts_no_data(
         &self,
-        mut callback: impl FnMut(StoredAccountNoData),
+        mut callback: impl FnMut(StoredAccountNoData) -> ControlFlow<()>,
     ) -> Result<()> {
         let self_len = self.len();
         // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
@@ -874,11 +966,14 @@ impl AppendVec {
                 break;
             }
             let stored_size = u64_align!(unaligned_stored_size);
-            callback(StoredAccountNoData {
+            let control_flow = callback(StoredAccountNoData {
                 meta: stored_meta,
                 account_meta,
                 offset,
             });
+            if control_flow.is_break() {
+                break;
+            }
             reader.consume_or_skip(stored_size);
         }
         Ok(())
@@ -1092,17 +1187,31 @@ impl<W: io::Write> AppendVecAccountWriter<W> {
     }
 }
 
+/// Helper fn to return a StoredAccountInfo from a StoredAccountMeta.
+fn stored_account_from<'a>(stored_account_meta: StoredAccountMeta<'a>) -> StoredAccountInfo<'a> {
+    StoredAccountInfo {
+        pubkey: stored_account_meta.pubkey(),
+        lamports: stored_account_meta.lamports(),
+        owner: &stored_account_meta.account_meta.owner,
+        data: stored_account_meta.data(),
+        executable: stored_account_meta.executable(),
+        rent_epoch: stored_account_meta.rent_epoch(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
+        crate::utils::create_account_shared_data,
         rand::{prelude::*, rng},
         rand_chacha::ChaChaRng,
         solana_account::{AccountSharedData, WritableAccount, accounts_equal},
         solana_clock::Slot,
         std::{
+            assert_matches,
             io::{Seek as _, SeekFrom, Write as _},
+            iter,
             mem::ManuallyDrop,
             ptr,
         },
@@ -1130,12 +1239,13 @@ mod tests {
             let mut matches = true;
             let mut last_offset = 0;
             self.scan_stored_accounts_no_data(|account| {
-                if !matches || !account.sanitize() {
+                if !account.sanitize() {
                     matches = false;
-                    return;
+                    return ControlFlow::Break(());
                 }
                 last_offset = account.offset() + account.stored_size() as FileOffset;
                 num_accounts += 1;
+                ControlFlow::Continue(())
             })?;
             let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
 
@@ -1157,7 +1267,9 @@ mod tests {
                 .sum();
             let offset = file_offset_from_logical(logical_offset);
             let result = self.get_stored_account_meta_callback(offset, |r_callback| {
-                let r2 = self.get_account_shared_data(logical_offset);
+                let r2 = self
+                    .get_account_shared_data_if(logical_offset, |_, _, _| true)
+                    .unwrap();
                 assert!(solana_account::accounts_equal(
                     &r_callback,
                     r2.as_ref().unwrap()
@@ -1171,7 +1283,10 @@ mod tests {
                     self.get_stored_account_meta_callback(offset, |_| {})
                         .is_none()
                 );
-                assert!(self.get_account_shared_data(logical_offset).is_none());
+                assert!(
+                    self.get_account_shared_data_if(logical_offset, |_, _, _| true)
+                        .is_none()
+                );
                 // it has different rules for checking len and returning None
                 assert_eq!(sizes, 0);
             }
@@ -1199,8 +1314,11 @@ mod tests {
     /// Note that `sample`=0 returns a fully default account with a default pubkey.
     fn create_test_account(sample: usize) -> (Pubkey, AccountSharedData) {
         let data_len = sample % 256;
-        let mut account = AccountSharedData::new(sample as u64, 0, &Pubkey::default());
-        account.set_data_from_slice(&vec![data_len as u8; data_len]);
+        let account = AccountSharedData::new_with_data(
+            sample as u64,
+            vec![data_len as u8; data_len],
+            &Pubkey::default(),
+        );
         (Pubkey::default(), account)
     }
 
@@ -1327,6 +1445,7 @@ mod tests {
             let mut count = 0;
             self.scan_stored_accounts_no_data(|_| {
                 count += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
             count
@@ -1356,12 +1475,12 @@ mod tests {
         let mut create_account = |data_len: usize| -> (Pubkey, AccountSharedData) {
             let pubkey = Pubkey::new_from_array(rng.random());
             let owner = Pubkey::new_from_array(rng.random());
-            let mut account = AccountSharedData::new(rng.random(), data_len, &owner);
+            let lamports = rng.random();
             // Ensure we actually have some unique data to compare against when checking correctness
             let data = std::iter::from_fn(|| Some(rng.random::<u8>()))
                 .take(data_len)
                 .collect::<Vec<_>>();
-            account.set_data_from_slice(&data);
+            let account = AccountSharedData::new_with_data(lamports, data, &owner);
             (pubkey, account)
         };
 
@@ -1413,6 +1532,7 @@ mod tests {
                 assert_eq!(&recovered, account);
                 assert_eq!(v.pubkey(), pubkey);
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
             assert_eq!(index, num_accounts);
@@ -1428,6 +1548,7 @@ mod tests {
                 assert_eq!(stored_account.executable(), account.executable());
                 assert_eq!(stored_account.rent_epoch(), account.rent_epoch());
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
             assert_eq!(index, num_accounts);
@@ -1491,6 +1612,7 @@ mod tests {
                 assert_eq!(stored_account.pubkey(), pubkey);
                 assert_eq!(recovered, *account);
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
         assert_eq!(index, num_new_accounts);
@@ -1505,6 +1627,7 @@ mod tests {
                 assert_eq!(stored_account.executable(), account.executable());
                 assert_eq!(stored_account.rent_epoch(), account.rent_epoch());
                 index += 1;
+                ControlFlow::Continue(())
             })
             .expect("must scan accounts storage");
         assert_eq!(index, num_new_accounts);
@@ -1549,6 +1672,7 @@ mod tests {
             let recovered = create_account_shared_data(&v);
             assert_eq!(recovered, account.1);
             sample += 1;
+            ControlFlow::Continue(())
         })
         .expect("must scan accounts storage");
     }
@@ -1571,8 +1695,7 @@ mod tests {
             let pubkey = solana_pubkey::new_rand();
             let owner = Pubkey::default();
             let data_len = 3_u64;
-            let mut account = AccountSharedData::new(0, data_len as usize, &owner);
-            account.set_data_from_slice(b"abc");
+            let account = AccountSharedData::new_with_data(0, b"abc".to_vec(), &owner);
             let stored_meta = StoredMeta {
                 write_version: 0,
                 pubkey,
@@ -1796,7 +1919,33 @@ mod tests {
     }
 
     #[test]
-    fn test_get_account_shared_data_from_truncated_file() {
+    fn test_get_account_shared_data_if() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 10_000);
+        let account = AccountSharedData::new_with_data(123, vec![42; 165], &Pubkey::new_unique());
+        let offset = av
+            .append_account_test(&(Pubkey::new_unique(), account.clone()))
+            .unwrap();
+
+        for should_load in [false, true] {
+            let loaded_account = av
+                .get_account_shared_data_if(
+                    offset,
+                    |stored_lamports, stored_owner, stored_data_len| {
+                        assert_eq!(stored_lamports, account.lamports());
+                        assert_eq!(stored_owner, account.owner());
+                        assert_eq!(stored_data_len, account.data().len());
+                        should_load
+                    },
+                )
+                .unwrap();
+            assert_eq!(loaded_account.as_ref(), should_load.then_some(&account));
+        }
+    }
+
+    #[test]
+    fn test_get_account_shared_data_if_from_truncated_file() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("append_vec");
 
@@ -1805,7 +1954,8 @@ mod tests {
             // AppendVec internal buffer size is PAGESIZE).
             let data_len: usize = 2 * PAGE_SIZE;
             let pubkey = Pubkey::default();
-            let account = AccountSharedData::new(100, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(100, vec![0; data_len], &Pubkey::default());
             // wrap AppendVec in ManuallyDrop to ensure we do not remove the backing file when dropped
             let av = ManuallyDrop::new(AppendVec::new(
                 &path,
@@ -1820,14 +1970,88 @@ mod tests {
         let file_info = FileInfo::new_from_path(&path).unwrap();
         let av =
             AppendVec::new_from_file_info_unchecked(file_info, truncated_accounts_len).unwrap();
-        let account = av.get_account_shared_data(0);
+        let account = av.get_account_shared_data_if(0, |_, _, _| true);
         assert!(account.is_none()); // Expect None to be returned.
+
+        // the load filter returns false, so ensure no loaded account
+        assert_eq!(
+            av.get_account_shared_data_if(0, |_, _, _| false),
+            Some(None)
+        );
 
         let result = av.get_stored_account_meta_callback(0, |_| true);
         assert!(result.is_none()); // Expect None to be returned.
 
         let result = av.get_stored_account_without_data_callback(0, |_| true);
         assert!(result.is_none()); // Expect None to be returned.
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_complete() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 1024 * 1024);
+        let (pubkey, account) = create_test_account(5);
+        let index = av.append_account_test(&(pubkey, account.clone())).unwrap();
+        let offset = file_offset_from_logical(index);
+        let mut buffer = MetaEntryBuffer::new();
+        let bytes = av.read_meta_entry_bytes(offset, &mut buffer).unwrap();
+        let Some(AccountFromMetaEntry::Complete { account_meta, data }) =
+            av.account_from_meta_entry(offset, bytes)
+        else {
+            panic!("expected the meta entry to hold the whole account");
+        };
+        let read = account_meta.into_account_shared_data(data.to_vec());
+        assert!(accounts_equal(&read, &account));
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_partial() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 1024 * 1024);
+        let data_len = 2 * PAGE_SIZE;
+        let account = AccountSharedData::new_with_data(
+            100,
+            (0..data_len).map(|i| i as u8).collect(),
+            &Pubkey::default(),
+        );
+        let index = av
+            .append_account_test(&(Pubkey::default(), account.clone()))
+            .unwrap();
+        let offset = file_offset_from_logical(index);
+        let mut buffer = MetaEntryBuffer::new();
+        let bytes = av.read_meta_entry_bytes(offset, &mut buffer).unwrap();
+        let Some(AccountFromMetaEntry::Partial {
+            address,
+            account_meta,
+            data_offset,
+            data_len,
+        }) = av.account_from_meta_entry(offset, bytes)
+        else {
+            panic!("expected the account's data to continue past the meta entry");
+        };
+        assert_eq!(address, Pubkey::default());
+        let read = av
+            .read_account_data(account_meta, data_offset, data_len)
+            .unwrap();
+        assert!(accounts_equal(&read, &account));
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_truncated_header() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 1024 * 1024);
+        let index = av.append_account_test(&create_test_account(5)).unwrap();
+        // the meta entry ends inside the header
+        av.current_len
+            .store(STORE_META_OVERHEAD - 1, Ordering::Relaxed);
+        let offset = file_offset_from_logical(index);
+        let mut buffer = MetaEntryBuffer::new();
+        let bytes = av.read_meta_entry_bytes(offset, &mut buffer).unwrap();
+        assert_eq!(bytes.len(), STORE_META_OVERHEAD - 1);
+        assert!(av.account_from_meta_entry(offset, bytes).is_none());
     }
 
     #[test]
@@ -1843,7 +2067,8 @@ mod tests {
         for _ in &pubkeys {
             let lamports = rng.random();
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
-            let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(lamports, vec![0; data_len], &Pubkey::default());
             accounts.push(account);
             stored_sizes.push(AppendVec::calculate_stored_size(data_len));
         }
@@ -1896,7 +2121,8 @@ mod tests {
         for _ in &pubkeys {
             let lamports = rng.random();
             let data_len = rng.random_range(0..MAX_PERMITTED_DATA_LENGTH) as usize;
-            let account = AccountSharedData::new(lamports, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(lamports, vec![0; data_len], &Pubkey::default());
             accounts.push(account);
             total_stored_size += AppendVec::calculate_stored_size(data_len);
         }
@@ -2030,6 +2256,7 @@ mod tests {
                         assert_eq!(stored_account.data_len(), account.data().len() as u64);
 
                         i += 1;
+                        ControlFlow::Continue(())
                     })
                     .expect("must scan accounts storage");
                 assert_eq!(i, accounts.len());
@@ -2119,6 +2346,7 @@ mod tests {
                         assert!(accounts_equal(&stored_account, account));
 
                         i += 1;
+                        ControlFlow::Continue(())
                     })
                     .expect("must scan accounts storage");
                 assert_eq!(i, accounts.len());
@@ -2243,5 +2471,54 @@ mod tests {
             Some(MAX_LOGICAL_OFFSET),
         );
         assert_eq!(logical_offset_from_file(MAXIMUM_APPEND_VEC_FILE_SIZE), None);
+    }
+
+    /// Ensure the scan_accounts() fns respect their callback's control flow.
+    #[test]
+    fn test_scan_accounts_control_flow() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("append_vec");
+        let av = AppendVec::new(&path, 10_000);
+
+        let num_accounts = 9;
+        let accounts: Box<_> = iter::repeat_with(|| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::empty(1, &Pubkey::default()),
+            )
+        })
+        .take(num_accounts)
+        .collect();
+
+        let slot = 11; // value does not matter
+        av.append_accounts(&(slot, &*accounts)).unwrap();
+
+        let stop_at = num_accounts - 4;
+        let mut i = 0;
+        av.scan_accounts_stored_meta(|_stored_account| {
+            i += 1;
+            if i == stop_at {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap();
+        // ensure the scan visited the expected number of accounts
+        assert_eq!(i, stop_at);
+
+        let stop_at = num_accounts - 2;
+        let mut i = 0;
+        av.scan_stored_accounts_no_data(|_stored_account| {
+            i += 1;
+            if i == stop_at {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap();
+        // ensure the scan visited the expected number of accounts
+        assert_eq!(i, stop_at);
     }
 }

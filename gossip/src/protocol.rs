@@ -24,7 +24,6 @@ use {
     wincode::{SchemaRead, SchemaWrite},
 };
 
-pub(crate) const MAX_CRDS_OBJECT_SIZE: usize = 928;
 /// Max size of serialized crds-values in a Protocol::PushMessage packet. This
 /// is equal to PACKET_DATA_SIZE minus serialized size of an empty push
 /// message: Protocol::PushMessage(Pubkey::default(), Vec::default())
@@ -63,7 +62,7 @@ pub(crate) type GossipProtocolWincodeConfig =
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "D3Hqum16i1KHnejUD65odaQSbQnJtTQnTJSUoUrjzY2a",
+        abi_digest = "EXnayMCL7jaKJHM4HdK6P3EPFFid948d3azSdkeT8GUj",
         abi_serializer = ["wincode"],
         // `Protocol` has no `PartialEq` and embeds `CrdsValue` (whose `hash` is
         // recomputed on deserialize), so verify the wire round-trip only.
@@ -201,10 +200,10 @@ impl PruneData {
     }
 
     fn verify_data(&self, use_prefix: bool) -> bool {
-        let data = if !use_prefix {
-            self.signable_data_without_prefix()
-        } else {
+        let data = if use_prefix {
             self.signable_data_with_prefix()
+        } else {
+            self.signable_data_without_prefix()
         };
         self.get_signature()
             .verify(self.pubkey().as_ref(), data.borrow())
@@ -261,8 +260,7 @@ impl Signable for PruneData {
     }
 
     fn signable_data(&self) -> Cow<'static, [u8]> {
-        // Continue to return signable data without a prefix until cluster has upgraded
-        self.signable_data_without_prefix()
+        self.signable_data_with_prefix()
     }
 
     fn get_signature(&self) -> Signature {
@@ -276,7 +274,7 @@ impl Signable for PruneData {
     // override Signable::verify default
     fn verify(&self) -> bool {
         // Try to verify PruneData with both prefixed and non-prefixed data
-        self.verify_data(false) || self.verify_data(true)
+        self.verify_data(true) || self.verify_data(false)
     }
 }
 
@@ -325,12 +323,11 @@ pub(crate) mod tests {
         super::*,
         crate::{
             contact_info::ContactInfo,
-            crds_data::{self, CrdsData, Deprecated, LowestSlot, SnapshotHashes, Vote as CrdsVote},
+            crds_data::{self, CrdsData, Deprecated, SnapshotHashes},
             duplicate_shred::{
                 self, MAX_DUPLICATE_SHREDS,
                 tests::{new_rand_fec_set_index, new_rand_shred},
             },
-            epoch_slots::EpochSlots,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
         rand::Rng,
@@ -338,11 +335,8 @@ pub(crate) mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_perf::test_tx::new_test_vote_tx,
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        solana_transaction::Transaction,
-        solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -572,20 +566,17 @@ pub(crate) mod tests {
         .next()
         .unwrap();
 
-        let vote =
-            CrdsVote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
-
         // One representative per CrdsData variant. The array length is keyed to
         // strum::EnumCount, so adding a new CrdsData variant without listing it
         // here is a compile error (wrong array length).
         use strum::EnumCount;
         let variants: [CrdsData; CrdsData::COUNT] = [
             CrdsData::LegacyContactInfo(Deprecated {}),
-            CrdsData::Vote(0, vote),
-            CrdsData::LowestSlot(0, LowestSlot::new(Pubkey::new_unique(), 0, timestamp())),
+            CrdsData::Vote(Deprecated {}),
+            CrdsData::LowestSlot(Deprecated {}),
             CrdsData::LegacySnapshotHashes(Deprecated {}),
             CrdsData::AccountsHashes(Deprecated {}),
-            CrdsData::EpochSlots(0, EpochSlots::new_rand(&mut rng, None)),
+            CrdsData::EpochSlots(Deprecated {}),
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
@@ -606,7 +597,12 @@ pub(crate) mod tests {
             CrdsData::RestartHeaviestFork(RestartHeaviestFork::new_rand(&mut rng, None)),
         ];
 
-        for data in variants {
+        for (discriminant, data) in variants.into_iter().enumerate() {
+            assert_eq!(
+                wincode::serialize(&data).unwrap()[..4],
+                (discriminant as u32).to_le_bytes(),
+                "deprecating a CRDS payload must preserve every wire discriminant"
+            );
             let value = CrdsValue::new_unsigned(data);
             let bytes = wincode::serialize(&value).unwrap();
             // Deprecated variants fail to deserialize; only assert the bound
@@ -630,10 +626,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_split_messages_large() {
-        let value = CrdsValue::new_unsigned(CrdsData::LowestSlot(
-            0,
-            LowestSlot::new(Pubkey::default(), 0, 0),
-        ));
+        let value = CrdsValue::new_unsigned(CrdsData::SnapshotHashes(SnapshotHashes {
+            from: Pubkey::default(),
+            full: (0, Hash::default()),
+            incremental: vec![(1, Hash::default()); MAX_INCREMENTAL_SNAPSHOT_HASHES],
+            wallclock: 0,
+        }));
         test_split_messages(value);
     }
 
@@ -761,40 +759,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_vote_size() {
-        let slots = vec![1; 32];
-        let vote = Vote::new(slots, Hash::default());
-        let keypair = Arc::new(Keypair::new());
-
-        // Create the biggest possible vote transaction
-        let vote_ix = vote_instruction::vote_switch(
-            &keypair.pubkey(),
-            &keypair.pubkey(),
-            vote,
-            Hash::default(),
-        );
-        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&keypair.pubkey()));
-
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-        vote_tx.partial_sign(&[keypair.as_ref()], Hash::default());
-
-        let vote = CrdsVote::new(
-            keypair.pubkey(),
-            vote_tx,
-            0, // wallclock
-        )
-        .unwrap();
-        let vote = CrdsValue::new(CrdsData::Vote(1, vote), &Keypair::new());
-        assert!(vote.serialized_size() <= PUSH_MESSAGE_MAX_PAYLOAD_SIZE);
-    }
-
-    #[test]
     fn test_prune_data_sign_and_verify_without_prefix() {
         let mut rng = rand::rng();
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
-        prune_data.sign(&keypair);
+        let data = prune_data.signable_data_without_prefix();
+        prune_data.set_signature(keypair.sign_message(data.borrow()));
 
         let is_valid = prune_data.verify();
         assert!(is_valid, "Signature should be valid without prefix");
@@ -806,10 +777,11 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
-        // Manually set the signature with prefixed data
+        prune_data.sign(&keypair);
+
         let prefixed_data = prune_data.signable_data_with_prefix();
         let signature_with_prefix = keypair.sign_message(prefixed_data.borrow());
-        prune_data.set_signature(signature_with_prefix);
+        assert_eq!(prune_data.get_signature(), signature_with_prefix);
 
         let is_valid = prune_data.verify();
         assert!(is_valid, "Signature should be valid with prefix");
@@ -859,7 +831,8 @@ pub(crate) mod tests {
         let mut prune_data = new_rand_prune_data(&mut rng, &keypair, Some(3));
 
         // Sign with non-prefixed data
-        prune_data.sign(&keypair);
+        let data = prune_data.signable_data_without_prefix();
+        prune_data.set_signature(keypair.sign_message(data.borrow()));
         let is_valid_non_prefixed = prune_data.verify();
         assert!(
             is_valid_non_prefixed,

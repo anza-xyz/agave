@@ -9,8 +9,8 @@ use {
     },
     solana_program_runtime::{
         invoke_context::{BpfAllocator, InvokeContext},
-        loaded_programs::ProgramCacheForTxBatch,
         memory_context::MemoryContext,
+        program_cache::tx_batch::ProgramCacheForTxBatch,
         solana_sbpf::{
             aligned_memory::AlignedMemory,
             ebpf::{

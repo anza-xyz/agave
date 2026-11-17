@@ -1882,7 +1882,7 @@ mod tests {
         let markers = BlockMarkers {
             header: VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot,
-                parent_block_id: Hash::default(),
+                parent_block_id: BlockId::default(),
             }),
             genesis: Some(VersionedBlockMarker::from_genesis_cert_block_marker(
                 GenesisCertBlockMarker {

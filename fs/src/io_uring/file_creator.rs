@@ -6,11 +6,12 @@ use {
         file_io::FileCreator,
         io_uring::{
             IO_PRIO_BE_HIGHEST,
-            memory::{IoBufferChunk, PageAlignedMemory},
+            memory::{IoBufferChunk, new_io_buffer},
             sqpoll,
         },
     },
     agave_io_uring::{Completion, FixedSlab, Ring, RingAccess, RingOp},
+    agave_memory::{AlignedBuffer, HugePages},
     io_uring::{IoUring, opcode, squeue, types},
     libc::{O_CREAT, O_DIRECT, O_NOATIME, O_NOFOLLOW, O_RDWR, O_TRUNC},
     smallvec::SmallVec,
@@ -68,6 +69,7 @@ pub struct IoUringFileCreatorBuilder<'sp> {
     /// Register buffer as fixed with the kernel
     register_buffer: bool,
     write_with_direct_io: bool,
+    huge_pages: HugePages,
 }
 
 impl<'sp> IoUringFileCreatorBuilder<'sp> {
@@ -79,6 +81,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
             shared_sqpoll_fd: None,
             register_buffer: true,
             write_with_direct_io: false,
+            huge_pages: HugePages::Off,
         }
     }
 
@@ -107,6 +110,15 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         self
     }
 
+    /// Set the huge page backing of the buffer, regular pages by default.
+    ///
+    /// Transparent huge pages suit buffers allocated once, since allocating them can stall on
+    /// memory compaction.
+    pub fn huge_pages(mut self, huge_pages: HugePages) -> Self {
+        self.huge_pages = huge_pages;
+        self
+    }
+
     /// Use (or remove) a shared kernel thread to drain submission queue for IO operations
     pub fn shared_sqpoll(mut self, shared_sqpoll_fd: Option<BorrowedFd<'sp>>) -> Self {
         self.shared_sqpoll_fd = shared_sqpoll_fd;
@@ -132,7 +144,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
         F: FnMut(FileInfo) -> Option<File> + 'a,
     {
         let buf_capacity = buf_capacity.max(self.write_capacity as usize);
-        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        let buffer = new_io_buffer(buf_capacity, self.huge_pages)?;
         self.build_with_buffer(buffer, file_complete)
     }
 
@@ -140,7 +152,7 @@ impl<'sp> IoUringFileCreatorBuilder<'sp> {
     /// to notify caller with already written file.
     fn build_with_buffer<'a, F: FnMut(FileInfo) -> Option<File> + 'a>(
         self,
-        mut buffer: PageAlignedMemory,
+        mut buffer: AlignedBuffer,
         file_complete: F,
     ) -> io::Result<IoUringFileCreator<'a>> {
         // Align buffer capacity to write capacity, so we always write equally sized chunks
@@ -210,7 +222,7 @@ pub struct IoUringFileCreator<'a> {
     write_with_direct_io: bool,
     /// Owned buffer used (chunked into [`IoBufferChunk`] items) across lifespan of `ring`
     /// (should get dropped last)
-    _backing_buffer: PageAlignedMemory,
+    _backing_buffer: AlignedBuffer,
 }
 
 impl FileCreator for IoUringFileCreator<'_> {

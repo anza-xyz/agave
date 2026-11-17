@@ -30,15 +30,12 @@
 //!
 //! This pattern is illustrated in the example below.
 //!
-//! By default the [`block_subscribe`] and [`vote_subscribe`] events are
-//! disabled on RPC nodes. They can be enabled by passing
-//! `--rpc-pubsub-enable-block-subscription` and
-//! `--rpc-pubsub-enable-vote-subscription` to `agave-validator`. When these
-//! methods are disabled, the RPC server will return a "Method not found" error
-//! message.
+//! By default the [`block_subscribe`] event is disabled on RPC nodes. It can be
+//! enabled by passing `--rpc-pubsub-enable-block-subscription` to
+//! `agave-validator`. When this method is disabled, the RPC server will return
+//! a "Method not found" error message.
 //!
 //! [`block_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.block_subscribe
-//! [`vote_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.vote_subscribe
 //!
 //! # Examples
 //!
@@ -187,7 +184,7 @@ use {
         error_object::RpcErrorObject,
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+            RpcSignatureResult, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -431,23 +428,6 @@ impl PubsubClient {
     ) -> SubscribeResult<'_, RpcResponse<RpcKeyedAccount>> {
         let params = json!([pubkey.to_string(), config]);
         self.subscribe("program", params).await
-    }
-
-    /// Subscribe to vote events.
-    ///
-    /// Receives messages of type [`RpcVote`] when a new vote is observed. These
-    /// votes are observed prior to confirmation and may never be confirmed.
-    ///
-    /// This method is disabled by default. It can be enabled by passing
-    /// `--rpc-pubsub-enable-vote-subscription` to `agave-validator`.
-    ///
-    /// # RPC Reference
-    ///
-    /// This method corresponds directly to the [`voteSubscribe`] RPC method.
-    ///
-    /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket#votesubscribe
-    pub async fn vote_subscribe(&self) -> SubscribeResult<'_, RpcVote> {
-        self.subscribe("vote", json!([])).await
     }
 
     /// Subscribe to root events.

@@ -595,7 +595,6 @@ fn parse_ur_signature(ur: &str) -> Result<Vec<u8>, RemoteWalletError> {
         .data
         .ok_or(RemoteWalletError::Protocol("No signature in response"))?
         .get_signature()
-        .as_slice()
         .to_vec())
 }
 

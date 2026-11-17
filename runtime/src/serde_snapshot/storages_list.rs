@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry, accounts_db::AccountsFileId,
@@ -14,6 +16,7 @@ use {
 /// on-disk encoding can use `AccountsFileId` (`u32`) directly without worrying about
 /// forward-compat with potential future widening.
 #[repr(u8)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum StorageListItem {
     AppendVec {
@@ -33,6 +36,15 @@ const _: () = assert!(size_of::<StorageListItem>() == 16);
 ///
 /// Written next to the bank snapshot on graceful exit to record which storages in the account
 /// run dirs make up the snapshot; read on startup to prune anything else before fastboot.
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        abi_digest = "DPaA5tV2PU6rbtFswCwHXGTprqYu3u2hBEZ5vzCEtLZe",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct StoragesList {
     pub items: Vec<StorageListItem>,
@@ -75,12 +87,22 @@ impl From<LegacyStoragesList> for StoragesList {
 
 /// Legacy storage list item format, used before fastboot v5.0.0
 #[repr(C)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct LegacyStorageListItem {
     pub slot: Slot,
     pub id: AccountsFileId,
 }
 
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample, PartialEq),
+    frozen_abi(
+        abi_digest = "4FjJ2aGVW2RSNq5XQBAMG3q13KcCJxKihG3TtXGQzoRv",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct LegacyStoragesList {
     pub items: Vec<LegacyStorageListItem>,

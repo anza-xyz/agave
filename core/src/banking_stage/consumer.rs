@@ -1,3 +1,5 @@
+#[cfg(test)]
+use smallvec::SmallVec;
 use {
     super::{
         committer::{CommitTransactionDetails, Committer},
@@ -5,7 +7,6 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    smallvec::SmallVec,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -21,13 +22,12 @@ use {
         StaticMessageWithMeta, TransactionWithMeta,
     },
     solana_svm::{
-        account_loader::{TransactionCheckResult, validate_fee_payer},
+        account_loader::{TransactionCheckResult, fee_payer_load_filter, validate_fee_payer},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_transaction_error::{TransactionError, TransactionResult},
-    solana_vote::vote_parser,
     std::num::Saturating,
 };
 
@@ -82,8 +82,7 @@ pub struct ProcessTransactionBatchOutput {
 }
 
 pub struct ExecuteAndCommitTransactionsOutput {
-    // Transactions counts reported to `ConsumeWorkerMetrics` and then
-    // accumulated later for `LeaderSlotMetrics`
+    // Transaction counts reported to `ConsumeWorkerMetrics`.
     pub(crate) transaction_counts: LeaderProcessedTransactionCounts,
     // Transactions that either were not executed, or were executed and failed to be committed due
     // to the block ending.
@@ -126,6 +125,7 @@ impl Consumer {
         }
     }
 
+    #[cfg(test)]
     pub fn process_and_record_transactions(
         &self,
         bank: &Bank,
@@ -141,19 +141,7 @@ impl Consumer {
             bank.max_processing_age(),
             &mut error_counters,
         );
-        let check_results = check_results
-            .into_iter()
-            .zip(txs.iter())
-            .map(|(result, tx)| match result {
-                Ok(_) => {
-                    if bank.vote_only_bank() && !vote_parser::is_valid_vote_only_transaction(tx) {
-                        Err(TransactionError::SanitizeFailure)
-                    } else {
-                        Ok(())
-                    }
-                }
-                Err(err) => Err(err),
-            });
+        let check_results = check_results.into_iter().map(|result| result.map(|_| ()));
 
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
@@ -567,8 +555,8 @@ impl Consumer {
             bank.fee_features(),
         );
         let mut fee_payer_account = bank
-            .get_account_with_fixed_root(fee_payer)
-            .ok_or(TransactionError::AccountNotFound)?;
+            .get_account_if(fee_payer, fee_payer_load_filter)
+            .ok_or(TransactionError::InvalidAccountForFee)?;
 
         validate_fee_payer(
             &mut fee_payer_account,
@@ -576,9 +564,6 @@ impl Consumer {
             error_counters,
             &bank.rent_collector().rent,
             fee,
-            bank.feature_set
-                .snapshot()
-                .relax_post_exec_min_balance_check,
         )
     }
 }
@@ -625,6 +610,7 @@ mod tests {
             Transaction, sanitized::MessageHash, versioned::VersionedTransaction,
         },
         std::{
+            assert_matches,
             borrow::Cow,
             slice,
             sync::{Arc, RwLock},
@@ -658,8 +644,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(transaction_status_sender, replay_vote_sender, None);
+        let committer = Committer::new(transaction_status_sender, None);
         let consumer = Consumer::new(committer, recorder, None);
 
         TestFrame {
@@ -681,8 +666,7 @@ mod tests {
         let recorder = TransactionRecorder::new(record_sender);
         record_receiver.restart(bank.bank_id());
 
-        let (replay_vote_sender, _replay_vote_receiver) = bounded(1024);
-        let committer = Committer::new(None, replay_vote_sender, None);
+        let committer = Committer::new(None, None);
         let consumer = Consumer::new(committer, recorder, None);
         consumer.process_and_record_transactions(&bank, &transactions)
     }
@@ -754,8 +738,11 @@ mod tests {
         account_address: Pubkey,
         nonce_state: nonce::state::State,
     ) -> AccountSharedData {
-        let mut account =
-            AccountSharedData::new(1, nonce::state::State::size(), &system_program::id());
+        let mut account = AccountSharedData::new_with_data(
+            1,
+            vec![0; nonce::state::State::size()],
+            &system_program::id(),
+        );
         account
             .set_state(&nonce::versions::Versions::new(nonce_state))
             .unwrap();
@@ -770,9 +757,8 @@ mod tests {
         address_lookup_table: AddressLookupTable<'static>,
     ) -> AccountSharedData {
         let data = address_lookup_table.serialize_for_tests().unwrap();
-        let mut account =
-            AccountSharedData::new(1, data.len(), &address_lookup_table::program::id());
-        account.set_data_from_slice(&data);
+        let account =
+            AccountSharedData::new_with_data(1, data, &address_lookup_table::program::id());
         bank.store_account(&account_address, &account);
 
         account
@@ -1143,7 +1129,7 @@ mod tests {
         assert_eq!(
             commit_transactions_result.ok(),
             Some(vec![CommitTransactionDetails::NotCommitted(
-                TransactionError::AccountNotFound
+                TransactionError::InvalidAccountForFee
             )])
         );
 

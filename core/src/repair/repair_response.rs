@@ -1,10 +1,8 @@
 use {
+    agave_shred_wire_format::constants::{Nonce, SIZE_OF_NONCE},
     bytes::{BufMut, BytesMut},
     solana_clock::Slot,
-    solana_ledger::{
-        blockstore::Blockstore,
-        shred::{Nonce, SIZE_OF_NONCE},
-    },
+    solana_ledger::blockstore::Blockstore,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::{BytesPacket, Meta},
     std::net::SocketAddr,

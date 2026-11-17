@@ -218,6 +218,11 @@ impl TokenBucket {
             }
         }
     }
+
+    /// True if the bucket is full at the moment.
+    pub fn is_full(&self) -> bool {
+        self.current_tokens() == self.max_tokens
+    }
 }
 
 impl Clone for TokenBucket {

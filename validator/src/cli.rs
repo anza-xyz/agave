@@ -129,48 +129,14 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     }
 
     add_arg!(
-        // deprecated in v4.1.0
-        Arg::with_name("account_shrink_path")
-            .long("account-shrink-path")
-            .value_name("PATH")
-            .takes_value(true)
-            .multiple(true)
-            .help("Path to accounts shrink path which can hold a compacted account set."),
-        usage_warning: "Shrink paths are no longer used.",
-    );
-    add_arg!(
-        // deprecated in v4.2.0; the `mmap` value was deprecated in v4.0.0, and now mmap mode has
-        // been removed entirely. The only remaining mode (`file`) is the default and only
-        // behavior, so this flag is now a no-op.
-        Arg::with_name("accounts_db_access_storages_method")
-            .long("accounts-db-access-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["mmap", "file"])
-            .help("No-op; account storages are always accessed via file I/O"),
-    );
-    add_arg!(
-        // deprecated in v4.2.0
-        Arg::with_name("accounts_db_cache_limit_mb")
-            .long("accounts-db-cache-limit-mb")
-            .value_name("MEGABYTES")
+        // deprecated in v4.5.0
+        Arg::with_name("banking_trace_dir_byte_limit")
+            .long("enable-banking-trace")
+            .value_name("BYTES")
             .validator(is_parsable::<u64>)
             .takes_value(true)
-            .help(
-                "How large the write cache for account data can become. If this is exceeded, the \
-                 cache is flushed more aggressively.",
-            )
-            .conflicts_with("accounts_db_write_cache_limit"),
-        replaced_by: "accounts-db-write-cache-limit",
-    );
-    add_arg!(
-        // deprecated in v4.4.0
-        Arg::with_name("accounts_db_foreground_threads")
-            .long("accounts-db-foreground-threads")
-            .value_name("NUMBER")
-            .takes_value(true)
-            .validator(is_parsable::<usize>)
-            .help("No-op; AccountsDb no longer uses a foreground thread pool"),
+            .help("No-op; banking trace has been removed"),
+        usage_warning: "Banking trace has been removed.",
     );
     add_arg!(
         // deprecated in v4.3.0
@@ -179,25 +145,6 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
             .conflicts_with("banking_trace_dir_byte_limit")
             .takes_value(false)
             .help("Disables the banking trace. No-op, banking trace is disabled by default."),
-    );
-    add_arg!(
-        // deprecated in v4.0.0
-        Arg::with_name("enable_accounts_disk_index")
-            .long("enable-accounts-disk-index")
-            .help("Enables the disk-based accounts index")
-            .conflicts_with("accounts_index_limit"),
-        replaced_by: "accounts-index-limit",
-    );
-    add_arg!(
-        // deprecated in v4.2.0
-        Arg::with_name("experimental_poh_pinned_cpu_core")
-            .long("experimental-poh-pinned-cpu-core")
-            .takes_value(true)
-            .value_name("CPU_ID")
-            .conflicts_with("poh_pinned_cpu_core")
-            .validator(is_parsable::<usize>)
-            .help("Specify which CPU core PoH is pinned to. Use --poh-pinned-cpu-core instead"),
-        replaced_by: "poh-pinned-cpu-core",
     );
     add_arg!(
         // deprecated in v4.3.0
@@ -214,18 +161,36 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
     );
     add_arg!(
         // deprecated in v4.5.0
-        Arg::with_name("no_skip_initial_accounts_db_clean")
-            .long("no-skip-initial-accounts-db-clean")
-            .help("No-op; initial accounts cleaning is no longer performed"),
-        usage_warning: "Initial accounts cleaning is no longer performed.",
+        Arg::with_name("require_tower")
+            .long("require-tower")
+            .takes_value(false)
+            .help("Refuse to start if saved tower state is not found"),
+        usage_warning: "The --require-tower flag has been deprecated and will be removed in the \
+            future. The flag is only relevant to TowerBFT and setting it is now a no-op.",
     );
     add_arg!(
         // deprecated in v4.5.0
-        Arg::with_name("vote_use_quic")
-            .long("vote-use-quic")
+        Arg::with_name("tpu_max_connections_per_peer")
+            .long("tpu-max-connections-per-peer")
             .takes_value(true)
-            .help("No-op, towerBFT only concept"),
-        usage_warning: "TowerBFT-only argument.",
+            .validator(is_parsable::<u32>)
+            .help(
+                "Controls the max concurrent connections per IpAddr or staked identity. Overrides \
+                 tpu-max-connections-per-unstaked-peer and tpu-max-connections-per-staked-peer",
+            ),
+        usage_warning: "It still overrides --tpu-max-connections-per-unstaked-peer and \
+                        --tpu-max-connections-per-staked-peer, but will be removed in a future \
+                        release. Set both of those instead.",
+    );
+    add_arg!(
+        // deprecated in v4.5.0
+        Arg::with_name("tpu_vote_transaction_receive_threads")
+            .long("tpu-vote-transaction-receive-threads")
+            .value_name("NUMBER")
+            .takes_value(true)
+            .validator(is_parsable::<usize>)
+            .help("No-op; the TPU vote QUIC server has been removed"),
+        usage_warning: "Votes are no longer received over QUIC on the TPU vote port.",
     );
     res
 }
@@ -272,7 +237,6 @@ pub struct DefaultArgs {
     pub dynamic_port_range: String,
     pub ledger_path: String,
 
-    pub tower_storage: String,
     #[deprecated(since = "4.5.0", note = "Unused")]
     pub send_transaction_service_config: send_transaction_service::Config,
 
@@ -306,7 +270,6 @@ pub struct DefaultArgs {
     pub num_quic_endpoints: String,
     pub num_votor_endpoints: String,
 
-    pub banking_trace_dir_byte_limit: String,
     pub block_production_pacing_fill_time_millis: String,
 
     pub thread_args: DefaultThreadArgs,
@@ -319,7 +282,6 @@ impl DefaultArgs {
             ledger_path: "ledger".to_string(),
             dynamic_port_range: format!("{}-{}", VALIDATOR_PORT_RANGE.0, VALIDATOR_PORT_RANGE.1),
             maximum_local_snapshot_age: "2500".to_string(),
-            tower_storage: "file".to_string(),
             #[allow(deprecated)]
             send_transaction_service_config: send_transaction_service::Config::default(),
             maximum_full_snapshot_archives_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
@@ -358,7 +320,6 @@ impl DefaultArgs {
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             num_votor_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS.to_string(),
-            banking_trace_dir_byte_limit: 0.to_string(),
             block_production_pacing_fill_time_millis: BankingStage::default_fill_time_millis()
                 .to_string(),
             thread_args: DefaultThreadArgs::default(),
@@ -427,7 +388,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]",
                 ),
         )

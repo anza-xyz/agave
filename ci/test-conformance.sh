@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
 # Usage: ci/test-conformance.sh <package> <bin> <fixtures-dir>
+#
+# Builds the harness, unless PREBUILT_HARNESS_DIR points at a directory that
+# already contains <bin>.
 
 set -euo pipefail
 
@@ -14,9 +17,13 @@ fixtures_dir=$3
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
-"$root"/cargo stable build --release --locked \
-  --manifest-path "$root/dev-bins/Cargo.toml" --package "$package" --bin "$bin"
-harness="${CARGO_TARGET_DIR:-$root/dev-bins/target}/release/$bin"
+if [[ -n ${PREBUILT_HARNESS_DIR:-} ]]; then
+  harness=$PREBUILT_HARNESS_DIR/$bin
+else
+  "$root"/cargo stable build --release --locked \
+    --manifest-path "$root/dev-bins/Cargo.toml" --package "$package" --bin "$bin"
+  harness="${CARGO_TARGET_DIR:-$root/dev-bins/target}/release/$bin"
+fi
 
 total=$(find "$fixtures_dir" -type f -name '*.fix' | wc -l)
 if ((total == 0)); then
@@ -57,6 +64,10 @@ passed=$(grep -c '^OK: ' "$log" || true)
 if ((passed != total)); then
   grep -v '^OK: ' "$log" | head -n 2000 | print_failures || true
   echo "error: $bin passed $passed/$total fixtures in $fixtures_dir" >&2
+  if [[ $(basename "$(dirname "$fixtures_dir")") == fd-vectors ]]; then
+    echo "To regenerate the failing fixtures and view their diff, run:" >&2
+    echo "  ci/regenerate-test-vectors.sh $(basename "$fixtures_dir")" >&2
+  fi
   exit 1
 fi
 echo "$bin passed $passed/$total fixtures in $fixtures_dir"

@@ -1,23 +1,24 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, criterion_group, criterion_main},
     rand::Rng,
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{Entry, create_ticks},
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            filter::ShredRecoveryContext, get_data_shred_bytes_per_batch_typical,
-            max_entries_per_n_shred, max_ticks_per_n_shreds, ProcessShredsStats, Shred, Shredder,
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred,
+            Shredder,
+            filter::{ShredRecoveryContext, new_dummy_retransmit_sender},
+            get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred,
+            max_ticks_per_n_shreds,
         },
     },
     solana_perf::test_tx,
     solana_runtime::bank::Bank,
-    solana_streamer::evicting_sender::EvictingSender,
     std::{hint::black_box, sync::Arc, time::Duration},
 };
 
@@ -27,7 +28,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
     let slots_per_epoch = shred_slot.max(MINIMUM_SLOTS_PER_EPOCH);
     genesis_config.epoch_schedule = EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false);
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = EvictingSender::new_bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     ShredRecoveryContext::new(
         dummy_retransmit_sender,
         root_bank,

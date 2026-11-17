@@ -85,6 +85,20 @@ impl Bank {
         )
     }
 
+    /// Check a batch of messages against the status cache under one read lock.
+    pub fn get_processed_slots_from_status_cache<'a, Msg: StaticMessageWithMeta + 'a>(
+        &self,
+        messages: impl ExactSizeIterator<Item = &'a Msg>,
+    ) -> Vec<Option<Slot>> {
+        // Allocate before acquiring the status-cache lock.
+        let mut processed_slots = Vec::with_capacity(messages.len());
+        let status_cache = self.status_cache.read().unwrap();
+        for message in messages {
+            processed_slots.push(self.get_processed_slot(message, &status_cache));
+        }
+        processed_slots
+    }
+
     // The heart of runtime transaction checking. We perform these operations, in sequence:
     // * Parse and validate the compute budget and limits, producing the struct for SVM,
     //   or reject the transaction if the compute budget is malformed.
@@ -228,7 +242,7 @@ impl Bank {
         nonce_address: Pubkey,
         strict_nonce_checks: bool,
     ) -> Option<NonceData> {
-        let nonce_account = self.get_account_with_fixed_root(&nonce_address)?;
+        let nonce_account = self.get_account(&nonce_address)?;
 
         if strict_nonce_checks && nonce_account.data().len() != NonceState::size() {
             return None;
@@ -307,9 +321,7 @@ mod tests {
                 setup_nonce_with_bank,
             },
         },
-        solana_account::{
-            AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
-        },
+        solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
@@ -422,13 +434,13 @@ mod tests {
         ));
 
         let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        let mut resized_nonce_account = AccountSharedData::new(
+        let mut resized_data = nonce_account.data().to_vec();
+        resized_data.resize(NonceState::size() + 1, 0);
+        let resized_nonce_account = AccountSharedData::new_with_data(
             nonce_account.lamports(),
-            NonceState::size() + 1,
+            resized_data,
             nonce_account.owner(),
         );
-        resized_nonce_account.data_as_mut_slice()[..nonce_account.data().len()]
-            .copy_from_slice(nonce_account.data());
         bank.store_account(&nonce_pubkey, &resized_nonce_account);
 
         let nonce_address = bank
@@ -695,6 +707,27 @@ mod tests {
             &mut error_counters,
         );
         assert_eq!(check_result, Ok(None));
+    }
+
+    #[test]
+    fn test_get_processed_slots_from_status_cache_batch() {
+        let (genesis_config, _mint_keypair) = solana_genesis_config::create_genesis_config(1);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let processed =
+            make_test_tx_with_blockhash(TransactionVersion::LEGACY, bank.last_blockhash());
+        let unprocessed =
+            make_test_tx_with_blockhash(TransactionVersion::LEGACY, bank.last_blockhash());
+
+        bank.status_cache.write().unwrap().insert(
+            processed.recent_blockhash(),
+            processed.message_hash(),
+            bank.slot(),
+            Ok(()),
+        );
+
+        let slots =
+            bank.get_processed_slots_from_status_cache([&processed, &unprocessed].into_iter());
+        assert_eq!(slots, vec![Some(bank.slot()), None]);
     }
 
     fn check_transactions_for_tests<Tx: StaticTransactionWithMeta>(

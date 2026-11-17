@@ -87,9 +87,6 @@ fn verify_reachable_ports(
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
     }
-    if verify_address(&node.info.tpu_vote(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu_vote.iter());
-    }
     if verify_address(&node.info.tvu(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tvu.iter());
         udp_sockets.extend(node.sockets.broadcast.iter());

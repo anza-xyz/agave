@@ -41,17 +41,17 @@ bip39 = { workspace = true }
 bs58 = { workspace = true }
 clap = { workspace = true }
 console = { workspace = true }
-const_format = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
 pretty-hex = { workspace = true }
+rand = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "rustls-tls-native-roots", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
-solana-account-decoder = { workspace = true }
+solana-account-decoder-client-types = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-bls-signatures = { workspace = true }
 solana-borsh = { workspace = true }
@@ -110,7 +110,7 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
+base64 = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }

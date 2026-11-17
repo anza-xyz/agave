@@ -7,7 +7,7 @@
 
 use {
     agave_feature_set::FeatureSet,
-    agave_transaction_view::transaction_version::TransactionVersion,
+    agave_transaction_view::transaction_view::SanitizedTransactionView,
     agave_votor_messages::migration::MigrationStatus,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
@@ -18,34 +18,28 @@ use {
         accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDb, AccountsDbConfig},
         ancestors::Ancestors,
     },
-    solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_TICKS_PER_SLOT, Slot},
+    solana_clock::{DEFAULT_HASHES_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
-        blockstore::{
-            Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred, PurgeType,
-            handle_duplicate_shred,
-        },
-        blockstore_processor::verify_ticks,
+        blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
+        blockstore_processor::{set_alpenglow_ticks, verify_ticks},
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Payload, Shred,
-            filter::{ShredFilterContext, ShredRecoveryContext},
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
+            filter::{ShredFilterContext, ShredRecoveryContext, new_dummy_retransmit_sender},
             wire,
         },
     },
     solana_message::AccountKeys,
-    solana_packet::PACKET_DATA_SIZE,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, BankFieldsToDeserialize, BankRc},
         epoch_stakes::VersionedEpochStakes,
     },
-    solana_runtime_transaction::sanitize_config::sanitize_config,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::sysvar,
-    solana_streamer::evicting_sender::EvictingSender,
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
-    solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
+    solana_transaction::sanitized::MessageHash,
     std::{
-        borrow::Cow,
         cell::{Cell, RefCell},
         collections::{BTreeMap, HashMap},
         ffi::c_int,
@@ -125,7 +119,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     // FD: resolver + sched config (shred_version, advance_slot_old(root_slot)).
     let feature_set = FeatureSet::default();
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::default();
+    let migration = MigrationStatus::post_migration_status();
+    set_alpenglow_ticks(&bank, &migration);
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
@@ -167,20 +162,19 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             open_ledger()
         }
     };
-    let (retransmit_sender, _retransmit_rx) = EvictingSender::<Vec<Payload>>::new_bounded(0);
+    let retransmit_sender = new_dummy_retransmit_sender();
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
-    let handle_duplicate = |duplicate: PossibleDuplicateShred| {
-        let _duplicate_proof = handle_duplicate_shred(
-            &blockstore,
-            duplicate,
-            true, // no_verify_chained_merkle_root: Alpenglow relies on the block id instead
-        )
-        .expect("handle duplicate shred");
-    };
+    // Blockstore stores duplicate proofs at insert time.
+    let handle_duplicate = |_| {};
+
+    let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
+    slots.sort_unstable();
+    slots.dedup();
+
     let shreds_iter = parsed
-        .iter()
-        .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+        .into_iter()
+        .map(|shred| (shred, /*is_repaired:*/ false));
     let _ = blockstore.insert_shreds_handle_duplicate(
         shreds_iter,
         false, // is_trusted: keep dedup + integrity checks
@@ -188,10 +182,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         &handle_duplicate,
         &mut metrics,
     );
-
-    let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
-    slots.sort_unstable();
-    slots.dedup();
 
     // Replay only reaches a slot whose parent chain is connected to the root
     // through full slots; the other slots are held unverified.  FEC sets are
@@ -229,19 +219,24 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         }
         // Mirror FD's fd_sched_parse_txn: reject non-sanitizable, duplicate-account, or over-MTU txns.
         // The MTU depends on the transaction version, as in `Bank::verify_transaction`.
-        let sanitize_config = sanitize_config();
         for tx in entries.iter().flat_map(|entry| &entry.transactions) {
-            let max_transaction_size = match tx.version() {
-                TransactionVersion::V1 => solana_message::v1::MAX_TRANSACTION_SIZE,
-                _ => PACKET_DATA_SIZE,
+            let bad_locks = bank
+                .get_transaction_account_lock_limits()
+                .for_version(tx.version().into())
+                .and_then(|limit| {
+                    validate_account_locks(AccountKeys::new(tx.static_account_keys(), None), limit)
+                })
+                .is_err();
+            let invalid_tx = match (*tx).clone().sanitize() {
+                Ok(view) => RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+                    view,
+                    MessageHash::Compute,
+                    None,
+                )
+                .is_err(),
+                Err(_) => true,
             };
-            let oversized = tx.data().len() > max_transaction_size;
-            let bad_locks = validate_account_locks(
-                AccountKeys::new(tx.static_account_keys(), None),
-                MAX_TX_ACCOUNT_LOCKS,
-            )
-            .is_err();
-            if (*tx).clone().sanitize(&sanitize_config).is_err() || bad_locks || oversized {
+            if invalid_tx || bad_locks {
                 effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
             }
         }
@@ -354,7 +349,7 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
         None,
         &Ancestors::default(),
     );
-    bank_rc.accounts.accounts_db.add_root(parent_slot);
+    bank_rc.accounts.accounts_db.add_root(bank_id);
 
     let epoch_stakes = [epoch, epoch.saturating_add(1)]
         .into_iter()
@@ -370,7 +365,8 @@ fn build_root_bank(root_slot: Slot, feature_set: FeatureSet) -> Arc<Bank> {
         parent_slot,
         tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot),
         max_tick_height: DEFAULT_TICKS_PER_SLOT.saturating_mul(root_slot.saturating_add(1)),
-        hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK),
+        // Fixtures are generated with 400ms slots.
+        hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK_400_MS),
         ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
         slot: root_slot,
         block_height: root_slot,

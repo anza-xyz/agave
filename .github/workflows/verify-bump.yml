@@ -1,0 +1,40 @@
+name: Verify Version Bump
+
+on:
+  pull_request:
+    branches:
+      - master
+      - "v[0-9]*"
+
+jobs:
+  verify-bump:
+    if: startsWith(github.head_ref, 'version-bump-')
+    timeout-minutes: 15
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install anza-xtask
+        run: |
+          cargo install anza-xtask@0.2.6 --locked
+
+      - name: Verify bump
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          log="$RUNNER_TEMP/verify-bump.log"
+          status=0
+          cargo anza-xtask verify-bump --base "origin/$BASE_REF" 2>&1 | tee "$log" || status=$?
+
+          {
+            echo '```'
+            cat "$log"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          exit "$status"

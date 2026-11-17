@@ -1,6 +1,7 @@
 mod fetch;
 mod resolve;
 
+pub use resolve::ChannelInfo;
 use {
     anyhow::Result,
     clap::Args,
@@ -18,6 +19,18 @@ pub struct CommandArgs {
 }
 
 pub async fn run(args: CommandArgs) -> Result<()> {
+    let info = resolve().await?;
+
+    if args.json {
+        print_channel_info_json(&info)?;
+    } else {
+        print_channel_info(&info);
+    }
+
+    Ok(())
+}
+
+pub async fn resolve() -> Result<ChannelInfo> {
     let mut heads = fetch::release_heads()?;
     let tags = fetch::release_tags()?;
 
@@ -38,21 +51,13 @@ pub async fn run(args: CommandArgs) -> Result<()> {
     let pins = fetch::channel_pins(&client).await?;
     let branch = pick_env("CI_BASE_BRANCH").or_else(|| pick_env("CI_BRANCH"));
     let channel = pick_env("CHANNEL");
-    let info = derive_channels(
+    derive_channels(
         &versions,
         &tags,
         branch.as_deref(),
         channel.as_deref(),
         &pins,
-    )?;
-
-    if args.json {
-        print_channel_info_json(&info)?;
-    } else {
-        print_channel_info(&info);
-    }
-
-    Ok(())
+    )
 }
 
 fn pick_env(key: &str) -> Option<String> {

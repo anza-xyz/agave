@@ -1,5 +1,8 @@
 use {
-    crate::error::{LedgerToolError, Result},
+    crate::{
+        args::{CliAccountNewConfig, cli_account_with_config},
+        error::{LedgerToolError, Result},
+    },
     itertools::Either,
     pretty_hex::PrettyHex,
     serde::{
@@ -9,7 +12,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::is_loadable::IsLoadable as _,
     solana_cli_output::{
-        CliAccount, CliAccountNewConfig, CliBlock, OutputFormat, QuietDisplay, VerboseDisplay,
+        CliAccount, CliBlock, OutputFormat, QuietDisplay, VerboseDisplay,
         display::writeln_transaction,
     },
     solana_clock::{Slot, UnixTimestamp},
@@ -1174,7 +1177,7 @@ impl AccountsScanner {
         S: SerializeSeq,
     {
         if let Some(output_config) = &self.config.output_config {
-            let cli_account = CliAccount::new_with_config(pubkey, account, output_config);
+            let cli_account = cli_account_with_config(pubkey, account, output_config);
 
             if let Some(serializer) = seq_serializer {
                 serializer.serialize_element(&cli_account).unwrap();
@@ -1215,7 +1218,7 @@ impl AccountsScanner {
             AccountsOutputMode::Individual(pubkeys) => pubkeys.iter().for_each(|pubkey| {
                 if let Some((account, _slot)) = self
                     .bank
-                    .get_account_modified_slot_with_fixed_root(pubkey)
+                    .get_account_modified_slot(pubkey)
                     .filter(|(account, _)| self.should_process_account(account))
                 {
                     total_accounts_stats.accumulate_account(&account);

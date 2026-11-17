@@ -20,8 +20,11 @@ mod common;
 fn test_bpf_loader_upgradeable_write() {
     let loader_id = bpf_loader_upgradeable::id();
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account =
-        AccountSharedData::new(1, UpgradeableLoaderState::size_of_buffer(9), &loader_id);
+    let mut buffer_account = AccountSharedData::new_with_data(
+        1,
+        vec![0; UpgradeableLoaderState::size_of_buffer(9)],
+        &loader_id,
+    );
     let instruction_accounts = vec![
         AccountMeta {
             pubkey: buffer_address,
@@ -36,7 +39,7 @@ fn test_bpf_loader_upgradeable_write() {
     ];
 
     // Case: Not initialized
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 0,
         bytes: vec![42; 9],
     })
@@ -50,7 +53,7 @@ fn test_bpf_loader_upgradeable_write() {
     );
 
     // Case: Write entire buffer
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 0,
         bytes: vec![42; 9],
     })
@@ -85,7 +88,7 @@ fn test_bpf_loader_upgradeable_write() {
     );
 
     // Case: Write portion of the buffer
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 3,
         bytes: vec![42; 6],
     })
@@ -124,7 +127,7 @@ fn test_bpf_loader_upgradeable_write() {
     );
 
     // Case: overflow size
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 0,
         bytes: vec![42; 10],
     })
@@ -143,7 +146,7 @@ fn test_bpf_loader_upgradeable_write() {
     );
 
     // Case: overflow offset
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 1,
         bytes: vec![42; 9],
     })
@@ -162,7 +165,7 @@ fn test_bpf_loader_upgradeable_write() {
     );
 
     // Case: Not signed
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 0,
         bytes: vec![42; 9],
     })
@@ -193,7 +196,7 @@ fn test_bpf_loader_upgradeable_write() {
 
     // Case: wrong authority
     let authority_address = Pubkey::new_unique();
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 1,
         bytes: vec![42; 9],
     })
@@ -226,7 +229,7 @@ fn test_bpf_loader_upgradeable_write() {
     );
 
     // Case: None authority
-    let instruction = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+    let instruction = wincode::serialize(&UpgradeableLoaderInstruction::Write {
         offset: 1,
         bytes: vec![42; 9],
     })

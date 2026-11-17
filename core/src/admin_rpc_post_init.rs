@@ -22,8 +22,6 @@ pub enum KeyUpdaterType {
     Tpu,
     /// TPU forwards key updater
     TpuForwards,
-    /// TPU vote key updater
-    TpuVote,
     /// Forward key updater
     Forward,
     /// For the RPC service

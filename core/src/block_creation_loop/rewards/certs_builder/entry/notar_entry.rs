@@ -84,12 +84,7 @@ impl NotarEntry {
                     validators,
                 } => (signature, bitmap, validators),
             };
-            let cert = NotarRewardCertificate::try_new(
-                reward_slot,
-                block_id.to_hash(),
-                signature,
-                bitmap,
-            )?;
+            let cert = NotarRewardCertificate::try_new(reward_slot, block_id, signature, bitmap)?;
             return Ok(Some((cert, validators)));
         }
         Ok(None)
@@ -170,7 +165,7 @@ mod tests {
         let (notar_cert, _) = entry.build_cert(slot).unwrap().unwrap();
         assert_eq!(notar_cert.slot, slot);
         // We should pick the block id with the most stake (not the most votes)
-        assert_eq!(notar_cert.block_id, blockid0.to_hash());
+        assert_eq!(notar_cert.block_id, blockid0);
         validate_bitmap(notar_cert.bitmap(), 2, 5);
     }
 
@@ -225,7 +220,7 @@ mod tests {
             .unwrap();
 
         let (notar_cert, validators) = entry.build_cert(slot).unwrap().unwrap();
-        assert_eq!(notar_cert.block_id, blockid2.to_hash());
+        assert_eq!(notar_cert.block_id, blockid2);
         assert_eq!(validators, expected_validators);
         validate_bitmap(notar_cert.bitmap(), 1, max_validators);
     }

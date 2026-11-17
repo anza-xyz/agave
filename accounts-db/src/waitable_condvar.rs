@@ -25,10 +25,7 @@ impl WaitableCondvar {
     pub fn wait_timeout(&self, timeout: Duration) -> bool {
         let lock = self.mutex.lock().unwrap();
         let res = self.event.wait_timeout(lock, timeout).unwrap();
-        if res.1.timed_out() {
-            return true;
-        }
-        false
+        res.1.timed_out()
     }
 }
 

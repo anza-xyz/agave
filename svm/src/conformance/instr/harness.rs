@@ -12,7 +12,7 @@ use {
     solana_account::AccountSharedData,
     solana_instruction_error::InstructionError,
     solana_program_runtime::{
-        invoke_context::InvokeContext, loaded_programs::ProgramCacheForTxBatch,
+        invoke_context::InvokeContext, program_cache::tx_batch::ProgramCacheForTxBatch,
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,

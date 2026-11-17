@@ -1,21 +1,21 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 #[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
+use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
 use {
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_clock::Slot,
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::{LoaderV4State, LoaderV4Status},
-    solana_program_runtime::{
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramToLoad},
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
+    solana_program_runtime::program_cache::{
+        entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment, global::ProgramToLoad,
+        owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
     },
     solana_pubkey::Pubkey,
     solana_sbpf::elf_parser::consts::ELFMAG,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::AccountLoadCallback,
     solana_svm_timings::ExecuteTimings,
     solana_svm_type_overrides::sync::Arc,
     solana_transaction_error::{TransactionError, TransactionResult},
@@ -31,7 +31,7 @@ pub(crate) enum ProgramAccountLoadResult {
     ProgramOfLoaderV4(AccountSharedData, Slot),
 }
 
-pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
+pub(crate) fn load_program_accounts<CB: AccountLoadCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {
@@ -96,7 +96,7 @@ pub(crate) fn load_program_accounts<CB: TransactionProcessingCallback>(
 /// If the account doesn't exist it returns `None`. If the account does exist, it must be a program
 /// account (belong to one of the program loaders). Returns `Some(InvalidAccountData)` if the program
 /// account is `Closed`, contains invalid data or any of the programdata accounts are invalid.
-pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
+pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
     callbacks: &CB,
     program_runtime_environment: &ProgramRuntimeEnvironment,
     pubkey: &Pubkey,
@@ -187,7 +187,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     Some(Arc::new(loaded_program))
 }
 
-fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
+fn get_program_deployment_slot<CB: AccountLoadCallback>(
     callbacks: &CB,
     program: &AccountSharedData,
     loader: ProgramCacheEntryOwner,
@@ -257,7 +257,7 @@ fn get_program_deployment_slot<CB: TransactionProcessingCallback>(
 // to reload, and insert a closed tombstone, BUT it will not remove the program
 // from the search list, resulting in reload loop.
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-pub(crate) fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
+pub(crate) fn filter_executable_program_accounts<'a, CB: AccountLoadCallback>(
     callbacks: &CB,
     program_cache_for_tx_batch: &ProgramCacheForTxBatch,
     keys: impl Iterator<Item = &'a Pubkey>,
@@ -383,11 +383,11 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::compiled_instruction::CompiledInstruction,
         solana_program_runtime::{
-            loaded_programs::{
-                BlockRelation, ForkGraph, ProgramRuntimeEnvironment,
-                get_mock_program_runtime_environment,
+            program_cache::{
+                entry::ProgramCacheEntryType,
+                env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
+                fork_graph::{BlockRelation, ForkGraph},
             },
-            program_cache_entry::ProgramCacheEntryType,
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
@@ -410,7 +410,7 @@ mod tests {
         pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
     }
 
-    impl TransactionProcessingCallback for MockBankCallback {
+    impl AccountLoadCallback for MockBankCallback {
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.account_shared_data.borrow().get(pubkey).cloned()
         }
@@ -1068,7 +1068,7 @@ mod tests {
 
         // Fail: program account invalid state
         let invalid_program_account =
-            AccountSharedData::new(100, 100, &bpf_loader_upgradeable::id());
+            AccountSharedData::new_with_data(100, vec![0; 100], &bpf_loader_upgradeable::id());
         assert_eq!(
             get_program_deployment_slot(
                 &mock_bank,
@@ -1239,19 +1239,18 @@ mod tests {
                     latest_access_slot: AtomicU64::default(),
                 }),
             );
-            mock_bank
-                .account_shared_data
-                .borrow_mut()
-                .insert(loader_ids[i], AccountSharedData::new(1, 1, &program_ids[3]));
-            let mut program = AccountSharedData::new(1, 1, &loader_ids[i]);
-            program.set_data_from_slice(&ELFMAG);
+            mock_bank.account_shared_data.borrow_mut().insert(
+                loader_ids[i],
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[3]),
+            );
+            let program = AccountSharedData::new_with_data(1, ELFMAG.to_vec(), &loader_ids[i]);
             mock_bank
                 .account_shared_data
                 .borrow_mut()
                 .insert(program_ids[i], program);
             mock_bank.account_shared_data.borrow_mut().insert(
                 account_ids[i],
-                AccountSharedData::new(1, 1, &program_ids[i]),
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[i]),
             );
         }
 

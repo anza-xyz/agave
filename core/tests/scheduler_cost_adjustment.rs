@@ -161,7 +161,7 @@ impl TestSetup {
             let lamports = self.genesis_config.rent.minimum_balance(space);
 
             let mut data = vec![0; space];
-            bincode::serialize_into(
+            wincode::serialize_into(
                 &mut data[..metadata_offset],
                 &UpgradeableLoaderState::Buffer {
                     authority_address: Some(upgrade_authority_address),
@@ -393,7 +393,7 @@ fn test_builtin_ix_precompiled() {
     };
     assert_eq!(
         expected,
-        test_setup.execute_test_transaction(&[Instruction::new_with_bincode(
+        test_setup.execute_test_transaction(&[Instruction::new_with_bytes(
             secp256k1_program::id(),
             &[0u8],
             // Add a dummy account to generate a unique transaction

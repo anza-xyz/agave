@@ -1,16 +1,17 @@
 use {
     crate::{
-        cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
-        compute_budget::{ComputeUnitConfig, WithComputeUnitConfig},
+        cli::{
+            CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult,
+            message_into_signed_transaction,
+        },
+        compute_budget::ComputeUnitConfig,
+        message_builder::MessageBuilder,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balance},
     },
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     reqwest::blocking::Client,
     serde_json::{Map, Value},
     solana_account::{Account, WINCODE_CONFIG},
-    solana_account_decoder::validator_info::{
-        self, MAX_LONG_FIELD_LENGTH, MAX_SHORT_FIELD_LENGTH, MAX_VALIDATOR_INFO, ValidatorInfo,
-    },
     solana_clap_utils::{
         compute_budget::{COMPUTE_UNIT_PRICE_ARG, ComputeUnitLimit, compute_unit_price_arg},
         hidden_unless_forced,
@@ -24,18 +25,29 @@ use {
         state::{ConfigKeys, get_config_data},
     },
     solana_keypair::Keypair,
-    solana_message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_signer::Signer,
-    solana_transaction::Transaction,
     std::{error, rc::Rc},
-    wincode::serialized_size,
+    wincode::{SchemaRead, SchemaWrite, serialized_size},
 };
 
+const MAX_SHORT_FIELD_LENGTH: usize = 80;
+const MAX_LONG_FIELD_LENGTH: usize = 300;
+/// Maximum size of validator configuration data (`ValidatorInfo`).
+const MAX_VALIDATOR_INFO: u64 = 576;
+
+const VALIDATOR_INFO_ID: Pubkey =
+    solana_pubkey::pubkey!("Va1idator1nfo111111111111111111111111111111");
+
+#[derive(Debug, Default, SchemaRead, SchemaWrite)]
+struct ValidatorInfo {
+    info: String,
+}
+
 // Return an error if a validator details are longer than the max length.
-pub fn check_details_length(string: String) -> Result<(), String> {
+fn check_details_length(string: String) -> Result<(), String> {
     if string.len() > MAX_LONG_FIELD_LENGTH {
         Err(format!(
             "validator details longer than {MAX_LONG_FIELD_LENGTH:?}-byte limit"
@@ -45,7 +57,7 @@ pub fn check_details_length(string: String) -> Result<(), String> {
     }
 }
 
-pub fn check_total_length(info: &ValidatorInfo) -> Result<(), String> {
+fn check_total_length(info: &ValidatorInfo) -> Result<(), String> {
     let size = serialized_size(&info).unwrap();
     let limit = MAX_VALIDATOR_INFO;
 
@@ -315,7 +327,7 @@ pub async fn process_publish_validator_info(
         .iter()
         .filter(|(_, account)| {
             match wincode::config::deserialize::<ConfigKeys, _>(&account.data, WINCODE_CONFIG) {
-                Ok(key_list) => key_list.keys.contains(&(validator_info::id(), false)),
+                Ok(key_list) => key_list.keys.contains(&(VALIDATOR_INFO_ID, false)),
                 Err(_) => false,
             }
         })
@@ -340,7 +352,7 @@ pub async fn process_publish_validator_info(
     let balance = rpc_client.get_balance(&info_pubkey).await.unwrap_or(0);
 
     let keys = vec![
-        (validator_info::id(), false),
+        (VALIDATOR_INFO_ID, false),
         (config.signers[0].pubkey(), true),
     ];
     let data_len = MAX_VALIDATOR_INFO
@@ -378,37 +390,39 @@ pub async fn process_publish_validator_info(
     let build_message = |lamports| {
         let keys = keys.clone();
         if balance == 0 {
-            let mut instructions =
-                config_instruction::create_account_with_max_config_space::<ValidatorInfo>(
+            let instructions =
+                MessageBuilder::new(config_instruction::create_account_with_max_config_space::<
+                    ValidatorInfo,
+                >(
                     &config.signers[0].pubkey(),
                     &info_pubkey,
                     lamports,
                     MAX_VALIDATOR_INFO,
                     keys.clone(),
-                )
+                ))
                 .with_compute_unit_config(&ComputeUnitConfig {
                     compute_unit_price,
                     compute_unit_limit,
                 });
-            instructions.extend_from_slice(&[config_instruction::store(
+            let instructions = instructions.with_instruction(config_instruction::store(
                 &info_pubkey,
                 true,
                 keys,
                 &validator_info,
-            )]);
-            Message::new(&instructions, Some(&config.signers[0].pubkey()))
+            ));
+            instructions.build(&config.signers[0].pubkey())
         } else {
-            let instructions = vec![config_instruction::store(
+            let instructions = MessageBuilder::new(vec![config_instruction::store(
                 &info_pubkey,
                 false,
                 keys,
                 &validator_info,
-            )]
+            )])
             .with_compute_unit_config(&ComputeUnitConfig {
                 compute_unit_price,
                 compute_unit_limit,
             });
-            Message::new(&instructions, Some(&config.signers[0].pubkey()))
+            instructions.build(&config.signers[0].pubkey())
         }
     };
 
@@ -420,13 +434,15 @@ pub async fn process_publish_validator_info(
         SpendAmount::Some(lamports),
         &latest_blockhash,
         &config.signers[0].pubkey(),
-        compute_unit_limit,
+        &ComputeUnitConfig {
+            compute_unit_limit,
+            compute_unit_price,
+        },
         build_message,
         config.commitment,
     )
     .await?;
-    let mut tx = Transaction::new_unsigned(message);
-    tx.try_sign(&signers, latest_blockhash)?;
+    let tx = message_into_signed_transaction(message, &signers, latest_blockhash, false)?;
     let signature_str = rpc_client
         .send_and_confirm_transaction_with_spinner_and_config(
             &tx,
@@ -463,7 +479,7 @@ pub async fn process_get_validator_info(
                     &validator_info_account.data,
                     WINCODE_CONFIG,
                 ) {
-                    Ok(key_list) => key_list.keys.contains(&(validator_info::id(), false)),
+                    Ok(key_list) => key_list.keys.contains(&(VALIDATOR_INFO_ID, false)),
                     Err(_) => false,
                 }
             })
@@ -605,7 +621,7 @@ mod tests {
     #[test]
     fn test_parse_validator_info() {
         let pubkey = solana_pubkey::new_rand();
-        let keys = vec![(validator_info::id(), false), (pubkey, true)];
+        let keys = vec![(VALIDATOR_INFO_ID, false), (pubkey, true)];
         let config = ConfigKeys { keys };
 
         let mut info = Map::new();

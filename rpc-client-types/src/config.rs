@@ -51,6 +51,7 @@ pub struct RpcSimulateTransactionConfig {
     pub min_context_slot: Option<Slot>,
     #[serde(default)]
     pub inner_instructions: bool,
+    pub inner_instructions_encoding: Option<UiTransactionEncoding>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,7 +179,6 @@ pub struct RpcProgramAccountsConfig {
 #[serde(rename_all = "camelCase")]
 pub enum RpcTransactionLogsFilter {
     All,
-    AllWithVotes,
     Mentions(Vec<String>), // base58-encoded list of addresses
 }
 
@@ -352,9 +352,22 @@ pub struct RpcContextConfig {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RpcRankMapConfig {
+pub struct RpcVatActiveSetRankMapConfig {
     /// Filter by validator identity, as a base-58 encoded string.
     pub identity: Option<String>,
     /// Minimum finalized bank context slot; no minimum is enforced when omitted.
     pub min_context_slot: Option<Slot>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RpcTransactionLogsFilter;
+
+    #[test]
+    fn test_removed_all_with_votes_filter() {
+        assert!(serde_json::from_str::<RpcTransactionLogsFilter>(r#""allWithVotes""#).is_err());
+        let filter: RpcTransactionLogsFilter = serde_json::from_str(r#""all""#).unwrap();
+        assert_eq!(filter, RpcTransactionLogsFilter::All);
+        assert_eq!(serde_json::to_string(&filter).unwrap(), r#""all""#);
+    }
 }

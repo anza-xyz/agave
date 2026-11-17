@@ -52,17 +52,6 @@ pub enum DataRef<'data> {
     External(ExternalDataOffset),
 }
 
-/// Loaded account data, used when reading.
-#[derive(Debug)]
-pub enum LoadedData<'buf> {
-    /// Account has no data.
-    NoData,
-    /// Account data is small and stored inline with the meta entry.
-    Inline(&'buf [u8]),
-    /// Account data is large and stored in an external data file.
-    External(Vec<u8>),
-}
-
 #[cfg(test)]
 mod tests {
     use {super::*, solana_system_interface::MAX_PERMITTED_DATA_LENGTH};

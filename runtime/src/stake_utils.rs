@@ -13,17 +13,12 @@ use {
 };
 
 /// The minimum stake amount that can be delegated, in lamports.
-/// When this feature is added, it will be accompanied by an upgrade to the BPF Stake Program.
 /// NOTE: This is also used to calculate the minimum balance of a delegated stake account,
 /// which is the rent exempt reserve _plus_ the minimum stake delegation.
 #[inline(always)]
-pub fn get_minimum_delegation(upgrade_bpf_stake_program_to_v5_is_active: bool) -> u64 {
-    if upgrade_bpf_stake_program_to_v5_is_active {
-        const MINIMUM_DELEGATION_SOL: u64 = 1;
-        MINIMUM_DELEGATION_SOL * LAMPORTS_PER_SOL
-    } else {
-        1
-    }
+pub fn get_minimum_delegation() -> u64 {
+    const MINIMUM_DELEGATION_SOL: u64 = 1;
+    MINIMUM_DELEGATION_SOL * LAMPORTS_PER_SOL
 }
 
 /// Utility function for creating a stake account from basic parameters.
@@ -37,13 +32,10 @@ pub fn create_stake_account_with_activation_and_deactivation_epochs(
     activation_epoch: Epoch,
     deactivation_epoch: Epoch,
 ) -> AccountSharedData {
-    let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
-
     let vote_state = VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();
     let credits_observed = vote_state.credits();
 
-    let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
+    let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
     let stake_amount = lamports
         .checked_sub(rent_exempt_reserve)
         .expect("lamports >= rent_exempt_reserve");
@@ -62,11 +54,13 @@ pub fn create_stake_account_with_activation_and_deactivation_epochs(
         credits_observed,
     };
 
-    stake_account
-        .set_state(&StakeStateV2::Stake(meta, stake, StakeFlags::empty()))
-        .expect("set_state");
-
-    stake_account
+    AccountSharedData::new_data_with_space(
+        lamports,
+        &StakeStateV2::Stake(meta, stake, StakeFlags::empty()),
+        StakeStateV2::size_of(),
+        &stake_program::id(),
+    )
+    .expect("stake state fits StakeStateV2::size_of()")
 }
 
 /// Utility function for creating a stake account from basic parameters.

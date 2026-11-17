@@ -191,7 +191,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/do-audit.sh")
                         || file.ends_with("ci/check-install-all.sh")
                         || file.ends_with("scripts/spl-token-cli-version.sh")
-                        || file.ends_with("scripts/cargo-build-sbf-version.sh")
                 }),
             release_check: trigger_all
                 || rust_changed
@@ -221,7 +220,6 @@ impl PullRequestPipelineFlags {
                         || file.ends_with("ci/stable/run-partition.sh")
                         || file.ends_with("ci/stable/common.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
-                        || file.ends_with("ci/common/limit-threads.sh")
                 }),
             local_cluster: trigger_all
                 || rust_changed
@@ -237,7 +235,6 @@ impl PullRequestPipelineFlags {
                     file.ends_with("ci/test-docs.sh")
                         || file.ends_with("ci/test-stable.sh")
                         || file.ends_with("scripts/ulimit-n.sh")
-                        || file.ends_with("ci/common/limit-threads.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
                 }),
             localnet: trigger_all
@@ -262,7 +259,6 @@ impl PullRequestPipelineFlags {
                     file.ends_with("ci/test-stable-sbf.sh")
                         || file.ends_with("ci/test-stable.sh")
                         || file.ends_with("scripts/ulimit-n.sh")
-                        || file.ends_with("ci/common/limit-threads.sh")
                         || file.ends_with("ci/common/shared-functions.sh")
                         || file.starts_with("programs/sbf/")
                         || file == "cargo-build-sbf"
@@ -277,7 +273,6 @@ impl PullRequestPipelineFlags {
                 || changed_files.iter().any(|file| {
                     file.ends_with("scripts/coverage.sh")
                         || file.ends_with("ci/test-coverage.sh")
-                        || file.ends_with("ci/intercept.sh")
                         || file.ends_with("ci/codecov-env.sh")
                         || file.starts_with("ci/coverage/")
                 }),
@@ -409,7 +404,7 @@ fn default_sanity_step() -> buildkite::Step {
 fn default_shellcheck_step() -> buildkite::Step {
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("shellcheck"),
-        command: String::from("ci/shellcheck.sh"),
+        command: String::from("ci/docker-run-default-image.sh ci/shellcheck.sh"),
         agents: Some(queue_agents()),
         timeout_in_minutes: Some(5),
         ..Default::default()
@@ -431,7 +426,7 @@ fn default_release_check_step() -> buildkite::Step {
         name: String::from("release-check"),
         command: String::from("ci/docker-run-default-image.sh cargo xtask release-check"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(25),
+        timeout_in_minutes: Some(15),
         ..Default::default()
     })
 }
@@ -489,7 +484,7 @@ fn default_stable_abi_step() -> buildkite::Step {
         name: String::from("stable-abi"),
         command: String::from("ci/docker-run-default-image.sh ci/test-stable-abi.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(30),
+        timeout_in_minutes: Some(20),
         ..Default::default()
     })
 }
@@ -527,7 +522,7 @@ fn default_stable_step(parallel: u64) -> buildkite::Step {
                  ./dev-bins/Cargo.toml",
             ),
             agents: Some(queue_agents()),
-            timeout_in_minutes: Some(35),
+            timeout_in_minutes: Some(15),
             ..Default::default()
         }));
 
@@ -549,7 +544,7 @@ fn default_local_cluster_step(parallel: u64) -> buildkite::Step {
                      {parallel}"
                 ),
                 agents: Some(queue_agents()),
-                timeout_in_minutes: Some(15),
+                timeout_in_minutes: Some(20),
                 retry: Some(HashMap::from([(
                     String::from("automatic"),
                     String::from("true"),
@@ -575,17 +570,19 @@ fn default_localnet_step() -> buildkite::Step {
         name: String::from("localnet"),
         command: String::from("ci/docker-run-default-image.sh ci/stable/run-localnet.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(30),
+        timeout_in_minutes: Some(20),
         ..Default::default()
     })
 }
 
 fn default_xdp_test_step() -> buildkite::Step {
+    let mut agents = queue_agents();
+    agents.insert(String::from("kernel"), String::from("host"));
     buildkite::Step::Command(buildkite::CommandStep {
         name: String::from("xdp-test"),
         command: String::from("ci/docker-run-default-image.sh ci/test-xdp.sh"),
-        agents: Some(queue_agents()),
-        timeout_in_minutes: Some(25),
+        agents: Some(agents),
+        timeout_in_minutes: Some(10),
         env: Some(HashMap::from([
             (
                 String::from("EXTRA_DOCKER_RUN_ARGS"),
@@ -608,7 +605,7 @@ fn default_stable_sbf_step() -> buildkite::Step {
         name: String::from("stable-sbf"),
         command: String::from("ci/docker-run-default-image.sh ci/test-stable-sbf.sh"),
         agents: Some(queue_agents()),
-        timeout_in_minutes: Some(35),
+        timeout_in_minutes: Some(25),
         ..Default::default()
     })
 }
@@ -636,7 +633,7 @@ fn default_coverage_step(parallel: u64) -> buildkite::Step {
                 name: format!("coverage-{i}"),
                 command: format!("ci/docker-run-default-image.sh ci/coverage/part-{i}.sh"),
                 agents: Some(queue_agents()),
-                timeout_in_minutes: Some(60),
+                timeout_in_minutes: Some(30),
                 env: Some(HashMap::from([(
                     String::from("FETCH_CODECOV_ENVS"),
                     String::from("true"),

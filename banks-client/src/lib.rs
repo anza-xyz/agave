@@ -1,10 +1,10 @@
 #![cfg(feature = "agave-unstable-api")]
 //! A client for the ledger state, from the perspective of an arbitrary validator.
 //!
-//! Use start_tcp_client() to create a client and then import BanksClientExt to
-//! access its methods. Additional "*_with_context" methods are also available,
-//! but they are undocumented, may change over time, and are generally more
-//! cumbersome to use.
+//! Use start_client() with a transport, such as the one returned by
+//! solana_banks_server::banks_server::start_local_server(), to create a client.
+//! Additional "*_with_context" methods are also available, but they are
+//! undocumented, may change over time, and are generally more cumbersome to use.
 
 pub use {
     crate::error::BanksClientError,
@@ -32,10 +32,7 @@ use {
         ClientMessage, Response, Transport,
         client::{self, NewClient, RequestDispatch},
         context::{self, Context},
-        serde_transport::tcp,
     },
-    tokio::net::ToSocketAddrs,
-    tokio_serde::formats::Bincode,
 };
 
 mod error;
@@ -519,13 +516,6 @@ pub async fn start_client<C>(transport: C) -> Result<BanksClient, BanksClientErr
 where
     C: Transport<ClientMessage<BanksRequest>, Response<BanksResponse>> + Send + 'static,
 {
-    Ok(BanksClient {
-        inner: TarpcClient::new(client::Config::default(), transport).spawn(),
-    })
-}
-
-pub async fn start_tcp_client<T: ToSocketAddrs>(addr: T) -> Result<BanksClient, BanksClientError> {
-    let transport = tcp::connect(addr, Bincode::default).await?;
     Ok(BanksClient {
         inner: TarpcClient::new(client::Config::default(), transport).spawn(),
     })

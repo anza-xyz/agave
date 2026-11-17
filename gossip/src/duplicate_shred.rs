@@ -407,7 +407,7 @@ pub(crate) mod tests {
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction::transfer,
-        std::sync::Arc,
+        std::{assert_matches, sync::Arc},
         test_case::test_case,
     };
 

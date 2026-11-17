@@ -7,21 +7,25 @@ mod utils;
 
 use {
     self::{
-        common::{DataLen, DataRef, ExternalDataOffset, FileOffset, LoadedData},
+        common::{DataLen, DataRef, ExternalDataOffset, FileOffset},
         data::{
             calculate_data_entry_stored_size, create_data_file, parse_data_entry, read_data_entry,
             read_data_header, validate_data_entry_offset, write_data_entry,
         },
         meta::{
             META_ENTRY_FIXED_SIZE, META_ENTRY_OFFSET_ALIGNMENT, META_HEADER_SIZE, MetaEntryRef,
-            calculate_meta_entry_stored_size, create_meta_file, parse_meta_entry_data_ref,
-            parse_meta_entry_fixed, read_meta_entry, read_meta_header,
-            should_store_account_data_in_meta_file, write_meta_entry,
+            calculate_meta_entry_stored_size, create_meta_file, parse_meta_entry,
+            parse_meta_entry_data_ref, parse_meta_entry_fixed, read_meta_entry,
+            read_meta_entry_bytes, read_meta_header, should_store_account_data_in_meta_file,
+            write_meta_entry,
         },
         utils::{file_offset_from_logical, logical_offset_from_file},
     },
     crate::{
-        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        account_storage::{
+            meta_entry_read::{AccountFromMetaEntry, AccountMetaOwned, MetaEntryBuffer},
+            stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
+        },
         append_vec::AppendVec,
         storable_accounts::StorableAccounts,
     },
@@ -32,12 +36,15 @@ use {
         },
     },
     solana_account::{AccountSharedData, ReadableAccount},
+    solana_pubkey::Pubkey,
     std::{
         convert::TryFrom,
         fs::{self, File},
+        io::{BufWriter, Seek, SeekFrom, Write},
+        ops::ControlFlow,
         path::{Path, PathBuf},
         sync::{
-            Arc, Mutex, OnceLock,
+            Mutex, MutexGuard, OnceLock,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     },
@@ -52,8 +59,13 @@ pub static SPLIT_FILE_STATS: SplitFileStats = SplitFileStats {
     num_stored_bytes_data: AtomicU64::new(0),
 };
 
-/// Buffer size to use when scaning a meta file.
+/// Buffer size to use when scanning a meta file.
 const META_SCAN_BUFFER_SIZE: usize = 16 * 1024;
+
+/// Writes end up in the kernel's page cache, so the buffer only amortizes write syscalls.
+/// AppendVec observed that gains flatten out above 64 KiB and set this to 256 KiB.
+/// Use the same value and avoid oversized allocations.
+const WRITE_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Account storage backed by split metadata and data files.
 ///
@@ -287,6 +299,7 @@ impl SplitFile {
         }
 
         if self.remove_on_drop.load(Ordering::Relaxed) {
+            self.is_dirty.store(true, Ordering::Relaxed);
             return Err(SplitFileError::FlushButRemoveOnDrop);
         }
 
@@ -322,82 +335,41 @@ impl SplitFile {
         &self,
         accounts: &impl StorableAccounts<'a>,
     ) -> Result<(Vec<LogicalOffset>, u64), SplitFileError> {
+        let mut writer = self.writer()?;
+        let result = writer.write_accounts(accounts)?;
+        writer.finish()?;
+        Ok(result)
+    }
+
+    /// Instantiates a SplitFileWriter, which is used to perform buffered writes.
+    ///
+    /// Ensure that `finish()` is called after writing accounts.
+    ///
+    /// e.g.
+    ///
+    /// ```ignore
+    /// let mut writer = split_file.writer()?;
+    /// let result = writer.write_accounts(accounts)?;
+    /// writer.finish()?;
+    /// ```
+    pub fn writer(&self) -> Result<SplitFileWriter<'_>, SplitFileError> {
         let InnerState::Writable(inner) = &self.inner else {
             return Err(SplitFileError::NotWritable);
         };
-
-        let _write_guard = inner.write_lock.lock().unwrap();
-
-        let mut meta_file_offset = FileOffset(inner.meta_len.load(Ordering::Relaxed));
-        let mut data_file_offset = FileOffset(inner.data_len.load(Ordering::Relaxed));
-        let mut logical_offsets = Vec::with_capacity(accounts.len());
-        let mut logical_stored_size = 0;
-
-        for i in 0..accounts.len() {
-            accounts.account_default_if_zero_lamport(
-                i,
-                |account| -> Result<(), SplitFileError> {
-                    let data_len = DataLen::try_from(account.data().len())?;
-                    let data_ref = if data_len.0 == 0 {
-                        // no data, so nothing to write
-                        DataRef::NoData
-                    } else if should_store_account_data_in_meta_file(data_len) {
-                        // data is small, so will write inline in the meta file
-                        DataRef::Inline(account.data())
-                    } else {
-                        // data is large, so write into the data file now
-                        if inner.data_file.get().is_none() {
-                            // Data file doesn't exist yet, so create it now.
-                            // Cannot use OnceLock::get_or_init() since create is
-                            // fallible, and we want to return a Result.
-                            let (data_path, data_file, data_len) =
-                                create_data_file(inner.meta_path.with_extension(""), inner.uid)?;
-                            debug_assert_eq!(data_path, inner.data_path);
-                            inner.data_len.store(data_len as u64, Ordering::Relaxed);
-                            // SAFETY: data_file was checked above to be None
-                            inner.data_file.set(data_file).unwrap();
-                            data_file_offset = FileOffset(data_len as u64);
-                        }
-                        let write_info = write_data_entry(
-                            // SAFETY: data_file was just initialized
-                            inner.data_file.get().unwrap(),
-                            data_file_offset,
-                            account.pubkey(),
-                            account.data(),
-                        )?;
-                        data_file_offset =
-                            FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
-                        DataRef::External(ExternalDataOffset(write_info.start))
-                    };
-
-                    let write_info = write_meta_entry(
-                        &inner.meta_file,
-                        meta_file_offset,
-                        account.pubkey(),
-                        account.owner(),
-                        account.lamports(),
-                        account.rent_epoch(),
-                        account.executable(),
-                        data_len,
-                        data_ref,
-                    )?;
-                    meta_file_offset =
-                        FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
-                    logical_offsets.push(logical_offset_from_file(write_info.start)?);
-                    logical_stored_size += calculate_logical_stored_size(account.data().len());
-                    Ok(())
-                },
-            )?;
-        }
-
-        inner.meta_len.store(meta_file_offset.0, Ordering::Relaxed);
-        inner.data_len.store(data_file_offset.0, Ordering::Relaxed);
-        let was_dirty = self.is_dirty.swap(true, Ordering::Relaxed);
-        if !was_dirty {
-            SPLIT_FILE_STATS.num_dirty.fetch_add(1, Ordering::Relaxed);
-        }
-
-        Ok((logical_offsets, logical_stored_size))
+        let write_guard = inner.write_lock.lock().unwrap();
+        let meta_file_offset = FileOffset(inner.meta_len.load(Ordering::Relaxed));
+        let data_file_offset = FileOffset(inner.data_len.load(Ordering::Relaxed));
+        let mut meta_file = &inner.meta_file;
+        meta_file.seek(SeekFrom::Start(meta_file_offset.0))?;
+        Ok(SplitFileWriter {
+            split: self,
+            inner,
+            meta_writer: BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, meta_file),
+            data_writer: None,
+            meta_file_offset,
+            data_file_offset,
+            _write_guard: write_guard,
+        })
     }
 
     /// Reads account at `offset` and then calls `callback` with it.
@@ -426,71 +398,129 @@ impl SplitFile {
         offset: LogicalOffset,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
     ) -> Result<Ret, SplitFileError> {
-        self._get_account_with_data(offset, |meta_entry, loaded_data| {
-            let data = match &loaded_data {
-                LoadedData::NoData => &[],
-                LoadedData::Inline(data) => *data,
-                LoadedData::External(data) => data.as_slice(),
-            };
-            callback(stored_account_from(meta_entry, data))
-        })
-    }
-
-    /// Read account at `offset` and return it as an AccountSharedData.
-    pub fn get_account_shared_data(
-        &self,
-        offset: LogicalOffset,
-    ) -> Result<AccountSharedData, SplitFileError> {
-        self._get_account_with_data(offset, |meta_entry, loaded_data| {
-            let data = match loaded_data {
-                LoadedData::NoData => Vec::new(),
-                LoadedData::Inline(data) => data.to_vec(),
-                LoadedData::External(data) => data,
-            };
-            AccountSharedData::create_from_existing_shared_data(
-                meta_entry.lamports,
-                Arc::new(data),
-                *meta_entry.owner,
-                meta_entry.is_executable,
-                meta_entry.rent_epoch,
-            )
-        })
-    }
-
-    /// Helper fn that reads account at `offset` and then calls `callback` with it.
-    ///
-    /// This fn lets the caller decide how to handle account data (if any).
-    /// e.g. if the caller wants an AccountSharedData with owned data (i.e. Vec),
-    /// or if the caller wants a StoredAccountInfo with borrowed data (i.e. &[u8]).
-    fn _get_account_with_data<Ret>(
-        &self,
-        offset: LogicalOffset,
-        mut callback: impl for<'local> FnMut(MetaEntryRef<'local>, LoadedData<'local>) -> Ret,
-    ) -> Result<Ret, SplitFileError> {
         let file_offset = file_offset_from_logical(offset);
         read_meta_entry(
             self.meta_file(),
             self.meta_len(),
             file_offset,
-            |meta_entry, data_ref| -> Result<_, SplitFileError> {
-                match data_ref {
-                    DataRef::NoData => Ok(callback(meta_entry, LoadedData::NoData)),
-                    DataRef::Inline(data) => Ok(callback(meta_entry, LoadedData::Inline(data))),
+            |meta_entry, data_ref| {
+                let external_data;
+                let data = match data_ref {
+                    DataRef::NoData => &[],
+                    DataRef::Inline(data) => data,
                     DataRef::External(external_data_offset) => {
-                        let data_file = self.data_file().ok_or(SplitFileError::MissingDataFile)?;
-                        let data_file_len = self.data_len();
-                        let data = read_data_entry(
-                            data_file,
-                            data_file_len,
+                        external_data = self.read_external_data(
                             external_data_offset.0,
                             meta_entry.address,
                             meta_entry.data_len,
                         )?;
-                        Ok(callback(meta_entry, LoadedData::External(data)))
+                        external_data.as_slice()
                     }
-                }
+                };
+                Ok(callback(stored_account_from(meta_entry, data)))
             },
         )?
+    }
+
+    /// Read account at `offset` and return it as an AccountSharedData.
+    ///
+    /// `load_filter` is a predicate that determines if the account should be loaded in full.
+    /// The parameters are lamports, owner, and data length.
+    ///
+    /// Returns:
+    /// * Err if there is an error reading the account.
+    /// * Ok(None) if `load_filter` returns false.
+    /// * Ok(Some(account)) otherwise.
+    pub fn get_account_shared_data_if(
+        &self,
+        offset: LogicalOffset,
+        load_filter: impl Fn(u64, &Pubkey, usize) -> bool,
+    ) -> Result<Option<AccountSharedData>, SplitFileError> {
+        let mut buffer = MetaEntryBuffer::new();
+        let from_meta_entry = self.read_account_from_meta_entry(offset, &mut buffer)?;
+        if !from_meta_entry.passes_load_filter(load_filter) {
+            return Ok(None);
+        }
+        Ok(Some(match from_meta_entry {
+            AccountFromMetaEntry::Complete { account_meta, data } => {
+                account_meta.into_account_shared_data(data.to_vec())
+            }
+            AccountFromMetaEntry::Partial {
+                address,
+                account_meta,
+                data_offset,
+                data_len,
+            } => self.read_account_data(&address, account_meta, data_offset, data_len)?,
+        }))
+    }
+
+    /// Reads and parses the meta entry of the account at `offset`, into `buffer`
+    fn read_account_from_meta_entry<'a>(
+        &self,
+        offset: LogicalOffset,
+        buffer: &'a mut MetaEntryBuffer,
+    ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
+        let file_offset = file_offset_from_logical(offset);
+        let bytes = read_meta_entry_bytes(self.meta_file(), self.meta_len(), file_offset, buffer)?;
+        self.account_from_meta_entry(bytes)
+    }
+
+    /// Parses the account from `bytes`, as read by `read_meta_entry_bytes()`: the account, or the
+    /// read of its data entry from the data file
+    fn account_from_meta_entry<'a>(
+        &self,
+        bytes: &'a [u8],
+    ) -> Result<AccountFromMetaEntry<'a>, SplitFileError> {
+        let (meta_entry, data_ref) = parse_meta_entry(bytes)?;
+        let account_meta = AccountMetaOwned {
+            lamports: meta_entry.lamports,
+            owner: *meta_entry.owner,
+            executable: meta_entry.is_executable,
+            rent_epoch: meta_entry.rent_epoch,
+        };
+        Ok(match data_ref {
+            DataRef::NoData => AccountFromMetaEntry::Complete {
+                account_meta,
+                data: &[],
+            },
+            DataRef::Inline(data) => AccountFromMetaEntry::Complete { account_meta, data },
+            DataRef::External(external_data_offset) => AccountFromMetaEntry::Partial {
+                address: *meta_entry.address,
+                account_meta,
+                data_offset: external_data_offset.0.0,
+                data_len: meta_entry.data_len.0 as usize,
+            },
+        })
+    }
+
+    /// Reads the data entry at `data_offset` from the data file, checks it is `address`'s, and
+    /// returns the account with its data
+    fn read_account_data(
+        &self,
+        address: &Pubkey,
+        account_meta: AccountMetaOwned,
+        data_offset: FileSize,
+        data_len: usize,
+    ) -> Result<AccountSharedData, SplitFileError> {
+        let data = self.read_external_data(
+            FileOffset(data_offset),
+            address,
+            // the data length came from the meta entry's DataLen
+            DataLen(data_len as u32),
+        )?;
+        Ok(account_meta.into_account_shared_data(data))
+    }
+
+    /// Reads the data entry at `offset` from the data file, and checks it is `address`'s
+    fn read_external_data(
+        &self,
+        offset: FileOffset,
+        address: &Pubkey,
+        data_len: DataLen,
+    ) -> Result<Vec<u8>, SplitFileError> {
+        let data_file = self.data_file().ok_or(SplitFileError::MissingDataFile)?;
+        let data = read_data_entry(data_file, self.data_len(), offset, address, data_len)?;
+        Ok(data)
     }
 
     /// Iterate over all accounts and call `callback` with each account.
@@ -499,10 +529,15 @@ impl SplitFile {
     /// * LogicalOffset: the offset within the file of this account
     /// * StoredAccountInfoWithoutData: the account itself, without account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfoWithoutData<'local>),
+        mut callback: impl for<'local> FnMut(
+            LogicalOffset,
+            StoredAccountInfoWithoutData<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<(), SplitFileError> {
         let meta_file = self.meta_file();
         let meta_file_len = self.meta_len();
@@ -517,7 +552,11 @@ impl SplitFile {
             let meta_entry = parse_meta_entry_fixed(buffer_bytes)?;
             let meta_entry_stored_size = calculate_meta_entry_stored_size(meta_entry.data_len);
             validate_meta_entry_stored_size(meta_file_len, file_offset, meta_entry_stored_size)?;
-            callback(logical_offset, stored_account_without_data_from(meta_entry));
+            let control_flow =
+                callback(logical_offset, stored_account_without_data_from(meta_entry));
+            if control_flow.is_break() {
+                break;
+            }
             // Move the reader to the next account.
             // The next meta entry's offset must be properly aligned.
             meta_reader.consume_or_skip(
@@ -535,12 +574,18 @@ impl SplitFile {
     /// * LogicalOffset: the offset within the file of this account
     /// * StoredAccountInfo: the account itself, with account data
     ///
+    /// The callback-returned `ControlFlow` indicates if the scan should continue or break.
+    /// After an early exit, callers must reset `data_reader` before starting another scan.
+    ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can read less and be faster.
     pub fn scan_accounts_with_data<'a>(
         &'a self,
         data_reader: &mut impl RequiredLenBufFileRead<'a>,
-        mut callback: impl for<'local> FnMut(LogicalOffset, StoredAccountInfo<'local>),
+        mut callback: impl for<'local> FnMut(
+            LogicalOffset,
+            StoredAccountInfo<'local>,
+        ) -> ControlFlow<()>,
     ) -> Result<(), SplitFileError> {
         let meta_file = self.meta_file();
         let meta_file_len = self.meta_len();
@@ -567,12 +612,10 @@ impl SplitFile {
             // Reset the required size back to the default.
             required_meta_read_size = META_ENTRY_FIXED_SIZE;
 
-            match parse_meta_entry_data_ref(buffer_bytes, &meta_entry)? {
-                DataRef::NoData => {
-                    callback(logical_offset, stored_account_from(meta_entry, &[]));
-                }
+            let control_flow = match parse_meta_entry_data_ref(buffer_bytes, &meta_entry)? {
+                DataRef::NoData => callback(logical_offset, stored_account_from(meta_entry, &[])),
                 DataRef::Inline(data) => {
-                    callback(logical_offset, stored_account_from(meta_entry, data));
+                    callback(logical_offset, stored_account_from(meta_entry, data))
                 }
                 DataRef::External(external_data_offset) => {
                     if data_file.is_none() {
@@ -592,8 +635,11 @@ impl SplitFile {
                     callback(
                         logical_offset,
                         stored_account_from(meta_entry, account_data),
-                    );
+                    )
                 }
+            };
+            if control_flow.is_break() {
+                break;
             }
 
             // Move the reader to the next account.
@@ -691,6 +737,124 @@ fn calculate_logical_stored_size(data_len: usize) -> u64 {
     AppendVec::calculate_stored_size(data_len) as u64
 }
 
+/// Writes accounts with a BufWriter.
+pub struct SplitFileWriter<'a> {
+    split: &'a SplitFile,
+    inner: &'a WritableState,
+    meta_writer: BufWriter<&'a File>,
+    data_writer: Option<BufWriter<&'a File>>,
+    meta_file_offset: FileOffset,
+    data_file_offset: FileOffset,
+    // keep this last in the struct to ensure the buffers are dropped before releasing the lock
+    _write_guard: MutexGuard<'a, ()>,
+}
+
+impl SplitFileWriter<'_> {
+    /// Writes `accounts`.
+    ///
+    /// Returns a tuple of:
+    /// - A vec of the logical offsets for where each account was written.
+    /// - The *logical* size required to store `accounts`.
+    ///   This is ultimately the bytes required to store `accounts` into an AppendVec,
+    ///   since that is the number used for shrink/squash, and also when
+    ///   writing accounts into a snapshot archive.
+    ///
+    /// Ensure that `finish()` is called after writing accounts.
+    pub fn write_accounts<'a>(
+        &mut self,
+        accounts: &impl StorableAccounts<'a>,
+    ) -> Result<(Vec<LogicalOffset>, u64), SplitFileError> {
+        let mut logical_offsets = Vec::with_capacity(accounts.len());
+        let mut logical_stored_size = 0;
+        for i in 0..accounts.len() {
+            accounts.account_default_if_zero_lamport(
+                i,
+                |account| -> Result<(), SplitFileError> {
+                    let data_len = DataLen::try_from(account.data().len())?;
+                    let data_ref = if data_len.0 == 0 {
+                        // no data, so nothing to write
+                        DataRef::NoData
+                    } else if should_store_account_data_in_meta_file(data_len) {
+                        // data is small, so will write inline in the meta file
+                        DataRef::Inline(account.data())
+                    } else {
+                        // data is large, so write into the data file now
+                        if self.inner.data_file.get().is_none() {
+                            // Data file doesn't exist yet, so create it now.
+                            // Cannot use OnceLock::get_or_init() since create is
+                            // fallible, and we want to return a Result.
+                            let (data_path, data_file, data_len) = create_data_file(
+                                self.inner.meta_path.with_extension(""),
+                                self.inner.uid,
+                            )?;
+                            debug_assert_eq!(data_path, self.inner.data_path);
+                            // SAFETY: data_file was checked above to be None
+                            self.inner.data_file.set(data_file).unwrap();
+                            let data_len64 = data_len as u64;
+                            self.inner.data_len.store(data_len64, Ordering::Relaxed);
+                            self.data_file_offset = FileOffset(data_len64);
+                        }
+                        if self.data_writer.is_none() {
+                            // Data writer also doesn't exist yet, so create it now.
+                            // SAFETY: data_file was created above and must be Some.
+                            let mut data_file = self.inner.data_file.get().unwrap();
+                            data_file.seek(SeekFrom::Start(self.data_file_offset.0))?;
+                            self.data_writer =
+                                Some(BufWriter::with_capacity(WRITE_BUFFER_CAPACITY, data_file));
+                        }
+                        let write_info = write_data_entry(
+                            // SAFETY: data_writer was just initialized
+                            self.data_writer.as_mut().unwrap(),
+                            self.data_file_offset,
+                            account.pubkey(),
+                            account.data(),
+                        )?;
+                        self.data_file_offset =
+                            FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
+                        DataRef::External(ExternalDataOffset(write_info.start))
+                    };
+                    let write_info = write_meta_entry(
+                        &mut self.meta_writer,
+                        self.meta_file_offset,
+                        account.pubkey(),
+                        account.owner(),
+                        account.lamports(),
+                        account.rent_epoch(),
+                        account.executable(),
+                        data_len,
+                        data_ref,
+                    )?;
+                    self.meta_file_offset =
+                        FileOffset(write_info.start.0 + write_info.num_bytes_written as u64);
+                    logical_offsets.push(logical_offset_from_file(write_info.start)?);
+                    logical_stored_size += calculate_logical_stored_size(account.data().len());
+                    Ok(())
+                },
+            )?;
+        }
+        Ok((logical_offsets, logical_stored_size))
+    }
+
+    /// Flushes BufWriters and updates meta/data lens.
+    pub fn finish(mut self) -> Result<(), SplitFileError> {
+        if let Some(data_writer) = &mut self.data_writer {
+            data_writer.flush()?;
+        }
+        self.meta_writer.flush()?;
+        self.inner
+            .data_len
+            .store(self.data_file_offset.0, Ordering::Relaxed);
+        self.inner
+            .meta_len
+            .store(self.meta_file_offset.0, Ordering::Relaxed);
+        let was_dirty = self.split.is_dirty.swap(true, Ordering::Relaxed);
+        if !was_dirty {
+            SPLIT_FILE_STATS.num_dirty.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+}
+
 /// The inner state of a SplitFile, used to distinguish writable from read-only state.
 #[derive(Debug)]
 enum InnerState {
@@ -743,7 +907,7 @@ mod tests {
         meta::META_ENTRY_INLINE_DATA_MAX_SIZE,
         solana_account::accounts_equal,
         solana_pubkey::Pubkey,
-        std::assert_matches,
+        std::{assert_matches, iter},
         tempfile::TempDir,
         test_case::test_case,
     };
@@ -776,7 +940,7 @@ mod tests {
         // Need to write accounts into split to ensure its data file is created.
         // Account data must be large enough to ensure it is written into external data.
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         split
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
@@ -797,7 +961,7 @@ mod tests {
         // Need to write accounts into split2 to ensure its data file is created.
         // Account data must be large enough to ensure it is written into external data.
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         split2
             .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
             .unwrap();
@@ -823,6 +987,95 @@ mod tests {
         assert!(split3.is_none());
     }
 
+    /// Reads the meta entry at `logical_offset` as `get_account_shared_data_if` does
+    fn read_meta_entry_at(split: &SplitFile, logical_offset: LogicalOffset) -> Vec<u8> {
+        let offset = file_offset_from_logical(logical_offset);
+        let mut buffer = MetaEntryBuffer::new();
+        read_meta_entry_bytes(split.meta_file(), split.meta_len(), offset, &mut buffer)
+            .unwrap()
+            .to_vec()
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_complete() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let owner = Pubkey::new_unique();
+        // no data, and data inline in the meta entry
+        let accounts = [
+            (Pubkey::new_unique(), AccountSharedData::empty(101, &owner)),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new_with_data(
+                    102,
+                    (0..META_ENTRY_INLINE_DATA_MAX_SIZE)
+                        .map(|i| i as u8)
+                        .collect(),
+                    &owner,
+                ),
+            ),
+        ];
+        let (logical_offsets, _) = split.write_accounts(&(0, accounts.as_slice())).unwrap();
+        for ((_, account), logical_offset) in accounts.iter().zip(logical_offsets) {
+            let bytes = read_meta_entry_at(&split, logical_offset);
+            let Ok(AccountFromMetaEntry::Complete { account_meta, data }) =
+                split.account_from_meta_entry(&bytes)
+            else {
+                panic!("expected the meta entry to hold the whole account");
+            };
+            let read = account_meta.into_account_shared_data(data.to_vec());
+            assert_eq!(&read, account);
+        }
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_partial() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
+        let account = AccountSharedData::new_with_data(
+            100,
+            (0..data_len).map(|i| i as u8).collect(),
+            &Pubkey::new_unique(),
+        );
+        let address = Pubkey::new_unique();
+        let (logical_offsets, _) = split
+            .write_accounts(&(0, &[(address, account.clone())][..]))
+            .unwrap();
+        let bytes = read_meta_entry_at(&split, logical_offsets[0]);
+        let Ok(AccountFromMetaEntry::Partial {
+            address: read_address,
+            account_meta,
+            data_offset,
+            data_len,
+        }) = split.account_from_meta_entry(&bytes)
+        else {
+            panic!("expected the account's data to be in the data file");
+        };
+        assert_eq!(read_address, address);
+        let read = split
+            .read_account_data(&read_address, account_meta, data_offset, data_len)
+            .unwrap();
+        assert_eq!(read, account);
+    }
+
+    #[test]
+    fn test_account_from_meta_entry_truncated_header() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let account = AccountSharedData::empty(100, &Pubkey::new_unique());
+        let (logical_offsets, _) = split
+            .write_accounts(&(0, &[(Pubkey::new_unique(), account)][..]))
+            .unwrap();
+        let bytes = read_meta_entry_at(&split, logical_offsets[0]);
+        // the bytes end inside the meta entry's fixed portion
+        assert!(
+            split
+                .account_from_meta_entry(&bytes[..META_ENTRY_FIXED_SIZE - 1])
+                .is_err()
+        );
+    }
+
     /// Ensure writing and reading accounts works, with a data file.
     #[test]
     fn test_write_and_read_accounts_with_data_file() {
@@ -840,23 +1093,36 @@ mod tests {
         let accounts = [
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(101, inline_data_min, &owner),
+                AccountSharedData::new_with_data(
+                    101,
+                    rand::random_iter().take(inline_data_min).collect(),
+                    &owner,
+                ),
+            ),
+            (Pubkey::new_unique(), AccountSharedData::empty(102, &owner)),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new_with_data(
+                    103,
+                    rand::random_iter().take(external_data_max).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(102, no_data, &owner),
+                AccountSharedData::new_with_data(
+                    104,
+                    rand::random_iter().take(inline_data_max).collect(),
+                    &owner,
+                ),
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(103, external_data_max, &owner),
-            ),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(104, inline_data_max, &owner),
-            ),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(105, external_data_min, &owner),
+                AccountSharedData::new_with_data(
+                    105,
+                    rand::random_iter().take(external_data_min).collect(),
+                    &owner,
+                ),
             ),
         ];
 
@@ -874,8 +1140,18 @@ mod tests {
                 let (address, account) = &accounts[i];
                 let logical_offset = written_logical_offsets[i];
 
-                let loaded_account = split.get_account_shared_data(logical_offset).unwrap();
+                let loaded_account = split
+                    .get_account_shared_data_if(logical_offset, |_, _, _| true)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(&loaded_account, account);
+
+                assert!(
+                    split
+                        .get_account_shared_data_if(logical_offset, |_, _, _| false)
+                        .unwrap()
+                        .is_none()
+                );
 
                 split
                     .get_account_with_data(logical_offset, |stored_account| {
@@ -913,15 +1189,20 @@ mod tests {
         let accounts = [
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(101, inline_data_min, &owner),
+                AccountSharedData::new_with_data(
+                    101,
+                    rand::random_iter().take(inline_data_min).collect(),
+                    &owner,
+                ),
             ),
+            (Pubkey::new_unique(), AccountSharedData::empty(102, &owner)),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(102, no_data, &owner),
-            ),
-            (
-                Pubkey::new_unique(),
-                AccountSharedData::new(104, inline_data_max, &owner),
+                AccountSharedData::new_with_data(
+                    104,
+                    rand::random_iter().take(inline_data_max).collect(),
+                    &owner,
+                ),
             ),
         ];
 
@@ -939,8 +1220,18 @@ mod tests {
                 let (address, account) = &accounts[i];
                 let logical_offset = written_logical_offsets[i];
 
-                let loaded_account = split.get_account_shared_data(logical_offset).unwrap();
+                let loaded_account = split
+                    .get_account_shared_data_if(logical_offset, |_, _, _| true)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(&loaded_account, account);
+
+                assert!(
+                    split
+                        .get_account_shared_data_if(logical_offset, |_, _, _| false)
+                        .unwrap()
+                        .is_none()
+                );
 
                 split
                     .get_account_with_data(logical_offset, |stored_account| {
@@ -963,6 +1254,65 @@ mod tests {
         }
     }
 
+    /// Ensure calling write_accounts() more than once works.
+    ///
+    /// `write_accounts()` conditionally creates the data file once per SplitFile,
+    /// and conditionally creates the data writer once per invocation.
+    /// So call `write_accounts()` twice, both with large accounts, to ensure
+    /// the data file and data writer are created/not created correctly.
+    #[test]
+    fn test_write_accounts_multiple_times() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().join("base");
+        let split = SplitFile::new(&base_path).unwrap();
+
+        let slot = 42; // value isn't used
+        let owner = Pubkey::new_unique();
+        let no_data = 0;
+        let inline_data = no_data + 1;
+        let external_data = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
+        let accounts = [
+            AccountSharedData::new_with_data(11, vec![0xAB; no_data], &owner),
+            AccountSharedData::new_with_data(33, vec![0xCD; external_data], &owner),
+            AccountSharedData::new_with_data(55, vec![0xEF; inline_data], &owner),
+        ];
+
+        // split starts without a data file
+        assert!(split.data_file().is_none());
+
+        let to_store1: Vec<_> = accounts
+            .iter()
+            .map(|account| (Pubkey::new_unique(), account.clone()))
+            .collect();
+        split.write_accounts(&(slot, to_store1.as_slice())).unwrap();
+
+        // after writing the first time, data file is created
+        assert!(split.data_file().is_some());
+
+        // write again, must succeed
+        let to_store2: Vec<_> = accounts
+            .iter()
+            .map(|account| (Pubkey::new_unique(), account.clone()))
+            .collect();
+        split.write_accounts(&(slot, to_store2.as_slice())).unwrap();
+
+        // verify the written accounts
+        let to_store = [to_store1, to_store2].concat();
+        let mut data_reader = new_scan_accounts_reader();
+        data_reader
+            .set_file(split.data_file().unwrap(), split.data_len())
+            .unwrap();
+        let mut i = 0;
+        split
+            .scan_accounts_with_data(&mut data_reader, |_offset, stored_account| {
+                assert_eq!(stored_account.pubkey, &to_store[i].0);
+                assert!(accounts_equal(&stored_account, &to_store[i].1));
+                i += 1;
+                ControlFlow::Continue(())
+            })
+            .unwrap();
+    }
+
     /// Ensure the scan_accounts() fns work, with a data file.
     #[test]
     fn test_scan_accounts_with_data_file() {
@@ -972,7 +1322,6 @@ mod tests {
 
         let slot = 23;
         let owner = Pubkey::new_unique();
-        let no_data = 0;
         let inline_data = 165; // 165 bytes is the common size for a token account
         let small_external_data = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
         // Include accounts larger than MIN_CAPACITY (128 KB) of the reader
@@ -982,19 +1331,28 @@ mod tests {
         for i in 0..5 {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, inline_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(inline_data + i).collect(),
+                    &owner,
+                ),
+            ));
+            accounts.push((Pubkey::new_unique(), AccountSharedData::empty(123, &owner)));
+            accounts.push((
+                Pubkey::new_unique(),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(small_external_data + i).collect(),
+                    &owner,
+                ),
             ));
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, no_data, &owner),
-            ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, small_external_data + i, &owner),
-            ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, large_external_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(large_external_data + i).collect(),
+                    &owner,
+                ),
             ));
         }
         // Include enough accounts to ensure the meta file size is larger than
@@ -1002,7 +1360,13 @@ mod tests {
         for _ in 0..META_SCAN_BUFFER_SIZE.div_ceil(META_ENTRY_INLINE_DATA_MAX_SIZE) {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, META_ENTRY_INLINE_DATA_MAX_SIZE, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter()
+                        .take(META_ENTRY_INLINE_DATA_MAX_SIZE)
+                        .collect(),
+                    &owner,
+                ),
             ));
         }
 
@@ -1029,6 +1393,7 @@ mod tests {
                     assert_eq!(stored_account.pubkey, &accounts[i].0);
                     assert!(accounts_equal(&stored_account, &accounts[i].1));
                     i += 1;
+                    ControlFlow::Continue(())
                 })
                 .unwrap();
             // ensure the scan visited all the accounts and didn't silently terminate
@@ -1046,6 +1411,7 @@ mod tests {
                     assert_eq!(stored_account.executable, account.executable());
                     assert_eq!(stored_account.data_len, account.data().len());
                     i += 1;
+                    ControlFlow::Continue(())
                 })
                 .unwrap();
             // ensure the scan visited all the accounts and didn't silently terminate
@@ -1062,25 +1428,31 @@ mod tests {
 
         let slot = 23;
         let owner = Pubkey::new_unique();
-        let no_data = 0;
         let inline_data = 165; // 165 bytes is the common size for a token account
         let mut accounts = Vec::new();
         for i in 0..5 {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, inline_data + i, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter().take(inline_data + i).collect(),
+                    &owner,
+                ),
             ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, no_data, &owner),
-            ));
+            accounts.push((Pubkey::new_unique(), AccountSharedData::empty(123, &owner)));
         }
         // Include enough accounts to ensure the meta file size is larger than
         // the META_SCAN_BUFFER_SIZE to exercise the meta reader's retry logic.
         for _ in 0..META_SCAN_BUFFER_SIZE.div_ceil(META_ENTRY_INLINE_DATA_MAX_SIZE) {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, META_ENTRY_INLINE_DATA_MAX_SIZE, &owner),
+                AccountSharedData::new_with_data(
+                    123,
+                    rand::random_iter()
+                        .take(META_ENTRY_INLINE_DATA_MAX_SIZE)
+                        .collect(),
+                    &owner,
+                ),
             ));
         }
 
@@ -1107,6 +1479,7 @@ mod tests {
                     assert_eq!(stored_account.pubkey, &accounts[i].0);
                     assert!(accounts_equal(&stored_account, &accounts[i].1));
                     i += 1;
+                    ControlFlow::Continue(())
                 })
                 .unwrap();
             // ensure the scan visited all the accounts and didn't silently terminate
@@ -1124,11 +1497,67 @@ mod tests {
                     assert_eq!(stored_account.executable, account.executable());
                     assert_eq!(stored_account.data_len, account.data().len());
                     i += 1;
+                    ControlFlow::Continue(())
                 })
                 .unwrap();
             // ensure the scan visited all the accounts and didn't silently terminate
             assert_eq!(i, accounts.len());
         }
+    }
+
+    /// Ensure the scan_accounts() fns respect their callback's control flow.
+    #[test]
+    fn test_scan_accounts_control_flow() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().join("base");
+        let split = SplitFile::new(&base_path).unwrap();
+
+        let num_accounts = 9;
+        let accounts: Box<_> = iter::repeat_with(|| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::empty(1, &Pubkey::default()),
+            )
+        })
+        .take(num_accounts)
+        .collect();
+
+        let slot = 11; // value does not matter
+        let (_written_logical_offsets, _written_size) =
+            split.write_accounts(&(slot, &*accounts)).unwrap();
+
+        assert!(split.data_file().is_none());
+        let mut data_reader = new_scan_accounts_reader(); // unused since there's no data file
+
+        let stop_at = num_accounts - 4;
+        let mut i = 0;
+        split
+            .scan_accounts_with_data(&mut data_reader, |_offset, _stored_account| {
+                i += 1;
+                if i == stop_at {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .unwrap();
+        // ensure the scan visited the expected number of accounts
+        assert_eq!(i, stop_at);
+
+        let stop_at = num_accounts - 2;
+        let mut i = 0;
+        split
+            .scan_accounts_without_data(|_offset, _stored_account| {
+                i += 1;
+                if i == stop_at {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .unwrap();
+        // ensure the scan visited the expected number of accounts
+        assert_eq!(i, stop_at);
     }
 
     #[test]
@@ -1137,7 +1566,8 @@ mod tests {
         let write_split = |name: &str| {
             let split = SplitFile::new(temp_dir.path().join(name)).unwrap();
             let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-            let account = AccountSharedData::new(1, data_len, &Pubkey::default());
+            let account =
+                AccountSharedData::new_with_data(1, vec![0; data_len], &Pubkey::default());
             split
                 .write_accounts(&(0, [(Pubkey::new_unique(), account)].as_slice()))
                 .unwrap();
@@ -1151,7 +1581,10 @@ mod tests {
             let mut reader = new_scan_accounts_reader();
             reader.set_file(source.data_file().unwrap(), source.data_len())?;
             let mut num_accounts = 0;
-            main.scan_accounts_with_data(&mut reader, |_, _| num_accounts += 1)?;
+            main.scan_accounts_with_data(&mut reader, |_, _| {
+                num_accounts += 1;
+                ControlFlow::Continue(())
+            })?;
             Ok::<_, SplitFileError>(num_accounts)
         };
 
@@ -1165,7 +1598,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
-        let account = AccountSharedData::new(123, 0, &Pubkey::default());
+        let account = AccountSharedData::empty(123, &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1198,7 +1631,9 @@ mod tests {
 
         // test case: scan_accounts_without_data()
         {
-            let err = split.scan_accounts_without_data(|_, _| {}).unwrap_err();
+            let err = split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap_err();
             assert_matches!(err, SplitFileError::Io(_));
         }
 
@@ -1209,7 +1644,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(err, SplitFileError::Io(_));
         }
@@ -1221,7 +1656,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
         let address = Pubkey::new_unique();
-        let account = AccountSharedData::new(123, 165, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; 165], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1254,7 +1689,9 @@ mod tests {
 
         // test case: scan_accounts_without_data()
         {
-            let err = split.scan_accounts_without_data(|_, _| {}).unwrap_err();
+            let err = split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap_err();
             assert_matches!(
                 err,
                 SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
@@ -1268,7 +1705,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(
                 err,
@@ -1285,7 +1722,7 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1318,7 +1755,9 @@ mod tests {
 
         // test case: scan_accounts_without_data()
         {
-            let err = split.scan_accounts_without_data(|_, _| {}).unwrap_err();
+            let err = split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap_err();
             assert_matches!(
                 err,
                 SplitFileError::ReadMetaEntry(ReadMetaEntryError::OffsetOverrun(_))
@@ -1332,7 +1771,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(
                 err,
@@ -1349,7 +1788,7 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1378,7 +1817,9 @@ mod tests {
         // test case: scan_accounts_without_data()
         {
             // does not fail because the data entry is not read
-            split.scan_accounts_without_data(|_, _| {}).unwrap();
+            split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap();
         }
 
         // test case: scan_accounts_with_data()
@@ -1388,7 +1829,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(
                 err,
@@ -1405,7 +1846,7 @@ mod tests {
         let expected_address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, data_len, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(123, vec![0; data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(&expected_address, &account)].as_slice()))
             .unwrap();
@@ -1419,8 +1860,10 @@ mod tests {
         let data_offset =
             data::DATA_HEADER_SIZE.next_multiple_of(data::DATA_ENTRY_OFFSET_ALIGNMENT) as u64;
         let wrong_address = Pubkey::new_unique();
+        let mut data_file = data_file;
+        data_file.seek(SeekFrom::Start(data_offset)).unwrap();
         write_data_entry(
-            data_file,
+            &mut data_file,
             FileOffset(data_offset),
             &wrong_address,
             vec![0; data_len].as_slice(),
@@ -1445,7 +1888,9 @@ mod tests {
         // test case: scan_accounts_without_data()
         {
             // does not fail because the data entry is not read
-            split.scan_accounts_without_data(|_, _| {}).unwrap();
+            split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap();
         }
 
         // test case: scan_accounts_with_data()
@@ -1455,7 +1900,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(
                 err,
@@ -1472,7 +1917,8 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let expected_data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, expected_data_len, &Pubkey::default());
+        let account =
+            AccountSharedData::new_with_data(123, vec![0; expected_data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1486,13 +1932,12 @@ mod tests {
         let data_offset =
             data::DATA_HEADER_SIZE.next_multiple_of(data::DATA_ENTRY_OFFSET_ALIGNMENT) as u64;
         let wrong_data_len = expected_data_len - 1;
-        write_data_entry(
-            data_file,
-            FileOffset(data_offset),
-            &address,
-            vec![0; wrong_data_len].as_slice(),
-        )
-        .unwrap();
+        let data_len_offset = data_offset + expected_data_len as u64;
+        let mut data_file = data_file;
+        data_file.seek(SeekFrom::Start(data_len_offset)).unwrap();
+        data_file
+            .write_all(&(wrong_data_len as u32).to_le_bytes())
+            .unwrap();
 
         // test case: get_account_without_data()
         {
@@ -1512,7 +1957,9 @@ mod tests {
         // test case: scan_accounts_without_data()
         {
             // does not fail because the data entry is not read
-            split.scan_accounts_without_data(|_, _| {}).unwrap();
+            split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap();
         }
 
         // test case: scan_accounts_with_data()
@@ -1522,7 +1969,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(
                 err,
@@ -1539,7 +1986,8 @@ mod tests {
         let address = Pubkey::new_unique();
         // account data must be large enough to ensure it is written into external data
         let expected_data_len = META_ENTRY_INLINE_DATA_MAX_SIZE + 1;
-        let account = AccountSharedData::new(123, expected_data_len, &Pubkey::default());
+        let account =
+            AccountSharedData::new_with_data(123, vec![0; expected_data_len], &Pubkey::default());
         let (offsets, _) = split
             .write_accounts(&(0, [(address, account)].as_slice()))
             .unwrap();
@@ -1565,7 +2013,9 @@ mod tests {
         // test case: scan_accounts_without_data()
         {
             // does not fail because the data entry is not read
-            split.scan_accounts_without_data(|_, _| {}).unwrap();
+            split
+                .scan_accounts_without_data(|_, _| ControlFlow::Continue(()))
+                .unwrap();
         }
 
         // test case: scan_accounts_with_data()
@@ -1575,7 +2025,7 @@ mod tests {
                 data_reader.set_file(data_file, split.data_len()).unwrap();
             }
             let err = split
-                .scan_accounts_with_data(&mut data_reader, |_, _| {})
+                .scan_accounts_with_data(&mut data_reader, |_, _| ControlFlow::Continue(()))
                 .unwrap_err();
             assert_matches!(err, SplitFileError::MissingDataFile);
         }
@@ -1590,22 +2040,18 @@ mod tests {
 
         let slot = 33;
         let owner = Pubkey::new_unique();
-        let no_data = 0;
         let inline_data = 42;
         let external_data = meta::META_ENTRY_MAX_SIZE + 1;
         let mut accounts = Vec::new();
         for i in 0..2 {
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, inline_data + i, &owner),
+                AccountSharedData::new_with_data(123, vec![0; inline_data + i], &owner),
             ));
+            accounts.push((Pubkey::new_unique(), AccountSharedData::empty(123, &owner)));
             accounts.push((
                 Pubkey::new_unique(),
-                AccountSharedData::new(123, no_data, &owner),
-            ));
-            accounts.push((
-                Pubkey::new_unique(),
-                AccountSharedData::new(123, external_data + i, &owner),
+                AccountSharedData::new_with_data(123, vec![0; external_data + i], &owner),
             ));
         }
 
@@ -1678,5 +2124,28 @@ mod tests {
         // flush() will succeed after disabling remove_on_drop
         split.disable_remove_on_drop();
         split.flush().unwrap();
+    }
+
+    /// A rejected flush must leave pending writes eligible for a later flush.
+    #[test]
+    fn test_rejected_flush_preserves_dirty_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let split = SplitFile::new(temp_dir.path().join("base")).unwrap();
+        let account = AccountSharedData::new_with_data(
+            1,
+            rand::random_iter().take(32).collect(),
+            &Pubkey::new_unique(),
+        );
+        split
+            .write_accounts(&(0, [(&Pubkey::new_unique(), &account)].as_slice()))
+            .unwrap();
+        assert!(split.is_dirty.load(Ordering::Relaxed));
+
+        assert_matches!(split.flush(), Err(SplitFileError::FlushButRemoveOnDrop));
+        assert!(split.is_dirty.load(Ordering::Relaxed));
+
+        split.disable_remove_on_drop();
+        split.flush().unwrap();
+        assert!(!split.is_dirty.load(Ordering::Relaxed));
     }
 }

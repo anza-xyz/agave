@@ -10,10 +10,7 @@ use {
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_runtime_transaction::{
-        runtime_transaction::{ReplayTransaction, RuntimeTransaction},
-        sanitize_config::sanitize_config,
-    },
+    solana_runtime_transaction::runtime_transaction::{ReplayTransaction, RuntimeTransaction},
     solana_signer::Signer,
     solana_system_transaction::transfer,
     solana_transaction::sanitized::MessageHash,
@@ -33,7 +30,7 @@ fn build_unverified_signatures(num_transactions: usize) -> UnverifiedSignatures<
     let validate_transaction =
         move |unsanitized: UnsanitizedTransactionView<Bytes>| -> Result<ReplayTransaction> {
             let sanitized = unsanitized
-                .sanitize(&sanitize_config())
+                .sanitize()
                 .map_err(|_| TransactionError::SanitizeFailure)?;
             let statically_loaded = RuntimeTransaction::<SanitizedTransactionView<Bytes>>::try_new(
                 sanitized,

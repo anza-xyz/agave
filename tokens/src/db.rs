@@ -234,10 +234,10 @@ pub(crate) fn check_output_file(path: &str, db: &PickleDb) {
 mod tests {
     use {
         super::*,
-        assert_matches::assert_matches,
         csv::{ReaderBuilder, Trim},
         solana_transaction_error::TransactionError,
         solana_transaction_status::TransactionConfirmationStatus,
+        std::assert_matches,
         tempfile::NamedTempFile,
     };
 

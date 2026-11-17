@@ -7,13 +7,15 @@ use {
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         stats::Stats,
     },
+    agave_memory::{AllocOptions, HugePageAlign, HugePages, PageAllocator},
+    hashbrown::hash_map::{Entry, HashMap},
     rand::{Rng, rng},
     solana_bucket_map::bucket_api::BucketApi,
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     std::{
-        collections::{HashMap, HashSet, hash_map::Entry},
+        collections::HashSet,
         fmt::Debug,
         mem,
         num::NonZeroUsize,
@@ -29,12 +31,20 @@ pub struct StartupStats {
     pub copy_data_us: AtomicU64,
 }
 
+type BinMap<T> = HashMap<Pubkey, Box<AccountMapEntry<T>>, ahash::RandomState, PageAllocator>;
+type BinEntry<'a, T> =
+    Entry<'a, Pubkey, Box<AccountMapEntry<T>>, ahash::RandomState, PageAllocator>;
+// Allocator that backs the table's end with huge pages when the table size isn't a multiple of the
+// huge page size. This speeds up hashbrown's hot path, which probes the control bytes at the end.
+const BIN_MAP_ALLOC: PageAllocator =
+    PageAllocator::new(AllocOptions::new().huge_pages(HugePages::Transparent(HugePageAlign::End)));
+
 // one instance of this represents one bin of the accounts index.
 pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     last_age_flushed: AtomicAge,
 
     // backing store
-    map_internal: RwLock<HashMap<Pubkey, Box<AccountMapEntry<T>>, ahash::RandomState>>,
+    map_internal: RwLock<BinMap<T>>,
     storage: Arc<BucketMapHolder<T, U>>,
     _bin: usize,
 
@@ -124,12 +134,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     .as_ref()
                     .map_or(usize::MAX, |thresholds| thresholds.target_entries),
             );
-            RwLock::new(HashMap::with_capacity_and_hasher(
+            RwLock::new(HashMap::with_capacity_and_hasher_in(
                 capacity_per_bin,
                 ahash::RandomState::default(),
+                BIN_MAP_ALLOC,
             ))
         } else {
-            RwLock::default()
+            RwLock::new(HashMap::with_hasher_in(
+                ahash::RandomState::default(),
+                BIN_MAP_ALLOC,
+            ))
         };
 
         Self {
@@ -248,11 +262,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         let stats = self.stats();
         let (count, time) = if found {
-            (&stats.gets_from_mem, &stats.get_mem_us)
+            (&stats.gets_from_mem, &stats.get_mem_ns)
         } else {
-            (&stats.gets_missing, &stats.get_missing_us)
+            (&stats.gets_missing, &stats.get_missing_ns)
         };
-        Self::update_stat(time, m.as_us());
+        Self::update_stat(time, m.as_ns());
         Self::update_stat(count, 1);
 
         result
@@ -326,10 +340,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// return false if the entry is in the index (disk or memory) and has a slot list len > 0
     /// return true in all other cases, including if the entry is NOT in the index at all
-    fn remove_if_slot_list_empty_entry(
-        &self,
-        entry: Entry<Pubkey, Box<AccountMapEntry<T>>>,
-    ) -> bool {
+    fn remove_if_slot_list_empty_entry(&self, entry: BinEntry<T>) -> bool {
         match entry {
             Entry::Occupied(occupied) => {
                 let result = self
@@ -697,11 +708,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     fn update_entry_stats(&self, stopped_measure: Measure, found: bool) {
         let stats = self.stats();
         let (count, time) = if found {
-            (&stats.entries_from_mem, &stats.entry_mem_us)
+            (&stats.entries_from_mem, &stats.entry_mem_ns)
         } else {
-            (&stats.entries_missing, &stats.entry_missing_us)
+            (&stats.entries_missing, &stats.entry_missing_ns)
         };
-        Self::update_stat(time, stopped_measure.as_us());
+        Self::update_stat(time, stopped_measure.as_ns());
         Self::update_stat(count, 1);
     }
 
@@ -1330,7 +1341,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // backing storage stays stable across eviction cycles. Building a brand-new
         // map (rather than `shrink_to_fit`) guarantees a full rehash, which is what
         // actually clears the tombstones.
-        let mut new_map = HashMap::with_capacity_and_hasher(target_entries, map.hasher().clone());
+        let mut new_map = HashMap::with_capacity_and_hasher_in(
+            target_entries,
+            map.hasher().clone(),
+            BIN_MAP_ALLOC,
+        );
         new_map.extend(map.drain());
         *map = new_map;
         let capacity_post = map.capacity();
@@ -1452,7 +1467,7 @@ impl ReservoirState {
 /// `InMemAccountsIndex`.  When this structure is dropped (falls out of scope), the flag will be
 /// cleared (set to false).
 ///
-/// After successfully locking (calling `FlushGuard::lock()`), pass a reference to the `FlashGuard`
+/// After successfully locking (calling `FlushGuard::lock()`), pass a reference to the `FlushGuard`
 /// instance to any function/code that requires the `flushing_active` flag has been set (to true).
 #[derive(Debug)]
 struct FlushGuard<'a> {
@@ -1492,9 +1507,8 @@ mod tests {
             INDEX_LIMIT_THRESHOLD_FOR_TESTING, IndexLimit, IndexLimitThreshold,
             bucket_map_holder::ThresholdEntriesPerBin,
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
-        std::iter,
+        std::{assert_matches, collections::HashMap, iter},
         test_case::test_case,
     };
 

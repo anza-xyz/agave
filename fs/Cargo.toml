@@ -23,11 +23,11 @@ name = "agave_fs"
 agave-unstable-api = []
 
 [dependencies]
+agave-memory = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 slab = { workspace = true }
 smallvec = { workspace = true }
-thiserror = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 agave-io-uring = { workspace = true }

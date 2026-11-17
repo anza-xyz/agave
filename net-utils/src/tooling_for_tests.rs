@@ -3,13 +3,18 @@ use {
     anyhow::Context,
     log::{debug, error, info},
     pcap_file::pcapng::PcapNgReader,
+    pretty_hex::{HexConfig, PrettyHex},
     std::{fs::File, io::Write, path::PathBuf},
 };
 
 /// Prints a hexdump of a given byte buffer into stderr
 pub fn hexdump(bytes: &[u8]) -> anyhow::Result<()> {
-    hxdmp::hexdump(bytes, &mut std::io::stderr())?;
-    std::io::stderr().write_all(b"\n")?;
+    let config = HexConfig {
+        title: false,
+        group: 0,
+        ..HexConfig::default()
+    };
+    writeln!(std::io::stderr().lock(), "{:?}", bytes.hex_conf(config))?;
     Ok(())
 }
 

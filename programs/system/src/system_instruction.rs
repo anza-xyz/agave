@@ -252,7 +252,6 @@ pub(crate) fn authorize_nonce_account(
 mod test {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::AccountSharedData,
         solana_nonce::{self as nonce, state::State},
         solana_nonce_account::{create_account, verify_nonce_account},
@@ -260,6 +259,7 @@ mod test {
         solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
         solana_transaction_context::instruction_accounts::InstructionAccount,
+        std::assert_matches,
     };
 
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;
@@ -305,7 +305,7 @@ mod test {
     macro_rules! set_invoke_context_blockhash {
         ($invoke_context:expr, $seed:expr) => {
             $invoke_context.environment_config.blockhash =
-                hash(&bincode::serialize(&$seed).unwrap());
+                hash(&wincode::serialize(&$seed).unwrap());
             $invoke_context
                 .environment_config
                 .blockhash_lamports_per_signature = ($seed as u64).saturating_mul(100);

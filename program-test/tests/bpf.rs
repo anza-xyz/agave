@@ -1,5 +1,4 @@
 use {
-    agave_feature_set as feature_set,
     solana_account::Account,
     solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
     solana_instruction::{AccountMeta, Instruction},
@@ -47,20 +46,26 @@ async fn test_add_bpf_program() {
         .unwrap();
 }
 
-#[test_case(64, true, true; "success with 64 accounts and without feature")]
-#[test_case(65, true, false; "failure with 65 accounts and without feature")]
-#[test_case(128, false, true; "success with 128 accounts and with feature")]
-#[test_case(129, false, false; "failure with 129 accounts and with feature")]
+#[test_case(64, None, true; "success with 64 accounts by default")]
+#[test_case(65, None, false; "failure with 65 accounts by default")]
+#[test_case(128, Some(128), true; "success with 128 accounts with runtime override")]
+#[test_case(129, Some(128), false; "failure with 129 accounts with runtime override")]
+#[test_case(32, Some(32), true; "success with 32 accounts with runtime override")]
+#[test_case(33, Some(32), false; "failure with 33 accounts with runtime override")]
 #[tokio::test]
-async fn test_max_accounts(num_accounts: u8, deactivate_feature: bool, expect_success: bool) {
+async fn test_max_accounts(
+    num_accounts: u8,
+    account_lock_limit: Option<usize>,
+    expect_success: bool,
+) {
     let program_id = Pubkey::new_unique();
 
     let mut program_test = ProgramTest::default();
 
     program_test.prefer_bpf(true);
     program_test.add_program("noop_program", program_id, None);
-    if deactivate_feature {
-        program_test.deactivate_feature(feature_set::increase_tx_account_lock_limit::id());
+    if let Some(limit) = account_lock_limit {
+        program_test.set_transaction_account_lock_limit(limit);
     }
 
     // Subtract 2 to account for the program and fee payer

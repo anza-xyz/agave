@@ -5,6 +5,6 @@ here=$(dirname "$0")
 cargo --list | grep -q "^\s*build-sbf"
 found=$?
 if [[ $found -ne 0 ]]; then
-  cargo install cargo-build-sbf
+  cargo install cargo-build-sbf@4.5.0 --locked
 fi
 exec cargo build-sbf "$@"

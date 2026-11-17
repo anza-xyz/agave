@@ -1,5 +1,8 @@
 use {
-    crate::{event::VotorEvent, voting_service::BLSOp},
+    crate::{
+        event::{FinalizationType, VotorEvent},
+        voting_service::BLSOp,
+    },
     agave_votor_messages::vote::Vote,
     solana_clock::Slot,
     solana_metrics::datapoint_info,
@@ -46,9 +49,8 @@ struct SlotTracking {
     vote_notarize: Option<Instant>,
     /// The time when the skip vote for this slot was sent
     vote_skip: Option<Instant>,
-    /// If the slot was finalized, this is the time when it was finalized,
-    /// the bool indicates if it was fast finalized
-    finalized: Option<(Instant, bool)>,
+    /// If the slot was finalized, this is the time when it was finalized, and type of finalization
+    finalized: Option<(Instant, FinalizationType)>,
 }
 
 impl Default for SlotTracking {
@@ -143,7 +145,7 @@ impl StatsEvent {
             VotorEvent::SafeToNotar(_) => StatsEvent::SafeToNotar,
             VotorEvent::SafeToSkip(_) => StatsEvent::SafeToSkip,
             VotorEvent::ProduceWindow(_) => StatsEvent::ProduceWindow,
-            VotorEvent::Finalized(..) => StatsEvent::Finalized,
+            VotorEvent::Finalized { .. } => StatsEvent::Finalized,
             VotorEvent::Standstill(_) => StatsEvent::Standstill,
             VotorEvent::SetIdentity => StatsEvent::SetIdentity,
         }
@@ -177,14 +179,17 @@ impl EventHandlerStats {
                 let entry = self.slot_tracking_map.entry(*slot).or_default();
                 entry.parent_ready = Some(Instant::now());
             }
-            VotorEvent::Finalized(block, is_fast_finalization) => {
+            VotorEvent::Finalized {
+                block,
+                finalization_type,
+            } => {
                 let entry = self.slot_tracking_map.entry(block.slot).or_default();
                 if entry.finalized.is_none() {
-                    entry.finalized = Some((Instant::now(), *is_fast_finalization));
-                } else if *is_fast_finalization {
-                    // We can accept Notarize and FastFinalization, never set the flag from true to false
-                    if let Some((instant, false)) = entry.finalized {
-                        entry.finalized = Some((instant, true));
+                    entry.finalized = Some((Instant::now(), *finalization_type));
+                } else if matches!(finalization_type, FinalizationType::Fast) {
+                    // We can accept Notarize and FastFinalization, never set the flag from fast to slow
+                    if let Some((instant, FinalizationType::Slow)) = entry.finalized {
+                        entry.finalized = Some((instant, FinalizationType::Fast));
                     }
                 }
             }
@@ -325,7 +330,7 @@ impl EventHandlerStats {
                     }),
                     Option<i64>
                 ),
-                ("is_fast_finalization", tracking.finalized.map(|t| t.1), Option<bool>)
+                ("is_fast_finalization", tracking.finalized.map(|t| t.1.as_bool()), Option<bool>)
             );
         }
         self.last_report_time = now;

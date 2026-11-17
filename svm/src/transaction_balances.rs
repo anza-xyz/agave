@@ -1,10 +1,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::field_qualifiers;
 use {
-    crate::{
-        account_loader::AccountLoader,
-        transaction_processing_callback::TransactionProcessingCallback,
-    },
+    crate::{account_loader::AccountLoader, transaction_processing_callback::AccountLoadCallback},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_transaction::SVMTransaction,
@@ -19,13 +16,13 @@ type BatchTokenBalances = Vec<TxTokenBalances>;
 
 // to operate cleanly over Option<BalanceCollector> we use a trait impled on the outer and inner type
 pub(crate) trait BalanceCollectionRoutines {
-    fn collect_pre_balances<CB: TransactionProcessingCallback>(
+    fn collect_pre_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
     );
 
-    fn collect_post_balances<CB: TransactionProcessingCallback>(
+    fn collect_post_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -75,7 +72,7 @@ impl BalanceCollector {
 
     // gather native lamport balances for all accounts
     // and token balances for valid, initialized token accounts with valid, initialized mints
-    fn collect_balances<CB: TransactionProcessingCallback>(
+    fn collect_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -86,7 +83,10 @@ impl BalanceCollector {
         let has_token_program = transaction.account_keys().iter().any(is_known_spl_token_id);
 
         for (index, key) in transaction.account_keys().iter().enumerate() {
-            let Some(account) = account_loader.load_account(key) else {
+            let Some(account) = account_loader
+                .load_account(key)
+                .map(|loaded| loaded.account)
+            else {
                 native_balances.push(0);
                 continue;
             };
@@ -116,7 +116,7 @@ impl BalanceCollector {
 }
 
 impl BalanceCollectionRoutines for BalanceCollector {
-    fn collect_pre_balances<CB: TransactionProcessingCallback>(
+    fn collect_pre_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -126,7 +126,7 @@ impl BalanceCollectionRoutines for BalanceCollector {
         self.token_pre.push(token_balances);
     }
 
-    fn collect_post_balances<CB: TransactionProcessingCallback>(
+    fn collect_post_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -138,7 +138,7 @@ impl BalanceCollectionRoutines for BalanceCollector {
 }
 
 impl BalanceCollectionRoutines for Option<BalanceCollector> {
-    fn collect_pre_balances<CB: TransactionProcessingCallback>(
+    fn collect_pre_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -148,7 +148,7 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
         }
     }
 
-    fn collect_post_balances<CB: TransactionProcessingCallback>(
+    fn collect_post_balances<CB: AccountLoadCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
@@ -172,7 +172,7 @@ pub struct SvmTokenInfo {
 }
 
 impl SvmTokenInfo {
-    fn unpack_token_account<CB: TransactionProcessingCallback>(
+    fn unpack_token_account<CB: AccountLoadCallback>(
         account_loader: &mut AccountLoader<CB>,
         account: &AccountSharedData,
         index: usize,
@@ -184,7 +184,7 @@ impl SvmTokenInfo {
             amount,
         } = generic_token::Account::unpack(account.data(), &program_id)?;
 
-        let mint_account = account_loader.load_account(&mint)?;
+        let mint_account = account_loader.load_account(&mint)?.account;
         if *mint_account.owner() != program_id {
             return None;
         }

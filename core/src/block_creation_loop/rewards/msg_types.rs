@@ -38,4 +38,5 @@ pub(crate) struct RewardResponse {
 /// The request token to be used to receive responses on previously sent requests to build reward certs.
 pub(crate) struct RewardRequestToken {
     pub(super) reply_receiver: Receiver<RewardResponse>,
+    pub(super) bank_slot: Slot,
 }

@@ -35,12 +35,24 @@ struct Config {
     json_rpc_urls: Vec<String>,
     rpc_timeout: Duration,
     minimum_validator_identity_balance: u64,
+    minimum_vote_account_balance: Option<u64>,
     monitor_active_stake: bool,
     active_stake_alert_threshold: u8,
     unhealthy_threshold: usize,
     validator_identity_pubkeys: Vec<Pubkey>,
     name_suffix: String,
     acceptable_slot_range: u64,
+}
+
+/// Accepts exactly what `sol_str_to_lamports` accepts, so a value that passes validation
+/// can never be dropped later at conversion time (e.g. `1e2` parses as an f64 but is not a
+/// valid SOL amount).
+fn is_sol_amount(amount: String) -> Result<(), String> {
+    if sol_str_to_lamports(&amount).is_some() {
+        Ok(())
+    } else {
+        Err(format!("Unable to parse SOL amount, provided: {amount}"))
+    }
 }
 
 fn get_config() -> Config {
@@ -147,8 +159,20 @@ fn get_config() -> Config {
                 .value_name("SOL")
                 .takes_value(true)
                 .default_value("10")
-                .validator(is_parsable::<f64>)
+                .validator(is_sol_amount)
                 .help("Alert when the validator identity balance is less than this amount of SOL"),
+        )
+        .arg(
+            Arg::with_name("minimum_vote_account_balance")
+                .long("minimum-vote-account-balance")
+                .value_name("SOL")
+                .takes_value(true)
+                .validator(is_sol_amount)
+                .help(
+                    "Alert when a monitored validator's vote account balance is less than this \
+                     amount of SOL. Checked in addition to the automatic validator admission \
+                     ticket (VAT) balance check",
+                ),
         )
         .arg(
             // Deprecated parameter, now always enabled
@@ -215,6 +239,9 @@ fn get_config() -> Config {
         .value_of("minimum_validator_identity_balance")
         .and_then(sol_str_to_lamports)
         .unwrap();
+    let minimum_vote_account_balance = matches
+        .value_of("minimum_vote_account_balance")
+        .and_then(sol_str_to_lamports);
     let json_rpc_urls = values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| {
         vec![value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url)]
     });
@@ -241,6 +268,7 @@ fn get_config() -> Config {
         json_rpc_urls,
         rpc_timeout,
         minimum_validator_identity_balance,
+        minimum_vote_account_balance,
         monitor_active_stake,
         active_stake_alert_threshold,
         unhealthy_threshold,
@@ -464,7 +492,9 @@ fn query_endpoint(
                     ));
                 }
 
-                if let Some(minimum_vat_vote_account_balance) = minimum_vat_vote_account_balance {
+                if minimum_vat_vote_account_balance.is_some()
+                    || config.minimum_vote_account_balance.is_some()
+                {
                     for vote_account in vote_accounts
                         .current
                         .iter()
@@ -483,7 +513,10 @@ fn query_endpoint(
                         };
 
                         let balance = endpoint.rpc_client.get_balance(&vote_pubkey)?;
-                        if balance < minimum_vat_vote_account_balance {
+                        if let Some(minimum_vat_vote_account_balance) =
+                            minimum_vat_vote_account_balance
+                            && balance < minimum_vat_vote_account_balance
+                        {
                             failures.push((
                                 "vat-vote-account-balance",
                                 format!(
@@ -493,6 +526,21 @@ fn query_endpoint(
                                     vote_pubkey,
                                     Sol(balance),
                                     Sol(minimum_vat_vote_account_balance)
+                                ),
+                            ));
+                        }
+                        if let Some(minimum_vote_account_balance) =
+                            config.minimum_vote_account_balance
+                            && balance < minimum_vote_account_balance
+                        {
+                            failures.push((
+                                "vote-account-balance",
+                                format!(
+                                    "{} vote account {} has {}, below the configured minimum of {}",
+                                    formatted_validator_identity,
+                                    vote_pubkey,
+                                    Sol(balance),
+                                    Sol(minimum_vote_account_balance)
                                 ),
                             ));
                         }

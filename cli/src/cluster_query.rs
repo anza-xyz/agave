@@ -59,7 +59,7 @@ use {
         rc::Rc,
         str::FromStr,
         sync::{
-            Arc,
+            Arc, LazyLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
@@ -69,6 +69,13 @@ use {
 };
 
 const DEFAULT_RPC_PORT_STR: &str = "8899";
+
+static DELINQUENT_SLOT_DISTANCE_HELP: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Minimum slot distance from the tip to consider a validator delinquent [default: \
+         {DELINQUENT_VALIDATOR_SLOT_DISTANCE}]"
+    )
+});
 
 pub trait ClusterQuerySubCommands {
     fn cluster_query_subcommands(self) -> Self;
@@ -380,12 +387,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .takes_value(true)
                         .value_name("SLOT_DISTANCE")
                         .validator(is_slot)
-                        .help(concatcp!(
-                            "Minimum slot distance from the tip to consider a validator \
-                             delinquent [default: ",
-                            DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-                            "]",
-                        )),
+                        .help(DELINQUENT_SLOT_DISTANCE_HELP.as_str()),
                 ),
         )
         .subcommand(
@@ -1476,16 +1478,9 @@ pub fn parse_logs(
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<CliCommandInfo, CliError> {
     let address = pubkey_of_signer(matches, "address", wallet_manager)?;
-    let include_votes = matches.is_present("include_votes");
 
     let filter = match address {
-        None => {
-            if include_votes {
-                RpcTransactionLogsFilter::AllWithVotes
-            } else {
-                RpcTransactionLogsFilter::All
-            }
-        }
+        None => RpcTransactionLogsFilter::All,
         Some(address) => RpcTransactionLogsFilter::Mentions(vec![address.to_string()]),
     };
 
@@ -1497,7 +1492,6 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
-            RpcTransactionLogsFilter::AllWithVotes => " (including votes)".into(),
             RpcTransactionLogsFilter::Mentions(addresses) =>
                 format!(" mentioning {}", addresses.join(",")),
         },
@@ -1689,7 +1683,7 @@ pub async fn process_show_stakes(
 
     let mut program_accounts_config = RpcProgramAccountsConfig {
         account_config: RpcAccountInfoConfig {
-            encoding: Some(solana_account_decoder::UiAccountEncoding::Base64),
+            encoding: Some(solana_account_decoder_client_types::UiAccountEncoding::Base64),
             ..RpcAccountInfoConfig::default()
         },
         ..RpcProgramAccountsConfig::default()

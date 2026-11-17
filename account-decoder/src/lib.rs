@@ -12,7 +12,6 @@ pub mod parse_sysvar;
 pub mod parse_token;
 pub mod parse_token_extension;
 pub mod parse_vote;
-pub mod validator_info;
 
 pub use solana_account_decoder_client_types::{
     UiAccount, UiAccountData, UiAccountEncoding, UiDataSliceConfig,
@@ -140,8 +139,8 @@ fn slice_data(data: &[u8], data_slice_config: Option<UiDataSliceConfig>) -> &[u8
 mod test {
     use {
         super::*,
-        assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData},
+        std::assert_matches,
     };
 
     #[test]

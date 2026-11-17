@@ -13,6 +13,7 @@ use {
         fs, io,
         mem::ManuallyDrop,
         num::Saturating,
+        ops::ControlFlow,
         path::{Path, PathBuf},
     },
 };
@@ -143,6 +144,7 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
             num_accounts += 1;
             stored_accounts_size += account.stored_size();
             lamports += account.lamports();
+            ControlFlow::Continue(())
         })
         .map_err(|err| {
             format!(
@@ -217,6 +219,7 @@ fn do_search(
                         );
                     }
                 }
+                ControlFlow::Continue(())
             })
             .unwrap_or_else(|err| {
                 eprintln!(

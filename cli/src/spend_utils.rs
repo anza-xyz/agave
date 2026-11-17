@@ -2,17 +2,17 @@ use {
     crate::{
         checks::{check_account_for_balance_with_commitment, get_fee_for_messages},
         cli::CliError,
-        compute_budget::{UpdateComputeUnitLimitResult, simulate_and_update_compute_unit_limit},
+        compute_budget::{
+            ComputeUnitConfig, set_compute_unit_limit, simulate_and_update_compute_unit_limit,
+        },
         stake, vote,
     },
     clap::ArgMatches,
-    solana_clap_utils::{
-        compute_budget::ComputeUnitLimit, input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG,
-    },
+    solana_clap_utils::{input_parsers::lamports_of_sol, offline::SIGN_ONLY_ARG},
     solana_cli_output::display::build_balance_message,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
-    solana_message::{Message, VersionedMessage},
+    solana_message::VersionedMessage,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
 };
@@ -70,12 +70,12 @@ pub async fn resolve_spend_tx_and_check_account_balance<F>(
     amount: SpendAmount,
     blockhash: &Hash,
     from_pubkey: &Pubkey,
-    compute_unit_limit: ComputeUnitLimit,
+    compute_unit_config: &ComputeUnitConfig,
     build_message: F,
     commitment: CommitmentConfig,
-) -> Result<(Message, u64), CliError>
+) -> Result<(VersionedMessage, u64), CliError>
 where
-    F: Fn(u64) -> Message,
+    F: Fn(u64) -> VersionedMessage,
 {
     resolve_spend_tx_and_check_account_balances(
         rpc_client,
@@ -84,13 +84,14 @@ where
         blockhash,
         from_pubkey,
         from_pubkey,
-        compute_unit_limit,
+        compute_unit_config,
         build_message,
         commitment,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn resolve_spend_tx_and_check_account_balances<F>(
     rpc_client: &RpcClient,
     sign_only: bool,
@@ -98,12 +99,49 @@ pub async fn resolve_spend_tx_and_check_account_balances<F>(
     blockhash: &Hash,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
-    compute_unit_limit: ComputeUnitLimit,
+    compute_unit_config: &ComputeUnitConfig,
     build_message: F,
     commitment: CommitmentConfig,
-) -> Result<(Message, u64), CliError>
+) -> Result<(VersionedMessage, u64), CliError>
 where
-    F: Fn(u64) -> Message,
+    F: Fn(u64) -> VersionedMessage,
+{
+    resolve_spend_tx_and_check_account_balances_with_reserve(
+        rpc_client,
+        sign_only,
+        amount,
+        0,
+        0,
+        blockhash,
+        from_pubkey,
+        fee_pubkey,
+        compute_unit_config,
+        build_message,
+        commitment,
+    )
+    .await
+}
+
+/// Resolves a spend while retaining `additional_balance_to_reserve` on top of
+/// the greater of the account's rent-exempt minimum and
+/// `minimum_rent_exempt_balance_to_reserve` when `amount` is
+/// [`SpendAmount::RentExempt`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_spend_tx_and_check_account_balances_with_reserve<F>(
+    rpc_client: &RpcClient,
+    sign_only: bool,
+    amount: SpendAmount,
+    minimum_rent_exempt_balance_to_reserve: u64,
+    additional_balance_to_reserve: u64,
+    blockhash: &Hash,
+    from_pubkey: &Pubkey,
+    fee_pubkey: &Pubkey,
+    compute_unit_config: &ComputeUnitConfig,
+    build_message: F,
+    commitment: CommitmentConfig,
+) -> Result<(VersionedMessage, u64), CliError>
+where
+    F: Fn(u64) -> VersionedMessage,
 {
     if sign_only {
         let (message, SpendAndFee { spend, fee: _ }) = resolve_spend_message(
@@ -114,7 +152,7 @@ where
             from_pubkey,
             fee_pubkey,
             0,
-            compute_unit_limit,
+            compute_unit_config,
             build_message,
         )
         .await?;
@@ -127,7 +165,7 @@ where
             .unwrap_or_default();
         let mut from_balance = account.lamports;
         let from_rent_exempt_minimum =
-            if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
+            if matches!(amount, SpendAmount::RentExempt | SpendAmount::Available) {
                 rpc_client
                     .get_minimum_balance_for_rent_exemption(account.data.len())
                     .await?
@@ -165,6 +203,13 @@ where
                 from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
             }
         }
+        let from_minimum_balance = if amount == SpendAmount::RentExempt {
+            from_rent_exempt_minimum
+                .max(minimum_rent_exempt_balance_to_reserve)
+                .saturating_add(additional_balance_to_reserve)
+        } else {
+            from_rent_exempt_minimum
+        };
         let (message, SpendAndFee { spend, fee }) = resolve_spend_message(
             rpc_client,
             amount,
@@ -172,8 +217,8 @@ where
             from_balance,
             from_pubkey,
             fee_pubkey,
-            from_rent_exempt_minimum,
-            compute_unit_limit,
+            from_minimum_balance,
+            compute_unit_config,
             build_message,
         )
         .await?;
@@ -205,6 +250,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_spend_message<F>(
     rpc_client: &RpcClient,
     amount: SpendAmount,
@@ -212,12 +258,12 @@ async fn resolve_spend_message<F>(
     from_account_transferable_balance: u64,
     from_pubkey: &Pubkey,
     fee_pubkey: &Pubkey,
-    from_rent_exempt_minimum: u64,
-    compute_unit_limit: ComputeUnitLimit,
+    from_minimum_balance: u64,
+    compute_unit_config: &ComputeUnitConfig,
     build_message: F,
-) -> Result<(Message, SpendAndFee), CliError>
+) -> Result<(VersionedMessage, SpendAndFee), CliError>
 where
-    F: Fn(u64) -> Message,
+    F: Fn(u64) -> VersionedMessage,
 {
     let (fee, compute_unit_info) = match blockhash {
         Some(blockhash) => {
@@ -246,29 +292,22 @@ where
                     | SpendAmount::All
                     | SpendAmount::Available => from_account_transferable_balance,
                     SpendAmount::RentExempt => {
-                        from_account_transferable_balance.saturating_sub(from_rent_exempt_minimum)
+                        from_account_transferable_balance.saturating_sub(from_minimum_balance)
                     }
                 }
             };
             let mut dummy_message = build_message(lamports);
 
-            dummy_message.recent_blockhash = *blockhash;
-            let compute_unit_info =
-                if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
-                    simulate_and_update_compute_unit_limit(
-                        &compute_unit_limit,
-                        rpc_client,
-                        &mut dummy_message,
-                    )
-                    .await?
-                {
-                    Some((ix_index, dummy_message.instructions[ix_index].data.clone()))
-                } else {
-                    None
-                };
+            dummy_message.set_recent_blockhash(*blockhash);
+            let compute_unit_info = simulate_and_update_compute_unit_limit(
+                &compute_unit_config.compute_unit_limit,
+                compute_unit_config.compute_unit_price,
+                rpc_client,
+                &mut dummy_message,
+            )
+            .await?;
             (
-                get_fee_for_messages(rpc_client, &[&VersionedMessage::Legacy(dummy_message)])
-                    .await?,
+                get_fee_for_messages(rpc_client, &[&dummy_message]).await?,
                 compute_unit_info,
             )
         }
@@ -303,7 +342,7 @@ where
             } else {
                 from_account_transferable_balance
             };
-            lamports = lamports.saturating_sub(from_rent_exempt_minimum);
+            lamports = lamports.saturating_sub(from_minimum_balance);
             (
                 build_message(lamports),
                 SpendAndFee {
@@ -314,8 +353,8 @@ where
         }
     };
     // After build message, update with correct compute units
-    if let Some((ix_index, ix_data)) = compute_unit_info {
-        message.instructions[ix_index].data = ix_data;
+    if let Some(limit) = compute_unit_info {
+        set_compute_unit_limit(&mut message, limit, compute_unit_config.compute_unit_price);
     }
     Ok((message, spend_and_fee))
 }
@@ -324,9 +363,12 @@ where
 mod tests {
     use {
         super::*,
+        base64::{Engine, prelude::BASE64_STANDARD},
         serde_json::json,
         solana_account::Account,
-        solana_account_decoder::{UiAccountEncoding, encode_ui_account},
+        solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
+        solana_clap_utils::compute_budget::ComputeUnitLimit,
+        solana_message::Message,
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcResponseContext},
@@ -353,22 +395,31 @@ mod tests {
         }
     }
 
-    /// Resolves the amount that `withdraw-from-vote-account ALL` withdraws from
-    /// `vote_account`, with the fee paid by another account.
-    async fn resolve_rent_exempt_spend(vote_account: Account, rent_exempt_minimum: u64) -> u64 {
+    /// Resolves the safe amount that `withdraw-from-vote-account ALL` withdraws
+    /// from `vote_account`, with the fee paid by another account.
+    async fn resolve_rent_exempt_spend(
+        vote_account: Account,
+        rent_exempt_minimum: u64,
+        minimum_rent_exempt_balance_to_reserve: u64,
+        additional_balance_to_reserve: u64,
+    ) -> u64 {
         let vote_account_pubkey = Pubkey::new_unique();
         let account_response = json!(Response {
             context: RpcResponseContext {
                 slot: 1,
                 api_version: None
             },
-            value: json!(encode_ui_account(
-                &vote_account_pubkey,
-                &vote_account,
-                UiAccountEncoding::Base64,
-                None,
-                None,
-            )),
+            value: json!(UiAccount {
+                lamports: vote_account.lamports,
+                data: UiAccountData::Binary(
+                    BASE64_STANDARD.encode(&vote_account.data),
+                    UiAccountEncoding::Base64,
+                ),
+                owner: vote_account.owner.to_string(),
+                executable: vote_account.executable,
+                rent_epoch: vote_account.rent_epoch,
+                space: Some(vote_account.data.len() as u64),
+            }),
         });
         let mut mocks = HashMap::new();
         mocks.insert(RpcRequest::GetAccountInfo, account_response);
@@ -381,16 +432,21 @@ mod tests {
         let withdraw_authority = Pubkey::new_unique();
         let destination_pubkey = Pubkey::new_unique();
         let fee_payer = Pubkey::new_unique();
-        let (_message, spend) = resolve_spend_tx_and_check_account_balances(
+        let (_message, spend) = resolve_spend_tx_and_check_account_balances_with_reserve(
             &rpc_client,
             false,
             SpendAmount::RentExempt,
+            minimum_rent_exempt_balance_to_reserve,
+            additional_balance_to_reserve,
             &Hash::default(),
             &vote_account_pubkey,
             &fee_payer,
-            ComputeUnitLimit::Default,
+            &ComputeUnitConfig {
+                compute_unit_limit: ComputeUnitLimit::Default,
+                compute_unit_price: None,
+            },
             |lamports| {
-                Message::new(
+                VersionedMessage::Legacy(Message::new(
                     &[withdraw(
                         &vote_account_pubkey,
                         &withdraw_authority,
@@ -398,7 +454,7 @@ mod tests {
                         &destination_pubkey,
                     )],
                     Some(&fee_payer),
-                )
+                ))
             },
             CommitmentConfig::processed(),
         )
@@ -408,20 +464,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rent_exempt_spend_reserves_pending_delegator_rewards() {
+    async fn test_rent_exempt_spend_reserves_vat_and_pending_delegator_rewards() {
         const RENT_EXEMPT_MINIMUM: u64 = 27_000_000;
         const PENDING_DELEGATOR_REWARDS: u64 = 5_000_000;
+        const VAT_TO_RESERVE: u64 = 800_000_000;
         const WITHDRAWABLE: u64 = 1_000_000;
-        const RESERVED_BALANCE: u64 = RENT_EXEMPT_MINIMUM + PENDING_DELEGATOR_REWARDS;
+        const RESERVED_BALANCE: u64 =
+            RENT_EXEMPT_MINIMUM + VAT_TO_RESERVE + PENDING_DELEGATOR_REWARDS;
         const BALANCE: u64 = RESERVED_BALANCE + WITHDRAWABLE;
-        const BALANCE_WITHOUT_PENDING_REWARDS: u64 = RENT_EXEMPT_MINIMUM + WITHDRAWABLE;
+        const BALANCE_WITHOUT_PENDING_REWARDS: u64 =
+            RENT_EXEMPT_MINIMUM + VAT_TO_RESERVE + WITHDRAWABLE;
 
-        // Without pending rewards, everything in excess of the rent-exempt
-        // minimum is withdrawable.
+        // Without pending rewards, everything in excess of rent and VAT is
+        // withdrawable.
         assert_eq!(
             resolve_rent_exempt_spend(
                 vote_account(BALANCE_WITHOUT_PENDING_REWARDS, 0),
                 RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
             )
             .await,
             WITHDRAWABLE
@@ -433,6 +494,8 @@ mod tests {
             resolve_rent_exempt_spend(
                 vote_account(BALANCE, PENDING_DELEGATOR_REWARDS),
                 RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
             )
             .await,
             WITHDRAWABLE
@@ -443,9 +506,28 @@ mod tests {
             resolve_rent_exempt_spend(
                 vote_account(RESERVED_BALANCE, PENDING_DELEGATOR_REWARDS),
                 RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
             )
             .await,
             0
+        );
+
+        // An account with a larger actual rent requirement must retain that
+        // larger rent amount in addition to the VAT reserve.
+        const OVERSIZED_ACCOUNT_RENT_EXEMPT_MINIMUM: u64 = 30_000_000;
+        assert_eq!(
+            resolve_rent_exempt_spend(
+                vote_account(
+                    OVERSIZED_ACCOUNT_RENT_EXEMPT_MINIMUM + VAT_TO_RESERVE + WITHDRAWABLE,
+                    0,
+                ),
+                OVERSIZED_ACCOUNT_RENT_EXEMPT_MINIMUM,
+                RENT_EXEMPT_MINIMUM,
+                VAT_TO_RESERVE,
+            )
+            .await,
+            WITHDRAWABLE
         );
     }
 }

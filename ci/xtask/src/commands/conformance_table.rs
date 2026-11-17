@@ -11,10 +11,14 @@ use {
 };
 
 #[derive(Args)]
+#[group(required = true, multiple = false)]
 pub struct CommandArgs {
     /// The pull request number to inspect for changed files.
     #[arg(long)]
-    pub pr_number: u64,
+    pub pr_number: Option<u64>,
+    /// Select every fixture set.
+    #[arg(long)]
+    pub all: bool,
 }
 
 /// One row of the conformance dispatch table.
@@ -55,8 +59,7 @@ const FIXTURE_ANCHORS: &[(&str, &str, &str, &str)] = &[
         "test_exec_vm_serialization",
     ),
     ("cost", "solana-cost-model", AGAVE, "test_exec_cost"),
-    // TODO: Re-enable once the shred harness is fixed.
-    // ("shred", "solana-core", AGAVE, "test_exec_shred"),
+    ("shred", "solana-ledger", AGAVE, "test_exec_shred"),
     ("gossip", "solana-gossip", AGAVE, "test_exec_gossip"),
 ];
 
@@ -212,8 +215,12 @@ fn is_infra_change(changed_files: &[String]) -> bool {
 }
 
 pub async fn run(args: CommandArgs) -> Result<()> {
+    let Some(pr_number) = args.pr_number else {
+        println!("{}", serde_json::to_string(&all_entries())?);
+        return Ok(());
+    };
     let repo = Repo::from_env();
-    let changed_files = github::get_changed_files(&repo, args.pr_number).await?;
+    let changed_files = github::get_changed_files(&repo, pr_number).await?;
 
     if changed_files.is_empty() {
         println!("[]");
@@ -387,7 +394,7 @@ mod tests {
         let entries = select_entries(&HashSet::new(), &changed, &HashMap::new());
         assert_eq!(
             fixture_dirs(&entries),
-            vec!["txn", "block", "cost", "gossip"]
+            vec!["txn", "block", "cost", "shred", "gossip"]
         );
 
         let changed = changed_harnesses(&["svm-conformance/Cargo.toml".to_string()]);

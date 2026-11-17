@@ -1,11 +1,13 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    agave_feature_set::{enable_alt_bn128_syscall, loader_v3_set_program_data_to_elf_length},
-    assert_matches::assert_matches,
+    agave_feature_set::{
+        disable_sbpf_v0_v1_v2_deployment, enable_alt_bn128_syscall,
+        loader_v3_allow_prefunded_programdata, loader_v3_remove_extend_program,
+        loader_v3_set_program_data_to_elf_length,
+    },
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
-    solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
         program::{CLOSE_PROGRAM_WARNING, ProgramCliCommand},
@@ -14,7 +16,6 @@ use {
     solana_cli_output::{OutputFormat, parse_sign_only_reply_string},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
-    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_faucet::faucet::run_local_faucet_with_unique_port_for_tests,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
@@ -42,7 +43,7 @@ use {
     solana_signer::{Signer, null_signer::NullSigner},
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_test_validator::{TestValidator, TestValidatorGenesis},
-    solana_transaction::Transaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -57,6 +58,8 @@ use {
 
 pub struct LoaderV3Features {
     pub set_programdata_to_elf_length: bool,
+    pub remove_extend_program: bool,
+    pub allow_prefunded_programdata: bool,
 }
 
 fn test_validator_genesis(
@@ -80,9 +83,23 @@ fn test_validator_genesis(
 
     let LoaderV3Features {
         set_programdata_to_elf_length,
+        remove_extend_program,
+        allow_prefunded_programdata,
     } = features;
+    // SIMD-0685 depends on SIMD-0433, since without ExtendProgram only
+    // upgrades can grow the program data account.
+    assert!(
+        !remove_extend_program || set_programdata_to_elf_length,
+        "SIMD-0685 requires SIMD-0433"
+    );
     if !set_programdata_to_elf_length {
         genesis.deactivate_features(&[loader_v3_set_program_data_to_elf_length::id()]);
+    }
+    if !remove_extend_program {
+        genesis.deactivate_features(&[loader_v3_remove_extend_program::id()]);
+    }
+    if !allow_prefunded_programdata {
+        genesis.deactivate_features(&[loader_v3_allow_prefunded_programdata::id()]);
     }
 
     genesis
@@ -131,13 +148,14 @@ async fn expect_account_absent(rpc_client: &RpcClient, pubkey: Pubkey, absent_be
 async fn fetch_and_decode_transaction(
     rpc_client: &RpcClient,
     signature: &Signature,
-) -> Transaction {
+) -> VersionedTransaction {
     rpc_client
         .get_transaction_with_config(
             signature,
             RpcTransactionConfig {
                 encoding: Some(UiTransactionEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
+                max_supported_transaction_version: Some(1),
                 ..RpcTransactionConfig::default()
             },
         )
@@ -146,8 +164,6 @@ async fn fetch_and_decode_transaction(
         .transaction
         .transaction
         .decode()
-        .unwrap()
-        .into_legacy_transaction()
         .unwrap()
 }
 
@@ -210,6 +226,7 @@ async fn setup_extend_program_test<'a>(
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -243,6 +260,8 @@ async fn test_cli_program_deploy_non_upgradeable() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -291,6 +310,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -341,6 +361,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -402,6 +423,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -430,6 +452,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -459,6 +482,8 @@ async fn test_cli_program_deploy_no_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -510,6 +535,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -541,6 +567,7 @@ async fn test_cli_program_deploy_no_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -568,6 +595,8 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     );
 
@@ -626,6 +655,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -658,6 +688,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             max_sign_attempts: 5,
             auto_extend: true,
             use_rpc: false,
+            generate_ephemeral_program_id: true,
             skip_feature_verification: true,
         });
 
@@ -705,6 +736,8 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     );
 
@@ -774,6 +807,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -874,6 +908,8 @@ async fn test_cli_program_deploy_local_verifier() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     );
 
@@ -926,6 +962,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -959,6 +996,7 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
 
@@ -991,11 +1029,117 @@ async fn test_cli_program_deploy_local_verifier() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
 
     let response = process_command(&config).await;
     assert!(response.is_ok());
+}
+
+#[test_case(true; "Feature enabled")]
+#[test_case(false; "Feature disabled")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enabled: bool) {
+    agave_logger::setup();
+
+    let mut program_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    program_path.push("../programs/bpf_loader/test_elfs/out/noop_aligned");
+    program_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let mut test_validator_builder = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
+        },
+    );
+    if !disable_sbpf_v0_v1_v2_deployment_enabled {
+        test_validator_builder.deactivate_features(&[disable_sbpf_v0_v1_v2_deployment::id()]);
+    }
+
+    let test_validator = test_validator_builder
+        .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+        .await
+        .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+
+    let mut file = File::open(program_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let max_len = program_data.len();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            max_len,
+        ))
+        .await
+        .unwrap();
+    let minimum_balance_for_program = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
+        .await
+        .unwrap();
+    let upgrade_authority = Keypair::new();
+    let buffer_keypair = Keypair::new();
+
+    let keypair = Keypair::new();
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
+    };
+    config.signers = vec![&keypair];
+    process_command(&config).await.unwrap();
+    let balance = rpc_client.get_balance(&keypair.pubkey()).await.unwrap();
+
+    config.signers = vec![&keypair, &upgrade_authority, &buffer_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(program_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: None,
+        program_pubkey: None,
+        buffer_signer_index: Some(2),
+        buffer_pubkey: Some(buffer_keypair.pubkey()),
+        upgrade_authority_signer_index: 1,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        generate_ephemeral_program_id: true,
+        skip_feature_verification: false,
+    });
+    config.output_format = OutputFormat::JsonCompact;
+
+    if disable_sbpf_v0_v1_v2_deployment_enabled {
+        expect_command_failure(
+            &config,
+            "SBPFv0 deployment is disabled",
+            "program targets SBPF v0, which this CLI does not have enabled (enabled: v3–v3). \
+             Rebuild the program targeting v3.",
+        )
+        .await;
+
+        // Pre-flight fails before any transaction is sent.
+        expect_account_absent(
+            &rpc_client,
+            buffer_keypair.pubkey(),
+            "Buffer should not be created",
+        )
+        .await;
+        assert_eq!(
+            rpc_client.get_balance(&keypair.pubkey()).await.unwrap(),
+            balance,
+        );
+    } else {
+        let response = process_command(&config).await;
+        assert!(response.is_ok());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1013,6 +1157,8 @@ async fn test_cli_program_deploy_with_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1065,6 +1211,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1121,6 +1268,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1168,6 +1316,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1247,6 +1396,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1330,6 +1480,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -1356,6 +1507,7 @@ async fn test_cli_program_deploy_with_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1431,6 +1583,8 @@ async fn test_cli_program_upgrade_auto_extend(
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length,
+            remove_extend_program: set_programdata_to_elf_length,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1492,6 +1646,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1517,6 +1672,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: false, // --no-auto-extend flag is present
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     if set_programdata_to_elf_length {
@@ -1547,6 +1703,7 @@ async fn test_cli_program_upgrade_auto_extend(
             max_sign_attempts: 5,
             auto_extend: false, // --no-auto-extend flag is present
             use_rpc: false,
+            generate_ephemeral_program_id: false,
             skip_feature_verification: true,
         });
         process_command(&config).await.unwrap();
@@ -1603,6 +1760,7 @@ async fn test_cli_program_upgrade_auto_extend(
         max_sign_attempts: 5,
         auto_extend: true, // --no-auto-extend flag is absent
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -1652,8 +1810,9 @@ async fn test_cli_program_upgrade_auto_extend(
     let mut extends = 0;
     for signature in &signatures {
         let tx = fetch_and_decode_transaction(&rpc_client, signature).await;
-        for instruction in &tx.message.instructions {
-            if instruction.program_id(&tx.message.account_keys) == &bpf_loader_upgradeable::id()
+        for instruction in tx.message.instructions() {
+            if instruction.program_id(tx.message.static_account_keys())
+                == &bpf_loader_upgradeable::id()
                 && matches!(
                     wincode::deserialize(&instruction.data),
                     Ok(UpgradeableLoaderInstruction::ExtendProgram { .. })
@@ -1681,6 +1840,8 @@ async fn test_cli_program_close_program() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -1736,6 +1897,7 @@ async fn test_cli_program_close_program() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -1824,6 +1986,8 @@ async fn test_cli_program_extend_program() {
         &noop_path,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .await;
@@ -1870,6 +2034,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
 
@@ -1925,6 +2090,7 @@ async fn test_cli_program_extend_program() {
         max_sign_attempts: 5,
         auto_extend: false,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -1987,6 +2153,8 @@ async fn test_cli_program_extend_program_minimum_size() {
         &noop_path,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .await;
@@ -2110,6 +2278,8 @@ async fn test_cli_program_write_buffer() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2482,6 +2652,7 @@ async fn test_cli_program_write_buffer() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2522,6 +2693,8 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     );
 
@@ -2621,6 +2794,8 @@ async fn test_cli_program_set_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2726,6 +2901,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2787,6 +2963,7 @@ async fn test_cli_program_set_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2808,6 +2985,8 @@ async fn test_cli_program_mismatch_buffer_authority() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -2883,6 +3062,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     expect_command_failure(
@@ -2913,6 +3093,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2944,6 +3125,8 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -3005,6 +3188,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3143,6 +3327,8 @@ async fn test_cli_program_show() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -3285,6 +3471,7 @@ async fn test_cli_program_show() {
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc: false,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3405,6 +3592,8 @@ async fn test_cli_program_dump() {
         &mint_keypair,
         LoaderV3Features {
             set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata: true,
         },
     )
     .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
@@ -3607,6 +3796,7 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
         max_sign_attempts: 5,
         auto_extend: true,
         use_rpc,
+        generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -3658,46 +3848,204 @@ async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_
     let write_tx = fetch_and_decode_transaction(&rpc_client, &signatures[2]).await;
     let final_tx = fetch_and_decode_transaction(&rpc_client, &deploy_signature).await;
 
+    let configs = [&initial_tx, &write_tx, &final_tx].map(|tx| {
+        let VersionedMessage::V1(message) = &tx.message else {
+            panic!("program deploy transaction should use V1");
+        };
+        assert!(tx.message.instructions().iter().all(|instruction| {
+            instruction.program_id(tx.message.static_account_keys()) != &compute_budget::id()
+        }));
+        &message.config
+    });
+
     if let Some(compute_unit_price) = compute_unit_price {
-        for tx in [&initial_tx, &write_tx, &final_tx] {
-            let ix_len = tx.message.instructions.len();
-            for i in [1, 2] {
-                assert_eq!(
-                    tx.message.instructions[ix_len - i].program_id(&tx.message.account_keys),
-                    &compute_budget::id()
-                );
-            }
-
-            assert_matches!(
-                try_from_slice_unchecked(&tx.message.instructions[ix_len - 2].data),
-                Ok(ComputeBudgetInstruction::SetComputeUnitPrice(price)) if price == compute_unit_price
+        for config in configs {
+            let limit = config.compute_unit_limit.unwrap();
+            assert!(
+                limit > 0
+                    && limit < solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT
             );
+            let fee = u128::from(compute_unit_price)
+                .saturating_mul(u128::from(limit))
+                .div_ceil(1_000_000);
+            assert_eq!(config.priority_fee, Some(fee as u64));
         }
-
-        assert_matches!(
-            try_from_slice_unchecked(&initial_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2820))
-        );
-        assert_matches!(
-            try_from_slice_unchecked(&write_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2670))
-        );
-        assert_matches!(
-            try_from_slice_unchecked(&final_tx.message.instructions.last().unwrap().data),
-            Ok(ComputeBudgetInstruction::SetComputeUnitLimit(2970))
-        );
     } else {
+        assert!(configs.iter().all(|config| config.priority_fee.is_none()));
         assert_eq!(
-            initial_tx.message.instructions[0].program_id(&initial_tx.message.account_keys),
+            initial_tx.message.instructions()[0]
+                .program_id(initial_tx.message.static_account_keys()),
             &system_program::id()
         );
         assert_eq!(
-            write_tx.message.instructions[0].program_id(&write_tx.message.account_keys),
+            write_tx.message.instructions()[0].program_id(write_tx.message.static_account_keys()),
             &bpf_loader_upgradeable::id()
         );
         assert_eq!(
-            final_tx.message.instructions[0].program_id(&final_tx.message.account_keys),
+            final_tx.message.instructions()[0].program_id(final_tx.message.static_account_keys()),
             &system_program::id()
         );
     }
+}
+
+#[test_case(false; "legacy")]
+#[test_case(true; "SIMD-0684")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_deploy_prefunded_programdata(allow_prefunded_programdata: bool) {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let test_validator = test_validator_genesis(
+        &mint_keypair,
+        LoaderV3Features {
+            set_programdata_to_elf_length: false,
+            remove_extend_program: false,
+            allow_prefunded_programdata,
+        },
+    )
+    .start_async_with_mint_address(&mint_keypair, SocketAddrSpace::Unspecified)
+    .await
+    .expect("validator start failed");
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = setup_rpc_client(&mut config);
+    config.send_transaction_config.skip_preflight = false;
+
+    let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data).unwrap();
+    let minimum_balance_for_programdata = rpc_client
+        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            program_data.len(),
+        ))
+        .await
+        .unwrap();
+
+    let keypair = Keypair::new();
+    config.command = CliCommand::Airdrop {
+        pubkey: None,
+        lamports: 100 * minimum_balance_for_programdata,
+    };
+    config.signers = vec![&keypair];
+    process_command(&config).await.unwrap();
+
+    let program_keypair = Keypair::new();
+    let programdata_pubkey = get_program_data_address(&program_keypair.pubkey());
+    let prefund_lamports = minimum_balance_for_programdata / 2;
+    config.command = CliCommand::Airdrop {
+        pubkey: Some(programdata_pubkey),
+        lamports: prefund_lamports,
+    };
+    process_command(&config).await.unwrap();
+
+    config.signers = vec![&keypair, &program_keypair];
+    config.command = CliCommand::Program(ProgramCliCommand::Deploy {
+        program_location: Some(noop_path.to_str().unwrap().to_string()),
+        fee_payer_signer_index: 0,
+        program_signer_index: Some(1),
+        program_pubkey: Some(program_keypair.pubkey()),
+        buffer_signer_index: None,
+        buffer_pubkey: None,
+        upgrade_authority_signer_index: 0,
+        is_final: false,
+        max_len: None,
+        skip_fee_check: false,
+        compute_unit_price: None,
+        max_sign_attempts: 5,
+        auto_extend: true,
+        use_rpc: false,
+        generate_ephemeral_program_id: false,
+        skip_feature_verification: true,
+    });
+    let result = process_command(&config).await;
+
+    let programdata_lamports = rpc_client.get_balance(&programdata_pubkey).await.unwrap();
+    if allow_prefunded_programdata {
+        result.unwrap();
+        assert_eq!(programdata_lamports, minimum_balance_for_programdata);
+        let program_account = rpc_client
+            .get_account(&program_keypair.pubkey())
+            .await
+            .unwrap();
+        assert!(program_account.executable);
+    } else {
+        result.unwrap_err();
+        assert_eq!(programdata_lamports, prefund_lamports);
+        expect_account_absent(
+            &rpc_client,
+            program_keypair.pubkey(),
+            "Deploy fails when the programdata account is prefunded",
+        )
+        .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_cli_program_extend_program_removed() {
+    agave_logger::setup();
+
+    let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    noop_path.push("tests");
+    noop_path.push("fixtures");
+    noop_path.push("noop");
+    noop_path.set_extension("so");
+
+    let mint_keypair = Keypair::new();
+    let keypair = Keypair::new();
+    let upgrade_authority = Keypair::new();
+    let program_keypair = Keypair::new();
+    let ExtendProgramTestSetup {
+        test_validator: _test_validator,
+        mut config,
+        rpc_client,
+        programdata_pubkey,
+        program_len: _,
+    } = setup_extend_program_test(
+        &mint_keypair,
+        &keypair,
+        &upgrade_authority,
+        &program_keypair,
+        &noop_path,
+        LoaderV3Features {
+            set_programdata_to_elf_length: true,
+            remove_extend_program: true,
+            allow_prefunded_programdata: true,
+        },
+    )
+    .await;
+
+    let prev_len = rpc_client
+        .get_account(&programdata_pubkey)
+        .await
+        .unwrap()
+        .data
+        .len();
+
+    // Wait one slot to avoid "Program was deployed in this block already" error.
+    wait_n_slots(&rpc_client, 1).await;
+
+    // SIMD-0685: The CLI rejects extend before sending a transaction.
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
+        program_pubkey: program_keypair.pubkey(),
+        payer_signer_index: 0,
+        additional_bytes: MINIMUM_EXTEND_PROGRAM_BYTES,
+    });
+    expect_command_failure(
+        &config,
+        "extend must be rejected by the CLI once SIMD-0685 is active",
+        "ExtendProgram has been disabled by SIMD-0685. Use `solana program upgrade`, which \
+         resizes the program data account automatically",
+    )
+    .await;
+
+    let programdata_account = rpc_client.get_account(&programdata_pubkey).await.unwrap();
+    assert_eq!(prev_len, programdata_account.data.len());
 }

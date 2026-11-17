@@ -8,8 +8,8 @@
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
     agave_feature_set::FeatureSet,
-    solana_bincode::limited_deserialize,
     solana_compute_budget::compute_budget_limits::DEFAULT_HEAP_COST,
+    solana_packet::PACKET_DATA_WINCODE_CONFIG,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_meta::TransactionMeta,
     solana_sdk_ids::system_program,
@@ -245,7 +245,7 @@ impl CostModel {
     ) -> SystemProgramAccountAllocation {
         if program_id == &system_program::id() {
             if let Ok(instruction) =
-                limited_deserialize(instruction.data, solana_packet::PACKET_DATA_SIZE as u64)
+                wincode::config::deserialize(instruction.data, PACKET_DATA_WINCODE_CONFIG)
             {
                 Self::calculate_account_data_size_on_deserialized_system_instruction(
                     instruction,
@@ -455,7 +455,7 @@ mod tests {
         let transaction = Transaction::new_unsigned(Message::new(
             &[
                 system_instruction::allocate(&Pubkey::new_unique(), 100),
-                Instruction::new_with_bincode(system_program::id(), &(), vec![]),
+                Instruction::new_with_bytes(system_program::id(), &[], vec![]),
             ],
             Some(&Pubkey::new_unique()),
         ));
@@ -832,7 +832,7 @@ mod tests {
         let transaction =
             RuntimeTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
                 &[
-                    Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
+                    Instruction::new_with_bytes(Pubkey::new_unique(), &[0], vec![]),
                     system_instruction::transfer(&mint_keypair.pubkey(), &Pubkey::new_unique(), 2),
                 ],
                 Some(&mint_keypair.pubkey()),

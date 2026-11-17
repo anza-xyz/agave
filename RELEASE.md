@@ -59,6 +59,11 @@ There are three release channels that map to branches as follows:
 * beta - tracks the largest (and latest) `vX.Y` stabilization branch, more stable.
 * stable - tracks the second largest `vX.Y` stabilization branch, most stable.
 
+Edge serves the tip of `master`. Beta and stable serve the latest tag on their
+branch, not its tip. The "sync release channels" step at the end of every tag's
+`agave-secondary` build copies those tags' artifacts into the channels. If a
+channel is stale, retry that step on any tag build.
+
 ## Steps to Create a Branch
 
 ### Major release branch
@@ -136,7 +141,6 @@ Create a PR that makes the following updates to [CHANGELOG.md](https://github.co
 #### Newly Promoted Stable (Former Beta) Branch
 
 1. Pin the spl-token-cli version in the newly promoted stable branch by setting `splTokenCliVersion` in scripts/spl-token-cli-version.sh to the latest release that depends on the stable branch (usually this will be the latest spl-token-cli release).
-1. Pin the cargo-build-sbf version in the newly promoted stable branch by setting `cargoBuildSbfVersion` in scripts/cargo-build-sbf-version.sh to the latest release that depends on the stable branch (usually this will be the latest releases).
 
 #### Newly Created Beta Branch
 

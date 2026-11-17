@@ -2,6 +2,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_program_test::ProgramTest,
+    solana_sbpf::vm::MAX_INSTRUCTION_METER,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
     solana_sysvar::rent,
@@ -18,7 +19,7 @@ fn overflow_compute_units() {
 #[tokio::test]
 async fn max_compute_units() {
     let mut program_test = ProgramTest::default();
-    program_test.set_compute_max_units(i64::MAX as u64);
+    program_test.set_compute_max_units(MAX_INSTRUCTION_METER);
     let context = program_test.start_with_context().await;
 
     // Invalid compute unit maximums are only triggered by BPF programs, so send

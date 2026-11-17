@@ -24,7 +24,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
     solana_time_utils::AtomicInterval,
-    std::{borrow::Cow, collections::VecDeque, sync::RwLock},
+    std::{collections::VecDeque, sync::RwLock},
 };
 
 // Expect blacklist events to be extremely rare, so we can tightly bound the
@@ -38,7 +38,7 @@ pub struct StandardBroadcastRun {
     // Parent encoded in shred headers. This must remain stable for the slot
     // because it is used to derive PARENT_OFFSET.
     parent: Slot,
-    parent_block_id: Hash,
+    parent_block_id: BlockId,
     // Parent slot and block id committed into the double-merkle block id. This
     // can change after an UpdateParent marker.
     parent_for_double_merkle: Block,
@@ -85,7 +85,7 @@ impl StandardBroadcastRun {
         Self {
             slot: Slot::MAX,
             parent: Slot::MAX,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
             parent_for_double_merkle: Block {
                 slot: Slot::MAX,
                 block_id: BlockId::default(),
@@ -170,7 +170,7 @@ impl StandardBroadcastRun {
 
         self.slot = bank.slot();
         self.parent = bank.parent_slot();
-        self.parent_block_id = parent_block_id.to_hash();
+        self.parent_block_id = parent_block_id;
         self.parent_for_double_merkle = Block {
             slot: bank.parent_slot(),
             block_id: parent_block_id,
@@ -464,12 +464,7 @@ impl StandardBroadcastRun {
             && shred.index() == 0
         {
             blockstore
-                .insert_cow_shreds(
-                    [Cow::Borrowed(shred)],
-                    true, // is_trusted
-                    pinnable_slice,
-                    write_batch,
-                )
+                .insert_trusted_shreds([shred.clone()], pinnable_slice, write_batch)
                 .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
@@ -557,14 +552,9 @@ impl StandardBroadcastRun {
             .map(usize::from)
             .unwrap_or_default();
         let num_shreds = shreds.len();
-        let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
+        let shreds = shreds.iter().skip(offset).cloned();
         blockstore
-            .insert_cow_shreds(
-                shreds,
-                /*is_trusted:*/ true,
-                pinnable_slice,
-                write_batch,
-            )
+            .insert_trusted_shreds(shreds, pinnable_slice, write_batch)
             .expect("Failed to insert shreds in blockstore");
         let insert_shreds_elapsed = insert_shreds_start.elapsed();
         let new_insert_shreds_stats = InsertShredsStats {
@@ -708,7 +698,6 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
-        assert_matches::assert_matches,
         rand::Rng,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
@@ -731,7 +720,7 @@ mod test {
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
         solana_signer::Signer,
-        std::{ops::Deref, sync::Arc, time::Duration},
+        std::{assert_matches, ops::Deref, sync::Arc, time::Duration},
         test_case::test_case,
     };
 
@@ -853,7 +842,7 @@ mod test {
         assert!(Arc::ptr_eq(&header_shreds, &transmit_shreds));
         assert_eq!(
             deshred_component(&header_shreds),
-            BlockComponent::new_block_header(parent_bank.slot(), parent_block_id.to_hash()),
+            BlockComponent::new_block_header(parent_bank.slot(), parent_block_id),
         );
         let header_data_shred = header_shreds.iter().find(|shred| shred.is_data()).unwrap();
         let flags = layout::get_flags(header_data_shred.payload().as_ref()).unwrap();
@@ -1481,11 +1470,11 @@ mod test {
         );
         bs.slot = 12;
         bs.parent = 10;
-        let original_parent_block_id = Hash::new_unique();
+        let original_parent_block_id = BlockId::new_unique();
         bs.parent_block_id = original_parent_block_id;
         bs.parent_for_double_merkle = Block {
             slot: bs.parent,
-            block_id: BlockId::from(bs.parent_block_id),
+            block_id: bs.parent_block_id,
         };
 
         let new_parent_slot = 7;

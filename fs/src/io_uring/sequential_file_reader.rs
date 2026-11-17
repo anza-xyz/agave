@@ -3,10 +3,11 @@
 use {
     super::{
         IO_PRIO_BE_HIGHEST,
-        memory::{IoBufferChunk, PageAlignedMemory},
+        memory::{IoBufferChunk, new_io_buffer},
     },
     crate::{FileSize, IoSize, buffered_reader::FileBufRead, io_uring::sqpoll},
     agave_io_uring::{Completion, Ring, RingAccess as _, RingOp},
+    agave_memory::{AlignedBuffer, HugePages},
     io_uring::{IoUring, opcode, squeue, types},
     std::{
         collections::VecDeque,
@@ -45,6 +46,7 @@ pub struct SequentialFileReaderBuilder<'sp> {
     register_buffer: bool,
     /// Toggle option for opening files with the O_DIRECT flag
     use_direct_io: bool,
+    huge_pages: HugePages,
 }
 
 impl<'sp> SequentialFileReaderBuilder<'sp> {
@@ -56,6 +58,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
             shared_sqpoll_fd: None,
             register_buffer: false,
             use_direct_io: false,
+            huge_pages: HugePages::Off,
         }
     }
 
@@ -85,6 +88,15 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
         self
     }
 
+    /// Set the huge page backing of the buffer, regular pages by default.
+    ///
+    /// Transparent huge pages suit buffers allocated once, since allocating them can stall on
+    /// memory compaction.
+    pub fn huge_pages(mut self, huge_pages: HugePages) -> Self {
+        self.huge_pages = huge_pages;
+        self
+    }
+
     /// Use (or remove) a shared kernel thread to drain submission queue for IO operations
     pub fn shared_sqpoll(mut self, shared_sqpoll_fd: Option<BorrowedFd<'sp>>) -> Self {
         self.shared_sqpoll_fd = shared_sqpoll_fd;
@@ -99,7 +111,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     /// multiple `read_capacity` sized reads in parallel to fill the buffer.
     pub fn build<'a>(self, buf_capacity: usize) -> io::Result<SequentialFileReader<'a>> {
         let buf_capacity = buf_capacity.max(self.read_capacity as usize);
-        let buffer = PageAlignedMemory::new(buf_capacity)?;
+        let buffer = new_io_buffer(buf_capacity, self.huge_pages)?;
         self.build_with_buffer(buffer)
     }
 
@@ -111,7 +123,7 @@ impl<'sp> SequentialFileReaderBuilder<'sp> {
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
     fn build_with_buffer<'a>(
         self,
-        mut buffer: PageAlignedMemory,
+        mut buffer: AlignedBuffer,
     ) -> io::Result<SequentialFileReader<'a>> {
         // Align buffer capacity to read capacity, so we always read equally sized chunks
         let buf_capacity =
@@ -206,7 +218,7 @@ pub struct SequentialFileReader<'a> {
     state: SequentialFileReaderState,
     /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
     /// (should get dropped last)
-    backing_buffer: PageAlignedMemory,
+    backing_buffer: AlignedBuffer,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -935,7 +947,7 @@ mod tests {
         )
         .unwrap();
 
-        let buf = PageAlignedMemory::new(backing_buffer_size).unwrap();
+        let buf = AlignedBuffer::new_page_aligned(backing_buffer_size).unwrap();
         let mut reader = SequentialFileReaderBuilder::new()
             .use_direct_io(use_direct_io)
             .read_capacity(read_capacity)

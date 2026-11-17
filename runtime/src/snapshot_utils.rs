@@ -1838,10 +1838,9 @@ mod tests {
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             },
         },
-        assert_matches::assert_matches,
         solana_accounts_db::accounts_file::AccountsFileProvider,
         solana_hash::Hash,
-        std::{convert::TryFrom, mem::size_of, slice},
+        std::{assert_matches, convert::TryFrom, mem::size_of, slice},
         tempfile::NamedTempFile,
         test_case::test_case,
     };

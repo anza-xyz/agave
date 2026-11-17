@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::program_cache_entry::ProgramCacheEntry,
+    crate::program_cache::entry::ProgramCacheEntry,
     qualifier_attr::qualifiers,
     solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_epoch_schedule::EpochSchedule,
@@ -12,12 +12,14 @@ use {
 };
 use {
     crate::{
+        abi::ABI,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
         memory_context::{MemoryContext, MemoryContexts},
-        program_cache_entry::ProgramCacheEntryType,
+        program_cache::{
+            entry::ProgramCacheEntryType,
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            tx_batch::ProgramCacheForTxBatch,
+        },
         stable_log,
         sysvar_cache::SysvarCache,
     },
@@ -159,7 +161,6 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
     program_runtime_environments: &'a ProgramRuntimeEnvironments,
@@ -169,7 +170,6 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
         program_runtime_environments: &'a ProgramRuntimeEnvironments,
@@ -178,7 +178,6 @@ impl<'a> EnvironmentConfig<'a> {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded,
             epoch_stake_callback,
             feature_set,
             program_runtime_environments,
@@ -187,7 +186,7 @@ impl<'a> EnvironmentConfig<'a> {
     }
 
     /// Get cached sysvars
-    pub fn sysvar_cache(&self) -> &SysvarCache {
+    pub fn sysvar_cache(&self) -> &'a SysvarCache {
         self.sysvar_cache
     }
 }
@@ -749,11 +748,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.log_collector.clone()
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_alpenglow_migration_succeeded_for_tests(&mut self, succeeded: bool) {
-        self.environment_config.alpenglow_migration_succeeded = succeeded;
-    }
-
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
@@ -773,16 +767,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config
             .program_runtime_environments
             .get_env_for_deployment()
-    }
-
-    pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
-        self.environment_config
-            .feature_set
-            .deprecate_legacy_vote_ixs
-    }
-
-    pub fn is_alpenglow_migration_succeeded(&self) -> bool {
-        self.environment_config.alpenglow_migration_succeeded
     }
 
     /// Get cached epoch total stake.
@@ -805,8 +789,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .is_precompile(pubkey)
     }
 
-    // Should alignment be enforced during user pointer translation
-    pub fn get_check_aligned(&self) -> bool {
+    /// Get the current instruction's [`ABI`].
+    pub fn abi(&self) -> ABI {
         self.transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
@@ -814,8 +798,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 debug_assert!(owner_id.is_ok());
                 owner_id
             })
-            .map(|owner_key| owner_key != bpf_loader_deprecated::id())
-            .unwrap_or(true)
+            .map(|owner_id| ABI::resolve(&owner_id))
+            .unwrap_or(ABI::V1)
     }
 
     /// Insert a VM register trace
@@ -877,7 +861,9 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 },
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                program_cache::{
+                    env::ProgramRuntimeEnvironments, tx_batch::ProgramCacheForTxBatch,
+                },
                 sysvar_cache::SysvarCache,
             },
         };
@@ -909,7 +895,6 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockInvokeContextCallback {},
             $feature_set,
             &program_runtime_environments,
@@ -1013,7 +998,7 @@ where
                 .map(|(_, a)| AccountSharedData::from(a.clone()))
                 .unwrap_or_else(|| {
                     if key == program_id {
-                        let mut account = AccountSharedData::new(0, 0, loader_key);
+                        let mut account = AccountSharedData::empty(0, loader_key);
                         account.set_executable(true);
                         account
                     } else {
@@ -1161,7 +1146,7 @@ mod tests {
             ec::{EcGroup, EcKey},
             nid::Nid,
         },
-        solana_account::{Account, DUMMY_INHERITABLE_ACCOUNT_FIELDS, ReadableAccount},
+        solana_account::{Account, ReadableAccount},
         solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_keypair::{Address, Keypair},
         solana_message::AccountKeys,
@@ -1325,7 +1310,7 @@ mod tests {
             invoke_stack.push(program_id);
             transaction_accounts.push((
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(1, 1, &program_id),
+                AccountSharedData::new_with_data(1, vec![0; 1], &program_id),
             ));
             instruction_accounts.push(InstructionAccount::new(
                 index as IndexOfAccount,
@@ -1340,7 +1325,7 @@ mod tests {
         for (index, program_id) in invoke_stack.iter().enumerate() {
             transaction_accounts.push((
                 *program_id,
-                AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &solana_pubkey::Pubkey::default()),
             ));
             instruction_accounts.push(InstructionAccount::new(
                 index as IndexOfAccount,
@@ -1395,7 +1380,7 @@ mod tests {
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
             )],
             Rent::default(),
             1,
@@ -1428,7 +1413,7 @@ mod tests {
         let mut transaction_context = TransactionContext::new(
             vec![(
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
             )],
             Rent::default(),
             256,
@@ -1499,11 +1484,14 @@ mod tests {
         expected_result: Result<(), InstructionError>,
     ) {
         let callee_program_id = solana_pubkey::new_rand();
-        let owned_account = AccountSharedData::new(42, 1, &callee_program_id);
-        let not_owned_account = AccountSharedData::new(84, 1, &solana_pubkey::new_rand());
-        let readonly_account = AccountSharedData::new(168, 1, &solana_pubkey::new_rand());
-        let loader_account = AccountSharedData::new(0, 1, &native_loader::id());
-        let mut program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let owned_account = AccountSharedData::new_with_data(42, vec![0; 1], &callee_program_id);
+        let not_owned_account =
+            AccountSharedData::new_with_data(84, vec![0; 1], &solana_pubkey::new_rand());
+        let readonly_account =
+            AccountSharedData::new_with_data(168, vec![0; 1], &solana_pubkey::new_rand());
+        let loader_account = AccountSharedData::new_with_data(0, vec![0; 1], &native_loader::id());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
             (solana_pubkey::new_rand(), owned_account),
@@ -1554,11 +1542,14 @@ mod tests {
         expected_result: Result<(), InstructionError>,
     ) {
         let callee_program_id = solana_pubkey::new_rand();
-        let owned_account = AccountSharedData::new(42, 1, &callee_program_id);
-        let not_owned_account = AccountSharedData::new(84, 1, &solana_pubkey::new_rand());
-        let readonly_account = AccountSharedData::new(168, 1, &solana_pubkey::new_rand());
-        let loader_account = AccountSharedData::new(0, 1, &native_loader::id());
-        let mut program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let owned_account = AccountSharedData::new_with_data(42, vec![0; 1], &callee_program_id);
+        let not_owned_account =
+            AccountSharedData::new_with_data(84, vec![0; 1], &solana_pubkey::new_rand());
+        let readonly_account =
+            AccountSharedData::new_with_data(168, vec![0; 1], &solana_pubkey::new_rand());
+        let loader_account = AccountSharedData::new_with_data(0, vec![0; 1], &native_loader::id());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
             (solana_pubkey::new_rand(), owned_account),
@@ -1652,11 +1643,12 @@ mod tests {
     #[test_case(-1; "Resize the account smaller")]
     fn test_process_instruction_accounts_resize_delta(resize_delta: i64) {
         let program_key = Pubkey::new_unique();
-        let user_account_data_len = 123u64;
+        let user_account_data_len = 123usize;
         let user_account =
-            AccountSharedData::new(100, user_account_data_len as usize, &program_key);
-        let dummy_account = AccountSharedData::new(10, 0, &program_key);
-        let mut program_account = AccountSharedData::new(500, 500, &native_loader::id());
+            AccountSharedData::new_with_data(100, vec![0; user_account_data_len], &program_key);
+        let dummy_account = AccountSharedData::empty(10, &program_key);
+        let mut program_account =
+            AccountSharedData::new_with_data(500, vec![0; 500], &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
             (Pubkey::new_unique(), user_account),
@@ -1693,7 +1685,7 @@ mod tests {
 
     #[test]
     fn test_prepare_instruction_maximum_accounts() {
-        const MAX_ACCOUNTS_REFERENCED: usize = u16::MAX as usize;
+        const MAX_ACCOUNTS_REFERENCED: usize = MAX_ACCOUNTS_PER_INSTRUCTION;
         let mut transaction_accounts: Vec<KeyedAccountSharedData> =
             Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
         let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_REFERENCED);
@@ -1702,30 +1694,25 @@ mod tests {
         let fee_payer = Keypair::new();
         transaction_accounts.push((
             fee_payer.pubkey(),
-            AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
         ));
         account_metas.push(AccountMeta::new(fee_payer.pubkey(), true));
 
         let program_id = Pubkey::new_unique();
-        let mut program_account = AccountSharedData::new(1, 1, &Pubkey::new_unique());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique());
         program_account.set_executable(true);
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
 
-        for i in 2..MAX_ACCOUNTS_REFERENCED {
-            // Let's reference 256 unique accounts, and the rest is repeated.
-            if i < MAX_ACCOUNTS_PER_TRANSACTION {
-                let key = Pubkey::new_unique();
-                transaction_accounts
-                    .push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
-                account_metas.push(AccountMeta::new_readonly(key, false));
-            } else {
-                let repeated_key = transaction_accounts
-                    .get(i % MAX_ACCOUNTS_PER_TRANSACTION)
-                    .unwrap()
-                    .0;
-                account_metas.push(AccountMeta::new_readonly(repeated_key, false));
-            }
+        // Reference the maximum number of instruction accounts.
+        for _ in 2..MAX_ACCOUNTS_REFERENCED {
+            let key = Pubkey::new_unique();
+            transaction_accounts.push((
+                key,
+                AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
+            ));
+            account_metas.push(AccountMeta::new_readonly(key, false));
         }
 
         with_mock_invoke_context!(invoke_context, transaction_context, 2, transaction_accounts);
@@ -1759,19 +1746,8 @@ mod tests {
                 let other_ix_index = instruction_context
                     .get_index_of_account_in_instruction(index_in_transaction)
                     .unwrap();
-                if (index_in_instruction as usize) < MAX_ACCOUNTS_PER_TRANSACTION {
-                    assert_eq!(index_in_instruction, index_in_transaction);
-                    assert_eq!(index_in_instruction, other_ix_index);
-                } else {
-                    assert_eq!(
-                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
-                        index_in_transaction as usize
-                    );
-                    assert_eq!(
-                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
-                        other_ix_index as usize
-                    );
-                }
+                assert_eq!(index_in_instruction, index_in_transaction);
+                assert_eq!(index_in_instruction, other_ix_index);
             }
         }
 
@@ -1792,17 +1768,8 @@ mod tests {
                     (MAX_ACCOUNTS_REFERENCED as u16)
                         .saturating_sub(index_in_instruction)
                         .saturating_sub(1)
-                        .overflowing_rem(MAX_ACCOUNTS_PER_TRANSACTION as u16)
-                        .0
                 );
-                if (index_in_instruction as usize) < MAX_ACCOUNTS_PER_TRANSACTION {
-                    assert_eq!(index_in_instruction, other_ix_index);
-                } else {
-                    assert_eq!(
-                        index_in_instruction as usize % MAX_ACCOUNTS_PER_TRANSACTION,
-                        other_ix_index as usize
-                    );
-                }
+                assert_eq!(index_in_instruction, other_ix_index);
             }
         }
 
@@ -1847,12 +1814,13 @@ mod tests {
         let fee_payer = Keypair::new();
         transaction_accounts.push((
             fee_payer.pubkey(),
-            AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
         ));
         account_metas.push(AccountMeta::new(fee_payer.pubkey(), true));
 
         let program_id = Pubkey::new_unique();
-        let mut program_account = AccountSharedData::new(1, 1, &Pubkey::new_unique());
+        let mut program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique());
         program_account.set_executable(true);
         transaction_accounts.push((program_id, program_account));
         account_metas.push(AccountMeta::new_readonly(program_id, false));
@@ -1860,8 +1828,10 @@ mod tests {
         for i in 2..account_metas.capacity() {
             if i % 2 == 0 {
                 let key = Pubkey::new_unique();
-                transaction_accounts
-                    .push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+                transaction_accounts.push((
+                    key,
+                    AccountSharedData::new_with_data(1, vec![0; 1], &Pubkey::new_unique()),
+                ));
                 account_metas.push(AccountMeta::new_readonly(key, false));
             } else {
                 let last_key = transaction_accounts.last().unwrap().0;
@@ -1949,11 +1919,14 @@ mod tests {
         inner_instruction: Instruction,
         signer_seeds: &[&[&[u8]]],
     ) -> Result<(), InstructionError> {
-        let target_account = AccountSharedData::new(100, 0, &TEST_CALLEE_PROGRAM_ID);
-        let mock_extra_account = AccountSharedData::new(0, 1, &system_program::id());
-        let mut caller_program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let target_account = AccountSharedData::empty(100, &TEST_CALLEE_PROGRAM_ID);
+        let mock_extra_account =
+            AccountSharedData::new_with_data(0, vec![0; 1], &system_program::id());
+        let mut caller_program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         caller_program_account.set_executable(true);
-        let mut callee_program_account = AccountSharedData::new(1, 1, &native_loader::id());
+        let mut callee_program_account =
+            AccountSharedData::new_with_data(1, vec![0; 1], &native_loader::id());
         callee_program_account.set_executable(true);
         let transaction_accounts = vec![
             (target_key, target_account),
@@ -1982,6 +1955,22 @@ mod tests {
         let result = invoke_context.native_invoke_signed(inner_instruction, signer_seeds);
         invoke_context.pop().unwrap();
         result
+    }
+
+    #[test]
+    fn test_native_invoke_signed_instruction_account_limit() {
+        let instruction = Instruction::new_with_wincode(
+            TEST_CALLEE_PROGRAM_ID,
+            &MockInstruction::NoopSuccess,
+            vec![
+                AccountMeta::new_readonly(TEST_ACCOUNT_KEY, false);
+                MAX_ACCOUNTS_PER_INSTRUCTION + 1
+            ],
+        );
+        assert_eq!(
+            run_native_invoke_signed_test(TEST_ACCOUNT_KEY, false, instruction, &[]),
+            Err(InstructionError::MaxAccountsExceeded),
+        );
     }
 
     // Valid PDA seeds grant signer privilege to the derived address.
@@ -2111,18 +2100,48 @@ mod tests {
     impl InvokeContextCallback for MockCallback {}
 
     fn create_loadable_account_for_test(name: &str) -> AccountSharedData {
-        let (lamports, rent_epoch) = DUMMY_INHERITABLE_ACCOUNT_FIELDS;
         AccountSharedData::from(Account {
-            lamports,
+            lamports: 1,
             owner: native_loader::id(),
             data: name.as_bytes().to_vec(),
             executable: true,
-            rent_epoch,
+            rent_epoch: u64::MAX,
         })
     }
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
         SanitizedMessage::try_from_legacy_message(message, &HashSet::new()).unwrap()
+    }
+
+    #[test]
+    fn test_reject_instruction_with_more_than_255_accounts() {
+        let payer = Pubkey::new_unique();
+        let other_account = Pubkey::new_unique();
+        let program_id = Pubkey::new_unique();
+        let mut instruction_accounts = vec![0; 256];
+        instruction_accounts.push(1);
+        let message = new_sanitized_message(Message::new_with_compiled_instructions(
+            1,
+            0,
+            2,
+            vec![payer, other_account, program_id],
+            Hash::default(),
+            vec![solana_message::compiled_instruction::CompiledInstruction {
+                program_id_index: 2,
+                accounts: instruction_accounts,
+                data: vec![],
+            }],
+        ));
+        let accounts = vec![
+            (payer, AccountSharedData::default()),
+            (other_account, AccountSharedData::default()),
+            (program_id, create_loadable_account_for_test("noop")),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, accounts);
+        assert_eq!(
+            invoke_context.prepare_top_level_instructions(&message),
+            Err((0, InstructionError::MaxAccountsExceeded)),
+        );
     }
 
     #[test]
@@ -2169,11 +2188,11 @@ mod tests {
         let accounts = vec![
             (
                 writable_pubkey,
-                AccountSharedData::new(100, 1, &mock_system_program_id),
+                AccountSharedData::new_with_data(100, vec![0; 1], &mock_system_program_id),
             ),
             (
                 readonly_pubkey,
-                AccountSharedData::new(0, 1, &mock_system_program_id),
+                AccountSharedData::new_with_data(0, vec![0; 1], &mock_system_program_id),
             ),
             (
                 mock_system_program_id,
@@ -2219,7 +2238,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2271,7 +2289,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2309,7 +2326,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2387,11 +2403,11 @@ mod tests {
         let accounts = vec![
             (
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(100, 1, &mock_program_id),
+                AccountSharedData::new_with_data(100, vec![0; 1], &mock_program_id),
             ),
             (
                 solana_pubkey::new_rand(),
-                AccountSharedData::new(0, 1, &mock_program_id),
+                AccountSharedData::new_with_data(0, vec![0; 1], &mock_program_id),
             ),
             (
                 mock_program_id,
@@ -2435,7 +2451,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2466,7 +2481,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2502,7 +2516,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2588,20 +2601,20 @@ mod tests {
             Err(InstructionError::Custom(0xbabb1e))
         });
 
-        let mut secp256k1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut secp256k1_account = AccountSharedData::empty(1, &native_loader::id());
         secp256k1_account.set_executable(true);
-        let mut ed25519_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut ed25519_account = AccountSharedData::empty(1, &native_loader::id());
         ed25519_account.set_executable(true);
-        let mut secp256r1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut secp256r1_account = AccountSharedData::empty(1, &native_loader::id());
         secp256r1_account.set_executable(true);
-        let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut mock_program_account = AccountSharedData::empty(1, &native_loader::id());
         mock_program_account.set_executable(true);
 
         let fee_payer = Pubkey::new_unique();
         let accounts_map: HashMap<Address, AccountSharedData> = HashMap::from([
             (
                 fee_payer,
-                AccountSharedData::new(1, 0, &system_program::id()),
+                AccountSharedData::empty(1, &system_program::id()),
             ),
             (secp256k1_program::id(), secp256k1_account),
             (ed25519_program::id(), ed25519_account),
@@ -2659,7 +2672,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2681,5 +2693,43 @@ mod tests {
             transaction_context.number_of_called_instructions_in_trace(),
             4
         );
+    }
+
+    #[test]
+    fn test_abi_follows_instruction_stack() {
+        let transaction_accounts = vec![
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::empty(0, &bpf_loader_deprecated::id()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::empty(0, &bpf_loader_upgradeable::id()),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+
+        // No instruction.
+        assert_eq!(invoke_context.abi(), ABI::V1);
+
+        // ABIv0 program.
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V0);
+
+        // It invokes an ABIv1 program.
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(1, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V1);
+
+        // The callee returns.
+        invoke_context.pop().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V0);
     }
 }

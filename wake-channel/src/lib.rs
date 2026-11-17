@@ -46,6 +46,7 @@ use std::sync::atomic::AtomicUsize;
 use {
     crossbeam_utils::Backoff,
     std::{
+        fmt,
         marker::PhantomData,
         mem,
         sync::{
@@ -186,6 +187,12 @@ pub struct Sender<T> {
     shared: Arc<Shared>,
 }
 
+impl<T> fmt::Debug for Sender<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sender").finish_non_exhaustive()
+    }
+}
+
 impl<T> Sender<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         self.inner.send(value)?;
@@ -235,10 +242,11 @@ impl<T> Drop for Sender<T> {
 pub struct SingleChannelEvent;
 pub struct MultiChannelEvent;
 
-/// Receiver for a channel with its own wake event, created by [`bounded`].
+/// Receiver for a channel with its own wake event, created by [`bounded`] or [`unbounded`].
 pub type Receiver<T> = common::Receiver<T, SingleChannelEvent>;
 
-/// Receiver for a channel sharing a wake event, created by [`bounded_with_wake_event`].
+/// Receiver for a channel sharing a wake event, created by [`bounded_with_wake_event`] or
+/// [`unbounded_with_wake_event`].
 pub type SharedEventReceiver<T> = common::Receiver<T, MultiChannelEvent>;
 
 /// Receiver implementation shared by standalone and shared-event channels.
@@ -284,6 +292,12 @@ pub mod common {
     }
 }
 
+impl<T, Mode> fmt::Debug for common::Receiver<T, Mode> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Receiver").finish_non_exhaustive()
+    }
+}
+
 impl<T> Receiver<T> {
     /// Blocks until a message is available or all senders are disconnected.
     pub fn recv(&self) -> Result<T, RecvError> {
@@ -325,6 +339,33 @@ fn bounded_inner<T, Mode>(
 ) -> (Sender<T>, common::Receiver<T, Mode>) {
     assert_ne!(capacity, 0, "channel capacity must be nonzero");
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
+    with_wake_event(sender, receiver, event)
+}
+
+/// Creates an unbounded channel on its own [`WakeEvent`].
+pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
+    unbounded_inner(Arc::new(WakeEvent::default()))
+}
+
+/// Creates an unbounded channel on `event`.
+///
+/// Every consumer sleeping on the event must poll all channels attached to it, as with
+/// [`bounded_with_wake_event`]. The returned [`SharedEventReceiver`] only supports nonblocking
+/// receives.
+pub fn unbounded_with_wake_event<T>(event: Arc<WakeEvent>) -> (Sender<T>, SharedEventReceiver<T>) {
+    unbounded_inner(event)
+}
+
+fn unbounded_inner<T, Mode>(event: Arc<WakeEvent>) -> (Sender<T>, common::Receiver<T, Mode>) {
+    let (sender, receiver) = crossbeam_channel::unbounded();
+    with_wake_event(sender, receiver, event)
+}
+
+fn with_wake_event<T, Mode>(
+    sender: crossbeam_channel::Sender<T>,
+    receiver: crossbeam_channel::Receiver<T>,
+    event: Arc<WakeEvent>,
+) -> (Sender<T>, common::Receiver<T, Mode>) {
     let shared = Arc::new(Shared {
         wake_event: event,
         num_senders: AtomicUsize::new(1),
@@ -346,15 +387,35 @@ fn bounded_inner<T, Mode>(
 mod tests {
     use {
         super::*,
-        std::{sync::atomic::AtomicBool, thread},
+        std::{
+            sync::atomic::AtomicBool,
+            thread,
+            time::{Duration, Instant},
+        },
     };
 
     const NUM_RECEIVERS: usize = 4;
+    const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn wait_for_waiters(event: &WakeEvent, expected: usize) {
+        let start = Instant::now();
         while event.waiters.load(Ordering::Relaxed) != expected {
+            assert!(start.elapsed() < TEST_TIMEOUT, "receivers did not register");
             thread::yield_now();
         }
+    }
+
+    #[test]
+    fn test_unbounded_buffering_and_disconnect() {
+        let (sender, receiver) = unbounded();
+        assert_eq!(sender.capacity(), None);
+        assert_eq!(receiver.capacity(), None);
+        sender.send(1).unwrap();
+        sender.send(2).unwrap();
+        drop(sender);
+        assert_eq!(receiver.recv(), Ok(1));
+        assert_eq!(receiver.recv(), Ok(2));
+        assert_eq!(receiver.recv(), Err(RecvError));
     }
 
     #[test]
@@ -461,53 +522,67 @@ mod tests {
         }
     }
 
+    fn shared_channel<T>(
+        capacity: Option<usize>,
+        event: Arc<WakeEvent>,
+    ) -> (Sender<T>, SharedEventReceiver<T>) {
+        match capacity {
+            Some(capacity) => bounded_with_wake_event(capacity, event),
+            None => unbounded_with_wake_event(event),
+        }
+    }
+
     #[test]
     fn test_receivers_wake_on_either_channel() {
-        let event = Arc::new(WakeEvent::default());
-        let (sa, ra) = bounded_with_wake_event::<u32>(NUM_RECEIVERS, Arc::clone(&event));
-        let (sb, rb) = bounded_with_wake_event::<&'static str>(NUM_RECEIVERS, Arc::clone(&event));
+        for capacity in [Some(NUM_RECEIVERS), None] {
+            let event = Arc::new(WakeEvent::default());
+            let (sa, ra) = shared_channel::<u32>(capacity, Arc::clone(&event));
+            let (sb, rb) = shared_channel::<&'static str>(capacity, Arc::clone(&event));
 
-        // Each consumer receives once, so every registered consumer must make progress.
-        for expected in [Work::A(7), Work::B("b")] {
-            let consumers = (0..NUM_RECEIVERS)
-                .map(|_| {
-                    let event = Arc::clone(&event);
-                    let (ra, rb) = (ra.clone(), rb.clone());
-                    thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)).unwrap())
-                })
-                .collect::<Vec<_>>();
+            // Each consumer receives once, so every registered consumer must make progress.
+            for expected in [Work::A(7), Work::B("b")] {
+                let consumers = (0..NUM_RECEIVERS)
+                    .map(|_| {
+                        let event = Arc::clone(&event);
+                        let (ra, rb) = (ra.clone(), rb.clone());
+                        thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)).unwrap())
+                    })
+                    .collect::<Vec<_>>();
 
-            wait_for_waiters(&event, NUM_RECEIVERS);
-            for _ in 0..NUM_RECEIVERS {
-                match expected {
-                    Work::A(value) => sa.try_send(value).unwrap(),
-                    Work::B(value) => sb.try_send(value).unwrap(),
+                wait_for_waiters(&event, NUM_RECEIVERS);
+                for _ in 0..NUM_RECEIVERS {
+                    match expected {
+                        Work::A(value) => sa.send(value).unwrap(),
+                        Work::B(value) => sb.try_send(value).unwrap(),
+                    }
                 }
-            }
-            for consumer in consumers {
-                assert_eq!(consumer.join().unwrap(), expected);
+                for consumer in consumers {
+                    assert_eq!(consumer.join().unwrap(), expected);
+                }
             }
         }
     }
 
     #[test]
     fn test_channel_disconnect_wakes_all_shared_event_receivers() {
-        let event = Arc::new(WakeEvent::default());
-        let (_sa, ra) = bounded_with_wake_event::<u32>(1, Arc::clone(&event));
-        let (sb, rb) = bounded_with_wake_event::<&'static str>(1, Arc::clone(&event));
-        let consumers = (0..NUM_RECEIVERS)
-            .map(|_| {
-                let event = Arc::clone(&event);
-                let (ra, rb) = (ra.clone(), rb.clone());
-                thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)))
-            })
-            .collect::<Vec<_>>();
+        for capacity in [Some(1), None] {
+            let event = Arc::new(WakeEvent::default());
+            let (_sa, ra) = shared_channel::<u32>(capacity, Arc::clone(&event));
+            let (sb, rb) = shared_channel::<&'static str>(capacity, Arc::clone(&event));
+            let consumers = (0..NUM_RECEIVERS)
+                .map(|_| {
+                    let event = Arc::clone(&event);
+                    let (ra, rb) = (ra.clone(), rb.clone());
+                    thread::spawn(move || event.recv_with(|| poll_both(&ra, &rb)))
+                })
+                .collect::<Vec<_>>();
 
-        wait_for_waiters(&event, NUM_RECEIVERS);
-        // Channel A is still connected; dropping B's last sender must wake every consumer.
-        drop(sb);
-        for consumer in consumers {
-            assert_eq!(consumer.join().unwrap(), Err(RecvError));
+            wait_for_waiters(&event, NUM_RECEIVERS);
+            // Channel A is still connected; dropping B's last sender must wake every consumer.
+            drop(sb);
+            for consumer in consumers {
+                assert_eq!(consumer.join().unwrap(), Err(RecvError));
+            }
         }
     }
 

@@ -54,7 +54,7 @@ pub struct VoteHistory {
     voted: HashSet<Slot>,
 
     /// The blocks for which this node has cast a notarization vote
-    /// In the format of slot, block_id, bank_hash
+    /// In the format of slot, block_id
     voted_notar: HashMap<Slot, BlockId>,
 
     /// The blocks for which this node has cast a notarization fallback
@@ -77,10 +77,10 @@ pub struct VoteHistory {
     /// All votes cast for a `slot`, for use in refresh
     votes_cast: HashMap<Slot, Vec<VotePayloadToSign>>,
 
-    /// Blocks which have a notarization certificate via the certificate pool
+    /// Blocks which have a notarization certificate via the consensus pool
     notarized_blocks: HashSet<Block>,
 
-    /// Slots which have a parent ready condition via the certificate pool
+    /// Slots which have a parent ready condition via the consensus pool
     parent_ready_slots: HashMap<Slot, HashSet<Block>>,
 
     /// The latest root set by the voting loop. The above structures will not
@@ -137,7 +137,7 @@ impl VoteHistory {
         self.voted_notar.get(&slot).copied()
     }
 
-    /// Whether we voted notarize fallback in `slot` for block `(block_id, bank_hash)`
+    /// Whether we voted notarize fallback in `slot` for block `block_id`
     pub fn voted_notar_fallback(&self, slot: Slot, block_id: BlockId) -> bool {
         assert!(slot >= self.root);
         self.voted_notar_fallback
@@ -157,7 +157,7 @@ impl VoteHistory {
         self.skipped.contains(&slot)
     }
 
-    /// Have we casted a finalization vote for `slot`
+    /// Have we cast a finalization vote for `slot`
     pub fn its_over(&self, slot: Slot) -> bool {
         assert!(slot >= self.root);
         self.its_over.contains(&slot)
@@ -175,7 +175,7 @@ impl VoteHistory {
             .collect()
     }
 
-    /// Have we casted a bad window vote for `slot`:
+    /// Have we cast a bad window vote for `slot`:
     /// - Skip
     /// - Notarize fallback
     /// - Skip fallback

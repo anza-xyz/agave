@@ -59,16 +59,11 @@ impl ScanConfig {
 #[derive(Debug, Default)]
 pub struct ScanTracker {
     ongoing_scan_roots: RwLock<BTreeMap<Slot, u64>>,
-    // Each scan has some latest slot `S` that is the tip of the fork the scan
-    // is iterating over. The unique id of that slot `S` is recorded here (note we don't use
-    // `S` as the id because there can be more than one version of a slot `S`). If a fork
-    // is abandoned, all of the slots on that fork up to `S` will be removed via
-    // `AccountsDb::remove_unrooted_slots()`. When the scan finishes, it'll realize that the
-    // results of the scan may have been corrupted by `remove_unrooted_slots` and abort its results.
-    //
-    // `removed_bank_ids` tracks all the slot ids that were removed via `remove_unrooted_slots()` so any attempted scans
-    // on any of these slots fails. This is safe to purge once the associated Bank is dropped and
-    // scanning the fork with that Bank at the tip is no longer possible.
+    // Each scan records the `BankId` of the bank at the tip of the fork it scans (a `BankId`
+    // rather than a slot, since a slot can have more than one bank). When a fork is abandoned,
+    // its banks are added here via `mark_banks_removed()`: new scans on them fail, and in-flight
+    // scans on them stop and return an error instead of their results. A `BankId` is removed
+    // from here when its bank drops, since no scan can hold that bank anymore.
     pub removed_bank_ids: Mutex<HashSet<BankId>>,
     /// Number of total bank removals. Used by scans to determine if they need to check if the
     /// bank they are scanning on is being removed.
@@ -110,6 +105,7 @@ pub(crate) struct ScanGuard<'a> {
     max_root: Slot,
     scan_bank_id: BankId,
     bank_removals_at_last_check: u64,
+    bank_removed: bool,
 }
 
 impl<'a> ScanGuard<'a> {
@@ -167,11 +163,16 @@ impl<'a> ScanGuard<'a> {
             max_root: max_root_inclusive,
             scan_bank_id,
             bank_removals_at_last_check,
+            bank_removed: false,
         })
     }
 
     /// Checks if the bank being scanned is removed
     pub(crate) fn is_bank_removed(&mut self) -> bool {
+        if self.bank_removed {
+            return true;
+        }
+
         // Fast path: No banks have been removed since the last check.
         let bank_removals = self.scan_tracker.bank_removals.load(Ordering::Relaxed);
         if bank_removals == self.bank_removals_at_last_check {
@@ -180,11 +181,13 @@ impl<'a> ScanGuard<'a> {
 
         // If any bank has been removed, check to see if the bank being scanned has been removed
         self.bank_removals_at_last_check = bank_removals;
-        self.scan_tracker
+        self.bank_removed = self
+            .scan_tracker
             .removed_bank_ids
             .lock()
             .unwrap()
-            .contains(&self.scan_bank_id)
+            .contains(&self.scan_bank_id);
+        self.bank_removed
     }
 
     /// The inclusive max root pinned by this scan guard.
@@ -414,6 +417,18 @@ mod tests {
 
         assert!(guard_on_removed_bank.is_bank_removed());
         assert!(!guard_on_other_bank.is_bank_removed());
+    }
+
+    #[test]
+    fn test_is_bank_removed_stays_true() {
+        let tracker = ScanTracker::default();
+        let mut guard = ScanGuard::try_new(&tracker, BankId::new(1), || 10).unwrap();
+        assert!(!guard.is_bank_removed());
+
+        tracker.mark_banks_removed([BankId::new(1)]);
+
+        assert!(guard.is_bank_removed());
+        assert!(guard.is_bank_removed());
     }
 
     #[test]

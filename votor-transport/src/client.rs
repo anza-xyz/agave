@@ -432,7 +432,7 @@ mod tests {
 
         let (_egress_tx, egress_rx) = mpsc::channel(1);
         let (_identity_tx, identity_rx) = watch::channel(Keypair::new());
-        let (ack, _acks) = crossbeam_channel::unbounded();
+        let (ack, _acks) = crossbeam_channel::bounded(10);
         let (_peer_list_tx, peer_list_rx) = watch::channel(Arc::new(PeerList {
             peers: HashMap::default(),
             push_enabled: true,

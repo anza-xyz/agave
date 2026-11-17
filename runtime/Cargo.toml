@@ -56,15 +56,17 @@ shuttle-test = ["dep:shuttle"]
 agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
+agave-math-utils = { workspace = true }
+agave-memory = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
+agave-worker-pool = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 arrayref = { workspace = true }
-assert_matches = { workspace = true }
 base64 = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
@@ -134,19 +136,18 @@ solana-native-token = { workspace = true }
 solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true }
 solana-seed-derivable = { workspace = true }
-solana-serde = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
@@ -200,7 +201,7 @@ solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["wincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["bincode"] }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }

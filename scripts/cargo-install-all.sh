@@ -41,7 +41,6 @@ usage: $0 [+<cargo version>] [options] <install directory>
     --no-build-deprecated-bins  Do not build deprecated binaries.
     --no-build-dev-bins         Do not build development binaries.
     --no-build-end-user-bins    Do not build end user binaries.
-    --no-build-platform-tools   Do not build solana-platform-tools.
     --no-build-validator-bins   Do not build validator binaries.
     --no-perf-libs              Deprecated no-op. perf-libs are no longer applicable to agave.
     --no-spl-token              Do not fetch and install SPL-Token. (Note: Not using this flag requires internet at build time)
@@ -64,7 +63,6 @@ noBuildDCOUBins=
 noBuildDeprecatedBins=
 noBuildDevBins=
 noBuildEndUserBins=
-noBuildPlatformTools=
 noBuildValidatorBins=
 noSPLToken=
 
@@ -98,7 +96,7 @@ while [[ -n $1 ]]; do
       noBuildEndUserBins=true
       shift
     elif [[ $1 = --no-build-platform-tools ]]; then
-      noBuildPlatformTools=true
+      echo "WARNING: $1 has been deprecated, Solana CLI no longer builds platform tools by default"
       shift
     elif [[ $1 = --no-build-validator-bins ]]; then
       noBuildValidatorBins=true
@@ -112,10 +110,9 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --help ]]; then
       usage
     elif [[ $1 = --validator-only ]]; then
-      echo "WARNING: $1 has been deprecated, use a combination of --no-build-{dev,deprecated}-bins and --no-build-platform-tools instead."
+      echo "WARNING: $1 has been deprecated, use a combination of --no-build-{dev,deprecated}-bins instead"
       noBuildDevBins=true
       noBuildDeprecatedBins=true
-      noBuildPlatformTools=true
       shift
     else
       usage "Unknown option: $1"
@@ -260,18 +257,6 @@ done
 for bin in "${DCOU_BINS[@]}"; do
   cp -fv "dev-bins/target/$buildProfile/$bin" "$installDir"/bin
 done
-
-if [[ -z "$noBuildPlatformTools" ]]; then
-  # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-  "$cargo" $maybeRustVersion build --manifest-path syscalls/gen-syscall-list/Cargo.toml
-
-  # shellcheck source=scripts/cargo-build-sbf-version.sh
-  source "$SOLANA_ROOT"/scripts/cargo-build-sbf-version.sh
-
-  # shellcheck disable=SC2086
-  # starting from cargo-build-sbf v4.1.0, `cargo install cargo-build-sbf` installs both `cargo-build-sbf` and `cargo-test-sbf`
-  "$cargo" $maybeRustVersion install --locked cargo-build-sbf --root "$installDir" $maybeCargoBuildSbfVersionArg
-fi
 
 (
   set -x

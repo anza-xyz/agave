@@ -452,6 +452,15 @@ mod tests {
             self.keypair.pubkey()
         }
 
+        /// While `frozen`, the periodic metrics report does not reset server
+        /// counters, so test assertions observe cumulative totals across ticks.
+        fn freeze_server_stats(&self, frozen: bool) {
+            self.endpoint
+                .server_stats
+                .report_frozen
+                .store(frozen, Ordering::Relaxed);
+        }
+
         /// Broadcast `payload` to every peer in this node's peer_list.
         fn send(&self, payload: &Bytes) {
             self.egress
@@ -721,6 +730,8 @@ mod tests {
             peer_list_with_unknown_addr(pubkey_a),
             HIGH_PPS,
         );
+        // Keep `handshake_rejected_unauthorized` cumulative across report ticks.
+        server.freeze_server_stats(true);
         let server_pk = server.pubkey();
         let client_a = Node::spawn_node(
             &rt,
@@ -821,6 +832,8 @@ mod tests {
             peer_list_with_unknown_addr(client_pubkey),
             HIGH_PPS,
         );
+        // Keep `connection_closed_banned` cumulative across report ticks.
+        server.freeze_server_stats(true);
         let client = Node::spawn_node(
             &rt,
             client_keypair,
@@ -870,11 +883,7 @@ mod tests {
         );
         let server_pk = server.pubkey();
         // Keep `handshake_rejected_overload` cumulative across report ticks.
-        server
-            .endpoint
-            .server_stats
-            .report_frozen
-            .store(true, Ordering::Relaxed);
+        server.freeze_server_stats(true);
         let peers = peer_list_of(server_pk, server.addr);
         let client1 = Node::spawn_node(&rt, shared.insecure_clone(), peers.clone(), HIGH_PPS);
         let client2 = Node::spawn_node(&rt, shared.insecure_clone(), peers.clone(), HIGH_PPS);
@@ -919,6 +928,8 @@ mod tests {
             peer_list_with_unknown_addr(shared_pk),
             HIGH_PPS,
         );
+        // Keep `connection_closed_not_in_peer_list` cumulative across report ticks.
+        server.freeze_server_stats(true);
         let peers = peer_list_of(server.pubkey(), server.addr);
         let client1 = Node::spawn_node(&rt, shared.insecure_clone(), peers.clone(), HIGH_PPS);
         let client2 = Node::spawn_node(&rt, shared.insecure_clone(), peers.clone(), HIGH_PPS);
@@ -962,8 +973,8 @@ mod tests {
     /// the bucket dry closes the connection.
     #[test]
     fn test_server_rate_limit_drops_then_closes_on_sustained_flood() {
-        // pps=20 => burst bucket = ceil(20*BURST_WINDOW=1s)=20,
-        // DoS bucket = ceil(20*DOS_WINDOW=10s)=200.
+        // pps=20 => shaper bucket = ceil(20*BURST_WINDOW=1s)=20,
+        // flood bucket = ceil(20*DOS_WINDOW=60s)=1200, drained by drops only.
         const PPS: usize = 20;
         const BURST: usize = 20;
         let rt = make_runtime_for_tests();
@@ -976,11 +987,7 @@ mod tests {
             PPS,
         );
         // Keep `datagram_rate_limited` / `connection_lost` cumulative across report ticks.
-        server
-            .endpoint
-            .server_stats
-            .report_frozen
-            .store(true, Ordering::Relaxed);
+        server.freeze_server_stats(true);
         let client = Node::spawn_node(
             &rt,
             client_keypair,
@@ -1030,13 +1037,17 @@ mod tests {
             "delivered {delivered} datagrams post-probe, exceeds the allowance {BURST}"
         );
 
-        // After the bucket refills, the SAME connection resumes delivery.
-        std::thread::sleep(Duration::from_secs(10));
+        // Dropped datagrams must not build up debt, so the SAME connection
+        // resumes delivery as soon as the shaper refills.
         let resume = Bytes::from_static(b"after-refill");
-        send_until_received(&client, &resume, &server.ingress_receiver, |d| {
-            (d.message == resume).then_some(())
-        })
-        .expect("post-refill datagram never arrived");
+        send_until_received_within(
+            &client,
+            &resume,
+            &server.ingress_receiver,
+            |d| (d.message == resume).then_some(()),
+            Duration::from_secs(1),
+        )
+        .expect("delivery should resume within 1s after the burst ends");
 
         // A sustained flood that drains the bucket dry closes the connection
         // (connection_lost grows).
@@ -1207,6 +1218,8 @@ mod tests {
             peer_list_with_unknown_addr(client_pubkey),
             HIGH_PPS,
         );
+        // Keep `connection_closed_identity_changed` cumulative across report ticks.
+        server.freeze_server_stats(true);
         let server_pubkey1 = server.pubkey();
         let client = Node::spawn_node(
             &rt,
@@ -1346,6 +1359,9 @@ mod tests {
         let keypair = Keypair::new();
         let self_pubkey = keypair.pubkey();
         let node = Node::spawn_node(&rt, keypair, HashMap::new(), HIGH_PPS);
+        // A report tick would reset the counters asserted to be zero below,
+        // hiding a self-connection that did happen.
+        node.freeze_server_stats(true);
         // Our own identity, mapped to our own inbound address.
         node.set_peer_list(peer_list_of(self_pubkey, node.addr));
 
@@ -1388,6 +1404,8 @@ mod tests {
             peer_list_of(server.pubkey(), server.addr),
             HIGH_PPS,
         );
+        // Keep `connection_lost` cumulative until it has been observed.
+        server.freeze_server_stats(true);
         let stats = &server.endpoint.server_stats;
 
         // Establish the connection: the server now holds one inbound peer entry.
@@ -1407,6 +1425,9 @@ mod tests {
         client.set_peer_list(HashMap::new());
         let lost = wait_for_stat(&stats.connection_lost, 1, MAX_IDLE_TIMEOUT * 2);
         assert_eq!(lost, 1, "server must observe the client-initiated close");
+        // The reclaim below is observed through the report tick re-baselining
+        // `peak_unique_peers`, so reporting has to run again.
+        server.freeze_server_stats(false);
 
         // The background maintenance tick must reclaim the entry once
         // its rate limiter has refilled. peak_unique_peers returns to zero after
@@ -1590,11 +1611,7 @@ mod tests {
             );
             // Counters must stay cumulative: these tests outlive several
             // reporting ticks.
-            server
-                .endpoint
-                .server_stats
-                .report_frozen
-                .store(true, Ordering::Relaxed);
+            server.freeze_server_stats(true);
 
             // The client can only reach the server through the relay. Delivery is
             // asserted on peer_pubkey, never on peer_address: from the server's

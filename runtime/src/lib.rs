@@ -11,6 +11,7 @@ pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
 pub mod bank_forks_controller;
+#[cfg(feature = "dev-context-only-utils")]
 pub mod bank_utils;
 pub mod block_component_processor;
 pub mod commitment;
@@ -57,7 +58,6 @@ pub mod transaction_batch;
 pub mod transaction_execution;
 pub mod validated_block_finalization;
 pub mod validated_reward_certificate;
-pub mod vote_sender_types;
 
 #[macro_use]
 extern crate solana_metrics;

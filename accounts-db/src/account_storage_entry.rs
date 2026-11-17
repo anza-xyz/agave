@@ -11,6 +11,7 @@ use {
     solana_clock::Slot,
     solana_nohash_hasher::IntSet,
     std::{
+        ops::ControlFlow,
         path::Path,
         sync::{
             RwLock, RwLockReadGuard,
@@ -119,14 +120,14 @@ impl AccountStorageEntry {
         self.num_alive_accounts.load(Ordering::Acquire)
     }
 
-    /// Returns the number of bytes requried to store all the *alive* accounts in this storage.
+    /// Returns the number of bytes required to store all the *alive* accounts in this storage.
     ///
     /// Note, this is the size to store accounts into AppendVec format.
     pub fn num_alive_bytes(&self) -> usize {
         self.num_alive_bytes.load(Ordering::Acquire)
     }
 
-    /// Returns the number of bytes requried to store all the accounts in this storage.
+    /// Returns the number of bytes required to store all the accounts in this storage.
     ///
     /// Note, this is the size to store accounts into AppendVec format.
     pub fn num_stored_bytes(&self) -> u64 {
@@ -141,7 +142,7 @@ impl AccountStorageEntry {
             .obsolete_accounts_for_snapshots(slot)
     }
 
-    /// Locks obsolete accounts with a read lock and returns the the accounts with the guard
+    /// Locks obsolete accounts with a read lock and returns the accounts with the guard
     pub(crate) fn obsolete_accounts_read_lock(&self) -> RwLockReadGuard<'_, ObsoleteAccounts> {
         self.obsolete_accounts.read().unwrap()
     }
@@ -305,9 +306,10 @@ impl AccountStorageEntry {
             .scan_accounts_with(reader, |offset, account| {
                 if excluded_offsets.contains(&offset) {
                     num_excluded += 1;
-                    return;
+                    return ControlFlow::Continue(());
                 }
                 callback(offset, account);
+                ControlFlow::Continue(())
             })?;
         Ok(num_excluded)
     }
@@ -324,9 +326,10 @@ impl AccountStorageEntry {
             .scan_accounts_without_data(|offset, account| {
                 if excluded_offsets.contains(&offset) {
                     num_excluded += 1;
-                    return;
+                    return ControlFlow::Continue(());
                 }
                 callback(offset, account);
+                ControlFlow::Continue(())
             })?;
         Ok(num_excluded)
     }
@@ -374,7 +377,7 @@ mod tests {
         let accounts: Vec<_> = iter::repeat_with(|| {
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(1, 10, &Pubkey::default()),
+                AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default()),
             )
         })
         .take(5)

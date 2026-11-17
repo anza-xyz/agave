@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{bank::Bank, serde_snapshot::deserialize_wincode_from},
     log::*,
@@ -7,6 +9,7 @@ use {
 /// A single startup tuning hint.
 ///
 /// Hints are identified by tag, so extend by adding variants; never change an existing one.
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum StartupHint {
     /// Number of accounts in the snapshot's bank.
@@ -18,6 +21,15 @@ pub enum StartupHint {
 /// Written next to the bank snapshot on graceful exit, read back when starting from fastboot
 /// state. Local-only (never archived) and wholly optional: every component must still initialize
 /// correctly without it.
+#[cfg_attr(
+    feature = "stable-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "5PMJgfyiVpoK21xamLxssKDbWXmGLEz2oMHqP2Zhz9To",
+        abi_serializer = "wincode",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Clone, Debug, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct StartupHints {
     hints: Vec<StartupHint>,

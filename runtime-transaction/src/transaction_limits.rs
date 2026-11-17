@@ -2,33 +2,52 @@
 //! Format validity is established separately by SDK / transaction-view sanitization.
 
 use {
-    agave_transaction_view::{
-        transaction_data::TransactionData, transaction_view::SanitizedTransactionView,
-    },
+    agave_transaction_view::transaction_config_view::TransactionConfigView,
+    ahash::AHashSet,
     solana_compute_budget::compute_budget_limits::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
-    solana_message::v1,
+    solana_message::{AccountKeys, v1},
     solana_pubkey::Pubkey,
     solana_svm_transaction::svm_transaction::SVMStaticTransaction,
     solana_transaction::versioned::TransactionVersion,
     solana_transaction_context::{MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_TRACE_LENGTH},
     solana_transaction_error::{TransactionError, TransactionResult},
-    std::collections::HashSet,
+    std::cell::RefCell,
 };
 
 /// Maximum serialized transaction size for legacy and v0 transactions, in bytes.
 const MAX_LEGACY_AND_V0_TRANSACTION_SIZE: usize = 1232;
 const MAX_V1_SIGNATURES: usize = 12;
-const MAX_V1_ACCOUNTS: usize = 64;
+const MAX_V1_ACCOUNTS: usize = 96;
 
-pub(crate) fn validate_unique_account_keys<'a>(
-    account_keys: impl IntoIterator<Item = &'a Pubkey>,
-) -> TransactionResult<()> {
-    let mut seen = HashSet::new();
-    if account_keys.into_iter().any(|key| !seen.insert(key)) {
+pub(crate) fn validate_unique_account_keys(account_keys: AccountKeys) -> TransactionResult<()> {
+    if has_duplicates(&account_keys) {
         Err(TransactionError::AccountLoadedTwice)
     } else {
         Ok(())
     }
+}
+
+fn has_duplicates(account_keys: &AccountKeys) -> bool {
+    // comparing every pair is faster than hashing for small sets
+    const QUADRATIC_MAX_LEN: usize = 32;
+    let len = account_keys.len();
+    if len < QUADRATIC_MAX_LEN {
+        account_keys
+            .iter()
+            .enumerate()
+            .any(|(idx, key)| (idx + 1..len).any(|jdx| key == &account_keys[jdx]))
+    } else {
+        SEEN_KEYS.with_borrow_mut(|seen| {
+            seen.clear();
+            seen.reserve(len);
+            account_keys.iter().any(|key| !seen.insert(*key))
+        })
+    }
+}
+
+thread_local! {
+    // reused across calls to skip allocating a set per transaction
+    static SEEN_KEYS: RefCell<AHashSet<Pubkey>> = RefCell::default();
 }
 
 pub(crate) fn validate_transaction_limits(
@@ -68,16 +87,10 @@ pub(crate) fn validate_transaction_config(config: &v1::TransactionConfig) -> Tra
     validate_heap_size(config.heap_size)
 }
 
-// TransactionConfigView is not publicly exported by transaction-view, so accept
-// the enclosing view and access its config without materializing an SDK config.
 pub(crate) fn validate_transaction_config_view(
-    transaction: &SanitizedTransactionView<impl TransactionData>,
+    config: &TransactionConfigView<'_>,
 ) -> TransactionResult<()> {
-    validate_heap_size(
-        transaction
-            .transaction_config()
-            .and_then(|config| config.requested_heap_size()),
-    )
+    validate_heap_size(config.requested_heap_size())
 }
 
 fn validate_heap_size(requested_heap_size: Option<u32>) -> TransactionResult<()> {
@@ -94,7 +107,7 @@ fn validate_heap_size(requested_heap_size: Option<u32>) -> TransactionResult<()>
 mod tests {
     use {
         super::*,
-        crate::{runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config},
+        crate::runtime_transaction::RuntimeTransaction,
         agave_transaction_view::{
             resolved_transaction_view::ResolvedTransactionView,
             transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
@@ -111,6 +124,7 @@ mod tests {
             sanitized::{MessageHash, SanitizedTransaction},
             versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
         },
+        std::collections::HashSet,
     };
 
     fn transaction(
@@ -212,8 +226,7 @@ mod tests {
                 );
             }
 
-            let view = SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config())
-                .unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
             let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
@@ -267,8 +280,7 @@ mod tests {
             Some(TransactionError::AccountLoadedTwice),
         );
 
-        let view =
-            SanitizedTransactionView::try_new_sanitized(&bytes[..], &sanitize_config()).unwrap();
+        let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
         let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             view,
             MessageHash::Compute,
@@ -288,10 +300,6 @@ mod tests {
 
     #[test]
     fn test_instruction_limit_boundaries() {
-        let mut config = sanitize_config();
-        config.max_instructions += 1;
-        config.max_accounts_per_instruction += 1;
-
         for version in [
             TransactionVersion::Legacy,
             TransactionVersion::V0,
@@ -310,7 +318,7 @@ mod tests {
                     TransactionVersion::Legacy
                     | TransactionVersion::V0
                     | TransactionVersion::V1 => {
-                        assert_view_constructors(&wincode::serialize(&tx).unwrap(), &config, valid);
+                        assert_view_constructors(&wincode::serialize(&tx).unwrap(), valid);
                     }
                 }
                 assert_sdk_constructor(tx, valid);
@@ -320,9 +328,13 @@ mod tests {
 
     #[test]
     fn test_v1_signature_and_account_limits() {
-        // Upstream SDK sanitization still rejects the over-limit cases first.
-        // These constructor tests continue to apply when those checks move here.
-        for (signatures, accounts, valid) in [(12, 64, true), (13, 64, false), (12, 65, false)] {
+        for (signatures, accounts, valid) in [
+            (12, 64, true),
+            (13, 64, false),
+            (12, 65, true),
+            (12, 96, true),
+            (12, 97, false),
+        ] {
             let mut tx = transaction(TransactionVersion::V1, vec![]);
             let VersionedMessage::V1(message) = &mut tx.message else {
                 unreachable!();
@@ -330,6 +342,7 @@ mod tests {
             message.header.num_required_signatures = signatures;
             message.account_keys = (0..accounts).map(|_| Pubkey::new_unique()).collect();
             tx.signatures = vec![Signature::default(); usize::from(signatures)];
+            assert_view_constructors(&wincode::serialize(&tx).unwrap(), valid);
             assert_sdk_constructor(tx, valid);
         }
     }
@@ -380,18 +393,14 @@ mod tests {
                 assert_eq!(bytes.len(), max_size + excess);
                 assert_sdk_constructor(tx, excess == 0);
                 if excess == 0 {
-                    assert_view_constructors(&bytes, &sanitize_config(), true);
+                    assert_view_constructors(&bytes, true);
                 }
             }
         }
     }
 
-    fn assert_view_constructors(
-        bytes: &[u8],
-        config: &agave_transaction_view::sanitize::SanitizeConfig,
-        valid: bool,
-    ) {
-        let view = SanitizedTransactionView::try_new_sanitized(bytes, config).unwrap();
+    fn assert_view_constructors(bytes: &[u8], valid: bool) {
+        let view = SanitizedTransactionView::try_new_sanitized(bytes).unwrap();
         let borrowed = RuntimeTransaction::<&SanitizedTransactionView<_>>::try_new(
             &view,
             MessageHash::Compute,
@@ -414,17 +423,39 @@ mod tests {
 
     #[test]
     fn test_view_constructors_reject_invalid_heap() {
-        let mut config = sanitize_config();
-        config.min_requested_heap_size = 0;
-        config.max_requested_heap_size = u32::MAX;
-
         for heap in [MIN_HEAP_FRAME_BYTES - 1024, MAX_HEAP_FRAME_BYTES + 1024] {
             let mut tx = transaction(TransactionVersion::V1, vec![]);
             let VersionedMessage::V1(message) = &mut tx.message else {
                 unreachable!()
             };
             message.config.heap_size = Some(heap);
-            assert_view_constructors(&wincode::serialize(&tx).unwrap(), &config, false);
+            assert_view_constructors(&wincode::serialize(&tx).unwrap(), false);
+        }
+    }
+
+    fn split_has_duplicates(keys: &[Pubkey]) -> bool {
+        let (static_keys, loaded) = keys.split_at(keys.len() / 2);
+        let (writable, readonly) = loaded.split_at(loaded.len() / 2);
+        let loaded = LoadedAddresses {
+            writable: writable.to_vec(),
+            readonly: readonly.to_vec(),
+        };
+        has_duplicates(&AccountKeys::new(static_keys, Some(&loaded)))
+    }
+
+    #[test]
+    fn test_has_duplicates() {
+        for len in [2, 31, 32, 64, 256] {
+            let keys: Vec<_> = (0..len).map(|_| Pubkey::new_unique()).collect();
+            assert!(!split_has_duplicates(&keys), "len {len}");
+
+            for (src, dst) in [(0, len - 1), (len - 1, 0), (len / 2, len / 2 - 1)] {
+                let mut keys = keys.clone();
+                keys[dst] = keys[src];
+                assert!(split_has_duplicates(&keys), "len {len} {src}->{dst}");
+            }
+            // entries left by an early return on a duplicate must not affect the next call
+            assert!(!split_has_duplicates(&keys), "len {len} after duplicates");
         }
     }
 }

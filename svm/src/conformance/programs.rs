@@ -1,21 +1,23 @@
 //! Program helpers: builtins, keyed accounts, and program cache.
 
 #[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
+use solana_program_runtime::program_cache::metrics::LoadProgramMetrics;
 use {
     crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+            tx_batch::ProgramCacheForTxBatch,
+        },
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
-    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_callback::AccountLoadCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
     solana_syscalls::create_program_runtime_environment,
@@ -185,7 +187,7 @@ pub fn fill_program_cache_from_accounts(
 
 struct FillFromAccountsCallback<'a>(&'a [(Pubkey, Account)]);
 
-impl TransactionProcessingCallback for FillFromAccountsCallback<'_> {
+impl AccountLoadCallback for FillFromAccountsCallback<'_> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         self.0
             .iter()
