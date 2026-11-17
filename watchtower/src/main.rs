@@ -36,6 +36,7 @@ struct Config {
     rpc_timeout: Duration,
     minimum_validator_identity_balance: u64,
     minimum_vote_account_balance: Option<u64>,
+    minimum_delegated: Option<u64>,
     monitor_active_stake: bool,
     active_stake_alert_threshold: u8,
     unhealthy_threshold: usize,
@@ -175,6 +176,17 @@ fn get_config() -> Config {
                 ),
         )
         .arg(
+            Arg::with_name("minimum_delegated")
+                .long("minimum-delegated")
+                .value_name("SOL")
+                .takes_value(true)
+                .validator(is_sol_amount)
+                .help(
+                    "Alert when a monitored validator's delegated stake is less than this \
+                     amount of SOL",
+                ),
+        )
+        .arg(
             // Deprecated parameter, now always enabled
             Arg::with_name("no_duplicate_notifications")
                 .long("no-duplicate-notifications")
@@ -242,6 +254,9 @@ fn get_config() -> Config {
     let minimum_vote_account_balance = matches
         .value_of("minimum_vote_account_balance")
         .and_then(sol_str_to_lamports);
+    let minimum_delegated = matches
+        .value_of("minimum_delegated")
+        .and_then(sol_str_to_lamports);
     let json_rpc_urls = values_t!(matches, "json_rpc_urls", String).unwrap_or_else(|_| {
         vec![value_t!(matches, "json_rpc_url", String).unwrap_or_else(|_| config.json_rpc_url)]
     });
@@ -269,6 +284,7 @@ fn get_config() -> Config {
         rpc_timeout,
         minimum_validator_identity_balance,
         minimum_vote_account_balance,
+        minimum_delegated,
         monitor_active_stake,
         active_stake_alert_threshold,
         unhealthy_threshold,
@@ -541,6 +557,29 @@ fn query_endpoint(
                                     vote_pubkey,
                                     Sol(balance),
                                     Sol(minimum_vote_account_balance)
+                                ),
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(minimum_delegated) = config.minimum_delegated {
+                    for vote_account in vote_accounts
+                        .current
+                        .iter()
+                        .chain(vote_accounts.delinquent.iter())
+                        .filter(|vai| vai.node_pubkey == validator_identity_string.as_str())
+                    {
+                        if vote_account.activated_stake < minimum_delegated {
+                            failures.push((
+                                "delegated-stake",
+                                format!(
+                                    "{} vote account {} has {} delegated stake, below the \
+                                     configured minimum of {}",
+                                    formatted_validator_identity,
+                                    vote_account.vote_pubkey,
+                                    Sol(vote_account.activated_stake),
+                                    Sol(minimum_delegated)
                                 ),
                             ));
                         }
