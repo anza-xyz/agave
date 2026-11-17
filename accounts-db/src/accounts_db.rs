@@ -4728,7 +4728,7 @@ impl AccountsDb {
                             );
                             last_update = now;
                         }
-                        thread::sleep(Duration::from_millis(500))
+                        thread::park_timeout(Duration::from_millis(500));
                     }
                 })
                 .expect("spawn thread");
@@ -4742,6 +4742,7 @@ impl AccountsDb {
             // Make sure to join the logger thread *after* the main threads.
             // This way, if a main thread errors, we won't spin indefinitely
             // waiting for the logger thread to finish (it never will).
+            logger_thread_handle.thread().unpark();
             logger_thread_handle.join().expect("join thread");
         });
         index_time.stop();
