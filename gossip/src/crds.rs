@@ -72,8 +72,6 @@ pub struct Crds {
     shards: CrdsShards,
     nodes: IndexSet<usize>, // Indices of nodes' ContactInfo.
     num_nodes_removed: u64,
-    // Indices of EpochSlots keyed by insert order.
-    epoch_slots: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of DuplicateShred keyed by insert order.
     duplicate_shreds: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of all crds values associated with a node.
@@ -255,7 +253,6 @@ impl Default for Crds {
             shards: CrdsShards::new(CRDS_SHARDS_BITS),
             nodes: IndexSet::default(),
             num_nodes_removed: 0,
-            epoch_slots: BTreeMap::default(),
             duplicate_shreds: BTreeMap::default(),
             records: HashMap::default(),
             entries: BTreeMap::default(),
@@ -357,9 +354,6 @@ impl Crds {
                             ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
                         );
                     }
-                    CrdsData::EpochSlots(_, _) => {
-                        self.epoch_slots.insert(value.ordinal, entry_index);
-                    }
                     CrdsData::DuplicateShred(_, _) => {
                         self.duplicate_shreds.insert(value.ordinal, entry_index);
                     }
@@ -385,10 +379,6 @@ impl Crds {
                             self.contact_info_sender.as_ref(),
                             ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
                         );
-                    }
-                    CrdsData::EpochSlots(_, _) => {
-                        self.epoch_slots.remove(&entry.get().ordinal);
-                        self.epoch_slots.insert(value.ordinal, entry_index);
                     }
                     CrdsData::DuplicateShred(_, _) => {
                         self.duplicate_shreds.remove(&entry.get().ordinal);
@@ -457,19 +447,6 @@ impl Crds {
         self.get_nodes().map(|v| match v.value.data() {
             CrdsData::ContactInfo(info) => info,
             _ => panic!("this should not happen!"),
-        })
-    }
-
-    /// Returns all epoch-slot entries inserted since the given cursor.
-    /// Updates the cursor as the entries are consumed.
-    pub(crate) fn get_epoch_slots<'a>(
-        &'a self,
-        cursor: &'a mut Cursor,
-    ) -> impl Iterator<Item = &'a VersionedCrdsValue> {
-        let range = (Bound::Included(cursor.ordinal()), Bound::Unbounded);
-        self.epoch_slots.range(range).map(move |(ordinal, index)| {
-            cursor.consume(*ordinal);
-            self.table.index(*index)
         })
     }
 
@@ -681,9 +658,6 @@ impl Crds {
                     ContactInfoEvent::Removed(*node.pubkey()),
                 );
             }
-            CrdsData::EpochSlots(_, _) => {
-                self.epoch_slots.remove(&value.ordinal);
-            }
             CrdsData::DuplicateShred(_, _) => {
                 self.duplicate_shreds.remove(&value.ordinal);
             }
@@ -719,9 +693,6 @@ impl Crds {
                     self.nodes
                         .replace_index(k, index)
                         .expect("the freed index is not in nodes");
-                }
-                CrdsData::EpochSlots(_, _) => {
-                    self.epoch_slots.insert(value.ordinal, index);
                 }
                 CrdsData::DuplicateShred(_, _) => {
                     self.duplicate_shreds.insert(value.ordinal, index);
@@ -859,10 +830,10 @@ impl CrdsDataStats {
         match entry.value.data() {
             CrdsData::LegacyContactInfo(_) => 0,
             CrdsData::Vote(_) => 1,
-            CrdsData::LowestSlot(_, _) => 2,
+            CrdsData::LowestSlot(_) => 2,
             CrdsData::LegacySnapshotHashes(_) => 3,
             CrdsData::AccountsHashes(_) => 4,
-            CrdsData::EpochSlots(_, _) => 5,
+            CrdsData::EpochSlots(_) => 5,
             CrdsData::LegacyVersion(_) => 6,
             CrdsData::Version(_) => 7,
             CrdsData::NodeInstance(_) => 8,
@@ -901,7 +872,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            crds_data::{Deprecated, LowestSlot, SnapshotHashes, new_rand_timestamp},
+            crds_data::{Deprecated, SnapshotHashes, new_rand_timestamp},
             crds_gossip_pull::CRDS_GOSSIP_PURGE_DURATION,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
@@ -1295,40 +1266,13 @@ mod tests {
         }
     }
 
-    fn check_crds_value_indices<R: rand::Rng>(
-        rng: &mut R,
-        crds: &Crds,
-    ) -> (
-        usize, // number of nodes
-        usize, // number of epoch slots
-    ) {
+    fn check_crds_value_indices<R: rand::Rng>(rng: &mut R, crds: &Crds) -> usize {
         let size = crds.table.len();
         let since = if size == 0 || rng.random() {
             rng.random_range(0..crds.cursor.0 + 1)
         } else {
             crds.table[rng.random_range(0..size)].ordinal
         };
-        let num_epoch_slots = crds
-            .table
-            .values()
-            .filter(|v| v.ordinal >= since)
-            .filter(|v| matches!(v.value.data(), CrdsData::EpochSlots(_, _)))
-            .count();
-        let mut cursor = Cursor(since);
-        assert_eq!(num_epoch_slots, crds.get_epoch_slots(&mut cursor).count());
-        assert_eq!(
-            cursor.0,
-            crds.epoch_slots
-                .iter()
-                .last()
-                .map(|(k, _)| k + 1)
-                .unwrap_or_default()
-                .max(since)
-        );
-        for value in crds.get_epoch_slots(&mut Cursor(since)) {
-            assert!(value.ordinal >= since);
-            assert_matches!(value.value.data(), CrdsData::EpochSlots(_, _));
-        }
         let num_entries = crds
             .table
             .values()
@@ -1353,24 +1297,12 @@ mod tests {
             .values()
             .filter(|v| matches!(v.value.data(), CrdsData::ContactInfo(_)))
             .count();
-        let num_epoch_slots = crds
-            .table
-            .values()
-            .filter(|v| matches!(v.value.data(), CrdsData::EpochSlots(_, _)))
-            .count();
         assert_eq!(
             crds.table.len(),
             crds.get_entries(&mut Cursor::default()).count()
         );
         assert_eq!(num_nodes, crds.get_nodes_contact_info().count());
-        assert_eq!(
-            num_epoch_slots,
-            crds.get_epoch_slots(&mut Cursor::default()).count()
-        );
-        for epoch_slots in crds.get_epoch_slots(&mut Cursor::default()) {
-            assert_matches!(epoch_slots.value.data(), CrdsData::EpochSlots(_, _));
-        }
-        (num_nodes, num_epoch_slots)
+        num_nodes
     }
 
     #[test]
@@ -1396,10 +1328,9 @@ mod tests {
         assert!(crds.table.len() > 200);
         assert_eq!(crds.num_purged() + crds.table.len(), 4096);
         assert!(num_inserts > crds.table.len());
-        let (num_nodes, num_epoch_slots) = check_crds_value_indices(&mut rng, &crds);
+        let num_nodes = check_crds_value_indices(&mut rng, &crds);
         assert!(num_nodes * 3 < crds.table.len());
         assert!(num_nodes > 100, "num nodes: {num_nodes}");
-        assert!(num_epoch_slots > 100, "num epoch slots: {num_epoch_slots}");
         // Remove values one by one and assert that nodes indices stay valid.
         while !crds.table.is_empty() {
             let index = rng.random_range(0..crds.table.len());
@@ -1888,10 +1819,8 @@ mod tests {
             CrdsData::LegacyVersion(Deprecated {}),
             CrdsData::Version(Deprecated {}),
             CrdsData::NodeInstance(Deprecated {}),
-            CrdsData::LowestSlot(
-                1,
-                LowestSlot::new(solana_pubkey::new_rand(), 0, timestamp()),
-            ),
+            CrdsData::LowestSlot(Deprecated {}),
+            CrdsData::EpochSlots(Deprecated {}),
         ];
         for data in sanitize_blocked {
             assert!(CrdsValue::new_unsigned(data).sanitize().is_err());

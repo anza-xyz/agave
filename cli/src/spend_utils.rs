@@ -363,9 +363,10 @@ where
 mod tests {
     use {
         super::*,
+        base64::{Engine, prelude::BASE64_STANDARD},
         serde_json::json,
         solana_account::Account,
-        solana_account_decoder::{UiAccountEncoding, encode_ui_account},
+        solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
         solana_clap_utils::compute_budget::ComputeUnitLimit,
         solana_message::Message,
         solana_rpc_client_api::{
@@ -408,13 +409,17 @@ mod tests {
                 slot: 1,
                 api_version: None
             },
-            value: json!(encode_ui_account(
-                &vote_account_pubkey,
-                &vote_account,
-                UiAccountEncoding::Base64,
-                None,
-                None,
-            )),
+            value: json!(UiAccount {
+                lamports: vote_account.lamports,
+                data: UiAccountData::Binary(
+                    BASE64_STANDARD.encode(&vote_account.data),
+                    UiAccountEncoding::Base64,
+                ),
+                owner: vote_account.owner.to_string(),
+                executable: vote_account.executable,
+                rent_epoch: vote_account.rent_epoch,
+                space: Some(vote_account.data.len() as u64),
+            }),
         });
         let mut mocks = HashMap::new();
         mocks.insert(RpcRequest::GetAccountInfo, account_response);

@@ -314,24 +314,6 @@ fn test_conformance_push_message_multiple() {
 // CrdsData edge case tests
 
 #[test]
-fn test_conformance_epoch_slots_index_at_max() {
-    let pk = [0x66; 32];
-    let es_data = make_epoch_slots_crds_data(255, &pk, 1_000_000);
-    let crds_val = make_crds_value_bytes(&[0u8; 64], &es_data);
-    let data = make_push_message_bytes(&pk, &[crds_val]);
-    check(&data, false);
-}
-
-#[test]
-fn test_conformance_lowest_slot_nonzero_index() {
-    let pk = [0x77; 32];
-    let ls_data = make_lowest_slot_crds_data(1, &pk, 42, 1_000_000); // index=1 invalid
-    let crds_val = make_crds_value_bytes(&[0u8; 64], &ls_data);
-    let data = make_push_message_bytes(&pk, &[crds_val]);
-    check(&data, false);
-}
-
-#[test]
 fn test_conformance_snapshot_hashes_slot_at_max() {
     let pk = [0x88; 32];
     let sh_data =
@@ -392,16 +374,6 @@ fn test_conformance_pull_request_snapshot_hashes_rejected() {
     let filter = make_crds_filter_bytes();
     let sh_data = make_snapshot_hashes_crds_data(&pk, 100, &[0xBB; 32], &[], 1_000_000);
     let crds_val = make_crds_value_bytes(&[0u8; 64], &sh_data);
-    let data = make_pull_request_bytes(&filter, &crds_val);
-    check(&data, false);
-}
-
-#[test]
-fn test_conformance_pull_request_lowest_slot_rejected() {
-    let pk = [0xAA; 32];
-    let filter = make_crds_filter_bytes();
-    let ls_data = make_lowest_slot_crds_data(0, &pk, 42, 1_000_000);
-    let crds_val = make_crds_value_bytes(&[0u8; 64], &ls_data);
     let data = make_pull_request_bytes(&filter, &crds_val);
     check(&data, false);
 }

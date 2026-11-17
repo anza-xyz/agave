@@ -1467,7 +1467,7 @@ impl ReservoirState {
 /// `InMemAccountsIndex`.  When this structure is dropped (falls out of scope), the flag will be
 /// cleared (set to false).
 ///
-/// After successfully locking (calling `FlushGuard::lock()`), pass a reference to the `FlashGuard`
+/// After successfully locking (calling `FlushGuard::lock()`), pass a reference to the `FlushGuard`
 /// instance to any function/code that requires the `flushing_active` flag has been set (to true).
 #[derive(Debug)]
 struct FlushGuard<'a> {

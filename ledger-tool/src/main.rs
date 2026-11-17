@@ -36,7 +36,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, OutputFormat, display::build_balance_message},
+    solana_cli_output::{OutputFormat, display::build_balance_message},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_core::{
@@ -2309,7 +2309,7 @@ fn main() {
                             .accounts
                             .into_iter()
                             .map(|(pubkey, account)| {
-                                CliAccount::new_with_config(
+                                cli_account_with_config(
                                     &pubkey,
                                     &AccountSharedData::from(account),
                                     &output_config,

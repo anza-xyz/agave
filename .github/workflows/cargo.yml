@@ -34,7 +34,7 @@ jobs:
     strategy:
       matrix:
         os:
-          - os: macos-15
+          - os: macos-26
           # musl with dynamic linking
           - os: ubuntu-26.04
             container: docker.io/rust:1-alpine3.23
