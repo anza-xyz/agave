@@ -1,11 +1,9 @@
 use {
     crate::account_loader::LoadedTransaction,
     solana_message::inner_instruction::InnerInstructionsList,
-    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
-    solana_pubkey::Pubkey,
+    solana_program_runtime::program_cache::tx_batch::TxBatchCacheEntry, solana_pubkey::Pubkey,
     solana_transaction_context::transaction::TransactionReturnData,
-    solana_transaction_error::TransactionResult,
-    std::{collections::HashMap, sync::Arc},
+    solana_transaction_error::TransactionResult, std::collections::HashMap,
 };
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -18,7 +16,7 @@ pub struct TransactionLoadedAccountsStats {
 pub struct ExecutedTransaction {
     pub loaded_transaction: LoadedTransaction,
     pub execution_details: TransactionExecutionDetails,
-    pub programs_modified_by_tx: HashMap<Pubkey, Arc<ProgramCacheEntry>>,
+    pub programs_modified_by_tx: HashMap<Pubkey, TxBatchCacheEntry>,
 }
 
 impl ExecutedTransaction {

@@ -70,9 +70,9 @@ pub enum ProgramCacheEntryType {
     /// Verified program.
     ///
     /// It may or may not be JIT compiled.
-    Loaded(Executable<InvokeContext<'static, 'static>>),
+    Loaded(Arc<Executable<InvokeContext<'static, 'static>>>),
     /// A built-in program which is not stored on-chain but backed into and distributed with the validator
-    Builtin(BuiltinProgram<InvokeContext<'static, 'static>>),
+    Builtin(Arc<BuiltinProgram<InvokeContext<'static, 'static>>>),
 }
 
 impl std::fmt::Debug for ProgramCacheEntryType {
@@ -189,24 +189,10 @@ impl ProgramCacheEntry {
         Ok(Self {
             deployment_slot,
             account_owner: ProgramCacheEntryOwner::try_from(loader_key).unwrap(),
-            program: ProgramCacheEntryType::Loaded(executable),
+            program: ProgramCacheEntryType::Loaded(Arc::new(executable)),
             stats: entry_stats.into(),
             latest_access_slot: AtomicU64::new(0),
         })
-    }
-
-    pub fn new_unloaded(
-        deployment_slot: Slot,
-        account_owner: ProgramCacheEntryOwner,
-        program_runtime_environment: ProgramRuntimeEnvironment,
-    ) -> Self {
-        Self {
-            program: ProgramCacheEntryType::Unloaded(program_runtime_environment),
-            account_owner,
-            deployment_slot,
-            stats: Arc::default(),
-            latest_access_slot: AtomicU64::new(deployment_slot),
-        }
     }
 
     pub fn to_unloaded(&self) -> Option<Self> {
@@ -227,7 +213,7 @@ impl ProgramCacheEntry {
         Self {
             deployment_slot: 0, // Deployment slot is always zero
             account_owner: ProgramCacheEntryOwner::NativeLoader,
-            program: ProgramCacheEntryType::Builtin(program),
+            program: ProgramCacheEntryType::Builtin(Arc::new(program)),
             stats: Arc::default(),
             latest_access_slot: AtomicU64::new(0),
         }
@@ -321,6 +307,23 @@ impl ProgramCacheEntry {
     }
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl ProgramCacheEntry {
+    pub fn new_unloaded(
+        deployment_slot: Slot,
+        account_owner: ProgramCacheEntryOwner,
+        program_runtime_environment: ProgramRuntimeEnvironment,
+    ) -> Self {
+        Self {
+            program: ProgramCacheEntryType::Unloaded(program_runtime_environment),
+            account_owner,
+            deployment_slot,
+            stats: Arc::default(),
+            latest_access_slot: AtomicU64::new(deployment_slot),
+        }
+    }
+}
+
 /// See [`ProgramCacheEntry::retention_score`].
 pub(crate) const fn retention_score(last_access: u64, recovery_cost: u64, frequency: u64) -> u64 {
     // Traditionally GDSF uses the following logic:
@@ -364,7 +367,7 @@ pub(crate) fn new_loaded_entry(env: ProgramRuntimeEnvironment) -> ProgramCacheEn
         .read_to_end(&mut elf)
         .unwrap();
     let executable = Executable::load(&elf, Arc::clone(&*env)).unwrap();
-    ProgramCacheEntryType::Loaded(executable)
+    ProgramCacheEntryType::Loaded(Arc::new(executable))
 }
 
 #[cfg(test)]

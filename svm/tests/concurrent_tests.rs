@@ -13,8 +13,9 @@ use {
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         program_cache::{
-            entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironments,
-            metrics::ProgramStatistics, tx_batch::ProgramCacheForTxBatch,
+            env::ProgramRuntimeEnvironments,
+            metrics::ProgramStatistics,
+            tx_batch::{ProgramCacheForTxBatch, TxBatchCacheEntryType},
         },
     },
     solana_pubkey::Pubkey,
@@ -83,7 +84,7 @@ fn program_cache_execution(threads: usize) {
                     let cache_entry = result.find(key);
                     assert!(matches!(
                         cache_entry.unwrap().program,
-                        ProgramCacheEntryType::Loaded(_)
+                        TxBatchCacheEntryType::Loaded(_)
                     ));
                 }
             })

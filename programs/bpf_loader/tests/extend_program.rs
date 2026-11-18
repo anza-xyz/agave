@@ -10,12 +10,11 @@ use {
         instruction::{MINIMUM_EXTEND_PROGRAM_BYTES, extend_program},
         state::UpgradeableLoaderState,
     },
-    solana_program_runtime::program_cache::entry::ProgramCacheEntry,
+    solana_program_runtime::program_cache::tx_batch::TxBatchCacheEntry,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sbpf::program::BuiltinFunctionDefinition,
     solana_sdk_ids::{bpf_loader_upgradeable::id, native_loader, sysvar},
-    solana_svm_type_overrides::sync::Arc,
     solana_system_interface::{
         MAX_PERMITTED_DATA_LENGTH, error::SystemError, program as system_program,
     },
@@ -45,9 +44,9 @@ fn process_instruction(
         |invoke_context| {
             invoke_context.program_cache_for_tx_batch.replenish(
                 system_program::id(),
-                Arc::new(ProgramCacheEntry::new_builtin(
+                TxBatchCacheEntry::new_builtin(
                     solana_system_program::system_processor::Entrypoint::register,
-                )),
+                ),
             );
         },
     )

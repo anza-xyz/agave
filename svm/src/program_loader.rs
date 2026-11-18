@@ -387,12 +387,12 @@ mod tests {
                 entry::ProgramCacheEntryType,
                 env::{ProgramRuntimeEnvironment, get_mock_program_runtime_environment},
                 fork_graph::{BlockRelation, ForkGraph},
+                tx_batch::TxBatchCacheEntry,
             },
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
         solana_svm_transaction::svm_message::SVMMessage,
-        solana_svm_type_overrides::sync::atomic::AtomicU64,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         std::{cell::RefCell, collections::HashMap},
     };
@@ -1229,16 +1229,8 @@ mod tests {
         let mut loaded_programs_for_tx_batch = ProgramCacheForTxBatch::default();
         let mock_bank = MockBankCallback::default();
         for i in 0..3 {
-            loaded_programs_for_tx_batch.replenish(
-                loader_ids[i],
-                Arc::new(ProgramCacheEntry {
-                    program: ProgramCacheEntryType::Builtin(BuiltinProgram::new_mock()),
-                    account_owner: ProgramCacheEntryOwner::NativeLoader,
-                    deployment_slot: 0,
-                    stats: Arc::default(),
-                    latest_access_slot: AtomicU64::default(),
-                }),
-            );
+            loaded_programs_for_tx_batch
+                .replenish(loader_ids[i], TxBatchCacheEntry::new_builtin(|_, _| Ok(())));
             mock_bank.account_shared_data.borrow_mut().insert(
                 loader_ids[i],
                 AccountSharedData::new_with_data(1, vec![0; 1], &program_ids[3]),
@@ -1331,7 +1323,7 @@ mod tests {
             0,
             ProgramCacheEntryOwner::LoaderV2,
         ));
-        batch.replenish(key, Arc::clone(&entry));
+        batch.replenish(key, TxBatchCacheEntry::from(entry.as_ref()));
 
         // Already in the batch, so it is counted as used and not asked for
         // again. The account is never looked at.
