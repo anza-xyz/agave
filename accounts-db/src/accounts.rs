@@ -603,7 +603,7 @@ mod tests {
     fn test_load_lookup_table_addresses_account_not_found() {
         let ancestors = Ancestors::from(vec![0]);
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let invalid_table_key = Pubkey::new_unique();
         let address_table_lookup = MessageAddressTableLookup {
@@ -626,7 +626,7 @@ mod tests {
     fn test_load_lookup_table_addresses_invalid_account_owner() {
         let ancestors = Ancestors::from(vec![0]);
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let invalid_table_key = Pubkey::new_unique();
         let mut invalid_table_account = AccountSharedData::default();
@@ -654,7 +654,7 @@ mod tests {
     fn test_load_lookup_table_addresses_invalid_account_data() {
         let ancestors = Ancestors::from(vec![0]);
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let invalid_table_key = Pubkey::new_unique();
         let invalid_table_account =
@@ -682,7 +682,7 @@ mod tests {
     fn test_load_lookup_table_addresses() {
         let ancestors = Ancestors::from(vec![1, 0]);
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let table_key = Pubkey::new_unique();
         let table_addresses = vec![Pubkey::new_unique(), Pubkey::new_unique()];
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn test_load_by_program_slot() {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         // Load accounts owned by various programs into AccountsDb
         let pubkey0 = solana_pubkey::new_rand();
@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn test_lock_accounts_with_duplicates() {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let keypair = Keypair::new();
         let message = Message {
@@ -772,7 +772,7 @@ mod tests {
     #[test_case::test_case(Some(false); "overlap_with_explicit_read")]
     #[test_case::test_case(Some(true); "overlap_with_explicit_write")]
     fn test_lock_accounts_implicit_programdata(explicit_writable_programdata: Option<bool>) {
-        let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
+        let accounts = Accounts::new(AccountsDb::default_for_tests());
         let program = Pubkey::new_unique();
         let programdata = solana_loader_v3_interface::get_program_data_address(&program);
         let metas = match explicit_writable_programdata {
@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn test_lock_accounts_with_too_many_accounts() {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         let keypair = Keypair::new();
 
@@ -936,7 +936,7 @@ mod tests {
         let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
         accounts.store_for_tests(0, &keypair2.pubkey(), &account2);
@@ -1051,7 +1051,7 @@ mod tests {
         let account2 = AccountSharedData::empty(3, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
         accounts.store_for_tests(0, &keypair2.pubkey(), &account2);
@@ -1134,7 +1134,7 @@ mod tests {
         let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
         accounts.store_for_tests(0, &keypair2.pubkey(), &account2);
@@ -1206,7 +1206,7 @@ mod tests {
         let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         accounts.store_for_tests(0, &keypair0.pubkey(), &account0);
         accounts.store_for_tests(0, &keypair1.pubkey(), &account1);
         accounts.store_for_tests(0, &keypair2.pubkey(), &account2);
@@ -1287,7 +1287,7 @@ mod tests {
     fn test_accounts_locks_intrabatch_conflicts() {
         let pubkey = Pubkey::new_unique();
         let account_data = AccountSharedData::empty(1, &Pubkey::default());
-        let accounts_db = Arc::new(AccountsDb::default_for_tests());
+        let accounts_db = AccountsDb::default_for_tests();
         accounts_db.store_for_tests((
             0,
             [
@@ -1361,7 +1361,7 @@ mod tests {
     #[test]
     fn huge_clean() {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
         let mut old_pubkey = Pubkey::default();
         let zero_account = AccountSharedData::empty(0, &Pubkey::default());
         for i in 0..2_000 {
@@ -1378,7 +1378,7 @@ mod tests {
     #[test]
     fn test_load_largest_accounts() {
         let accounts_db = AccountsDb::default_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
+        let accounts = Accounts::new(accounts_db);
 
         /* This test assumes pubkey0 < pubkey1 < pubkey2.
          * But the keys created with new_unique() does not guarantee this
