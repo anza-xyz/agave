@@ -44,7 +44,7 @@ use {
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_test_validator::{TestValidator, TestValidatorGenesis},
     solana_transaction::versioned::VersionedTransaction,
-    solana_transaction_status::UiTransactionEncoding,
+    solana_transaction_status_client_types::UiTransactionEncoding,
     std::{
         env,
         fs::File,
