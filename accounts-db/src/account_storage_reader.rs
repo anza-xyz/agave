@@ -50,6 +50,7 @@ pub fn storage_file_buf_reader<'a>(
             .shared_sqpoll(io_setup.shared_sqpoll_fd())
             .use_direct_io(io_setup.use_direct_io && !use_page_cache)
             .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
+            .huge_pages(io_setup.huge_pages)
             .build(max_buf_size)?
     };
     #[cfg(not(target_os = "linux"))]

@@ -1,9 +1,9 @@
-use std::io;
 #[cfg(target_os = "linux")]
 use {
     crate::io_uring::sqpoll::SharedSqPoll,
     std::os::fd::{AsFd as _, BorrowedFd},
 };
+use {agave_memory::HugePages, std::io};
 
 /// State used by IO utilities for managing shared resources and configuration during setup.
 ///
@@ -23,6 +23,7 @@ pub struct IoSetupState {
     shared_sqpoll: Option<SharedSqPoll>,
     pub use_direct_io: bool,
     pub use_registered_io_uring_buffers: bool,
+    pub huge_pages: HugePages,
 }
 
 impl IoSetupState {
@@ -55,6 +56,16 @@ impl IoSetupState {
     /// than the overall savings from re-using cached file data (e.g. for read / write once data).
     pub fn with_direct_io(mut self, use_direct_io: bool) -> Self {
         self.use_direct_io = use_direct_io;
+        self
+    }
+
+    /// Sets the huge page backing of io-uring buffers, regular pages by default.
+    ///
+    /// Transparent huge pages suit buffers allocated once, e.g. during startup, since allocating
+    /// them can stall on memory compaction, which also stalls other threads that touch the
+    /// migrated pages.
+    pub fn with_huge_pages(mut self, huge_pages: HugePages) -> Self {
+        self.huge_pages = huge_pages;
         self
     }
 
