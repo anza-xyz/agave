@@ -769,12 +769,15 @@ struct ReferenceHeaders {
 
 /// Extracts the headers we expect to see for shreds in this FEC set
 ///
-/// Expects shreds to be sorted by their erasure shard index.
+/// Works irrespective of whether shreds are sorted by their erasure shard index.
 fn get_reference_headers(shreds: &[Shred]) -> Result<ReferenceHeaders, Error> {
-    // By the sorting order, the last shred is a coding shred if any coding
-    // shred is present.
-    let Some(shred) = shreds.last() else {
-        return Err(Error::TooFewParityShards);
+    // Prefer a coding shred. It determines the index of the first coding shred.
+    let Some(shred) = shreds
+        .iter()
+        .find(|shred| matches!(shred, Shred::ShredCode(_)))
+        .or_else(|| shreds.first())
+    else {
+        return Err(Error::TooFewDataShards);
     };
     let index = match shred {
         // Derive the index of the first coding shred from the last coding
@@ -829,14 +832,6 @@ fn set_bits(mut m: u64) -> impl Iterator<Item = usize> {
     })
 }
 
-#[cfg(test)]
-pub(super) fn rebuild_erasure_batch(
-    shreds: Vec<Shred>,
-    must_match_signatures: bool,
-) -> Result<ErasureBatch, Error> {
-    rebuild_erasure_batch_with_buffer(shreds, must_match_signatures)
-}
-
 /// Rebuilds the whole erasure batch from a subset of its shreds, and verifies
 /// that the rebuilt Merkle tree matches the signed Merkle root.
 ///
@@ -847,7 +842,7 @@ pub(super) fn rebuild_erasure_batch(
 /// drops that requirement: different but valid signatures over the same Merkle
 /// root are allowed. The Merkle root check ties the leaves together, and the
 /// Merkle proofs of received shreds are checked against the rebuilt tree.
-pub(super) fn rebuild_erasure_batch_with_buffer(
+pub(super) fn rebuild_erasure_batch(
     shreds: Vec<Shred>,
     must_match_signatures: bool,
 ) -> Result<ErasureBatch, Error> {
@@ -865,7 +860,11 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
         make_stub_shred(erasure_shard_index, &common_header, &chained_merkle_root)
     };
 
-    let mut batch: [Option<Shred>; SHREDS_PER_FEC_BLOCK] = std::array::from_fn(|_| None);
+    // Allocate the uninitialized storage for the resulting batch on the heap to avoid memory copy
+    // later when the elements are unwrapped and returned in a heap array.
+    let mut batch: Vec<Option<Shred>> = std::iter::repeat_with(|| None)
+        .take(SHREDS_PER_FEC_BLOCK)
+        .collect();
     // Merkle tree nodes.
     let mut nodes: [Option<Hash>; SHREDS_PER_FEC_BLOCK] = std::array::from_fn(|_| None);
     // Ones for the given shreds and zeros for erasures.
@@ -875,7 +874,7 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
     let recovered = RS_RECEIVED.with_borrow_mut(|mut rec| {
         rec.resize(SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
 
-        for shred in &shreds {
+        for shred in shreds {
             if must_match_signatures && shred.signature() != &common_header.signature {
                 return Err(Error::InvalidMerkleRoot);
             }
@@ -898,6 +897,7 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
             };
             rec[shard_index * shard_len..(shard_index + 1) * shard_len].copy_from_slice(src);
             mask |= 1 << shard_index;
+            batch[shard_index] = Some(shred);
         }
 
         let num_erasures = mask.count_zeros() as usize;
@@ -905,10 +905,13 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
             return Err(Error::TooManyErasures);
         }
 
-        // Spare correction capacity: re-derive this many received shards and check them against
-        // what was received. Take the lowest received indices.
-        let num_spare = CODING_SHREDS_PER_FEC_BLOCK - num_erasures;
-        let check_mask: u64 = set_bits(mask).take(num_spare).fold(0, |m, i| m | (1 << i));
+        // Recover from the lowest-indexed DATA_SHREDS_PER_FEC_BLOCK received shards, with data
+        // shards counted first and then the parity, and use the remaining received shards to check
+        // the result.
+        let basis_mask: u64 = set_bits(mask)
+            .take(DATA_SHREDS_PER_FEC_BLOCK)
+            .fold(0, |m, i| m | (1 << i));
+        let check_mask = mask & !basis_mask;
 
         // Clobber recovery overwrites every slot, so keep the shards being checked.
         let checked: Vec<Gf2p8_11d> = set_bits(check_mask)
@@ -920,14 +923,6 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
             rec[i * shard_len..(i + 1) * shard_len].fill(0u8.into());
         }
         let erasure_positions: Vec<u8> = set_bits(erased_mask).map(|i| i as u8).collect();
-
-        // Populate the batch not including the checked shreds. Those should arrive from recovery.
-        for shred in shreds {
-            let shard_index = shred.erasure_shard_index()?;
-            if !erased_mask & (1u64 << shard_index) != 0 {
-                batch[shard_index] = Some(shred.clone());
-            }
-        }
 
         if !erasure_positions.is_empty() {
             let rs = RsStandard::<SHREDS_PER_FEC_BLOCK, CODING_SHREDS_PER_FEC_BLOCK>::new();
@@ -941,15 +936,16 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
                     != checked[k * shard_len..(k + 1) * shard_len]
                 {
                     coding_matches_data = false;
+                    // TODO: return an error from here. Computing the Merkle tree below is a waste.
                     break;
                 }
             }
         }
 
-        // Collect, verify and sanitize recovered shreds, re-compute the Merkle tree and set
-        // the merkle proof on the recovered shreds.
+        // Collect, verify and sanitize the recovered shreds. Re-compute the Merkle tree and set the
+        // Merkle proof on the recovered shreds.
         let mut recovered = Vec::with_capacity(CODING_SHREDS_PER_FEC_BLOCK);
-        for (shard_index, node) in nodes.iter_mut().enumerate().filter(|(_, n)| n.is_none()) {
+        for shard_index in set_bits(!mask) {
             let mut shred = make_stub_shred(shard_index)?;
             let src: &[u8] = unsafe {
                 std::slice::from_raw_parts(
@@ -972,7 +968,7 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
                 return Err(Error::InvalidRecoveredShred);
             }
             shred.sanitize()?;
-            *node = Some(shred.merkle_node()?);
+            nodes[shard_index] = Some(shred.merkle_node()?);
             recovered.push((shard_index, shred));
         }
 
@@ -993,9 +989,10 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
         return Err(Error::InvalidMerkleRoot);
     }
 
-    for (shred_index, mut shred) in recovered {
-        let proof = tree.make_merkle_proof(shred_index, SHREDS_PER_FEC_BLOCK);
-        if mask & (1u64 << shred_index) != 0 {
+    // Received shreds: check that their proofs match the tree.
+    for (shred_index, slot) in batch.iter().enumerate() {
+        if let Some(shred) = slot {
+            let proof = tree.make_merkle_proof(shred_index, SHREDS_PER_FEC_BLOCK);
             // Sigverify checks each shred against the root derived from its own proof.
             // Signatures need not match after SIMD-0504, so a received leaf may match the
             // tree while its proof derives a different Merkle root. Force proofs to match.
@@ -1005,21 +1002,30 @@ pub(super) fn rebuild_erasure_batch_with_buffer(
             if !shred.merkle_proof()?.map(Some).eq(proof.map(Result::ok)) {
                 return Err(Error::InvalidMerkleRoot);
             }
-        } else {
-            shred.set_merkle_proof(proof)?;
-            // Already sanitized after reconstruct.
-            debug_assert_matches!(shred.sanitize(), Ok(()));
-            // Assert that shred payload is fully populated.
-            debug_assert_eq!(shred, {
-                let shred = shred.payload().clone();
-                Shred::from_payload(shred).unwrap()
-            });
         }
+    }
+
+    // Recovered shreds: attach proofs and fill the remaining slots.
+    for (shred_index, mut shred) in recovered {
+        let proof = tree.make_merkle_proof(shred_index, SHREDS_PER_FEC_BLOCK);
+        shred.set_merkle_proof(proof)?;
+        // Already sanitized after reconstruct.
+        debug_assert_matches!(shred.sanitize(), Ok(()));
+        // Assert that shred payload is fully populated.
+        debug_assert_eq!(shred, {
+            let shred = shred.payload().clone();
+            Shred::from_payload(shred).unwrap()
+        });
         batch[shred_index] = Some(shred);
     }
 
-    let shreds: Box<[Shred; SHREDS_PER_FEC_BLOCK]> =
-        Box::new(batch.map(|slot| slot.expect("every shred is received or recovered")));
+    let shreds: Box<[Shred; SHREDS_PER_FEC_BLOCK]> = batch
+        .into_iter()
+        .map(|slot| slot.expect("every shred is received or recovered"))
+        .collect::<Vec<_>>() // reuses the allocation in place
+        .into_boxed_slice() // no reallocation since the length is at capacity
+        .try_into() // cast Box<[Shred]> into Box<[Shred; N]> and keep the allocation
+        .expect("SHREDS_PER_FEC_BLOCK slots");
 
     Ok(ErasureBatch {
         shreds,
@@ -1655,8 +1661,7 @@ mod test {
     /// Rebuilds the erasure batch requiring the same signature on all shreds,
     /// as before SIMD-0504.
     fn rebuild_erasure_batch(shreds: Vec<Shred>) -> Result<ErasureBatch, Error> {
-        let must_match_signatures = true;
-        super::rebuild_erasure_batch(shreds, must_match_signatures)
+        super::rebuild_erasure_batch(shreds, true)
     }
 
     // Total size of a data shred including headers and merkle proof.
@@ -1881,7 +1886,7 @@ mod test {
             if shreds.len() < num_data_shreds {
                 assert_matches!(
                     recover(shreds).err(),
-                    Some(Error::TooFewParityShards) | Some(Error::TooManyErasures)
+                    Some(Error::TooFewDataShards) | Some(Error::TooManyErasures)
                 );
                 continue;
             }
@@ -1980,10 +1985,8 @@ mod test {
                 shreds, received, ..
             } = rebuild_erasure_batch(data_shreds).unwrap();
             assert_eq!(shreds[..], batch);
-            const DATA_MASK: u64 = 0xffff;
-            const CODING_MASK: u64 = 0x0000ffff;
-            assert!(received & coding_mask == coding_mask);
-            assert!(!received & data_mask != 0);
+            const DATA_MASK: u64 = 0x0000_0000_ffff_ffff;
+            assert_eq!(received, DATA_MASK);
             // Random subsets of the erasure batch.
             for size in DATA_SHREDS_PER_FEC_BLOCK..=SHREDS_PER_FEC_BLOCK {
                 let mut subset = batch.clone();
@@ -1993,7 +1996,7 @@ mod test {
                     shreds, received, ..
                 } = rebuild_erasure_batch(subset).unwrap();
                 assert_eq!(shreds[..], batch);
-                assert_eq!(received.count_ones(), size);
+                assert_eq!(received.count_ones() as usize, size);
             }
         }
     }
@@ -2087,7 +2090,7 @@ mod test {
         subset.truncate(DATA_SHREDS_PER_FEC_BLOCK - 1);
         assert_matches!(
             rebuild_erasure_batch(subset).err(),
-            Some(Error::Erasure(TooFewShardsPresent))
+            Some(Error::TooManyErasures)
         );
     }
 
@@ -2230,8 +2233,7 @@ mod test {
         ] {
             let subset = batch[..num_shreds].to_vec();
             // Each batch carries a single signature, so either mode works here.
-            let must_match_signatures = true;
-            let rebuilt = rebuild_erasure_batch_with_buffer(subset, must_match_signatures).unwrap();
+            let rebuilt = rebuild_erasure_batch(subset).unwrap();
             assert_eq!(rebuilt.check_fec_set(), expected);
         }
     }

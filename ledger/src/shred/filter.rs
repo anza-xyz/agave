@@ -639,7 +639,7 @@ impl ShredRecoveryContext {
             .first()
             .is_some_and(|shred| self.is_stricter_shred_validation_active(shred.slot()));
 
-        merkle::rebuild_erasure_batch_with_buffer(shreds, must_match_signatures)
+        merkle::rebuild_erasure_batch(shreds, must_match_signatures)
     }
 
     /// Checks the reconstructed shreds of the erasure batch.
@@ -993,7 +993,7 @@ mod tests {
                 &mut recovered_shreds,
                 &mut recovered_data_shreds,
             ),
-            Err(Error::TooFewParityShards)
+            Err(Error::TooFewDataShards)
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());

@@ -3,13 +3,15 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT, ShredFlags,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
+            ShredFlags,
+            filter::new_dummy_retransmit_sender,
             max_ticks_per_n_shreds,
-            merkle::finish_erasure_batch_for_tests,
-            merkle_tree::{
-                SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
-                verify_merkle_proof,
+            merkle::{
+                finish_erasure_batch_for_tests, sign_with_duplicate_coding_index_for_tests,
+                sign_with_flipped_resigned_for_tests, sign_with_invalid_parity_for_tests,
             },
+            merkle_tree::{get_proof_size, hash_as_merkle_proof_entry, verify_merkle_proof},
         },
     },
     agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
