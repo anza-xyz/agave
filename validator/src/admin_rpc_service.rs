@@ -25,6 +25,7 @@ use {
             should_require_vote_history_file,
         },
     },
+    solana_entry::block_component::MAX_BLOCK_USER_AGENT_LEN,
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{Keypair, read_keypair_file},
@@ -60,6 +61,7 @@ pub struct AdminRpcRequestMetadata {
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
+    pub block_user_agent_override: Arc<RwLock<Option<Vec<u8>>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
     pub rpc_to_plugin_manager_sender: Option<Sender<GeyserPluginManagerRequest>>,
 }
@@ -222,6 +224,14 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "setEventFilter")]
     fn set_event_filter(&self, meta: Self::Metadata, filter: String) -> Result<()>;
+
+    /// Sets the user agent written into the footer of blocks this node produces.
+    #[rpc(meta, name = "setBlockUserAgent")]
+    fn set_block_user_agent(&self, meta: Self::Metadata, user_agent: String) -> Result<()>;
+
+    /// Resets the block footer user agent to the default.
+    #[rpc(meta, name = "resetBlockUserAgent")]
+    fn reset_block_user_agent(&self, meta: Self::Metadata) -> Result<()>;
 
     #[rpc(meta, name = "startTime")]
     fn start_time(&self, meta: Self::Metadata) -> Result<SystemTime>;
@@ -558,6 +568,21 @@ impl AdminRpc for AdminRpcImpl {
     fn set_log_filter(&self, filter: String) -> Result<()> {
         debug!("set_log_filter admin rpc request received");
         agave_logger::setup_with(&filter);
+        Ok(())
+    }
+
+    fn set_block_user_agent(&self, meta: Self::Metadata, user_agent: String) -> Result<()> {
+        if user_agent.len() > MAX_BLOCK_USER_AGENT_LEN {
+            return Err(jsonrpc_core::Error::invalid_params(format!(
+                "Block user agent must be at most {MAX_BLOCK_USER_AGENT_LEN} bytes"
+            )));
+        }
+        *meta.block_user_agent_override.write().unwrap() = Some(user_agent.into_bytes());
+        Ok(())
+    }
+
+    fn reset_block_user_agent(&self, meta: Self::Metadata) -> Result<()> {
+        *meta.block_user_agent_override.write().unwrap() = None;
         Ok(())
     }
 
@@ -1311,6 +1336,7 @@ mod tests {
                     votor_event_sender,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+                block_user_agent_override: Arc::default(),
                 rpc_to_plugin_manager_sender: None,
             };
             let mut io = MetaIoHandler::default();
@@ -1331,6 +1357,47 @@ mod tests {
 
         let bank = Bank::new_with_paths_for_tests(&genesis_config, Some(config), vec![], None);
         (BankForks::new_rw_arc(bank), Arc::new(voting_keypair))
+    }
+
+    #[test]
+    fn test_set_block_user_agent() {
+        let RpcHandler { io, meta } = RpcHandler::_start();
+        let block_user_agent_override = meta.block_user_agent_override.clone();
+        let send = |method: &str, params: Value| -> Value {
+            let request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": method,
+                "params": params,
+            });
+            serde_json::from_str(
+                &io.handle_request_sync(&request.to_string(), meta.clone())
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let set = |user_agent: &str| send("setBlockUserAgent", serde_json::json!([user_agent]));
+        let reset = || send("resetBlockUserAgent", serde_json::json!([]));
+        let ok = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": null});
+
+        let max_len_user_agent = "a".repeat(MAX_BLOCK_USER_AGENT_LEN);
+        for user_agent in ["my-client/1.0", "", max_len_user_agent.as_str()] {
+            assert_eq!(set(user_agent), ok);
+            assert_eq!(
+                *block_user_agent_override.read().unwrap(),
+                Some(user_agent.as_bytes().to_vec())
+            );
+        }
+
+        let too_long_user_agent = "a".repeat(MAX_BLOCK_USER_AGENT_LEN + 1);
+        assert_eq!(set(&too_long_user_agent)["error"]["code"], -32602);
+        assert_eq!(
+            *block_user_agent_override.read().unwrap(),
+            Some(max_len_user_agent.into_bytes())
+        );
+
+        assert_eq!(reset(), ok);
+        assert_eq!(*block_user_agent_override.read().unwrap(), None);
     }
 
     // This test checks that the rpc call to `set_identity` works a expected with
@@ -1508,6 +1575,7 @@ mod tests {
                 ),
                 post_init: post_init.clone(),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+                block_user_agent_override: Arc::default(),
                 rpc_to_plugin_manager_sender: None,
             };
 
@@ -1594,6 +1662,7 @@ mod tests {
             ),
             post_init: post_init.clone(),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+            block_user_agent_override: Arc::default(),
             rpc_to_plugin_manager_sender: None,
         };
 
@@ -1689,6 +1758,7 @@ mod tests {
             ),
             post_init: Arc::new(RwLock::new(None)),
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+            block_user_agent_override: Arc::default(),
             rpc_to_plugin_manager_sender: None,
         };
 

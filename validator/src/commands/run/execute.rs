@@ -534,6 +534,7 @@ pub fn execute(
         snapshot_config,
         wait_to_vote_slot: value_t!(matches, "wait_to_vote_slot", Slot).ok(),
         staked_nodes_overrides: staked_nodes_overrides.clone(),
+        block_user_agent_override: Arc::default(),
         use_snapshot_archives_at_startup,
         ip_echo_server_threads,
         rayon_global_threads,
@@ -647,6 +648,7 @@ pub fn execute(
             post_init: admin_service_post_init.clone(),
             vote_history_storage: validator_config.vote_history_storage.clone(),
             staked_nodes_overrides,
+            block_user_agent_override: validator_config.block_user_agent_override.clone(),
             rpc_to_plugin_manager_sender,
         },
     );

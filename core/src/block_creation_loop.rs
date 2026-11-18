@@ -154,6 +154,8 @@ pub struct BlockCreationLoopConfig {
     pub highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     pub replay_highest_frozen: Arc<ReplayHighestFrozen>,
     pub highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    /// Overrides the user agent written into the footer of each block we produce.
+    pub block_user_agent_override: Arc<RwLock<Option<Vec<u8>>>>,
 
     pub record_receiver: RecordReceiver,
     pub optimistic_parent_receiver: Receiver<LeaderWindowInfo>,
@@ -172,6 +174,7 @@ struct LeaderContext {
     /// Highest ParentReady event observed by Votor, used to abandon stale windows.
     highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
     highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
+    block_user_agent_override: Arc<RwLock<Option<Vec<u8>>>>,
 
     blockstore: Arc<Blockstore>,
     record_receiver: RecordReceiver,
@@ -272,6 +275,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         highest_parent_ready,
         optimistic_parent_receiver,
         highest_finalized,
+        block_user_agent_override,
         banking_stage_sender,
         sharable_banks,
         alpenglow_slot_clock,
@@ -308,6 +312,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         banking_stage_sender,
         metrics: LoopMetrics::default(),
         highest_finalized,
+        block_user_agent_override,
     };
 
     // Configure PoH before any Alpenglow leader calls `set_bank()`. At this point,
@@ -551,10 +556,15 @@ fn skew_block_producer_time_nanos(
         .min(max_working_bank_time)
 }
 
-/// Produces a block footer with the current timestamp; version; reward certs; and finalization cert.
+fn default_block_user_agent() -> Vec<u8> {
+    format!("agave/{}", version!()).into_bytes()
+}
+
+/// Produces a block footer with the current timestamp; user agent; reward certs; and finalization cert.
 /// The bank_hash field is left as default and will be filled in after the bank freezes.
 fn produce_block_footer(
     bank: &Bank,
+    block_user_agent: Vec<u8>,
     skip_reward_cert: Option<SkipRewardCertificate>,
     notar_reward_cert: Option<NotarRewardCertificate>,
     highest_finalized: Option<&ValidatedBlockFinalizationCert>,
@@ -589,7 +599,7 @@ fn produce_block_footer(
     BlockFooterV1 {
         bank_hash: Hash::default(),
         block_producer_time_nanos: block_producer_time_nanos as u64,
-        block_user_agent: format!("agave/{}", version!()).into_bytes(),
+        block_user_agent,
         block_final_cert,
         skip_reward_cert,
         notar_reward_cert,
@@ -922,7 +932,13 @@ fn record_and_complete_block(
             None => (None, None, None),
         };
         let guard = ctx.highest_finalized.read().unwrap();
-        let footer = produce_block_footer(&bank, skip, notar, guard.as_ref());
+        let block_user_agent = ctx
+            .block_user_agent_override
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(default_block_user_agent);
+        let footer = produce_block_footer(&bank, block_user_agent, skip, notar, guard.as_ref());
         let final_cert_input = guard.as_ref().map(|c| c.vote_rewards_input());
 
         // BankingStage may still be executing batches that were already recorded.
@@ -1610,6 +1626,14 @@ mod tests {
     }
 
     #[test]
+    fn test_default_block_user_agent_fits_footer() {
+        assert!(
+            default_block_user_agent().len()
+                <= solana_entry::block_component::MAX_BLOCK_USER_AGENT_LEN
+        );
+    }
+
+    #[test]
     fn test_freshest_window_highest() {
         let selected = freshest_window_from_iter(
             Some(leader_window_info(8, 7)),
@@ -1729,6 +1753,7 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
+            block_user_agent_override: Arc::default(),
         };
         // A window for the new identity can arrive before the loop refreshes its cached identity.
         let err = produce_window(
@@ -1869,6 +1894,7 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
+            block_user_agent_override: Arc::default(),
         };
 
         // Slot 12 opens a leader window, and its parent (slot 11) never finishes
@@ -1959,6 +1985,7 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
+            block_user_agent_override: Arc::default(),
         };
 
         create_and_insert_leader_bank(1, root_bank.clone(), 0, &mut ctx).unwrap();
@@ -2071,6 +2098,7 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
+            block_user_agent_override: Arc::default(),
         };
 
         let err = create_and_insert_leader_bank(2, parent_bank, 0, &mut ctx).unwrap_err();
@@ -2141,6 +2169,7 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
+            block_user_agent_override: Arc::default(),
         };
 
         create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
@@ -2265,6 +2294,7 @@ mod tests {
             reward_certs_requestor,
             banking_stage_sender,
             metrics: LoopMetrics::default(),
+            block_user_agent_override: Arc::default(),
         };
 
         let leader_slot = 4;
