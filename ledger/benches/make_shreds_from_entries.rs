@@ -194,7 +194,6 @@ fn run_recover_shreds(
     let num_missing_data = DATA_SHREDS_PER_FEC_BLOCK - data.len();
     let mut shreds = data;
     shreds.extend(code);
-
     c.bench_function(name, |b| {
         let mut shred_recovery_context = new_shred_recovery_context(&shreds);
         // Guard against the recovery filter silently discarding the input.
