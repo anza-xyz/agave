@@ -541,9 +541,6 @@ pub struct ShredRecoveryContext {
     retransmit_sender: RetransmitSender,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
-    /// Scratch space for the parity check of erasure batches, reused across
-    /// recoveries.
-    parity_buffer: Vec<u8>,
 }
 
 /// Maximum number of shreds sent to retransmit workers in one job.
@@ -576,7 +573,6 @@ impl ShredRecoveryContext {
         Self {
             retransmit_sender,
             shred_filter_ctx,
-            parity_buffer: Vec::new(),
         }
     }
 
@@ -643,11 +639,7 @@ impl ShredRecoveryContext {
             .first()
             .is_some_and(|shred| self.is_stricter_shred_validation_active(shred.slot()));
 
-        merkle::rebuild_erasure_batch_with_buffer(
-            shreds,
-            must_match_signatures,
-            &mut self.parity_buffer,
-        )
+        merkle::rebuild_erasure_batch(shreds, must_match_signatures)
     }
 
     /// Checks the reconstructed shreds of the erasure batch.
@@ -1001,9 +993,7 @@ mod tests {
                 &mut recovered_shreds,
                 &mut recovered_data_shreds,
             ),
-            Err(Error::Erasure(
-                reed_solomon_erasure::Error::TooFewShardsPresent
-            ))
+            Err(Error::TooFewDataShards)
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());

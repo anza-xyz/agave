@@ -29,6 +29,7 @@ stable-abi = [
 agave-unstable-api = []
 
 [dependencies]
+additive-fft-reed-solomon = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-shred-wire-format = { workspace = true }
@@ -58,7 +59,6 @@ qualifier_attr = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
-reed-solomon-erasure = { workspace = true, features = ["simd-accel"] }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 smallvec = { workspace = true }

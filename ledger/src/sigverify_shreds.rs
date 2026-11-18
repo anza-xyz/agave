@@ -79,11 +79,11 @@ mod tests {
     use {
         super::*,
         crate::{
-            shred::{DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred},
+            shred::{ProcessShredsStats, Shred, DATA_SHREDS_PER_FEC_BLOCK},
             shredder::Shredder,
         },
         itertools::Itertools,
-        rand::{Rng, seq::SliceRandom},
+        rand::{seq::SliceRandom, Rng},
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
@@ -324,12 +324,10 @@ mod tests {
             .collect();
         let mut packets = make_packets(&mut rng, &shreds);
         verify_batches(&mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .flatten()
-                .all(|packet| !packet.meta().discard())
-        );
+        assert!(packets
+            .iter()
+            .flatten()
+            .all(|packet| !packet.meta().discard()));
         // Invalidate signatures for a random number of packets.
         let expected_discards = packets
             .iter_mut()
@@ -347,17 +345,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         verify_batches(&mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .zip(expected_discards.iter())
-                .all(|(batch, expected)| {
-                    batch
-                        .iter()
-                        .zip(expected)
-                        .all(|(packet, should_discard)| packet.meta().discard() == *should_discard)
-                })
-        );
+        assert!(packets
+            .iter()
+            .zip(expected_discards.iter())
+            .all(|(batch, expected)| {
+                batch
+                    .iter()
+                    .zip(expected)
+                    .all(|(packet, should_discard)| packet.meta().discard() == *should_discard)
+            }));
     }
 
     #[test_case(true)]
@@ -385,12 +381,10 @@ mod tests {
         let mut packets = make_packets(&mut rng, &shreds);
         // Assert that initially all signatures are invalid.
         verify_batches(&mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .flatten()
-                .all(|packet| packet.meta().discard())
-        );
+        assert!(packets
+            .iter()
+            .flatten()
+            .all(|packet| packet.meta().discard()));
         // Sign and verify shreds signatures.
         packets.iter_mut().for_each(|batch| {
             batch
@@ -399,11 +393,9 @@ mod tests {
         });
         sign_shreds(&keypair, &mut packets);
         verify_batches(&mut packets, &pubkeys, &cache);
-        assert!(
-            packets
-                .iter()
-                .flatten()
-                .all(|packet| !packet.meta().discard())
-        );
+        assert!(packets
+            .iter()
+            .flatten()
+            .all(|packet| !packet.meta().discard()));
     }
 }
