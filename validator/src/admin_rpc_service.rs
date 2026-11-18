@@ -1566,6 +1566,8 @@ mod tests {
 
     impl Drop for TestValidatorWithAdminRpc {
         fn drop(&mut self) {
+            // Close and join directly. The admin exit RPC leaves a detached thread
+            // that can outlive the test and terminate the entire test process.
             self.validator
                 .take()
                 .expect("validator is only taken here")
@@ -1638,14 +1640,6 @@ mod tests {
             actual_validator_id,
             expected_validator_id.pubkey().to_string()
         );
-
-        let contact_info_request =
-            r#"{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}"#.to_string();
-        let exit_response = test_validator.handle_request(&contact_info_request);
-        let actual_parsed_response: Value =
-            serde_json::from_str(&exit_response.expect("actual response"))
-                .expect("actual response deserialization");
-        assert_eq!(actual_parsed_response, expected_parsed_response);
     }
 
     #[test]
