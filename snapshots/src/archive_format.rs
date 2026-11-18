@@ -1,4 +1,5 @@
 use {
+    crate::parallel_zstd::{self, ParallelZstdReader},
     std::{fmt, str::FromStr},
     strum::Display,
 };
@@ -64,14 +65,19 @@ impl FromStr for ArchiveFormat {
 
 pub enum ArchiveFormatDecompressor<R> {
     Zstd(zstd::stream::read::Decoder<'static, R>),
+    ParallelZstd(ParallelZstdReader<R>),
     Lz4(lz4::Decoder<R>),
 }
 
 impl<R: std::io::BufRead> ArchiveFormatDecompressor<R> {
-    pub fn new(format: ArchiveFormat, input: R) -> std::io::Result<Self> {
+    pub fn new(format: ArchiveFormat, mut input: R) -> std::io::Result<Self> {
         Ok(match format {
             ArchiveFormat::TarZstd { .. } => {
-                Self::Zstd(zstd::stream::read::Decoder::with_buffer(input)?)
+                if parallel_zstd::can_decode_in_parallel(input.fill_buf()?) {
+                    Self::ParallelZstd(ParallelZstdReader::new(input, parallel_zstd::NUM_DECODERS)?)
+                } else {
+                    Self::Zstd(zstd::stream::read::Decoder::with_buffer(input)?)
+                }
             }
             ArchiveFormat::TarLz4 => {
                 Self::Lz4(lz4::Decoder::new(input).map_err(std::io::Error::other)?)
@@ -84,6 +90,7 @@ impl<R: std::io::BufRead> std::io::Read for ArchiveFormatDecompressor<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Self::Zstd(decoder) => decoder.read(buf),
+            Self::ParallelZstd(reader) => reader.read(buf),
             Self::Lz4(decoder) => decoder.read(buf),
         }
     }

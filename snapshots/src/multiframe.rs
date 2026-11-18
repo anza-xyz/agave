@@ -6,6 +6,10 @@ use std::io::{self, Write};
 
 const MAX_ZSTD_FRAME_SIZE: u32 = 1 << 30;
 
+// Uncompressed bytes per zstd frame. 32 MiB keeps compression loss below ~0.02
+// while giving parallel decompressors enough chunk size.
+pub(crate) const ZSTD_FRAME_SIZE: u32 = 32 * 1024 * 1024;
+
 /// Compresses a byte stream into independent zstd frames of `frame_size`
 /// uncompressed bytes each, written back to back.
 pub struct MultiFrameZstdWriter<W: Write> {

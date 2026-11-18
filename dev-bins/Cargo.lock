@@ -478,6 +478,7 @@ name = "agave-snapshots"
 version = "5.0.0-alpha.1"
 dependencies = [
  "agave-fs",
+ "agave-worker-pool",
  "bzip2",
  "crossbeam-channel",
  "log",
