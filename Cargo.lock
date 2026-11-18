@@ -8693,6 +8693,7 @@ version = "5.0.0-alpha.0"
 dependencies = [
  "agave-logger",
  "agave-random",
+ "agave-shred-wire-format",
  "agave-votor-messages",
  "anyhow",
  "arc-swap",
@@ -9169,6 +9170,7 @@ version = "5.0.0-alpha.0"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-shred-wire-format",
  "agave-snapshots",
  "agave-votor",
  "agave-votor-messages",

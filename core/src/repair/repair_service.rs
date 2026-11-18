@@ -11,6 +11,7 @@ use {
         },
     },
     agave_bls_sigverify::pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     ahash::AHashMap,
     bytes::Bytes,
     crossbeam_channel::Receiver as CrossbeamReceiver,
@@ -23,7 +24,6 @@ use {
         blockstore::Blockstore,
         blockstore_db::DBPinnableSlice,
         blockstore_meta::{BlockLocation, NextSlots, SlotMetaRepair},
-        shred,
     },
     solana_measure::measure::Measure,
     solana_net_utils::{PinnedXdpSender, Protocol},
@@ -64,7 +64,7 @@ const MIN_FEC_SET_OBSERVATION_CAPACITY: usize = 32;
 
 /// Returns the fixed-size FEC set ordinal containing `shred_index`.
 fn fec_set_ordinal(shred_index: u64) -> usize {
-    shred_index as usize / shred::DATA_SHREDS_PER_FEC_BLOCK
+    shred_index as usize / DATA_SHREDS_PER_FEC_BLOCK
 }
 
 /// Per-slot repair timing tracked at FEC granularity.
@@ -1492,7 +1492,7 @@ mod test {
         );
 
         let slot = 1;
-        let missing_fec_start = shred::DATA_SHREDS_PER_FEC_BLOCK as u64;
+        let missing_fec_start = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let future_fec_start = 2 * missing_fec_start;
         let shreds_by_index = make_shreds_by_index(slot, 0, future_fec_start);
         let shreds_to_insert: Vec<_> = (0..missing_fec_start)

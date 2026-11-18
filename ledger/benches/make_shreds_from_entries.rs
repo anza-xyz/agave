@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     criterion::{Criterion, criterion_group, criterion_main},
     rand::Rng,
     solana_entry::entry::Entry,
@@ -8,7 +9,7 @@ use {
     solana_ledger::{
         genesis_utils::create_genesis_config,
         shred::{
-            DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred, Shredder,
+            ProcessShredsStats, Shred, Shredder,
             filter::{ShredRecoveryContext, new_dummy_retransmit_sender},
         },
     },

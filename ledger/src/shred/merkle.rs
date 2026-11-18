@@ -1,8 +1,7 @@
 use {
     crate::shred::{
-        self, CODING_SHREDS_PER_FEC_BLOCK, CodingShredHeader, DATA_SHREDS_PER_FEC_BLOCK,
-        DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK, Shred, ShredCommonHeader,
-        ShredFlags, ShredVariant,
+        self, CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, Shred,
+        ShredCommonHeader, ShredFlags, ShredVariant,
         common::impl_shred_common,
         merkle_tree::*,
         payload::{Payload, PayloadMutGuard},
@@ -11,8 +10,9 @@ use {
     },
     agave_shred_wire_format::{
         constants::{
-            MerkleProofEntry, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_MERKLE_ROOT, SIZE_OF_SIGNATURE,
-            Section, Sections, sections_with_proof_entries,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MerkleProofEntry,
+            SHREDS_PER_FEC_BLOCK, SIZE_OF_MERKLE_PROOF_ENTRY, SIZE_OF_MERKLE_ROOT,
+            SIZE_OF_SIGNATURE, Section, Sections, sections_with_proof_entries,
         },
         headers::peek_header,
         kind::{Code as CodeLayout, Data as DataLayout, ShredLayout},

@@ -87,6 +87,7 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-shred-wire-format = { path = "../shred/wire-format", features = ["agave-unstable-api"] }
 anyhow = { workspace = true }
 bs58 = { workspace = true }
 criterion = { workspace = true }
