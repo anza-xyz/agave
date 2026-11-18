@@ -8,8 +8,6 @@ use {
         callback::ConformanceCallback,
         direct_mapping::direct_mapping_handle_cu_exhaustion,
         instr::{context::InstrContext, harness::execute_instr_with_callback},
-        programs::{fill_program_cache_from_accounts, new_program_cache_with_builtins},
-        setup::{compute_budget, program_runtime_environments, sysvar_cache_from_accounts},
     },
     std::ffi::c_int,
 };
@@ -17,33 +15,7 @@ use {
 pub fn execute_instr_proto(input: ProtoInstrContext) -> ProtoInstrEffects {
     let instr_context = InstrContext::from(input);
 
-    // When testing with protobuf, we fill the sysvar cache from input accounts.
-    let sysvar_cache = sysvar_cache_from_accounts(&instr_context.accounts);
-
-    // When testing with protobuf, we fill the program cache from input accounts.
-    let mut program_cache = {
-        let slot = sysvar_cache.get_clock().unwrap().slot;
-        let feature_set = &instr_context.feature_set;
-        let compute_budget = compute_budget(feature_set);
-        let environments = program_runtime_environments(feature_set, &compute_budget);
-
-        let mut cache = new_program_cache_with_builtins(slot);
-        fill_program_cache_from_accounts(
-            &mut cache,
-            environments.get_env_for_deployment(),
-            &instr_context.accounts,
-            slot,
-        );
-
-        cache
-    };
-
-    let mut effects = execute_instr_with_callback(
-        &instr_context,
-        &ConformanceCallback::default(),
-        &mut program_cache,
-        &sysvar_cache,
-    );
+    let mut effects = execute_instr_with_callback(&instr_context, &ConformanceCallback::default());
 
     // Precompile verification failures surface as `Custom`, but Firedancer
     // reports a custom error code of 0 for precompiles.
