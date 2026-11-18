@@ -1,5 +1,6 @@
 [bans]
 deny = [
     { crate = "solana-sdk", reason = "Deprecated; use the standalone Solana crates instead" },
+    { crate = "libz-sys", reason = "RUSTSEC-2026-0544 is ignored in ci/do-audit.sh because libz-sys is not built; remove the ignore before enabling this" },
 ]
 multiple-versions = "allow"
