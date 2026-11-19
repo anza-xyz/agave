@@ -2,6 +2,7 @@ use {
     crate::{
         cli::{CliCommand, CliCommandInfo, CliConfig, CliError, ProcessResult},
         feature::get_feature_activation_epoch,
+        json::json_encode_transaction,
     },
     agave_votor_messages::wire::WireBlockCertMessage,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
@@ -48,8 +49,8 @@ use {
     solana_stake_history::StakeHistory,
     solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
-    solana_transaction_status::{
-        EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
+    solana_transaction_status_client_types::{
+        EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::VoteStateV4,
     std::{
@@ -2063,7 +2064,7 @@ pub async fn process_transaction_history(
 
                         let decoded_transaction =
                             transaction_with_meta.transaction.decode().unwrap();
-                        let json_transaction = decoded_transaction.json_encode();
+                        let json_transaction = json_encode_transaction(&decoded_transaction);
 
                         transaction = Some(CliTransaction {
                             transaction: json_transaction,

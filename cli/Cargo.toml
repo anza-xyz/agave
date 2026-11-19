@@ -100,7 +100,7 @@ solana-tpu-client = { workspace = true, features = ["default"] }
 solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
-solana-transaction-status = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }

@@ -6,6 +6,7 @@ use {
             request_and_confirm_airdrop,
         },
         compute_budget::ComputeUnitConfig,
+        json::json_encode_transaction,
         message_builder::MessageBuilder,
         nonce::check_nonce_account,
         spend_utils::{SpendAmount, resolve_spend_tx_and_check_account_balances},
@@ -41,9 +42,9 @@ use {
     solana_signature::Signature,
     solana_system_interface::{error::SystemError, instruction as system_instruction},
     solana_transaction::versioned::VersionedTransaction,
-    solana_transaction_status::{
-        EncodableWithMeta, EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
-        TransactionBinaryEncoding, UiTransactionEncoding,
+    solana_transaction_status_client_types::{
+        EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, TransactionBinaryEncoding,
+        UiTransactionEncoding,
     },
     std::{fmt::Write as FmtWrite, fs::File, io::Write, rc::Rc, str::FromStr},
 };
@@ -873,7 +874,7 @@ pub async fn process_confirm(
 
                             let decoded_transaction =
                                 transaction_with_meta.transaction.decode().unwrap();
-                            let json_transaction = decoded_transaction.json_encode();
+                            let json_transaction = json_encode_transaction(&decoded_transaction);
 
                             transaction = Some(CliTransaction {
                                 transaction: json_transaction,
@@ -917,7 +918,7 @@ pub fn process_decode_transaction(
     let sigverify_status = CliSignatureVerificationStatus::verify_transaction(transaction);
     let decode_transaction = CliTransaction {
         decoded_transaction: transaction.clone(),
-        transaction: transaction.json_encode(),
+        transaction: json_encode_transaction(transaction),
         meta: None,
         block_time: None,
         slot: None,
