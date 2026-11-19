@@ -5,6 +5,7 @@ use {
     ahash::{AHashMap, AHashSet},
     protosol::protos::FeatureSet as ProtoFeatureSet,
     solana_pubkey::Pubkey,
+    solana_svm_feature_set::SVMFeatureSet,
     std::{collections::HashMap, sync::LazyLock},
 };
 
@@ -38,4 +39,15 @@ pub fn feature_set_from_proto(value: &ProtoFeatureSet) -> FeatureSet {
         }
     }
     FeatureSet::new(active, inactive)
+}
+
+/// Build a protobuf feature set from an `SVMFeatureSet`.
+pub fn feature_set_to_proto(feature_set: &SVMFeatureSet) -> ProtoFeatureSet {
+    let mut features = FeatureSet::from_runtime_features(feature_set)
+        .active()
+        .keys()
+        .map(feature_u64)
+        .collect::<Vec<_>>();
+    features.sort_unstable();
+    ProtoFeatureSet { features }
 }
