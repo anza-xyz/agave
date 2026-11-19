@@ -10,10 +10,10 @@ use {
         find_available_ports_in_range,
         multihomed_sockets::BindIpAddrs,
         sockets::{
-            bind_gossip_port_in_range_with_config, bind_in_range_with_config,
-            bind_more_with_config, bind_to_with_config, get_max_udp_recv_buffer_size,
-            get_max_udp_send_buffer_size, localhost_port_range_for_tests,
-            multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
+            SocketConfiguration as SocketConfig, bind_gossip_port_in_range_with_config,
+            bind_in_range_with_config, bind_more_with_config, bind_to_with_config,
+            get_max_udp_recv_buffer_size, get_max_udp_send_buffer_size,
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
         },
     },
     solana_pubkey::Pubkey,
@@ -100,21 +100,23 @@ impl Node {
             .ok();
         let set_max_recv_send_buffer_size =
             move |c: &mut SocketConfig, recv_size: Option<usize>, send_size: Option<usize>| {
-                let recv_size = match (recv_size, max_recv_buffer_size) {
-                    (Some(sz), Some(max_sz)) => std::cmp::min(sz, max_sz),
-                    (Some(sz), _) | (_, Some(sz)) => sz,
-                    _ => return,
-                };
-                *c = c.recv_buffer_size(recv_size);
+                if let Some(recv_size) = match (recv_size, max_recv_buffer_size) {
+                    (Some(sz), Some(max_sz)) => Some(std::cmp::min(sz, max_sz)),
+                    (Some(sz), _) | (_, Some(sz)) => Some(sz),
+                    _ => None,
+                } {
+                    *c = c.recv_buffer_size(recv_size);
+                }
                 // As UDP socket sends on freebsd & macos are always
                 // unbuffered, do not change the send buffer size.
-                if cfg!(not(any(target_os = "freebsd", target_os = "macos"))) {
-                    let send_size = match (send_size, max_send_buffer_size) {
-                        (Some(sz), Some(max_sz)) => std::cmp::min(sz, max_sz),
-                        (Some(sz), _) | (_, Some(sz)) => sz,
-                        _ => return,
-                    };
-                    *c = c.send_buffer_size(send_size);
+                if cfg!(target_os = "linux") {
+                    if let Some(send_size) = match (send_size, max_send_buffer_size) {
+                        (Some(sz), Some(max_sz)) => Some(std::cmp::min(sz, max_sz)),
+                        (Some(sz), _) | (_, Some(sz)) => Some(sz),
+                        _ => None,
+                    } {
+                        *c = c.send_buffer_size(send_size);
+                    }
                 }
             };
         let mut c = SocketConfigs::default();

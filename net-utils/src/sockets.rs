@@ -40,15 +40,6 @@ pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
     )
 }
 
-pub fn bind_gossip_port_in_range(
-    gossip_addr: &SocketAddr,
-    port_range: PortRange,
-    bind_ip_addr: IpAddr,
-) -> (u16, (UdpSocket, TcpListener)) {
-    let config = SocketConfiguration::default();
-    bind_gossip_port_in_range_with_config(gossip_addr, port_range, bind_ip_addr, config)
-}
-
 pub fn bind_gossip_port_in_range_with_config(
     gossip_addr: &SocketAddr,
     port_range: PortRange,
