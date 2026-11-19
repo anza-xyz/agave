@@ -502,6 +502,16 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
+    /// Returns the program ids of the cooperative loading tasks still in flight.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn get_loading_entries_for_tests(&self) -> Vec<Pubkey> {
+        match &self.index {
+            IndexImplementation::V1 {
+                loading_entries, ..
+            } => loading_entries.lock().unwrap().keys().copied().collect(),
+        }
+    }
+
     /// Returns the slot versions for the given program id.
     pub fn get_slot_versions_for_tests(&self, key: &Pubkey) -> &[Arc<ProgramCacheEntry>] {
         match &self.index {
