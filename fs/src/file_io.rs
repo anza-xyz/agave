@@ -730,33 +730,41 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_multiple_file_creations() -> io::Result<()> {
+    #[test_case(5, 7, 2 << 20; "small files")]
+    // The buffer holds enough pending writes to trigger writing one chunk of a file at a time.
+    #[test_case(16, 1_500_000, 4 << 20; "multi chunk files")]
+    fn test_multiple_file_creations(
+        num_files: usize,
+        file_size: usize,
+        buf_size: usize,
+    ) -> io::Result<()> {
         let temp_dir = tempfile::tempdir()?;
+        let content = |i| Vec::from_iter((0..file_size).map(|j| (i + j / 4096) as u8));
         let mut callback_counter = 0;
 
-        let mut creator = file_creator(2 << 20, &IoSetupState::default(), |file_info| {
-            let contents = read_file_to_string(&file_info.path);
-            assert!(contents.starts_with("File "));
+        let mut creator = file_creator(buf_size, &IoSetupState::default(), |file_info| {
             callback_counter += 1;
             Some(file_info.file)
         })?;
 
         let dir = Arc::new(File::open(temp_dir.path())?);
-        for i in 0..5 {
+        for i in 0..num_files {
             let file_path = temp_dir.path().join(format!("file_{i}.txt"));
-            let data = format!("File {i}");
             creator.schedule_create_at_dir(
                 file_path,
                 0o600,
                 dir.clone(),
-                &mut Cursor::new(data),
+                &mut Cursor::new(content(i)),
             )?;
         }
         creator.drain()?;
         drop(creator);
 
-        assert_eq!(callback_counter, 5);
+        assert_eq!(callback_counter, num_files);
+        for i in 0..num_files {
+            let written = fs::read(temp_dir.path().join(format!("file_{i}.txt")))?;
+            assert!(written == content(i), "file {i}");
+        }
         Ok(())
     }
 

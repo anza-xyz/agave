@@ -58,6 +58,11 @@ const MAX_OPEN_FILES: usize = 512;
 // (on open, since in accounts-db most files land in a single dir).
 const DEFAULT_MAX_IOWQ_WORKERS: u32 = 4;
 
+// Size of submitted writes that keeps the disk queues busy. Beyond it, a file has one write
+// submitted at a time, since parallel writes to a file just contend on its inode lock. 2 MiB is 16
+// full-size device commands of 128 KiB, which already saturates two striped NVMe drives in tests.
+const WRITES_SIZE_KEEPING_DISK_QUEUES_BUSY: usize = 2 * 1024 * 1024;
+
 const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
 
 /// Utility for building [`IoUringFileCreator`] with specified tuning options.
@@ -403,13 +408,16 @@ impl<'a> FileCreatorState<'a> {
         }
     }
 
-    /// Submits the backlog writes of an open file.
+    /// Submits the backlog writes of an open file, one at a time or all at once, depending on the
+    /// total size of the writes that are submitted for all files and not completed yet.
     fn submit_backlog_writes(
         ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
         file_key: usize,
     ) -> io::Result<()> {
         loop {
             let this = ring.context_mut();
+            let one_write_at_a_time =
+                this.submitted_writes_size >= WRITES_SIZE_KEEPING_DISK_QUEUES_BUSY;
             // The file is gone after its completion callback has run.
             let Some(file_state) = this.files.get_mut(file_key) else {
                 return Ok(());
@@ -417,7 +425,9 @@ impl<'a> FileCreatorState<'a> {
             let Some(file) = &file_state.open_file else {
                 return Ok(());
             };
-            if file_state.backlog.is_empty() {
+            if file_state.backlog.is_empty()
+                || (one_write_at_a_time && file_state.has_write_in_flight())
+            {
                 return Ok(());
             }
             let fd = types::Fd(file.as_raw_fd());
@@ -491,7 +501,7 @@ impl<'a> FileCreatorState<'a> {
                 };
             }
         }
-        Ok(())
+        Self::submit_backlog_writes(ring, file_key)
     }
 
     fn mark_file_complete(&mut self, file_key: usize) {
@@ -747,6 +757,12 @@ impl PendingFile {
             file_uses_direct_io: false,
             non_dio_eof_write: None,
         }
+    }
+
+    /// Whether a write is in flight, as started writes are either completed, in the backlog or in
+    /// flight.
+    fn has_write_in_flight(&self) -> bool {
+        self.writes_started > self.writes_completed + self.backlog.len()
     }
 
     fn path_cstring(&self) -> CString {
