@@ -21,7 +21,7 @@ stable-abi = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-agave-logger = { workspace = true }
+agave-logger = { workspace = true, features = ["auto-color"] }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
