@@ -1532,7 +1532,6 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::try_create(
             tx,
             MessageHash::Compute,
-            Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
         )

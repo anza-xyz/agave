@@ -482,7 +482,6 @@ mod tests {
             let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
-                None,
             )
             .unwrap();
             let view = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(

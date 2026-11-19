@@ -3881,7 +3881,6 @@ impl Bank {
                 let mut tx = RuntimeTransaction::try_create(
                     tx,
                     MessageHash::Compute,
-                    None,
                     self,
                     self.get_reserved_account_keys(),
                 )?;
@@ -4348,10 +4347,7 @@ impl Bank {
                 processed_counts.signature_count +=
                     tx.signature_details().num_transaction_signatures();
                 processed_counts.processed_transactions_count += 1;
-
-                if !tx.is_simple_vote_transaction() {
-                    processed_counts.processed_non_vote_transactions_count += 1;
-                }
+                processed_counts.processed_non_vote_transactions_count += 1;
             }
 
             match processing_result.flattened_result() {
@@ -5714,7 +5710,6 @@ impl Bank {
             let sanitized_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 sanitized_tx,
                 MessageHash::Compute,
-                None,
             )?;
 
             let (loaded_addresses, _) = self.load_addresses_for_view(&sanitized_tx)?;

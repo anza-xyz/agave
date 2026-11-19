@@ -177,7 +177,6 @@ mod tests {
         let result = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
             transaction,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             result.err(),
@@ -207,7 +206,6 @@ mod tests {
                 let static_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                     tx,
                     MessageHash::Compute,
-                    None,
                 )
                 .unwrap();
                 let address_loader = if matches!(version, TransactionVersion::V0) {
@@ -230,7 +228,6 @@ mod tests {
             let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
-                None,
             )
             .unwrap();
             let loaded_addresses =
@@ -264,12 +261,9 @@ mod tests {
             readonly: vec![duplicate_key],
         };
         let bytes = wincode::serialize(&tx).unwrap();
-        let sdk_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
-            tx,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
+        let sdk_tx =
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(tx, MessageHash::Compute)
+                .unwrap();
         assert_eq!(
             RuntimeTransaction::<SanitizedTransaction>::try_from(
                 sdk_tx,
@@ -281,12 +275,9 @@ mod tests {
         );
 
         let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
-        let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
+        let static_tx =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+                .unwrap();
         assert_eq!(
             RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 static_tx,
@@ -404,17 +395,13 @@ mod tests {
         let borrowed = RuntimeTransaction::<&SanitizedTransactionView<_>>::try_new(
             &view,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             borrowed.err(),
             (!valid).then_some(TransactionError::SanitizeFailure)
         );
-        let owned = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-            None,
-        );
+        let owned =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute);
         assert_eq!(
             owned.err(),
             (!valid).then_some(TransactionError::SanitizeFailure)
