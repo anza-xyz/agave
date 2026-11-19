@@ -348,6 +348,9 @@ impl IoUringFileCreator<'_> {
         file_state.ops_started += 1;
         if let Some(file) = &file_state.open_file {
             let fd = types::Fd(file.as_raw_fd());
+            if is_final_write {
+                FileCreatorState::schedule_fallocate(&mut self.ring, file_key, fd)?;
+            }
             if write_len == 0 {
                 // EOF was reached consuming input *and* there isn't any data left to write
                 // immediately (there might be some stored for non-direct IO mode). Treat it as
@@ -374,7 +377,7 @@ impl IoUringFileCreator<'_> {
                 buf_offset: 0,
                 write_len,
             };
-            state.submitted_writes_size += write_len as usize;
+            self.ring.context_mut().submitted_writes_size += write_len as usize;
             self.ring.push(FileCreatorOp::Write(op))?;
         } else {
             // Note: `write_len` might be 0 here, but it's handled on open op completion
@@ -464,6 +467,23 @@ impl<'a> FileCreatorState<'a> {
         }
 
         Self::try_finalize_file(ring, file_key, fd)
+    }
+
+    /// Schedules the allocation of the final file size, once it is known and non-zero.
+    ///
+    /// The file then spans one extent, and its writes don't contend on the inode lock to extend it.
+    /// It also lets the filesystem do a single, earlier block allocation and quota update.
+    fn schedule_fallocate(
+        ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
+        file_key: usize,
+        fd: types::Fd,
+    ) -> io::Result<()> {
+        let file_state = ring.context_mut().files.get_mut(file_key).unwrap();
+        let Some(len) = file_state.size_on_eof.filter(|&size| size > 0) else {
+            return Ok(());
+        };
+        file_state.ops_started += 1;
+        ring.push(FileCreatorOp::Fallocate(FallocateOp { file_key, fd, len }))
     }
 
     /// Finalize the file once all of its tracked ops have completed.
@@ -571,6 +591,10 @@ impl OpenOp {
         let backlog =
             ring.context_mut()
                 .mark_file_opened(self.file_key, fd, self.write_with_direct_io);
+
+        // Allocate before the writes that fill the file.
+        FileCreatorState::schedule_fallocate(ring, self.file_key, fd)?;
+
         for (buf, offset, write_len) in backlog {
             if write_len == 0 {
                 return FileCreatorState::mark_write_completed(ring, self.file_key, fd, true, buf);
@@ -710,11 +734,44 @@ impl<'a> WriteOp {
     }
 }
 
+/// Allocates the final file size (see [`opcode::Fallocate`]).
+#[derive(Debug)]
+struct FallocateOp {
+    file_key: usize,
+    fd: types::Fd,
+    len: FileSize,
+}
+
+impl<'a> FallocateOp {
+    fn entry(&mut self) -> squeue::Entry {
+        opcode::Fallocate::new(self.fd, self.len).build()
+    }
+
+    fn complete(
+        &mut self,
+        ring: &mut Completion<FileCreatorState<'a>, FileCreatorOp>,
+        res: io::Result<i32>,
+    ) -> io::Result<()>
+    where
+        Self: Sized,
+    {
+        let file_state = ring.context_mut().files.get_mut(self.file_key).unwrap();
+        if let Err(err) = res {
+            // The allocation is only a hint: a real problem, such as a full device, resurfaces
+            // on the writes.
+            log::warn!("fallocate failed for {}: {err}", file_state.path.display());
+        }
+        file_state.ops_completed += 1;
+        FileCreatorState::try_finalize_file(ring, self.file_key, self.fd)
+    }
+}
+
 #[derive(Debug)]
 enum FileCreatorOp {
     Open(OpenOp),
     Close(CloseOp),
     Write(WriteOp),
+    Fallocate(FallocateOp),
 }
 
 impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
@@ -723,6 +780,7 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
             Self::Open(op) => op.entry(),
             Self::Close(op) => op.entry(),
             Self::Write(op) => op.entry(),
+            Self::Fallocate(op) => op.entry(),
         }
     }
 
@@ -738,6 +796,7 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
             Self::Open(op) => op.complete(ring, res),
             Self::Close(op) => op.complete(ring, res),
             Self::Write(op) => op.complete(ring, res),
+            Self::Fallocate(op) => op.complete(ring, res),
         }
     }
 }
