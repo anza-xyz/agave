@@ -345,7 +345,7 @@ impl IoUringFileCreator<'_> {
                 }
             }
         }
-        file_state.writes_started += 1;
+        file_state.ops_started += 1;
         if let Some(file) = &file_state.open_file {
             let fd = types::Fd(file.as_raw_fd());
             if write_len == 0 {
@@ -450,7 +450,7 @@ impl<'a> FileCreatorState<'a> {
         let this = ring.context_mut();
 
         let file_state = this.files.get_mut(file_key).unwrap();
-        file_state.writes_completed += 1;
+        file_state.ops_completed += 1;
 
         match file_state.non_dio_eof_write.as_mut() {
             Some(eof_write) if is_eof_write => {
@@ -463,13 +463,25 @@ impl<'a> FileCreatorState<'a> {
             _ => this.buffers.push_front(buf),
         }
 
-        if file_state.required_writes_done() {
+        Self::try_finalize_file(ring, file_key, fd)
+    }
+
+    /// Finalize the file once all of its tracked ops have completed.
+    fn try_finalize_file(
+        ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
+        file_key: usize,
+        fd: types::Fd,
+    ) -> io::Result<()> {
+        let this = ring.context_mut();
+        let file_state = this.files.get_mut(file_key).unwrap();
+
+        if file_state.required_ops_done() {
             // All aligned writes are done at this point, switch off direct-io before completing file
             file_state.ensure_direct_io_disabled(fd)?;
 
             // After disabling direct-IO, we may still have last write op to schedule.
             if let Some(op) = file_state.try_take_final_write_op(file_key, fd) {
-                file_state.writes_started += 1;
+                file_state.ops_started += 1;
                 this.submitted_writes_size += op.write_len as usize;
                 return ring.push(FileCreatorOp::Write(op));
             }
@@ -741,8 +753,10 @@ struct PendingFile {
     file_uses_direct_io: bool,
     /// Extra write data populated for direct IO mode if there is non-aligned data at EOF
     non_dio_eof_write: Option<FinalNonDirectIoWrite>,
-    writes_started: usize,
-    writes_completed: usize,
+    /// Number of scheduled ring ops that gate file's finalization.
+    ops_started: usize,
+    /// Number of completed ring ops, file can be finalized only if this reaches `ops_started`.
+    ops_completed: usize,
 }
 
 impl PendingFile {
@@ -751,8 +765,8 @@ impl PendingFile {
             path,
             open_file: None,
             backlog: SmallVec::new(),
-            writes_started: 0,
-            writes_completed: 0,
+            ops_started: 0,
+            ops_completed: 0,
             size_on_eof: None,
             file_uses_direct_io: false,
             non_dio_eof_write: None,
@@ -764,12 +778,12 @@ impl PendingFile {
         CString::new(os_str.as_encoded_bytes()).expect("path mustn't contain interior NULs")
     }
 
-    /// Check if all contents were read from source and scheduled writes are done
+    /// Check if all contents were read from source and all scheduled ops are done.
     ///
-    /// Note: this returns `true` if current stage writes are done, there might still be
+    /// Note: this returns `true` if current stage ops are done, there might still be a
     /// last write to be scheduled using `non_dio_eof_write`
-    fn required_writes_done(&self) -> bool {
-        self.writes_started == self.writes_completed && self.source_fully_read()
+    fn required_ops_done(&self) -> bool {
+        self.ops_started == self.ops_completed && self.source_fully_read()
     }
 
     /// Return true if all contents to be written for this file are already read
