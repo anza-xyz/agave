@@ -602,64 +602,55 @@ fn produce_first_slot(
     parent_block: Block,
     block_timer: &mut Instant,
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
 ) -> Result<(), StartLeaderError> {
-    let mut slot_metrics = SlotMetrics::new(slot, fast_leader_handover);
-    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
-    let res = start_leader_wait_for_parent_replay(
+    let working_bank = start_leader_wait_for_parent_replay(
         ctx,
-        &mut slot_metrics,
+        slot_metrics,
         slot,
         parent_block.slot,
         Some(parent_block.block_id),
         *block_timer,
         /* entry_bytes_consumed */ 0,
+    )?;
+    let reward_token = request_reward_certs(ctx, slot_metrics, slot)?;
+    produce_slot(
+        ctx,
+        slot_metrics,
+        slot,
+        fast_leader_handover.then_some(parent_block),
+        reward_token,
+        block_timer,
+        working_bank,
     )
-    .and_then(|working_bank| {
-        produce_slot(
-            ctx,
-            &mut slot_metrics,
-            slot,
-            fast_leader_handover.then_some(parent_block),
-            reward_cert_request,
-            block_timer,
-            working_bank,
-        )
-    });
-    slot_metrics.report();
-    res
 }
 
 fn produce_intra_window_slot(
     slot: Slot,
     block_timer: &mut Instant,
     ctx: &mut LeaderContext,
+    slot_metrics: &mut SlotMetrics,
 ) -> Result<(), StartLeaderError> {
-    let mut slot_metrics = SlotMetrics::new(slot, false);
-    let reward_cert_request = request_reward_certs(ctx, &mut slot_metrics, slot)?;
-    let res = start_leader_wait_for_parent_replay(
+    let working_bank = start_leader_wait_for_parent_replay(
         ctx,
-        &mut slot_metrics,
+        slot_metrics,
         slot,
         slot - 1,
         None,
         *block_timer,
         /* entry_bytes_consumed */ 0,
+    )?;
+    let reward_token = request_reward_certs(ctx, slot_metrics, slot)?;
+    produce_slot(
+        ctx,
+        slot_metrics,
+        slot,
+        None,
+        reward_token,
+        block_timer,
+        working_bank,
     )
-    .and_then(|working_bank| {
-        produce_slot(
-            ctx,
-            &mut slot_metrics,
-            slot,
-            None,
-            reward_cert_request,
-            block_timer,
-            working_bank,
-        )
-    });
-    slot_metrics.report();
-    res
 }
-
 /// Asks the rewards service to build the reward certs for `slot`'s footer.
 ///
 /// Call this before waiting for the parent to parallelize waiting for parent with building certs.
@@ -730,18 +721,25 @@ fn produce_window(
     update_leader_window_clock(ctx, start_slot, block_timer);
     let mut window_production_start = Measure::start("window_production");
 
-    produce_first_slot(
+    let mut slot_metrics = SlotMetrics::new(start_slot, fast_leader_handover);
+    let res = produce_first_slot(
         fast_leader_handover,
         start_slot,
         parent_block,
         &mut block_timer,
         ctx,
-    )?;
+        &mut slot_metrics,
+    );
+    slot_metrics.report();
+    res?;
     for slot in (start_slot + 1)..=end_slot {
         if ctx.exit.load(Ordering::Relaxed) {
             break;
         }
-        produce_intra_window_slot(slot, &mut block_timer, ctx)?;
+        let mut slot_metrics = SlotMetrics::new(slot, false);
+        let res = produce_intra_window_slot(slot, &mut block_timer, ctx, &mut slot_metrics);
+        slot_metrics.report();
+        res?;
     }
     if !ctx.exit.load(Ordering::Relaxed) {
         trace!(
@@ -1816,7 +1814,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reward_certs_requested_before_parent_replay() {
+    fn test_reward_certs_not_requested_when_parent_replay_times_out() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let my_pubkey = Pubkey::new_unique();
@@ -1883,23 +1881,34 @@ mod tests {
             Block::new_unique(slot - 1),
             &mut block_timer,
             &mut ctx,
+            &mut SlotMetrics::new(slot, false),
         )
         .unwrap_err();
         assert!(matches!(err, StartLeaderError::ReplayIsBehind(11, 12)));
 
-        // The reward certs were already requested while we waited for the parent.
-        let request = reward_request_receiver.try_recv().unwrap();
-        assert_eq!(request.bank_slot, slot);
+        // Reward certs are requested only after the parent finishes replay.
+        assert!(matches!(
+            reward_request_receiver.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
 
         // Same for a slot later in the window.
         let slot = 13;
         let mut block_timer = Instant::now()
             .checked_sub(block_timeout(&root_bank, slot) - Duration::from_millis(20))
             .unwrap();
-        let err = produce_intra_window_slot(slot, &mut block_timer, &mut ctx).unwrap_err();
+        let err = produce_intra_window_slot(
+            slot,
+            &mut block_timer,
+            &mut ctx,
+            &mut SlotMetrics::new(slot, false),
+        )
+        .unwrap_err();
         assert!(matches!(err, StartLeaderError::ReplayIsBehind(12, 13)));
-        let request = reward_request_receiver.try_recv().unwrap();
-        assert_eq!(request.bank_slot, slot);
+        assert!(matches!(
+            reward_request_receiver.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
     }
 
     #[test]
