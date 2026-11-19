@@ -27,6 +27,7 @@ Release channels have their own copy of this changelog:
   * `getTokenLargestAccounts`
   * `getTokenAccountsByOwner`
   * `getTokenAccountsByDelegate`
+* Geyser account update notifications use `ReplicaAccountInfoV5`.
 
 #### Changes
 
