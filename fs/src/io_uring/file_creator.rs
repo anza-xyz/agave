@@ -346,42 +346,8 @@ impl IoUringFileCreator<'_> {
             }
         }
         file_state.writes_started += 1;
-        if let Some(file) = &file_state.open_file {
-            let fd = types::Fd(file.as_raw_fd());
-            if write_len == 0 {
-                // EOF was reached consuming input *and* there isn't any data left to write
-                // immediately (there might be some stored for non-direct IO mode). Treat it as
-                // a successful write, perform proper accounting and pass `buf` to the next
-                // write operation.
-                //
-                // Note: this logic might be happening with no pending writes (e.g. if `buf`
-                // was obtained just before reading reached EOF), so it's possible that file
-                // completion will be triggered immediately.
-                return FileCreatorState::mark_write_completed(
-                    &mut self.ring,
-                    file_key,
-                    fd,
-                    true,
-                    buf,
-                );
-            }
-
-            let op = WriteOp {
-                file_key,
-                fd,
-                offset: file_offset,
-                buf,
-                buf_offset: 0,
-                write_len,
-            };
-            state.submitted_writes_size += write_len as usize;
-            self.ring.push(FileCreatorOp::Write(op))?;
-        } else {
-            // Note: `write_len` might be 0 here, but it's handled on open op completion
-            file_state.backlog.push((buf, file_offset, write_len));
-        }
-
-        Ok(())
+        file_state.backlog.push((buf, file_offset, write_len));
+        FileCreatorState::submit_backlog_writes(&mut self.ring, file_key)
     }
 
     pub(super) fn wait_free_buf(&mut self) -> io::Result<IoBufferChunk> {
@@ -426,8 +392,7 @@ impl<'a> FileCreatorState<'a> {
         }
     }
 
-    /// Returns write backlog that needs to be submitted to IO ring
-    fn mark_file_opened(&mut self, file_key: usize, fd: types::Fd, direct_io: bool) -> BacklogVec {
+    fn mark_file_opened(&mut self, file_key: usize, fd: types::Fd, direct_io: bool) {
         let file = self.files.get_mut(file_key).unwrap();
         // Safety: we just received FD from io_uring open, so it's valid, track it in owned File
         file.open_file = Some(unsafe { File::from_raw_fd(fd.0) });
@@ -436,7 +401,49 @@ impl<'a> FileCreatorState<'a> {
         if self.buffers.len() * 2 > self.buffers.capacity() {
             self.stats.large_buf_headroom_count += 1;
         }
-        mem::take(&mut file.backlog)
+    }
+
+    /// Submits the backlog writes of an open file.
+    fn submit_backlog_writes(
+        ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
+        file_key: usize,
+    ) -> io::Result<()> {
+        loop {
+            let this = ring.context_mut();
+            // The file is gone after its completion callback has run.
+            let Some(file_state) = this.files.get_mut(file_key) else {
+                return Ok(());
+            };
+            let Some(file) = &file_state.open_file else {
+                return Ok(());
+            };
+            if file_state.backlog.is_empty() {
+                return Ok(());
+            }
+            let fd = types::Fd(file.as_raw_fd());
+            let (buf, offset, write_len) = file_state.backlog.remove(0);
+            if write_len == 0 {
+                // EOF was reached consuming input *and* there isn't any data left to write
+                // immediately (there might be some stored for non-direct IO mode). Treat it as
+                // a successful write, perform proper accounting and pass `buf` to the next
+                // write operation.
+                //
+                // Note: this logic might be happening with no pending writes (e.g. if `buf`
+                // was obtained just before reading reached EOF), so it's possible that file
+                // completion will be triggered immediately.
+                return Self::mark_write_completed(ring, file_key, fd, true, buf);
+            }
+
+            this.submitted_writes_size += write_len as usize;
+            ring.push(FileCreatorOp::Write(WriteOp {
+                file_key,
+                fd,
+                offset,
+                buf,
+                buf_offset: 0,
+                write_len,
+            }))?;
+        }
     }
 
     /// Calls `file_complete` callback with completed file info and optionally schedules close
@@ -556,26 +563,9 @@ impl OpenOp {
     {
         let fd = types::Fd(res?);
 
-        let backlog =
-            ring.context_mut()
-                .mark_file_opened(self.file_key, fd, self.write_with_direct_io);
-        for (buf, offset, write_len) in backlog {
-            if write_len == 0 {
-                return FileCreatorState::mark_write_completed(ring, self.file_key, fd, true, buf);
-            }
-            let op = WriteOp {
-                file_key: self.file_key,
-                fd,
-                offset,
-                buf,
-                buf_offset: 0,
-                write_len,
-            };
-            ring.context_mut().submitted_writes_size += write_len as usize;
-            ring.push(FileCreatorOp::Write(op))?;
-        }
-
-        Ok(())
+        ring.context_mut()
+            .mark_file_opened(self.file_key, fd, self.write_with_direct_io);
+        FileCreatorState::submit_backlog_writes(ring, self.file_key)
     }
 }
 
