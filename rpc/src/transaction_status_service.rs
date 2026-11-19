@@ -320,7 +320,6 @@ impl TransactionStatusService {
                     };
 
                     if let Some(transaction_notifier) = config.transaction_notifier.as_ref() {
-                        let is_vote = transaction.is_simple_vote_transaction();
                         let message_hash = transaction.message_hash();
                         let signature = transaction.signature();
                         let transaction = transaction.to_versioned_transaction();
@@ -330,7 +329,6 @@ impl TransactionStatusService {
                             transaction_index,
                             signature,
                             message_hash,
-                            is_vote,
                             &transaction_status_meta,
                             &transaction,
                         );
@@ -591,7 +589,6 @@ pub(crate) mod tests {
             transaction_index: usize,
             _signature: &Signature,
             message_hash: &Hash,
-            _is_vote: bool,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &VersionedTransaction,
         ) {
