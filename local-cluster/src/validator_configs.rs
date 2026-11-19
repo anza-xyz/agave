@@ -21,6 +21,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
         blockstore_options: config.blockstore_options.clone(),
         turbine_mode: config.turbine_mode.clone(),
+        shred_receiver_addresses: config.shred_receiver_addresses.clone(),
         fixed_leader_schedule: config.fixed_leader_schedule.clone(),
         wait_for_supermajority: config.wait_for_supermajority,
         new_hard_forks: config.new_hard_forks.clone(),

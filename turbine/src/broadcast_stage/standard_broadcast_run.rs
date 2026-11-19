@@ -64,6 +64,9 @@ pub struct StandardBroadcastRun {
     max_data_shreds_per_slot: u32,
     max_code_shreds_per_slot: u32,
     broadcast_blacklist: VecDeque<Slot>,
+    // Extra destinations for every shred this node broadcasts as leader
+    // (`--shred-receiver-address`); `None` when not configured.
+    shred_receivers: Option<ShredReceivers>,
 }
 
 #[derive(Debug)]
@@ -77,6 +80,7 @@ impl StandardBroadcastRun {
         migration_status: Arc<MigrationStatus>,
         votor_event_sender: VotorEventSender,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
+        shred_receivers: Option<ShredReceivers>,
     ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -110,6 +114,7 @@ impl StandardBroadcastRun {
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
             max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
             broadcast_blacklist: VecDeque::new(),
+            shred_receivers,
         }
     }
 
@@ -601,6 +606,7 @@ impl StandardBroadcastRun {
             bank_forks,
             &self.leader_schedule_cache,
             cluster_info.socket_addr_space(),
+            self.shred_receivers.as_ref(),
         )?;
         transmit_time.stop();
 
@@ -811,6 +817,7 @@ mod test {
             Arc::new(MigrationStatus::post_migration_status()),
             votor_event_sender,
             test_leader_schedule_cache(&parent_bank),
+            None,
         );
         let (blockstore_sender, blockstore_receiver) = bounded(1024);
         let (socket_sender, socket_receiver) = bounded(1024);
@@ -949,6 +956,7 @@ mod test {
             Arc::new(MigrationStatus::default()),
             votor_event_sender,
             test_leader_schedule_cache(&bank),
+            None,
         );
 
         standard_broadcast_run
@@ -980,6 +988,7 @@ mod test {
             Arc::new(MigrationStatus::default()),
             votor_event_sender,
             test_leader_schedule_cache(&bank),
+            None,
         );
         assert!(run.completed);
 
@@ -1036,6 +1045,7 @@ mod test {
             Arc::new(migration_status),
             votor_event_sender,
             test_leader_schedule_cache(&bank0),
+            None,
         );
         standard_broadcast_run
             .test_process_receive_results(
@@ -1189,6 +1199,7 @@ mod test {
             Arc::new(MigrationStatus::default()),
             votor_event_sender,
             test_leader_schedule_cache(&bank),
+            None,
         );
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
@@ -1264,6 +1275,7 @@ mod test {
             Arc::new(MigrationStatus::default()),
             votor_event_sender,
             test_leader_schedule_cache(&bank),
+            None,
         );
         standard_broadcast_run
             .test_process_receive_results(
@@ -1310,6 +1322,7 @@ mod test {
             Arc::new(MigrationStatus::default()),
             votor_event_sender,
             test_leader_schedule_cache(&bank1),
+            None,
         );
         let (bsend, brecv) = bounded(1024);
         let (ssend, srecv) = bounded(1024);
@@ -1430,6 +1443,7 @@ mod test {
             Arc::new(MigrationStatus::default()),
             votor_event_sender,
             test_leader_schedule_cache(&bank),
+            None,
         );
         bs.slot = 1;
         bs.parent = 0;
@@ -1467,6 +1481,7 @@ mod test {
             Arc::new(MigrationStatus::post_migration_status()),
             votor_event_sender,
             test_leader_schedule_cache(&bank),
+            None,
         );
         bs.slot = 12;
         bs.parent = 10;

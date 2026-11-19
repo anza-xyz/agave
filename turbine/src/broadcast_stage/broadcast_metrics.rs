@@ -23,6 +23,20 @@ pub struct TransmitShredsStats {
     pub total_packets: usize,
     pub(crate) dropped_packets_udp: usize,
     pub(crate) dropped_packets_xdp: usize,
+    /// Copies handed to the sender for the `--shred-receiver-address`
+    /// destinations, counted apart from the turbine packets above.
+    pub(crate) mirrored_packets: usize,
+    /// Copies the sender refused: a failed send on the UDP arm, a full low
+    /// priority channel on the XDP arm. Copies the XDP transmit loop drops
+    /// later (no route, no neighbor, MTU) are not counted.
+    pub(crate) dropped_packets_mirrored: usize,
+    /// Of `dropped_packets_mirrored`, the copies of data shreds that a full
+    /// low priority channel refused on the XDP arm. A transmit queue sends
+    /// those ahead of the copies of coding shreds and keeps them apart, so
+    /// any counted here means it could not send the copies of data shreds
+    /// alone. The UDP arm does not tell the two kinds apart and counts
+    /// nothing here.
+    pub(crate) dropped_packets_mirrored_data: usize,
     pub(crate) is_xdp: bool,
 }
 
@@ -35,6 +49,9 @@ impl BroadcastStats for TransmitShredsStats {
         self.total_packets += new_stats.total_packets;
         self.dropped_packets_udp += new_stats.dropped_packets_udp;
         self.dropped_packets_xdp += new_stats.dropped_packets_xdp;
+        self.mirrored_packets += new_stats.mirrored_packets;
+        self.dropped_packets_mirrored += new_stats.dropped_packets_mirrored;
+        self.dropped_packets_mirrored_data += new_stats.dropped_packets_mirrored_data;
     }
     fn report_stats(&mut self, slot: Slot, slot_start: Instant, was_interrupted: bool) {
         if was_interrupted {
@@ -48,6 +65,17 @@ impl BroadcastStats for TransmitShredsStats {
                 ("total_packets", self.total_packets as i64, i64),
                 ("dropped_packets_udp", self.dropped_packets_udp as i64, i64),
                 ("dropped_packets_xdp", self.dropped_packets_xdp as i64, i64),
+                ("mirrored_packets", self.mirrored_packets as i64, i64),
+                (
+                    "dropped_packets_mirrored",
+                    self.dropped_packets_mirrored as i64,
+                    i64
+                ),
+                (
+                    "dropped_packets_mirrored_data",
+                    self.dropped_packets_mirrored_data as i64,
+                    i64
+                ),
             );
         } else {
             datapoint_info!(
@@ -67,6 +95,17 @@ impl BroadcastStats for TransmitShredsStats {
                 ("total_packets", self.total_packets as i64, i64),
                 ("dropped_packets_udp", self.dropped_packets_udp as i64, i64),
                 ("dropped_packets_xdp", self.dropped_packets_xdp as i64, i64),
+                ("mirrored_packets", self.mirrored_packets as i64, i64),
+                (
+                    "dropped_packets_mirrored",
+                    self.dropped_packets_mirrored as i64,
+                    i64
+                ),
+                (
+                    "dropped_packets_mirrored_data",
+                    self.dropped_packets_mirrored_data as i64,
+                    i64
+                ),
             );
         }
     }
@@ -211,6 +250,9 @@ mod test {
                 total_packets: 7,
                 dropped_packets_udp: 8,
                 dropped_packets_xdp: 10,
+                mirrored_packets: 24,
+                dropped_packets_mirrored: 12,
+                dropped_packets_mirrored_data: 4,
                 is_xdp: false,
             },
             &Some(BroadcastShredBatchInfo {
@@ -231,6 +273,17 @@ mod test {
         assert_eq!(slot_0_stats.broadcast_shred_stats.total_packets, 7);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_udp, 8);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_xdp, 10);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.mirrored_packets, 24);
+        assert_eq!(
+            slot_0_stats.broadcast_shred_stats.dropped_packets_mirrored,
+            12
+        );
+        assert_eq!(
+            slot_0_stats
+                .broadcast_shred_stats
+                .dropped_packets_mirrored_data,
+            4
+        );
 
         slot_broadcast_stats.update(
             &TransmitShredsStats {
@@ -240,6 +293,9 @@ mod test {
                 total_packets: 17,
                 dropped_packets_udp: 18,
                 dropped_packets_xdp: 20,
+                mirrored_packets: 34,
+                dropped_packets_mirrored: 22,
+                dropped_packets_mirrored_data: 14,
                 is_xdp: false,
             },
             &None,
@@ -255,6 +311,17 @@ mod test {
         assert_eq!(slot_0_stats.broadcast_shred_stats.total_packets, 7);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_udp, 8);
         assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets_xdp, 10);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.mirrored_packets, 24);
+        assert_eq!(
+            slot_0_stats.broadcast_shred_stats.dropped_packets_mirrored,
+            12
+        );
+        assert_eq!(
+            slot_0_stats
+                .broadcast_shred_stats
+                .dropped_packets_mirrored_data,
+            4
+        );
 
         // If another batch is given, then total number of batches == num_expected_batches == 2,
         // so the batch should be purged from the HashMap
@@ -266,6 +333,9 @@ mod test {
                 total_packets: 1,
                 dropped_packets_udp: 1,
                 dropped_packets_xdp: 1,
+                mirrored_packets: 0,
+                dropped_packets_mirrored: 0,
+                dropped_packets_mirrored_data: 0,
                 is_xdp: false,
             },
             &Some(BroadcastShredBatchInfo {

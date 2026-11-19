@@ -7,7 +7,7 @@ use {
         standard_broadcast_run::StandardBroadcastRun,
     },
     crate::{
-        XdpSender,
+        ShredReceiverAddresses, XdpSender,
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
     },
     agave_votor::event::VotorEventSender,
@@ -30,7 +30,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
-    solana_net_utils::SocketAddrSpace,
+    solana_net_utils::{SocketAddrSpace, bind_to_unspecified},
     solana_poh::poh_recorder::WorkingBankMessage,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
@@ -169,6 +169,7 @@ impl BroadcastStageType {
         shred_version: u16,
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
+        shred_receivers: Option<ShredReceivers>,
     ) -> BroadcastStage {
         let migration_status = bank_forks.read().unwrap().migration_status();
         match self {
@@ -184,6 +185,7 @@ impl BroadcastStageType {
                     migration_status,
                     votor_event_sender,
                     leader_schedule_cache,
+                    shred_receivers,
                 ),
                 xdp_sender,
             ),
@@ -464,6 +466,51 @@ pub enum BroadcastSocket<'a> {
     Xdp(&'a XdpSender),
 }
 
+/// The XDP arm hands the sender one item per shred for up to this many
+/// receivers. A transmit queue sends an item whole, so this bounds what one
+/// item of copies can put ahead of a turbine packet. The top-level
+/// README.md quotes this number.
+const SHRED_RECEIVERS_PER_XDP_ITEM: usize = 32;
+
+/// Extra destinations for this node's own leader shreds
+/// (`--shred-receiver-address`): a copy of every shred goes to each address,
+/// after the turbine packets. On the XDP arm the copies are best effort, see
+/// [`broadcast_shreds`].
+#[derive(Clone)]
+pub struct ShredReceivers {
+    addrs: Arc<ShredReceiverAddresses>,
+    /// `addrs` in groups of [`SHRED_RECEIVERS_PER_XDP_ITEM`].
+    xdp_items: Arc<[Arc<[SocketAddr]>]>,
+    /// Bound to the unspecified address and an ephemeral port rather than
+    /// `--bind-address`, so on the UDP arm the kernel routing table picks the
+    /// outbound interface per receiver.
+    socket: Arc<UdpSocket>,
+}
+
+impl ShredReceivers {
+    /// `None` when no address is configured: nothing is bound and
+    /// `broadcast_shreds` sends nothing extra.
+    pub fn new(addrs: ShredReceiverAddresses) -> Option<Self> {
+        if addrs.is_empty() {
+            return None;
+        }
+        let socket = bind_to_unspecified().expect("bind the shred receiver socket");
+        // Let copies to a multicast group cross routers, like the other
+        // clients with this flag.
+        socket
+            .set_multicast_ttl_v4(64)
+            .expect("set the multicast TTL of the shred receiver socket");
+        Some(Self {
+            xdp_items: addrs
+                .chunks(SHRED_RECEIVERS_PER_XDP_ITEM)
+                .map(Arc::from)
+                .collect(),
+            addrs: Arc::new(addrs),
+            socket: Arc::new(socket),
+        })
+    }
+}
+
 /// Returns the pubkey of the next leader after `slot`, or None if it is us.
 fn next_broadcast_leader_pubkey(
     leader_schedule_cache: &LeaderScheduleCache,
@@ -479,7 +526,22 @@ fn next_broadcast_leader_pubkey(
 }
 
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
-/// turbine retransmit tree for each shred.
+/// turbine retransmit tree for each shred, then sends one copy of every
+/// shred to each configured `shred_receivers` address.
+///
+/// The turbine packets leave through `socket`. On the UDP arm the copies
+/// leave through the receivers' own socket; on the XDP arm the sender routes
+/// them like the turbine packets, so they must be reachable through the XDP
+/// interface. There the copies are best effort: a transmit queue sends them
+/// only when it has nothing else to send, a bounded number of frames at a
+/// time, so the turbine packets wait behind a bounded number of copy frames
+/// whatever the number of receivers, and the copies are dropped when the
+/// queue's low priority channel is full. The copies of data shreds go ahead
+/// of those of coding shreds and wait apart from them, so a queue that
+/// cannot send every copy drops copies of coding shreds first and sends the
+/// rest of them late. The copies are counted apart from the turbine packets,
+/// and a receiver that cannot be reached never fails the turbine broadcast.
+#[allow(clippy::too_many_arguments)]
 pub fn broadcast_shreds(
     socket: BroadcastSocket,
     shreds: &[Shred],
@@ -490,6 +552,7 @@ pub fn broadcast_shreds(
     bank_forks: &RwLock<BankForks>,
     leader_schedule_cache: &LeaderScheduleCache,
     socket_addr_space: &SocketAddrSpace,
+    shred_receivers: Option<&ShredReceivers>,
 ) -> Result<()> {
     let mut result = Ok(());
     // Compute destinations for each of the shreds to be sent
@@ -544,6 +607,28 @@ pub fn broadcast_shreds(
             }
             send_mmsg_time.stop();
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+            // One copy of every shred per configured receiver, after the
+            // turbine packets.
+            if let Some(receivers) = shred_receivers {
+                let mut mirrored = Vec::with_capacity(receivers.addrs.len() * shreds.len());
+                mirrored.extend(
+                    receivers
+                        .addrs
+                        .iter()
+                        .flat_map(|addr| shreds.iter().map(move |shred| (shred.payload(), *addr))),
+                );
+                let mirrored_len = mirrored.len();
+                transmit_stats.mirrored_packets += mirrored_len;
+                match batch_send(&receivers.socket, mirrored) {
+                    Ok(num_sent) => {
+                        transmit_stats.dropped_packets_mirrored += mirrored_len - num_sent
+                    }
+                    Err(SendPktsError::IoError(ioerr)) => {
+                        log::warn!("shred receiver send failed: {ioerr:?}");
+                        transmit_stats.dropped_packets_mirrored += mirrored_len;
+                    }
+                }
+            }
         }
         BroadcastSocket::Xdp(s) => {
             for (idx, (payload, addr)) in packets.enumerate() {
@@ -552,6 +637,33 @@ pub fn broadcast_shreds(
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
+                }
+            }
+            // The groups of receivers are the outer loop and `idx` keeps
+            // counting, so the copies for each group spread over the TX
+            // queues like the turbine packets, and a low priority channel
+            // that fills up refuses the copies for the last groups first.
+            let copies = shred_receivers.into_iter().flat_map(|receivers| {
+                receivers
+                    .xdp_items
+                    .iter()
+                    .flat_map(|addrs| shreds.iter().map(move |shred| (shred, addrs)))
+            });
+            for (idx, (shred, addrs)) in copies.enumerate() {
+                transmit_stats.mirrored_packets += addrs.len();
+                let (idx, payload) = (num_packets + idx, shred.payload().bytes.clone());
+                // A receiver needs no coding shred of a set whose data shreds
+                // all arrive, so the copies of coding shreds give way.
+                let sent = if shred.is_data() {
+                    s.try_send_low_priority(idx, Arc::clone(addrs), payload)
+                } else {
+                    s.try_send_lowest_priority(idx, Arc::clone(addrs), payload)
+                };
+                if sent.is_err() {
+                    transmit_stats.dropped_packets_mirrored += addrs.len();
+                    if shred.is_data() {
+                        transmit_stats.dropped_packets_mirrored_data += addrs.len();
+                    }
                 }
             }
         }
@@ -574,7 +686,7 @@ pub mod test {
         agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::bounded,
         solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
-        solana_gossip::{cluster_info::ClusterInfo, node::Node},
+        solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
@@ -583,10 +695,13 @@ pub mod test {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
+            shred::{ProcessShredsStats, Shredder},
         },
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{
+            collections::HashSet,
             num::NonZeroUsize,
             path::Path,
             sync::{Arc, atomic::AtomicBool},
@@ -719,6 +834,7 @@ pub mod test {
                 Arc::new(MigrationStatus::default()),
                 votor_event_sender,
                 leader_schedule_cache,
+                None,
             ),
             None,
         );
@@ -728,6 +844,251 @@ pub mod test {
             broadcast_service,
             bank,
         }
+    }
+
+    #[test]
+    fn test_shred_receivers_none_when_unconfigured() {
+        assert!(ShredReceivers::new(ShredReceiverAddresses::default()).is_none());
+    }
+
+    /// Returns a `broadcast_shreds` call for the leader of a cluster whose
+    /// only other node, if any, is staked and has `turbine_peer` as its TVU
+    /// address, and the payloads of the shreds the call broadcasts.
+    fn leader_broadcast(
+        turbine_peer: Option<SocketAddr>,
+    ) -> (
+        impl Fn(BroadcastSocket, &ShredReceivers) -> Result<TransmitShredsStats>,
+        HashSet<Vec<u8>>,
+    ) {
+        let leader_keypair = Arc::new(Keypair::new());
+        let leader_info = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
+        let cluster_info = ClusterInfo::new(
+            leader_info.info,
+            leader_keypair.clone(),
+            SocketAddrSpace::Unspecified,
+        );
+        let GenesisConfigInfo {
+            genesis_config,
+            validator_pubkey,
+            ..
+        } = create_genesis_config(10_000);
+        if let Some(turbine_peer) = turbine_peer {
+            let mut peer_info = ContactInfo::new_localhost(&validator_pubkey, timestamp());
+            peer_info.set_tvu(Protocol::UDP, turbine_peer).unwrap();
+            cluster_info.insert_info(peer_info);
+        }
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
+        let cluster_nodes_cache =
+            ClusterNodesCache::<BroadcastStage>::new(1, Duration::from_secs(60));
+
+        let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
+        let entries = create_ticks(1, 0, Hash::default());
+        let (mut shreds, mut coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
+            &leader_keypair,
+            &entries,
+            true,
+            Hash::default(),
+            0,
+            0,
+            &mut ProcessShredsStats::default(),
+        );
+        // Four shreds of each kind, data first as a leader broadcasts them:
+        // few enough to keep the copies well inside a default socket receive
+        // buffer, so the tests do not depend on the host's rmem_default.
+        assert!(shreds.len() > 4 && coding_shreds.len() > 4);
+        shreds.truncate(4);
+        coding_shreds.truncate(4);
+        shreds.append(&mut coding_shreds);
+        let payloads = shreds
+            .iter()
+            .map(|shred| shred.payload().to_vec())
+            .collect();
+
+        let broadcast = move |socket: BroadcastSocket, receivers: &ShredReceivers| {
+            let mut transmit_stats = TransmitShredsStats::default();
+            broadcast_shreds(
+                socket,
+                &shreds,
+                &cluster_nodes_cache,
+                &AtomicInterval::default(),
+                &mut transmit_stats,
+                &cluster_info,
+                &bank_forks,
+                &leader_schedule_cache,
+                &SocketAddrSpace::Unspecified,
+                Some(receivers),
+            )
+            .map(|()| transmit_stats)
+        };
+        (broadcast, payloads)
+    }
+
+    #[test]
+    fn test_shred_receiver_addresses_get_every_shred_once_on_udp() {
+        let bind_receiver = || {
+            let socket = bind_to_localhost_unique().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            socket
+        };
+        let receiver_sockets = [bind_receiver(), bind_receiver()];
+        let receivers = ShredReceivers::new(
+            ShredReceiverAddresses::new(
+                receiver_sockets
+                    .iter()
+                    .map(|socket| socket.local_addr().unwrap()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let turbine_socket = bind_to_localhost_unique().unwrap();
+
+        // Only this node is in the cluster, so turbine has no destinations.
+        let (broadcast, payloads) = leader_broadcast(None);
+        let transmit_stats = broadcast(BroadcastSocket::Udp(&turbine_socket), &receivers).unwrap();
+        assert_eq!(transmit_stats.total_packets, 0);
+        assert_eq!(
+            transmit_stats.mirrored_packets,
+            payloads.len() * receiver_sockets.len()
+        );
+        assert_eq!(transmit_stats.dropped_packets_mirrored, 0);
+
+        // The socket is bound to the unspecified address, so the kernel picks
+        // the source IP; the port identifies it.
+        let source_port = receivers.socket.local_addr().unwrap().port();
+        for receiver in &receiver_sockets {
+            let mut buf = [0u8; 2048];
+            let mut got = HashSet::new();
+            for _ in 0..payloads.len() {
+                let (len, from) = receiver.recv_from(&mut buf).unwrap();
+                assert_eq!(from.port(), source_port);
+                assert!(got.insert(buf[..len].to_vec()));
+            }
+            assert_eq!(got, payloads);
+            // Exactly once: nothing more arrives.
+            assert!(receiver.recv_from(&mut buf).is_err());
+        }
+    }
+
+    /// On the XDP arm the turbine packets and the copies wait apart on a TX
+    /// queue: the copies are low priority, one item per shred for up to
+    /// SHRED_RECEIVERS_PER_XDP_ITEM receivers, those of data shreds ahead of
+    /// those of coding shreds, and a queue with no room left drops copies,
+    /// counted by kind, without failing the turbine broadcast.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_shred_receiver_copies_are_low_priority_on_xdp() {
+        use {
+            agave_xdp::{
+                transmitter::XdpSender as QueuesSender,
+                tx_loop::{Receiver as _, TxPacket as _},
+            },
+            solana_ledger::shred::{ShredType, wire::get_shred_type},
+            std::net::{Ipv4Addr, SocketAddrV4},
+        };
+        const QUEUES: usize = 2;
+        // Two items per shred: a full one and one more receiver.
+        const RECEIVERS: usize = SHRED_RECEIVERS_PER_XDP_ITEM + 1;
+
+        let localhost = |port| SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let receiver_addrs: Vec<_> = (0..RECEIVERS).map(|i| localhost(9001 + i as u16)).collect();
+        let receivers =
+            ShredReceivers::new(ShredReceiverAddresses::new(receiver_addrs.clone()).unwrap())
+                .unwrap();
+        // The cluster's one staked node is the turbine destination of every
+        // shred.
+        let turbine_peer = localhost(9000);
+        let (broadcast, payloads) = leader_broadcast(Some(turbine_peer));
+        let copies_per_call = payloads.len() * RECEIVERS;
+        let is_coding = |payload: &[u8]| get_shred_type(payload).unwrap() == ShredType::Code;
+        // Half the shreds of a call are data shreds.
+        assert_eq!(
+            payloads.iter().filter(|payload| is_coding(payload)).count() * 2,
+            payloads.len()
+        );
+        // Each channel holds one call's share of the copies of each kind and
+        // no more.
+        let items_per_call = payloads.len() * RECEIVERS.div_ceil(SHRED_RECEIVERS_PER_XDP_ITEM);
+        let items_of_a_kind_per_queue = items_per_call / 2 / QUEUES;
+        let (sender, queues) = QueuesSender::with_receivers(QUEUES, items_of_a_kind_per_queue);
+        let sender = XdpSender::new(sender, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8001));
+        // What the TX loops would send first: only turbine packets.
+        let turbine_packets = || {
+            let mut sent = HashSet::new();
+            for queue in &queues {
+                while let Ok(packet) = queue.try_recv() {
+                    assert_eq!(packet.dst_addrs().as_ref(), [turbine_peer]);
+                    sent.insert(packet.payload().to_vec());
+                }
+            }
+            sent
+        };
+
+        // The copies of the first call fill the low priority channels, so
+        // those of the second are dropped, and counted for every receiver,
+        // those of data shreds apart. The turbine packets go out both times.
+        for dropped in [0, copies_per_call] {
+            let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+            assert_eq!(transmit_stats.total_packets, payloads.len());
+            assert_eq!(transmit_stats.dropped_packets_xdp, 0);
+            assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
+            assert_eq!(transmit_stats.dropped_packets_mirrored, dropped);
+            assert_eq!(transmit_stats.dropped_packets_mirrored_data, dropped / 2);
+            assert_eq!(turbine_packets(), payloads);
+        }
+
+        // The copies of the first call: every shred once for every receiver.
+        let mut copies = HashSet::new();
+        for queue in &queues {
+            let mut queue_copies = 0;
+            let mut items = Vec::new();
+            while let Some(packet) = queue.try_recv_low_priority(|| true) {
+                let addrs = packet.dst_addrs().as_ref();
+                assert!(addrs.len() <= SHRED_RECEIVERS_PER_XDP_ITEM);
+                queue_copies += addrs.len();
+                items.push((is_coding(packet.payload()), addrs[0]));
+                for addr in addrs {
+                    assert!(copies.insert((packet.payload().to_vec(), *addr)));
+                }
+            }
+            // Like the turbine packets, the copies spread evenly over the TX
+            // queues.
+            assert_eq!(queue_copies, copies_per_call / QUEUES);
+            // A queue sends the copies of data shreds before those of coding
+            // shreds. Within each kind the receiver addresses ascend, so this
+            // is the order given: the groups listed last are queued last, and
+            // a channel that fills up refuses them first.
+            assert!(items.is_sorted());
+        }
+        let expected: HashSet<_> = payloads
+            .iter()
+            .flat_map(|payload| {
+                receiver_addrs
+                    .iter()
+                    .map(move |addr| (payload.clone(), *addr))
+            })
+            .collect();
+        assert_eq!(copies, expected);
+
+        // A queue that has sent the copies of data shreds has room for those
+        // of the next call, whatever copies of coding shreds still wait on
+        // it: only the copies of coding shreds are dropped.
+        broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+        assert_eq!(turbine_packets(), payloads);
+        for queue in &queues {
+            for _ in 0..items_of_a_kind_per_queue {
+                let packet = queue.try_recv_low_priority(|| true).unwrap();
+                assert!(!is_coding(packet.payload()));
+            }
+        }
+        let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+        assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
+        assert_eq!(transmit_stats.dropped_packets_mirrored, copies_per_call / 2);
+        assert_eq!(transmit_stats.dropped_packets_mirrored_data, 0);
     }
 
     #[test]
