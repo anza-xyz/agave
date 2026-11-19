@@ -3,6 +3,7 @@
 
 mod instruction_data_len;
 pub(crate) mod instruction_meta;
+pub mod leader_transaction_notifier;
 pub mod runtime_transaction;
 pub mod signature_details;
 mod transaction_limits;

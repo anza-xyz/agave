@@ -18,8 +18,9 @@ use {
         },
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
-    solana_runtime_transaction::transaction_with_meta::{
-        StaticMessageWithMeta, TransactionWithMeta,
+    solana_runtime_transaction::{
+        leader_transaction_notifier::LeaderTransactionBatch,
+        transaction_with_meta::{StaticMessageWithMeta, TransactionWithMeta},
     },
     solana_svm::{
         account_loader::{TransactionCheckResult, fee_payer_load_filter, validate_fee_payer},
@@ -420,6 +421,28 @@ impl Consumer {
             processed_transactions
         });
 
+        let leader_batch = self
+            .transaction_recorder
+            .leader_transaction_notifier
+            .as_ref()
+            .map(|_| {
+                let mut notification = LeaderTransactionBatch::new(
+                    bank.slot(),
+                    bank.bank_id().into(),
+                    processed_transactions.len(),
+                    (entry_bytes - SERIALIZED_ENTRIES_OVERHEAD) as usize,
+                );
+                for (result, transaction) in processing_results
+                    .iter()
+                    .zip(batch.sanitized_transactions())
+                {
+                    if result.was_processed() {
+                        notification.push(transaction, result.flattened_result());
+                    }
+                }
+                notification
+            });
+
         // Handoff from the execution guard to the traditional freeze lock before recording. A
         // normal freeze only waits for this record/commit section, while bank retirement first
         // waits for execution guards and then for this lock.
@@ -474,6 +497,20 @@ impl Consumer {
                 execute_and_commit_timings,
                 error_counters,
             };
+        }
+
+        if let Some(notification) = leader_batch
+            && !notification.is_empty()
+        {
+            self.transaction_recorder
+                .leader_transaction_notifier
+                .as_ref()
+                .unwrap()
+                .notify_transactions(
+                    notification,
+                    starting_transaction_index
+                        .expect("leader notifications require transaction index tracking"),
+                );
         }
 
         let (commit_time_us, commit_transaction_statuses) =
@@ -762,6 +799,142 @@ mod tests {
         bank.store_account(&account_address, &account);
 
         account
+    }
+
+    #[test]
+    fn test_leader_notifications_without_transaction_status_sender() {
+        use solana_runtime_transaction::leader_transaction_notifier::{
+            LeaderNotification, LeaderTransactionNotifier,
+        };
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            mut consumer,
+            ..
+        } = setup_test(None);
+        let (record_sender, mut records) = record_channels(true);
+        records.restart(bank.bank_id());
+        consumer.transaction_recorder = TransactionRecorder::new(record_sender);
+        let (notifier, notifications) = LeaderTransactionNotifier::channel(8);
+        consumer.transaction_recorder.leader_transaction_notifier = Some(notifier);
+        let recipient = Pubkey::new_unique();
+        // The rejected transaction must not consume an index.
+        let original = vec![
+            system_transaction::transfer(
+                &mint_keypair,
+                &recipient,
+                1,
+                bank.confirmed_last_blockhash(),
+            ),
+            system_transaction::transfer(&mint_keypair, &recipient, 2, Hash::new_unique()),
+            system_transaction::transfer(
+                &mint_keypair,
+                &recipient,
+                u64::MAX,
+                bank.confirmed_last_blockhash(),
+            ),
+        ];
+        let transactions = sanitize_transactions(original.clone());
+        let output = consumer.process_and_record_transactions(&bank, &transactions);
+        assert!(
+            output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_ok()
+        );
+        let LeaderNotification::Transactions(batch) = notifications.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(batch.bank_id, u64::from(bank.bank_id()));
+        assert_eq!(batch.starting_index, 0);
+        let delivered: Vec<_> = batch.transactions().collect();
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(
+            delivered[0].0,
+            wincode::serialize(&VersionedTransaction::from(original[0].clone())).unwrap()
+        );
+        assert!(delivered[0].1.is_ok());
+        assert_eq!(
+            delivered[1].0,
+            wincode::serialize(&VersionedTransaction::from(original[2].clone())).unwrap()
+        );
+        assert!(delivered[1].1.is_err());
+        assert!(notifications.is_empty());
+
+        // A recorder rejection must not leak a successful execution observation.
+        records.shutdown();
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &mint_keypair,
+            &recipient,
+            3,
+            bank.confirmed_last_blockhash(),
+        )]);
+        let output = consumer.process_and_record_transactions(&bank, &transactions);
+        assert!(
+            output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_err()
+        );
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn test_leader_notifications_rollback_and_backpressure() {
+        use solana_runtime_transaction::leader_transaction_notifier::LeaderTransactionNotifier;
+        let TestFrame {
+            mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            mut consumer,
+            ..
+        } = setup_test(None);
+        let (record_sender, mut records) = record_channels(true);
+        records.restart(bank.bank_id());
+        consumer.transaction_recorder = TransactionRecorder::new(record_sender);
+        let (notifier, notifications) = LeaderTransactionNotifier::channel(0);
+        consumer.transaction_recorder.leader_transaction_notifier = Some(notifier.clone());
+        let recipient = Pubkey::new_unique();
+        let transactions = sanitize_transactions(vec![
+            system_transaction::transfer(
+                &mint_keypair,
+                &recipient,
+                1,
+                bank.confirmed_last_blockhash(),
+            ),
+            system_transaction::transfer(&mint_keypair, &recipient, 2, Hash::new_unique()),
+        ]);
+        let output = consumer.process_and_record_transactions_with_pre_results(
+            &bank,
+            &transactions,
+            vec![Ok(()), Err(TransactionError::BlockhashNotFound)].into_iter(),
+            &ExecutionFlags {
+                simulate: false,
+                drop_on_failure: true,
+                all_or_nothing: true,
+            },
+        );
+        assert_eq!(
+            output
+                .execute_and_commit_transactions_output
+                .transaction_counts
+                .processed_count,
+            0
+        );
+        assert!(notifications.is_empty());
+        assert_eq!(notifier.dropped(), (0, 0));
+        assert_eq!(bank.get_balance(&recipient), 0);
+
+        let output = consumer.process_and_record_transactions(&bank, &transactions[..1]);
+        assert!(
+            output
+                .execute_and_commit_transactions_output
+                .commit_transactions_result
+                .is_ok()
+        );
+        assert_eq!(bank.get_balance(&recipient), 1);
+        assert_eq!(notifier.dropped(), (1, 0));
     }
 
     #[test]

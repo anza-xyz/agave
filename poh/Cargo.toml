@@ -41,6 +41,7 @@ solana-metrics = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
+solana-runtime-transaction = { workspace = true }
 solana-transaction = { workspace = true }
 thiserror = { workspace = true }
 

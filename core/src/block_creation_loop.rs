@@ -51,6 +51,9 @@ use {
         validated_block_finalization::ValidatedBlockFinalizationCert,
         validated_reward_certificate::ValidatedRewardCert,
     },
+    solana_runtime_transaction::leader_transaction_notifier::{
+        LeaderBankStatus, LeaderTransactionNotifier,
+    },
     solana_transaction::versioned::VersionedTransaction,
     solana_version::version,
     stats::{LoopMetrics, SlotMetrics},
@@ -147,6 +150,7 @@ pub struct BlockCreationLoopConfig {
     // Notifiers
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
+    pub leader_transaction_notifier: Option<LeaderTransactionNotifier>,
     pub transaction_status_sender: Option<TransactionStatusSender>,
 
     // Receivers / notifications from banking stage / replay / votor
@@ -184,6 +188,7 @@ struct LeaderContext {
     rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     entry_notification_sender: Option<EntryNotifierSender>,
+    leader_transaction_notifier: Option<LeaderTransactionNotifier>,
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_highest_frozen: Arc<ReplayHighestFrozen>,
     reward_certs_requestor: CertsRequestor,
@@ -265,6 +270,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         rpc_subscriptions,
         slot_status_notifier,
         entry_notification_sender,
+        leader_transaction_notifier,
         transaction_status_sender,
         record_receiver,
         leader_window_info_receiver,
@@ -302,6 +308,7 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         rpc_subscriptions,
         slot_status_notifier,
         entry_notification_sender,
+        leader_transaction_notifier,
         transaction_status_sender,
         replay_highest_frozen,
         reward_certs_requestor,
@@ -898,7 +905,21 @@ fn record_and_complete_block(
     // Root advancement can retire and purge this Bank concurrently with block completion. Hold
     // execution token through remaining mutations.
     let Some(_completion_guard) = bank.try_enter_transaction_execution() else {
-        // Bank is being retired!
+        // Bank is being retired. Wait for recorded batches before the terminal event.
+        bank.wait_for_inflight_commits();
+        if let Some(notifier) = &ctx.leader_transaction_notifier {
+            notifier.notify_bank(
+                bank.slot(),
+                bank.parent_slot(),
+                bank.bank_id().into(),
+                LeaderBankStatus::Abandoned {
+                    transaction_count: ctx
+                        .record_receiver
+                        .recorded_transaction_count(bank.bank_id())
+                        .unwrap_or(0) as u64,
+                },
+            );
+        }
         w_poh_recorder.clear_bank(true);
         return Err(PohRecorderError::WindowMovedOn(bank_slot));
     };
@@ -943,6 +964,19 @@ fn record_and_complete_block(
 
     // Write the single tick for this slot
     w_poh_recorder.tick_alpenglow(max_tick_height, footer)?;
+    if let Some(notifier) = &ctx.leader_transaction_notifier {
+        notifier.notify_bank(
+            bank.slot(),
+            bank.parent_slot(),
+            bank.bank_id().into(),
+            LeaderBankStatus::Frozen {
+                transaction_count: ctx
+                    .record_receiver
+                    .recorded_transaction_count(bank.bank_id())
+                    .unwrap_or(0) as u64,
+            },
+        );
+    }
     Ok(())
 }
 
@@ -1012,6 +1046,19 @@ fn abort_working_bank(ctx: &mut LeaderContext, slot: Slot) -> Result<(), BankFor
         .parent()
         .unwrap_or_else(|| ctx.bank_forks.read().unwrap().root_bank());
     bank.quiesce_transaction_execution();
+    if let Some(notifier) = &ctx.leader_transaction_notifier {
+        notifier.notify_bank(
+            bank.slot(),
+            bank.parent_slot(),
+            bank.bank_id().into(),
+            LeaderBankStatus::Abandoned {
+                transaction_count: ctx
+                    .record_receiver
+                    .recorded_transaction_count(bank.bank_id())
+                    .unwrap_or(0) as u64,
+            },
+        );
+    }
     ctx.bank_forks_controller.clear_bank(slot)?;
     reset_poh_recorder(&reset_bank, ctx);
     Ok(())
@@ -1097,6 +1144,19 @@ fn handle_parent_ready(
         ))?;
     let cleared_bank_id = bank.bank_id();
     bank.quiesce_transaction_execution();
+    if let Some(notifier) = &ctx.leader_transaction_notifier {
+        notifier.notify_bank(
+            bank.slot(),
+            bank.parent_slot(),
+            bank.bank_id().into(),
+            LeaderBankStatus::Abandoned {
+                transaction_count: ctx
+                    .record_receiver
+                    .recorded_transaction_count(bank.bank_id())
+                    .unwrap_or(0) as u64,
+            },
+        );
+    }
     let entry_bytes_consumed = bank.entry_bytes_budget().consumed();
     ctx.bank_forks_controller
         .clear_bank(slot)
@@ -1473,6 +1533,9 @@ fn create_and_insert_leader_bank(
         return Err(StartLeaderError::PohRecorder(err));
     }
 
+    if let Some(notifier) = &ctx.leader_transaction_notifier {
+        notifier.notify_bank(slot, parent_slot, bank_id.into(), LeaderBankStatus::Created);
+    }
     // Wakeup banking stage
     ctx.record_receiver.restart(bank_id);
 
@@ -1611,7 +1674,7 @@ mod tests {
             poh_recorder.enable_alpenglow();
             let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-            let (record_sender, record_receiver) = record_channels(false);
+            let (record_sender, record_receiver) = record_channels(true);
             let (leader_window_info_sender, leader_window_info_receiver) = bounded(1024);
             let (banking_stage_sender, banking_stage_receiver) =
                 banking_channels::channel_for_test();
@@ -1636,6 +1699,7 @@ mod tests {
                 rpc_subscriptions: None,
                 slot_status_notifier: None,
                 entry_notification_sender: None,
+                leader_transaction_notifier: None,
                 transaction_status_sender: None,
                 replay_highest_frozen: Arc::new(ReplayHighestFrozen::default()),
                 reward_certs_requestor,
@@ -1899,6 +1963,86 @@ mod tests {
     }
 
     #[test]
+    fn test_leader_notification_frozen_bank() {
+        use solana_runtime_transaction::leader_transaction_notifier::LeaderNotification;
+        let identity = Pubkey::new_unique();
+        let fixture = TestFixture::new(identity, identity, None, (1, 1));
+        let TestFixture {
+            mut ctx,
+            root_bank,
+            entry_receiver,
+            ..
+        } = fixture;
+        let (notifier, receiver) = LeaderTransactionNotifier::channel(8);
+        ctx.leader_transaction_notifier = Some(notifier);
+        create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
+        let bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
+        let bank_id = u64::from(bank.bank_id());
+        // Replay observes the completed bank before broadcast receives the footer/tick.
+        let (ready_sender, ready_receiver) = bounded(1);
+        let replay = std::thread::spawn(move || {
+            ready_sender.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !bank.is_complete() {
+                assert!(Instant::now() < deadline, "leader did not finish the bank");
+                std::thread::yield_now();
+            }
+            bank.freeze();
+        });
+        ready_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let result = record_and_complete_block(
+            &mut ctx,
+            &mut SlotMetrics::new(1, false),
+            1,
+            None,
+            None,
+            &mut Instant::now(),
+            Duration::ZERO,
+        );
+        replay.join().unwrap();
+        result.unwrap();
+        // Preserve the broadcast receiver until completion has sent the footer and tick.
+        drop(entry_receiver);
+        let events: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(events[0], LeaderNotification::Bank { bank_id: id, status: LeaderBankStatus::Created, .. } if id == bank_id)
+        );
+        assert!(
+            matches!(events[1], LeaderNotification::Bank { bank_id: id, status: LeaderBankStatus::Frozen { transaction_count: 0 }, .. } if id == bank_id)
+        );
+    }
+
+    #[test]
+    fn test_leader_notification_bank_replacement() {
+        use solana_runtime_transaction::leader_transaction_notifier::LeaderNotification;
+        let identity = Pubkey::new_unique();
+        let fixture = TestFixture::new(identity, identity, None, (1, 1));
+        let TestFixture {
+            mut ctx, root_bank, ..
+        } = fixture;
+        let (notifier, receiver) = LeaderTransactionNotifier::channel(8);
+        ctx.leader_transaction_notifier = Some(notifier);
+        create_and_insert_leader_bank(1, root_bank.clone(), 0, &mut ctx).unwrap();
+        let old_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
+        abort_failed_working_bank(&mut ctx, 1).unwrap();
+        create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
+        let new_id = ctx.poh_recorder.read().unwrap().bank().unwrap().bank_id();
+        assert_ne!(old_id, new_id);
+        let events: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(events.len(), 3);
+        assert!(
+            matches!(events[0], LeaderNotification::Bank { slot: 1, bank_id, status: LeaderBankStatus::Created, .. } if bank_id == u64::from(old_id))
+        );
+        assert!(
+            matches!(events[1], LeaderNotification::Bank { slot: 1, bank_id, status: LeaderBankStatus::Abandoned { transaction_count: 0 }, .. } if bank_id == u64::from(old_id))
+        );
+        assert!(
+            matches!(events[2], LeaderNotification::Bank { slot: 1, bank_id, status: LeaderBankStatus::Created, .. } if bank_id == u64::from(new_id))
+        );
+    }
+
+    #[test]
     fn test_abort_failed_working_bank() {
         let my_pubkey = Pubkey::new_unique();
         let fixture = TestFixture::new(my_pubkey, my_pubkey, None, (1, 1));
@@ -2046,6 +2190,8 @@ mod tests {
             ..
         } = fixture;
         let bank_forks = ctx.bank_forks.clone();
+        let (leader_notifier, leader_notifications) = LeaderTransactionNotifier::channel(8);
+        ctx.leader_transaction_notifier = Some(leader_notifier);
 
         let new_parent_slot = 1;
         let new_parent_block_id = BlockId::new_unique();
@@ -2153,6 +2299,19 @@ mod tests {
         assert_eq!(
             purge_transactions.as_slice(),
             &[accumulated_tx.clone(), drained_tx.clone()]
+        );
+
+        use solana_runtime_transaction::leader_transaction_notifier::LeaderNotification;
+        let events: Vec<_> = leader_notifications.try_iter().collect();
+        assert_eq!(events.len(), 3);
+        assert!(
+            matches!(events[0], LeaderNotification::Bank { bank_id, status: LeaderBankStatus::Created, .. } if bank_id == u64::from(optimistic_bank_id))
+        );
+        assert!(
+            matches!(events[1], LeaderNotification::Bank { bank_id, status: LeaderBankStatus::Abandoned { .. }, .. } if bank_id == u64::from(optimistic_bank_id))
+        );
+        assert!(
+            matches!(events[2], LeaderNotification::Bank { bank_id, status: LeaderBankStatus::Created, .. } if bank_id == u64::from(new_bank.bank_id()))
         );
 
         assert_eq!(new_bank.slot(), leader_slot);

@@ -218,6 +218,10 @@ impl<D: AsRef<[u8]>> StaticTransactionWithMeta for RuntimeTransaction<SanitizedT
         to_versioned_transaction(&self.transaction)
     }
 
+    fn append_transaction_bytes(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.transaction.data());
+    }
+
     fn serialized_size(&self) -> usize {
         self.transaction.data().len()
     }
@@ -226,6 +230,10 @@ impl<D: AsRef<[u8]>> StaticTransactionWithMeta for RuntimeTransaction<SanitizedT
 impl<D: AsRef<[u8]>> StaticTransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
     fn to_versioned_transaction(&self) -> VersionedTransaction {
         to_versioned_transaction(&self.transaction)
+    }
+
+    fn append_transaction_bytes(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.transaction.data());
     }
 
     fn serialized_size(&self) -> usize {
@@ -394,6 +402,10 @@ mod tests {
             )
             .unwrap();
 
+            let mut copied = vec![99];
+            runtime_transaction.append_transaction_bytes(&mut copied);
+            assert_eq!(&copied[1..], bytes.as_slice());
+            assert_eq!(copied[0], 99);
             let versioned_transaction = runtime_transaction.to_versioned_transaction();
             assert_eq!(original_transaction, versioned_transaction);
         }
@@ -408,6 +420,28 @@ mod tests {
             Hash::new_unique(),
         ));
         assert_translation(original_transaction, None, &reserved_key_set);
+
+        let payer = Pubkey::new_unique();
+        assert_translation(
+            VersionedTransaction {
+                signatures: vec![Signature::default()],
+                message: VersionedMessage::V1(
+                    solana_message::v1::Message::try_compile_with_config(
+                        &payer,
+                        &[system_instruction::transfer(
+                            &payer,
+                            &Pubkey::new_unique(),
+                            1,
+                        )],
+                        Hash::default(),
+                        solana_message::v1::TransactionConfig::empty(),
+                    )
+                    .unwrap(),
+                ),
+            },
+            None,
+            &reserved_key_set,
+        );
 
         // Simple transfer with loaded addresses.
         let payer = Pubkey::new_unique();
