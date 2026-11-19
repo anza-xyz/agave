@@ -738,7 +738,6 @@ mod tests {
 
         let decision_maker = DecisionMaker::new(
             shared_leader_state.clone(),
-            bank_forks.read().unwrap().migration_status(),
             SharedAlpenglowSlotClock::default(),
         );
 
