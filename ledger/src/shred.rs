@@ -1528,4 +1528,16 @@ mod tests {
             assert!(other.is_shred_duplicate(shred));
         }
     }
+
+    #[test]
+    fn option_shred_adds_no_tag() {
+        // ErasureBatch construction relies on the ability of the compiler to embed the None tag
+        // within Shred to allow collecting Vec<Option<Shred>> in-place into Box<[Shred; N]> without
+        // reallocating. Failure of the assertion does not lead to a run-time error, rather the
+        // entire FEC set gets reallocated and moved.
+        assert_eq!(
+            std::mem::size_of::<Option<Shred>>(),
+            std::mem::size_of::<Shred>()
+        );
+    }
 }
