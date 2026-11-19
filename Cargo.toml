@@ -205,7 +205,7 @@ agave-event-system-derive = "0.3.0"
 agave-feature-set = { path = "feature-set", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-fs = { path = "fs", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-geyser-plugin-host = { path = "geyser-plugin-host", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
-agave-geyser-plugin-interface = "=9.0.0-alpha.0"
+agave-geyser-plugin-interface = { version = "=9.0.0-alpha.0", git = "https://github.com/sam0x17/agave-sdk", rev = "cf47062a0f768c76674eacbd14bb4441534ea00b" }
 agave-io-uring = { path = "io-uring", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-jemalloc = { path = "jemalloc", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-logger = { path = "logger", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
@@ -630,7 +630,6 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
-agave-geyser-plugin-interface = { git = "https://github.com/sam0x17/agave-sdk", rev = "cf47062a0f768c76674eacbd14bb4441534ea00b" }
 blstrs = { git = "https://github.com/anza-xyz/blstrs", rev = "a1faffa3420bdaf4102425c43f00cdd815d4f145" }
 # for details, see https://github.com/anza-xyz/crossbeam/commit/5ee1c6ec671d94db14ed9238eb99e59a84555aad
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
