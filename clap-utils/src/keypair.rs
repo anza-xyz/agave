@@ -399,6 +399,7 @@ const SIGNER_SOURCE_FILEPATH: &str = "file";
 const SIGNER_SOURCE_USB: &str = "usb";
 const SIGNER_SOURCE_STDIN: &str = "stdin";
 const SIGNER_SOURCE_PUBKEY: &str = "pubkey";
+const SIGNER_SOURCE_AWS_KMS: &str = "aws-kms";
 
 pub(crate) enum SignerSourceKind {
     Prompt,
@@ -406,6 +407,8 @@ pub(crate) enum SignerSourceKind {
     Usb(RemoteWalletLocator),
     Stdin,
     Pubkey(Pubkey),
+    #[cfg(feature = "aws-kms")]
+    AwsKms(crate::aws_kms::AwsKmsKey),
 }
 
 impl AsRef<str> for SignerSourceKind {
@@ -416,6 +419,8 @@ impl AsRef<str> for SignerSourceKind {
             Self::Usb(_) => SIGNER_SOURCE_USB,
             Self::Stdin => SIGNER_SOURCE_STDIN,
             Self::Pubkey(_) => SIGNER_SOURCE_PUBKEY,
+            #[cfg(feature = "aws-kms")]
+            Self::AwsKms(_) => SIGNER_SOURCE_AWS_KMS,
         }
     }
 }
@@ -431,6 +436,15 @@ impl std::fmt::Debug for SignerSourceKind {
 pub(crate) enum SignerSourceError {
     #[error("unrecognized signer source")]
     UnrecognizedSource,
+    #[cfg(feature = "aws-kms")]
+    #[error(
+        "invalid AWS KMS signer source, expected \
+         `aws-kms:<key-id|key-arn|alias/name>[?region=<region>]`"
+    )]
+    InvalidAwsKmsSource,
+    #[cfg(not(feature = "aws-kms"))]
+    #[error("AWS KMS signer sources require a build with the `aws-kms` feature")]
+    AwsKmsNotEnabled,
     #[error(transparent)]
     RemoteWalletLocatorError(#[from] RemoteWalletLocatorError),
     #[error(transparent)]
@@ -462,6 +476,21 @@ pub(crate) fn parse_signer_source<S: AsRef<str>>(
             source.to_string()
         }
     };
+    // Parsed before the URI, because key and alias ARNs are not valid URI authorities.
+    if let Some((_, key)) = source
+        .split_once(':')
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case(SIGNER_SOURCE_AWS_KMS))
+    {
+        #[cfg(feature = "aws-kms")]
+        return crate::aws_kms::AwsKmsKey::parse(key)
+            .map(|key| SignerSource::new(SignerSourceKind::AwsKms(key)))
+            .ok_or(SignerSourceError::InvalidAwsKmsSource);
+        #[cfg(not(feature = "aws-kms"))]
+        return {
+            let _ = key;
+            Err(SignerSourceError::AwsKmsNotEnabled)
+        };
+    }
     match uriparse::URIReference::try_from(source.as_str()) {
         Err(_) => std::fs::metadata(source.as_str())
             .map(|_| SignerSource::new(SignerSourceKind::Filepath(source)))
@@ -817,6 +846,8 @@ pub fn signer_from_path_with_config(
                 .into())
             }
         }
+        #[cfg(feature = "aws-kms")]
+        SignerSourceKind::AwsKms(key) => Ok(Box::new(crate::aws_kms::AwsKmsSigner::new(key)?)),
     }
 }
 
@@ -1158,6 +1189,45 @@ mod tests {
             signer_info.signers[1].pubkey(),
         ];
         assert_eq!(signer_pubkeys, expect);
+    }
+
+    #[test]
+    #[cfg(feature = "aws-kms")]
+    fn test_parse_signer_source_aws_kms() {
+        for source in [
+            "aws-kms://alias/treasury?region=eu-west-1",
+            "AWS-KMS:alias/treasury?region=eu-west-1",
+        ] {
+            assert_matches!(
+                parse_signer_source(source).unwrap(),
+                SignerSource {
+                    kind: SignerSourceKind::AwsKms(crate::aws_kms::AwsKmsKey { key_id, region }),
+                    derivation_path: None,
+                    legacy: false,
+                } if key_id == "alias/treasury" && region.as_deref() == Some("eu-west-1")
+            );
+        }
+        let arn = "arn:aws:kms:us-east-2:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab";
+        assert_matches!(
+            parse_signer_source(format!("aws-kms:{arn}")).unwrap(),
+            SignerSource {
+                kind: SignerSourceKind::AwsKms(crate::aws_kms::AwsKmsKey { key_id, region }),
+                ..
+            } if key_id == arn && region.as_deref() == Some("us-east-2")
+        );
+        assert_matches!(
+            parse_signer_source("aws-kms://"),
+            Err(SignerSourceError::InvalidAwsKmsSource)
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "aws-kms"))]
+    fn test_parse_signer_source_aws_kms_not_enabled() {
+        assert_matches!(
+            parse_signer_source("aws-kms://alias/treasury"),
+            Err(SignerSourceError::AwsKmsNotEnabled)
+        );
     }
 
     #[test]

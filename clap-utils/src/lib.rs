@@ -28,6 +28,8 @@ pub fn hidden_unless_forced() -> bool {
     std::env::var("SOLANA_NO_HIDDEN_CLI_ARGS").is_err()
 }
 
+#[cfg(feature = "aws-kms")]
+pub mod aws_kms;
 pub mod compute_budget;
 pub mod fee_payer;
 pub mod input_parsers;
