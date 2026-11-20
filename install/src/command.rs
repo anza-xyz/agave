@@ -194,6 +194,16 @@ fn load_release_target(release_dir: &Path) -> Result<String, String> {
     Ok(version.target)
 }
 
+fn path_export_command(shell: &str, bin_dir: &Path) -> Option<String> {
+    let shell_name = Path::new(shell).file_name()?.to_str()?;
+
+    match shell_name {
+        "fish" => Some(format!("set -gx PATH \"{}\" $PATH", bin_dir.display())),
+        "bash" | "zsh" | "sh" => Some(format!("export PATH=\"{}:$PATH\"", bin_dir.display())),
+        _ => None,
+    }
+}
+
 /// Bug the user if active_release_bin_dir is not in their PATH
 fn check_env_path_for_bin_dir(config: &Config) {
     use std::env;
@@ -215,11 +225,22 @@ fn check_env_path_for_bin_dir(config: &Config) {
     };
 
     if !found {
-        println!(
-            "\nPlease update your PATH environment variable to include the solana programs:\n    \
-             PATH=\"{}:$PATH\"\n",
-            config.active_release_bin_dir().to_str().unwrap()
-        );
+        let shell = std::env::var("SHELL").unwrap_or_default();
+        let bin_dir = config.active_release_bin_dir();
+
+        match path_export_command(&shell, &bin_dir) {
+            Some(command) => {
+                println!(
+                    "\nPlease update your PATH environment variable to include the Solana programs:\n    {command}\n"
+                );
+            }
+            None => {
+                println!(
+                    "\nPlease add {} to your shell's PATH manually.\n",
+                    bin_dir.display()
+                );
+            }
+        }
     }
 }
 
@@ -287,6 +308,23 @@ fn get_windows_path_var() -> Result<Option<String>, String> {
         Err(ref e) if e.kind() == io::ErrorKind::NotFound => Ok(Some(String::new())),
         Err(e) => Err(e.to_string()),
     }
+}
+
+#[cfg(unix)]
+fn select_shell_profile(shell: &str, home: &Path, zdotdir: Option<&Path>) -> Option<PathBuf> {
+    let shell_name = Path::new(shell).file_name()?.to_str()?;
+
+    let (directory, candidates): (&Path, &[&str]) = match shell_name {
+        "bash" => (home, &[".bash_profile", ".bash_login", ".profile"]),
+        "zsh" => (zdotdir.unwrap_or(home), &[".zshrc", ".zprofile"]),
+        "sh" => (home, &[".profile"]),
+        _ => return None,
+    };
+
+    candidates
+        .iter()
+        .map(|name| directory.join(name))
+        .find(|path| path.is_file())
 }
 
 #[cfg(windows)]
@@ -365,27 +403,14 @@ fn add_to_path(new_path: &str) -> bool {
     let shell_export_string = format!("\nexport PATH=\"{new_path}:$PATH\"");
     let mut modified_rcfiles = false;
 
-    // Look for sh, bash, and zsh rc files
-    let mut rcfiles = vec![dirs_next::home_dir().map(|p| p.join(".profile"))];
-    if let Ok(shell) = std::env::var("SHELL")
-        && shell.contains("zsh")
-    {
-        let zdotdir = std::env::var("ZDOTDIR")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(dirs_next::home_dir);
-        let zprofile = zdotdir.map(|p| p.join(".zprofile"));
-        rcfiles.push(zprofile);
-    }
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    let home_dir = dirs_next::home_dir();
+    let zdotdir = std::env::var_os("ZDOTDIR").map(PathBuf::from);
 
-    if let Some(bash_profile) = dirs_next::home_dir().map(|p| p.join(".bash_profile")) {
-        // Only update .bash_profile if it exists because creating .bash_profile
-        // will cause .profile to not be read
-        if bash_profile.exists() {
-            rcfiles.push(Some(bash_profile));
-        }
-    }
-    let rcfiles = rcfiles.into_iter().filter_map(|f| f.filter(|f| f.exists()));
+    let rcfiles = home_dir
+        .as_deref()
+        .and_then(|home| select_shell_profile(&shell, home, zdotdir.as_deref()))
+        .into_iter();
 
     // For each rc file, append a PATH entry if not already present
     for rcfile in rcfiles {
@@ -1062,4 +1087,119 @@ pub fn list(config_file: &str) -> Result<(), String> {
         };
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{path_export_command, select_shell_profile};
+    use std::{fs, path::Path};
+    use tempfile::tempdir;
+
+    #[test]
+    fn select_shell_profile_bash() {
+        let home = tempdir().unwrap();
+
+        fs::write(home.path().join(".profile"), "").unwrap();
+        fs::write(home.path().join(".bash_profile"), "").unwrap();
+
+        let result = select_shell_profile("/bin/bash", home.path(), None);
+
+        assert_eq!(result, Some(home.path().join(".bash_profile")));
+    }
+
+    #[test]
+    fn select_shell_profile_zsh() {
+        let home = tempdir().unwrap();
+        let zdotdir = tempdir().unwrap();
+
+        fs::write(zdotdir.path().join(".zprofile"), "").unwrap();
+
+        let result = select_shell_profile("/bin/zsh", home.path(), Some(zdotdir.path()));
+
+        assert_eq!(result, Some(zdotdir.path().join(".zprofile")));
+    }
+
+    #[test]
+    fn select_shell_profile_sh() {
+        let home = tempdir().unwrap();
+        fs::write(home.path().join(".profile"), "").unwrap();
+
+        let result = select_shell_profile("/bin/sh", home.path(), None);
+
+        assert_eq!(result, Some(home.path().join(".profile")));
+    }
+
+    #[test]
+    fn select_shell_profile_fish() {
+        let home = tempdir().unwrap();
+        fs::write(home.path().join(".bash_profile"), "").unwrap();
+
+        let result = select_shell_profile("/usr/bin/fish", home.path(), None);
+
+        assert_eq!(result, None);
+    }
+    #[test]
+    fn select_shell_profile_bash_fallback() {
+        let home = tempdir().unwrap();
+        fs::write(home.path().join(".profile"), "").unwrap();
+
+        let result = select_shell_profile("/bin/bash", home.path(), None);
+
+        assert_eq!(result, Some(home.path().join(".profile")));
+    }
+
+    #[test]
+    fn select_shell_profile_zsh_fallback() {
+        let home = tempdir().unwrap();
+        fs::write(home.path().join(".zshrc"), "").unwrap();
+
+        let result = select_shell_profile("/bin/zsh", home.path(), None);
+
+        assert_eq!(result, Some(home.path().join(".zshrc")));
+    }
+    #[test]
+    fn path_export_command_fish() {
+        let bin_dir = Path::new("/opt/solana/bin");
+
+        let result = path_export_command("/usr/bin/fish", bin_dir);
+
+        assert_eq!(
+            result.as_deref(),
+            Some("set -gx PATH \"/opt/solana/bin\" $PATH")
+        );
+    }
+
+    #[test]
+    fn path_export_command_posix_shells() {
+        let bin_dir = Path::new("/opt/solana/bin");
+
+        for shell in ["/bin/bash", "/bin/zsh", "/bin/sh"] {
+            let result = path_export_command(shell, bin_dir);
+
+            assert_eq!(
+                result.as_deref(),
+                Some("export PATH=\"/opt/solana/bin:$PATH\"")
+            );
+        }
+    }
+
+    #[test]
+    fn path_export_command_unknown_shell() {
+        let bin_dir = Path::new("/opt/solana/bin");
+
+        let result = path_export_command("/usr/bin/unknown-shell", bin_dir);
+
+        assert_eq!(result, None);
+    }
+    #[test]
+    fn select_shell_profile_zsh_prefers_zshrc() {
+        let home = tempdir().unwrap();
+
+        fs::write(home.path().join(".zprofile"), "").unwrap();
+        fs::write(home.path().join(".zshrc"), "").unwrap();
+
+        let result = select_shell_profile("/bin/zsh", home.path(), None);
+
+        assert_eq!(result, Some(home.path().join(".zshrc")));
+    }
 }
