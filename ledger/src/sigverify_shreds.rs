@@ -1,6 +1,9 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred,
+    crate::{
+        blockstore_meta::BlockLocation,
+        shred::{self, Shred},
+    },
     solana_clock::Slot,
     solana_hash::Hash,
     solana_nohash_hasher::BuildNoHashHasher,
@@ -16,41 +19,41 @@ pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash
 
 pub type SlotPubkeys = HashMap<Slot, Pubkey, BuildNoHashHasher<Slot>>;
 
+/// A sigverified shred sent to window service for insertion into blockstore.
+pub struct VerifiedShred {
+    pub shred: Shred,
+    pub is_repaired: bool,
+    pub location: BlockLocation,
+    pub merkle_root: Hash,
+}
+
+/// Verifies the leader signature of the shred in `packet` and returns its
+/// Merkle root if the signature is valid.
 #[must_use]
 pub fn verify_shred_cpu(
     packet: &BytesPacket,
     slot_leaders: &SlotPubkeys,
     cache: &RwLock<LruCache>,
-) -> bool {
+) -> Option<Hash> {
     if packet.meta().discard() {
-        return false;
+        return None;
     }
-    let Some(shred) = shred::layout::get_shred(packet) else {
-        return false;
-    };
-    let Some(slot) = shred::layout::get_slot(shred) else {
-        return false;
-    };
+    let shred = shred::layout::get_shred(packet)?;
+    let slot = shred::layout::get_slot(shred)?;
     trace!("slot {slot}");
-    let Some(pubkey) = slot_leaders.get(&slot) else {
-        return false;
-    };
-    let Some(signature) = shred::layout::get_signature(shred) else {
-        return false;
-    };
+    let pubkey = slot_leaders.get(&slot)?;
+    let signature = shred::layout::get_signature(shred)?;
     trace!("signature {signature}");
-    let Some(data) = shred::layout::get_merkle_root(shred) else {
-        return false;
-    };
+    let merkle_root = shred::layout::get_merkle_root(shred)?;
 
-    let key = (signature, *pubkey, data);
+    let key = (signature, *pubkey, merkle_root);
     if cache.read().unwrap().get(&key).is_some() {
-        true
+        Some(merkle_root)
     } else if key.0.verify(key.1.as_ref(), key.2.as_ref()) {
         cache.write().unwrap().put(key, ());
-        true
+        Some(merkle_root)
     } else {
-        false
+        None
     }
 }
 
@@ -105,7 +108,9 @@ mod tests {
     ) {
         for batch in batches {
             for packet in batch.iter_mut() {
-                if !packet.meta().discard() && !verify_shred_cpu(packet, slot_leaders, cache) {
+                if !packet.meta().discard()
+                    && verify_shred_cpu(packet, slot_leaders, cache).is_none()
+                {
                     packet.meta_mut().set_discard(true);
                 }
             }
@@ -140,14 +145,14 @@ mod tests {
         let packet = shred.payload().to_bytes_packet(None);
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache).is_some());
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache).is_none());
 
         let leader_slots: SlotPubkeys = HashMap::default();
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache).is_none());
     }
 
     #[test]
