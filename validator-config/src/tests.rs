@@ -244,11 +244,11 @@ fn test_invalid_schema_versions_are_rejected() {
 }
 
 #[test]
-fn test_invalid_references_are_rejected_even_when_xdp_is_disabled() {
+fn test_xdp_references_are_only_checked_when_enabled() {
     for (references, expected) in [
         (
-            "tpu.xdp.tx.queues = [1]",
-            "tpu.xdp.tx.queues references queue(s) 1 ",
+            "tpu.xdp.tx.queues = [99]",
+            "tpu.xdp.tx.queues references queue(s) 99 ",
         ),
         (
             "interfaces = {}",
@@ -259,12 +259,16 @@ fn test_invalid_references_are_rejected_even_when_xdp_is_disabled() {
             "gossip.xdp.tx.interface names \"missing\"",
         ),
     ] {
-        for enabled in [false, true] {
-            let contents = format!("schema_version = 1\nxdp.enabled = {enabled}\n{references}\n");
-            let error = load_config(&contents)
-                .expect_err("invalid references must be rejected whether or not XDP is enabled");
-            assert!(error.contains(expected), "{contents}: {error}");
-        }
+        let disabled = format!("schema_version = 1\nxdp.enabled = false\n{references}\n");
+        let (config, warnings) = parse(&disabled)
+            .expect("disabled XDP should accept undeclared interface and queue references");
+        assert!(config.resolve_xdp(&BTreeSet::new()).unwrap().is_none());
+        assert!(warnings.is_empty(), "{disabled}: {warnings:?}");
+
+        let enabled = format!("schema_version = 1\nxdp.enabled = true\n{references}\n");
+        let error = parse(&enabled).expect_err("enabled XDP should reject undeclared references");
+        assert_eq!(error.kind(), DiagnosticKind::InvalidReference);
+        assert!(error.to_string().contains(expected), "{enabled}: {error}");
     }
 }
 

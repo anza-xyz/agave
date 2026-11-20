@@ -270,12 +270,22 @@ fn validate_structural(config: &EffectiveConfig) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-/// Validate schema constraints and host-independent cross-references, selecting
-/// hardware queue IDs when XDP is enabled.
+/// Validate schema constraints. When XDP is enabled, check interface and queue
+/// references and select hardware queue IDs.
 pub(crate) fn validate(
     config: EffectiveConfig,
 ) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
     validate_structural(&config)?;
+    if !config.xdp.enabled {
+        return Ok((
+            ValidatedConfig {
+                effective: config,
+                xdp_queue_ids: None,
+            },
+            Vec::new(),
+        ));
+    }
+
     for (name, endpoint) in config.endpoints().named() {
         let label = &endpoint.tx.interface;
         let interface = config.interfaces.get(label).ok_or_else(|| {
@@ -315,15 +325,6 @@ pub(crate) fn validate(
                 .at_field([name, "xdp", "tx", "queues"]));
             }
         }
-    }
-    if !config.xdp.enabled {
-        return Ok((
-            ValidatedConfig {
-                effective: config,
-                xdp_queue_ids: None,
-            },
-            Vec::new(),
-        ));
     }
     validate_single_interface(&config)?;
     let (interface_label, interface) = config

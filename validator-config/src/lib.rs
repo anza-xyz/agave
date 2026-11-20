@@ -63,6 +63,7 @@ impl ValidatedConfig {
     }
 
     /// Effective XDP transmit settings for each endpoint, including when XDP is disabled.
+    /// Interface and queue references are validated when XDP is enabled.
     pub fn xdp_endpoints(&self) -> XdpEndpoints<&EndpointTx> {
         self.effective.endpoints().map(|&endpoint| &endpoint.tx)
     }
