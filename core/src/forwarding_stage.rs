@@ -294,7 +294,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                     RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                         transaction,
                         MessageHash::Compute,
-                        Some(packet.meta().is_simple_vote_tx()),
                     )
                     .map_err(|_| ())
                 })

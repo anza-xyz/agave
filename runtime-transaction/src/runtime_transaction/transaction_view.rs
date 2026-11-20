@@ -22,35 +22,21 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
-        simple_vote_transaction_checker::is_simple_vote_transaction_impl,
         versioned::VersionedTransaction,
     },
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{borrow::Cow, collections::HashSet},
 };
 
-fn is_simple_vote_transaction<D: AsRef<[u8]>>(transaction: &SanitizedTransactionView<D>) -> bool {
-    let signatures = transaction.signatures();
-    let is_legacy_message = matches!(transaction.version(), TransactionVersion::Legacy);
-    let instruction_programs = transaction
-        .program_instructions_iter()
-        .map(|(program_id, _ix)| program_id);
-
-    is_simple_vote_transaction_impl(signatures, is_legacy_message, instruction_programs)
-}
-
 impl<D: AsRef<[u8]>> RuntimeTransaction<SanitizedTransactionView<D>> {
     pub fn try_new(
         transaction: SanitizedTransactionView<D>,
         message_hash: MessageHash,
-        is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
-        from_sanitized_transaction_view(&transaction, message_hash, is_simple_vote_tx).map(|meta| {
-            RuntimeTransaction {
-                implicit_read_locks: Vec::new(),
-                transaction,
-                meta,
-            }
+        from_sanitized_transaction_view(&transaction, message_hash).map(|meta| RuntimeTransaction {
+            implicit_read_locks: Vec::new(),
+            transaction,
+            meta,
         })
     }
 }
@@ -59,14 +45,11 @@ impl<'a, D: AsRef<[u8]>> RuntimeTransaction<&'a SanitizedTransactionView<D>> {
     pub fn try_new(
         transaction: &'a SanitizedTransactionView<D>,
         message_hash: MessageHash,
-        is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
-        from_sanitized_transaction_view(transaction, message_hash, is_simple_vote_tx).map(|meta| {
-            RuntimeTransaction {
-                implicit_read_locks: Vec::new(),
-                transaction,
-                meta,
-            }
+        from_sanitized_transaction_view(transaction, message_hash).map(|meta| RuntimeTransaction {
+            implicit_read_locks: Vec::new(),
+            transaction,
+            meta,
         })
     }
 }
@@ -74,7 +57,6 @@ impl<'a, D: AsRef<[u8]>> RuntimeTransaction<&'a SanitizedTransactionView<D>> {
 fn from_sanitized_transaction_view<D>(
     transaction: &SanitizedTransactionView<D>,
     message_hash: MessageHash,
-    is_simple_vote_tx: Option<bool>,
 ) -> Result<CachedTransactionMeta>
 where
     D: AsRef<[u8]>,
@@ -91,9 +73,6 @@ where
         MessageHash::Precomputed(hash) => hash,
         MessageHash::Compute => VersionedMessage::hash_raw_message(transaction.message_data()),
     };
-    let is_simple_vote_tx =
-        is_simple_vote_tx.unwrap_or_else(|| is_simple_vote_transaction(transaction));
-
     let InstructionMeta {
         precompile_signature_details,
         instruction_data_len,
@@ -112,7 +91,6 @@ where
 
     Ok(CachedTransactionMeta {
         message_hash,
-        is_simple_vote_transaction: is_simple_vote_tx,
         signature_details,
         versioned_transaction_config,
         instruction_data_len,
@@ -246,7 +224,6 @@ where
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,
-            None,
         )
         .expect("failed to create RuntimeTransaction from Transaction");
         let mut tx = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
@@ -312,7 +289,7 @@ impl<D: AsRef<[u8]>> TransactionWithMeta for RuntimeTransaction<ResolvedTransact
             SanitizedTransaction::try_new_from_fields(
                 message,
                 *self.message_hash(),
-                self.is_simple_vote_transaction(),
+                false,
                 signatures,
             )
             .expect("transaction view is sanitized"),
@@ -353,12 +330,10 @@ mod tests {
             RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction,
                 MessageHash::Precomputed(hash),
-                None,
             )
             .unwrap();
 
         assert_eq!(hash, *static_runtime_transaction.message_hash());
-        assert!(!static_runtime_transaction.is_simple_vote_transaction());
 
         let dynamic_runtime_transaction =
             RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
@@ -369,7 +344,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(hash, *dynamic_runtime_transaction.message_hash());
-        assert!(!dynamic_runtime_transaction.is_simple_vote_transaction());
     }
 
     #[test]
@@ -384,7 +358,6 @@ mod tests {
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
-                None,
             )
             .unwrap();
             let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
@@ -450,7 +423,6 @@ mod tests {
             let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 transaction_view,
                 MessageHash::Compute,
-                None,
             )
             .unwrap();
             let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
@@ -538,7 +510,6 @@ mod tests {
         let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             transaction_view,
             MessageHash::Compute,
-            None,
         )
         .unwrap();
         let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(

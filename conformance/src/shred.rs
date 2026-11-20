@@ -231,7 +231,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
                 Ok(view) => RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                     view,
                     MessageHash::Compute,
-                    None,
                 )
                 .is_err(),
                 Err(_) => true,
