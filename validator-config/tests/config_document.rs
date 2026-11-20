@@ -19,9 +19,9 @@ gossip.xdp.tx.queues = [0]
     assert!(!round_trip.as_table().contains_key("interfaces"));
 
     let (config, _) = round_trip.validate().unwrap();
-    let policy = config.xdp().unwrap();
-    assert_eq!(policy.queues().tpu, &[0]);
-    assert_eq!(policy.queues().gossip, &[0]);
+    let queues = config.xdp_queue_ids().unwrap();
+    assert_eq!(queues.tpu, &[0]);
+    assert_eq!(queues.gossip, &[0]);
     assert_eq!(config.xdp_endpoints().tpu.queues(), &QueueSelection::All);
     assert_eq!(
         config.xdp_endpoints().gossip.queues(),
@@ -33,14 +33,14 @@ gossip.xdp.tx.queues = [0]
     round_trip.as_table_mut().extend(worker_override);
     let updated = ConfigDocument::parse(&round_trip.to_toml().unwrap()).unwrap();
     let (config, _) = updated.validate().unwrap();
-    let policy = config.xdp().unwrap();
-    assert_eq!(policy.interface_label(), "primary");
+    assert_eq!(config.xdp_endpoints().tpu.interface(), "primary");
     assert_eq!(
-        policy.interface().device(),
+        config.interfaces()["primary"].device(),
         &NetworkDeviceSelector::Route(RouteSelector::Default)
     );
-    assert_eq!(policy.queues().tpu, &[0, 1]);
-    assert_eq!(policy.queues().gossip, &[0]);
+    let queues = config.xdp_queue_ids().unwrap();
+    assert_eq!(queues.tpu, &[0, 1]);
+    assert_eq!(queues.gossip, &[0]);
 }
 
 #[test]
@@ -67,7 +67,7 @@ tx.queues = [3]
     )
     .unwrap();
     assert!(!config.xdp_enabled());
-    assert!(config.xdp().is_none());
+    assert!(config.xdp_queue_ids().is_none());
     assert!(warnings.is_empty());
     assert_eq!(config.interfaces().len(), 2);
     let primary = &config.interfaces()["primary"];

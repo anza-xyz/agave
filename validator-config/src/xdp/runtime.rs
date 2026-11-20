@@ -1,8 +1,8 @@
 //! Resolving an XDP policy against the host CPUs.
 
 use {
-    super::{XdpEndpoints, XdpPolicy, XdpWorkerBinding, XdpWorkerPool, collect_worker_queue_ids},
-    crate::{Diagnostic, DiagnosticKind, NetworkDeviceSelector},
+    super::{XdpEndpoints, XdpWorkerBinding, XdpWorkerPool, collect_worker_queue_ids},
+    crate::{Diagnostic, DiagnosticKind, NetworkDeviceSelector, ValidatedConfig},
     std::collections::{BTreeMap, BTreeSet},
 };
 
@@ -65,31 +65,38 @@ fn resolve_declared_workers(
         .collect())
 }
 
-impl XdpPolicy {
-    /// Resolve this policy against the host CPUs.
+impl ValidatedConfig {
+    /// Resolve the enabled XDP settings against the host CPUs.
+    /// Returns `None` when XDP is disabled.
     /// All declared workers must avoid the PoH core, including unreferenced workers.
     /// On Linux, active workers must fit the transmitter's CPU affinity mask.
-    pub fn resolve(
+    pub fn resolve_xdp(
         &self,
         allowed_cpus: &BTreeSet<usize>,
         poh_core: Option<usize>,
-    ) -> Result<XdpRuntimeConfig, Diagnostic> {
+    ) -> Result<Option<XdpRuntimeConfig>, Diagnostic> {
+        let Some(queue_ids) = &self.xdp_queue_ids else {
+            return Ok(None);
+        };
         if allowed_cpus.is_empty() {
             return Err(Diagnostic::new(
                 DiagnosticKind::CpuResolution,
                 "cannot resolve XDP workers: the process CPU affinity is empty",
             ));
         }
-        let workers = &self.interface.xdp.workers;
+        let (interface_label, interface) = self
+            .interfaces()
+            .first_key_value()
+            .expect("validated enabled XDP config has exactly one interface");
+        let workers = &interface.xdp.workers;
         let worker_error = |message| {
             Diagnostic::new(DiagnosticKind::CpuResolution, message)
                 .at_field(workers.field_path().iter().copied())
-                .at_field(["interfaces", &self.interface_label, "xdp"])
+                .at_field(["interfaces", interface_label, "xdp"])
         };
         let declared =
             resolve_declared_workers(workers, allowed_cpus, poh_core).map_err(worker_error)?;
-        let active_ids: BTreeSet<_> = self
-            .queues
+        let active_ids: BTreeSet<_> = queue_ids
             .get_values()
             .into_iter()
             .flat_map(|queues| queues.iter())
@@ -123,7 +130,7 @@ impl XdpPolicy {
             .enumerate()
             .map(|(position, binding)| (binding.queue, position))
             .collect();
-        let endpoints = self.queues.map(|queues| {
+        let endpoints = queue_ids.map(|queues| {
             queues
                 .iter()
                 .map(|queue| {
@@ -133,13 +140,13 @@ impl XdpPolicy {
                 })
                 .collect()
         });
-        Ok(XdpRuntimeConfig {
-            interface_label: self.interface_label.clone(),
-            device: self.interface.device.clone(),
+        Ok(Some(XdpRuntimeConfig {
+            interface_label: interface_label.clone(),
+            device: interface.device.clone(),
             queues: active_workers,
-            zero_copy: self.interface.xdp.zero_copy,
+            zero_copy: interface.xdp.zero_copy,
             endpoints,
-        })
+        }))
     }
 }
 
@@ -147,7 +154,7 @@ impl XdpPolicy {
 mod tests {
     use {
         super::*,
-        crate::test_utils::{load_config, load_worker_config, load_xdp_policy},
+        crate::test_utils::{load_config, load_test_config, load_worker_config},
     };
 
     const ALL_COMPONENTS_QUEUE_ZERO: &str = r#"
@@ -213,9 +220,10 @@ workers.bindings = [
 ]
 "#
             );
-            let runtime = load_xdp_policy(&contents)
-                .resolve(&BTreeSet::from([8, 9, 10, 11, 12]), None)
-                .expect("valid sparse bindings should resolve while preserving sender order");
+            let runtime = load_test_config(&contents)
+                .resolve_xdp(&BTreeSet::from([8, 9, 10, 11, 12]), None)
+                .expect("valid sparse bindings should resolve while preserving sender order")
+                .unwrap();
             let expected_workers: Vec<_> = expected_workers
                 .into_iter()
                 .map(|(queue, cpu)| XdpWorkerBinding { queue, cpu })
@@ -251,10 +259,10 @@ workers.bindings = [
             ("cpus", "{ cpus = [9] }"),
             ("bindings", "{ bindings = [{ queue = 0, cpu = 9 }] }"),
         ] {
-            let policy = load_worker_config(workers)
+            let config = load_worker_config(workers)
                 .expect("worker fixture should pass host-independent validation");
-            let error = policy
-                .resolve(&BTreeSet::from([8, 9, 10]), Some(9))
+            let error = config
+                .resolve_xdp(&BTreeSet::from([8, 9, 10]), Some(9))
                 .expect_err("active explicit workers must not share the PoH core");
             assert_eq!(
                 error.to_string(),
@@ -273,7 +281,7 @@ workers.bindings = [
                 "{ bindings = [{ queue = 3, cpu = 9 }, { queue = 0, cpu = 8 }] }",
             ),
         ] {
-            let policy = load_xdp_policy(&format!(
+            let config = load_test_config(&format!(
                 r#"
 {ALL_COMPONENTS_QUEUE_ZERO}
 [interfaces.primary]
@@ -282,8 +290,8 @@ xdp.zero_copy = false
 xdp.workers = {workers}
 "#
             ));
-            let error = policy
-                .resolve(&BTreeSet::from([8, 9, 10]), Some(9))
+            let error = config
+                .resolve_xdp(&BTreeSet::from([8, 9, 10]), Some(9))
                 .expect_err("unreferenced explicit workers must not share the PoH core");
             assert_eq!(
                 error.to_string(),
@@ -295,10 +303,10 @@ xdp.workers = {workers}
 
     #[test]
     fn test_auto_workers_require_enough_cpus_after_excluding_poh() {
-        let policy = load_worker_config("{ auto = { count = 2 } }")
+        let config = load_worker_config("{ auto = { count = 2 } }")
             .expect("two-worker fixture should pass host-independent validation");
-        let error = policy
-            .resolve(&BTreeSet::from([8, 9]), Some(9))
+        let error = config
+            .resolve_xdp(&BTreeSet::from([8, 9]), Some(9))
             .expect_err("auto workers must fail if too few CPUs remain after excluding PoH");
         assert_eq!(
             error.to_string(),
@@ -311,11 +319,12 @@ xdp.workers = {workers}
 
     #[test]
     fn test_auto_workers_use_the_highest_cpus_in_ascending_order() {
-        let policy = load_worker_config("{ auto = { count = 2 } }")
+        let config = load_worker_config("{ auto = { count = 2 } }")
             .expect("two-worker fixture should pass host-independent validation");
-        let runtime = policy
-            .resolve(&BTreeSet::from([7, 8, 9, 10, 11]), Some(11))
-            .expect("auto workers should resolve on the highest CPUs other than PoH");
+        let runtime = config
+            .resolve_xdp(&BTreeSet::from([7, 8, 9, 10, 11]), Some(11))
+            .expect("auto workers should resolve on the highest CPUs other than PoH")
+            .unwrap();
         assert_eq!(
             runtime.queues,
             [
@@ -333,9 +342,9 @@ xdp.workers = {workers}
             "{ cpus = [1000000] }",
             "{ bindings = [{ queue = 0, cpu = 1000000 }] }",
         ] {
-            let policy = load_worker_config(workers).unwrap();
-            let error = policy
-                .resolve(&BTreeSet::from([0, 1]), None)
+            let config = load_worker_config(workers).unwrap();
+            let error = config
+                .resolve_xdp(&BTreeSet::from([0, 1]), None)
                 .expect_err("active worker CPU must fit the Linux affinity mask");
             assert_eq!(error.kind(), DiagnosticKind::CpuResolution);
             assert!(
@@ -354,12 +363,13 @@ xdp.workers = {workers}
                 "{ bindings = [{ queue = 0, cpu = 9 }, { queue = 1, cpu = 11 }] }",
             ),
         ] {
-            let policy = load_worker_config(workers)
+            let config = load_worker_config(workers)
                 .expect("worker fixture should pass host-independent validation");
             // Equal worker and affinity CPU counts catch reservation checks based only on counts.
-            let runtime = policy
-                .resolve(&BTreeSet::from([8, 10]), None)
-                .expect("workers outside the process CPU affinity leave its CPUs unreserved");
+            let runtime = config
+                .resolve_xdp(&BTreeSet::from([8, 10]), None)
+                .expect("workers outside the process CPU affinity leave its CPUs unreserved")
+                .unwrap();
             assert_eq!(
                 runtime.queues,
                 [
@@ -382,11 +392,11 @@ xdp.workers = {workers}
                 (BTreeSet::from([8, 9]), None),
                 (BTreeSet::from([7, 8, 9]), Some(7)),
             ] {
-                let policy = load_worker_config(workers).expect(
+                let config = load_worker_config(workers).expect(
                     "worker fixture should pass validation before checking CPU reservations",
                 );
-                let error = policy
-                    .resolve(&allowed, poh_core)
+                let error = config
+                    .resolve_xdp(&allowed, poh_core)
                     .expect_err("active workers must leave at least one process CPU unreserved");
                 assert!(
                     error.to_string().contains("leave at least one"),
@@ -398,10 +408,10 @@ xdp.workers = {workers}
 
     #[test]
     fn test_empty_cpu_affinity_is_rejected() {
-        let policy = load_worker_config("{ cpus = [8] }")
+        let config = load_worker_config("{ cpus = [8] }")
             .expect("worker fixture should pass host-independent validation");
-        let error = policy
-            .resolve(&BTreeSet::new(), None)
+        let error = config
+            .resolve_xdp(&BTreeSet::new(), None)
             .expect_err("an empty process CPU affinity cannot leave a CPU unreserved");
         assert_eq!(
             error.to_string(),
@@ -411,7 +421,7 @@ xdp.workers = {workers}
 
     #[test]
     fn test_unreferenced_workers_warn_without_reserving_cpus() {
-        let (policy, warnings) = load_config(&format!(
+        let (config, warnings) = load_config(&format!(
             r#"
 {ALL_COMPONENTS_QUEUE_ZERO}
 [interfaces.primary]
@@ -421,10 +431,10 @@ xdp.workers.cpus = [8, 9]
 "#
         ))
         .expect("unreferenced workers should only warn");
-        let policy = policy.xdp().expect("test config should enable XDP");
-        let runtime = policy
-            .resolve(&BTreeSet::from([8, 9]), None)
-            .expect("discarding the unreferenced worker should leave a CPU unreserved");
+        let runtime = config
+            .resolve_xdp(&BTreeSet::from([8, 9]), None)
+            .expect("discarding the unreferenced worker should leave a CPU unreserved")
+            .unwrap();
         assert_eq!(
             runtime.queues,
             [XdpWorkerBinding { queue: 0, cpu: 8 }],

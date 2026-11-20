@@ -1,7 +1,7 @@
 use {
     super::*,
     crate::{
-        test_utils::{load_config, load_worker_config, load_xdp_policy},
+        test_utils::{load_config, load_test_config, load_worker_config},
         xdp::{MAX_XDP_WORKERS, XdpWorkerPool},
     },
     std::collections::BTreeSet,
@@ -9,19 +9,15 @@ use {
 
 #[test]
 fn test_embedded_default_resolves_to_one_shared_worker() {
-    let (policy, warnings) = load(None).expect("embedded default config should validate");
-    let xdp = policy.xdp().expect("embedded default should enable XDP");
+    let (config, warnings) = load(None).expect("embedded default config should validate");
+    let interface = &config.interfaces()["primary"];
     assert_eq!(
-        xdp.interface_label, "primary",
-        "embedded default should transmit on the primary interface"
-    );
-    assert_eq!(
-        xdp.interface.device,
+        interface.device,
         NetworkDeviceSelector::Route(RouteSelector::Default),
         "default primary interface should select the device carrying the default route"
     );
     assert_eq!(
-        xdp.interface.xdp.workers,
+        interface.xdp.workers,
         XdpWorkerPool::Auto { count: 1 },
         "embedded default should request one automatically assigned worker"
     );
@@ -30,9 +26,14 @@ fn test_embedded_default_resolves_to_one_shared_worker() {
         warnings.is_empty(),
         "embedded default should validate without warnings: {warnings:?}"
     );
-    let runtime = xdp
-        .resolve(&allowed, Some(5))
-        .expect("default worker should resolve using an eligible CPU distinct from PoH");
+    let runtime = config
+        .resolve_xdp(&allowed, Some(5))
+        .expect("default worker should resolve using an eligible CPU distinct from PoH")
+        .expect("embedded default should enable XDP");
+    assert_eq!(
+        runtime.interface_label, "primary",
+        "embedded default should transmit on the primary interface"
+    );
     assert_eq!(
         runtime.queues,
         [XdpWorkerBinding { queue: 0, cpu: 3 }],
@@ -85,19 +86,20 @@ fn test_partial_interface_overrides_inherit_unspecified_fields() {
             XdpWorkerPool::Auto { count: 1 },
         ),
     ] {
-        let policy = load_xdp_policy(&format!(
+        let config = load_test_config(&format!(
             "schema_version = 1\n[interfaces.primary]\n{overrides}"
         ));
+        let interface = &config.interfaces()["primary"];
         assert_eq!(
-            policy.interface.device, device,
+            interface.device, device,
             "{overrides}: inherit the device unless its selector is replaced"
         );
         assert_eq!(
-            policy.interface.xdp.zero_copy, zero_copy,
+            interface.xdp.zero_copy, zero_copy,
             "{overrides}: inherit zero_copy unless explicitly overridden"
         );
         assert_eq!(
-            policy.interface.xdp.workers, workers,
+            interface.xdp.workers, workers,
             "{overrides}: inherit workers unless the worker pool is replaced"
         );
     }
@@ -279,11 +281,17 @@ device.name = "eth1"
 xdp.zero_copy = false
 xdp.workers.cpus = [8]
 "#;
-    let (policy, warnings) = load_config(&format!(
+    let (config, warnings) = load_config(&format!(
         "schema_version = 1\nxdp.enabled = false\n{TWO_INTERFACES}"
     ))
     .expect("disabled XDP should accept more than one interface");
-    assert!(policy.xdp().is_none());
+    assert!(config.xdp_queue_ids().is_none());
+    assert!(
+        config
+            .resolve_xdp(&BTreeSet::new(), None)
+            .unwrap()
+            .is_none()
+    );
     assert!(warnings.is_empty(), "{warnings:?}");
     let error = load_config(&format!("schema_version = 1\n{TWO_INTERFACES}"))
         .expect_err("enabled XDP must reject more than one interface");
@@ -341,7 +349,7 @@ workers.cpus = [8]
         .expect_err("renaming an interface must invalidate references to its old label");
     assert!(error.contains("not a declared interface"), "{error}");
 
-    let updated_references = load_xdp_policy(&format!(
+    let updated_references = load_test_config(&format!(
         r#"
 {RENAMED}
 [tpu.xdp]
@@ -357,8 +365,9 @@ tx.interface = "fast"
 "#
     ));
     let runtime = updated_references
-        .resolve(&BTreeSet::from([8, 9]), None)
-        .expect("updated component references should resolve on the renamed interface");
+        .resolve_xdp(&BTreeSet::from([8, 9]), None)
+        .expect("updated component references should resolve on the renamed interface")
+        .unwrap();
     assert_eq!(
         runtime.interface_label, "fast",
         "runtime should retain the renamed interface label"

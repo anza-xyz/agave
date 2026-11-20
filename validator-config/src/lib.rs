@@ -14,8 +14,7 @@ pub use {
     file::{ConfigDocument, DEFAULT_CONFIG},
     interface::{NetworkDeviceSelector, NetworkInterface, RouteSelector},
     xdp::{
-        EndpointTx, QueueSelection, XdpEndpoints, XdpPolicy, XdpRuntimeConfig, XdpWorkerBinding,
-        XdpWorkerPool,
+        EndpointTx, QueueSelection, XdpEndpoints, XdpRuntimeConfig, XdpWorkerBinding, XdpWorkerPool,
     },
 };
 use {
@@ -51,13 +50,13 @@ pub(crate) struct EffectiveConfig {
 #[derive(Clone, Debug)]
 pub struct ValidatedConfig {
     effective: EffectiveConfig,
-    xdp: Option<XdpPolicy>,
+    xdp_queue_ids: Option<XdpEndpoints<Vec<u32>>>,
 }
 
 impl ValidatedConfig {
     /// Whether XDP is enabled for all endpoints.
     pub fn xdp_enabled(&self) -> bool {
-        self.effective.xdp.enabled
+        self.xdp_queue_ids.is_some()
     }
 
     /// Effective network interfaces by logical label, including when XDP is disabled.
@@ -70,9 +69,12 @@ impl ValidatedConfig {
         self.effective.endpoints().map(|&endpoint| &endpoint.tx)
     }
 
-    /// The XDP policy, or `None` when XDP is disabled.
-    pub fn xdp(&self) -> Option<&XdpPolicy> {
-        self.xdp.as_ref()
+    /// Selected hardware queue IDs in each endpoint's sender order.
+    /// Returns `None` when XDP is disabled.
+    pub fn xdp_queue_ids(&self) -> Option<XdpEndpoints<&[u32]>> {
+        self.xdp_queue_ids
+            .as_ref()
+            .map(|queues| queues.map(Vec::as_slice))
     }
 }
 
@@ -109,7 +111,7 @@ pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<Diagnostic
 /// use agave_validator_config::parse;
 ///
 /// let (config, warnings) = parse("schema_version = 1\nxdp.enabled = false")?;
-/// assert!(config.xdp().is_none());
+/// assert!(!config.xdp_enabled());
 /// assert!(warnings.is_empty());
 /// # Ok::<(), agave_validator_config::Diagnostic>(())
 /// ```
@@ -139,10 +141,7 @@ fn validate_document(
     } else {
         source_text.as_deref()
     };
-    let result = file::merge_config(document, description).and_then(|effective| {
-        let (xdp, warnings) = xdp::validate(&effective)?;
-        Ok((ValidatedConfig { effective, xdp }, warnings))
-    });
+    let result = file::merge_config(document, description).and_then(xdp::validate);
     match result {
         Ok((config, mut warnings)) => {
             file::attach_source_locations(&mut warnings, description, source_text);

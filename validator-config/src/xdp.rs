@@ -5,8 +5,8 @@ mod runtime;
 pub use runtime::XdpRuntimeConfig;
 use {
     crate::{
-        Diagnostic, DiagnosticKind, EffectiveConfig, NetworkDeviceSelector,
-        interface::{NetworkInterface, format_interface_path, format_label},
+        Diagnostic, DiagnosticKind, EffectiveConfig, NetworkDeviceSelector, ValidatedConfig,
+        interface::{format_interface_path, format_label},
     },
     serde::Deserialize,
     std::collections::BTreeSet,
@@ -193,7 +193,7 @@ fn collect_worker_queue_ids(workers: &XdpWorkerPool) -> Vec<u32> {
 
 /// One value per validator network endpoint that uses XDP. Generic over what each
 /// endpoint holds: its transmit settings ([`EndpointTx`]), its selected queue
-/// ids ([`XdpPolicy`]), or its sender positions ([`XdpRuntimeConfig`]).
+/// ids ([`ValidatedConfig::xdp_queue_ids`]), or its sender positions ([`XdpRuntimeConfig`]).
 #[derive(Clone, Debug)]
 pub struct XdpEndpoints<T> {
     pub gossip: T,
@@ -236,32 +236,6 @@ impl<T> XdpEndpoints<T> {
     }
 }
 
-/// The active XDP policy for the single transmit interface.
-#[derive(Clone, Debug)]
-pub struct XdpPolicy {
-    pub(crate) interface_label: String,
-    pub(crate) interface: NetworkInterface,
-    /// Queue ids each endpoint transmits over, in its own sender order.
-    pub(crate) queues: XdpEndpoints<Vec<u32>>,
-}
-
-impl XdpPolicy {
-    /// The logical label of the active transmit interface.
-    pub fn interface_label(&self) -> &str {
-        &self.interface_label
-    }
-
-    /// The active interface's device and worker settings.
-    pub fn interface(&self) -> &NetworkInterface {
-        &self.interface
-    }
-
-    /// The selected hardware queue IDs for each endpoint, in sender order.
-    pub fn queues(&self) -> XdpEndpoints<&[u32]> {
-        self.queues.map(Vec::as_slice)
-    }
-}
-
 /// Validate schema constraints independently of host state, even when XDP is
 /// disabled. Deserialization alone does not check them.
 fn validate_structural(config: &EffectiveConfig) -> Result<(), Diagnostic> {
@@ -296,12 +270,12 @@ fn validate_structural(config: &EffectiveConfig) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-/// Validate schema constraints and host-independent cross-references, returning
-/// the XDP policy when XDP is enabled.
+/// Validate schema constraints and host-independent cross-references, selecting
+/// hardware queue IDs when XDP is enabled.
 pub(crate) fn validate(
-    config: &EffectiveConfig,
-) -> Result<(Option<XdpPolicy>, Vec<Diagnostic>), Diagnostic> {
-    validate_structural(config)?;
+    config: EffectiveConfig,
+) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
+    validate_structural(&config)?;
     for (name, endpoint) in config.endpoints().named() {
         let label = &endpoint.tx.interface;
         let interface = config.interfaces.get(label).ok_or_else(|| {
@@ -343,9 +317,15 @@ pub(crate) fn validate(
         }
     }
     if !config.xdp.enabled {
-        return Ok((None, Vec::new()));
+        return Ok((
+            ValidatedConfig {
+                effective: config,
+                xdp_queue_ids: None,
+            },
+            Vec::new(),
+        ));
     }
-    validate_single_interface(config)?;
+    validate_single_interface(&config)?;
     let (interface_label, interface) = config
         .interfaces
         .first_key_value()
@@ -370,10 +350,11 @@ pub(crate) fn validate(
             .at_field(["interfaces", interface_label, "xdp"])
         })
         .collect();
-    let xdp = XdpPolicy {
-        interface_label: interface_label.clone(),
-        interface: interface.clone(),
-        queues,
-    };
-    Ok((Some(xdp), warnings))
+    Ok((
+        ValidatedConfig {
+            effective: config,
+            xdp_queue_ids: Some(queues),
+        },
+        warnings,
+    ))
 }
