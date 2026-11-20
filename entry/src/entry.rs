@@ -17,7 +17,7 @@ use {
     solana_signature::Signature,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    std::{fmt::Formatter, iter::repeat_with, time::Instant},
+    std::{fmt::Formatter, iter::repeat_with, ops::Range, time::Instant},
     wincode::{SchemaRead, SchemaWrite, containers::Vec as WincodeVec, len::BincodeLen},
 };
 
@@ -576,6 +576,27 @@ pub fn verify_entries_cpu(
     start_hash: &Hash,
 ) -> EntryVerificationState {
     verify_entries_cpu_generic(entries, start_hash)
+}
+
+/// Verifies the PoH hashes of `entries[range]`, each against the previous
+/// entry's hash (`start_hash` for the entry at index 0), stopping at the first
+/// invalid entry.
+///
+/// This is the check replay's PoH verification jobs run on their share of an
+/// entry batch.
+pub fn verify_entries_range(
+    entries: &[EntryVerificationData],
+    range: Range<usize>,
+    start_hash: &Hash,
+) -> bool {
+    range.into_iter().all(|index| {
+        let previous_hash = if index == 0 {
+            start_hash
+        } else {
+            &entries[index - 1].hash
+        };
+        entries[index].verify(previous_hash)
+    })
 }
 
 // an EntrySlice is a slice of Entries
