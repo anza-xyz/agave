@@ -93,7 +93,7 @@ pub struct BankingStage {
     worker_exit_signal: Arc<AtomicBool>,
     worker_thread_arenas: Option<Arc<ArenaGroup>>,
     banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
-    non_vote_receiver: BankingPacketReceiver,
+    transaction_receiver: BankingPacketReceiver,
     transaction_recorder: TransactionRecorder,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     bank_forks: Arc<RwLock<BankForks>>,
@@ -112,7 +112,7 @@ impl BankingStage {
         block_production_method: BlockProductionMethod,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
-        non_vote_receiver: BankingPacketReceiver,
+        transaction_receiver: BankingPacketReceiver,
         banking_control_receiver: mpsc::Receiver<BankingControlMsg>,
         num_workers: NonZeroUsize,
         scheduler_config: SchedulerConfig,
@@ -134,7 +134,7 @@ impl BankingStage {
             worker_exit_signal: Arc::new(AtomicBool::new(false)),
             worker_thread_arenas,
             banking_control_receiver,
-            non_vote_receiver,
+            transaction_receiver,
             transaction_recorder,
             poh_recorder,
             bank_forks,
@@ -282,7 +282,7 @@ impl BankingStage {
             self.filter_keys.clone(),
         );
         let receive_and_buffer = TransactionViewReceiveAndBuffer::new(
-            self.non_vote_receiver.clone(),
+            self.transaction_receiver.clone(),
             check_work_sender,
             check_result_receiver,
         );
@@ -297,10 +297,8 @@ impl BankingStage {
             bounded(num_workers.saturating_mul(CHANNEL_CAPACITY));
 
         // Spawn the worker threads
-        let migration_status = self.bank_forks.read().unwrap().migration_status();
         let decision_maker = DecisionMaker::new(
             self.poh_recorder.read().unwrap().shared_leader_state(),
-            migration_status,
             self.alpenglow_slot_clock.clone(),
         );
         let mut worker_metrics = Vec::with_capacity(num_workers);
@@ -547,7 +545,7 @@ mod external {
 
             // Spawn tpu to pack.
             let tpu_to_pack_receivers = BankingPacketReceivers {
-                packet_receiver: self.non_vote_receiver.clone(),
+                packet_receiver: self.transaction_receiver.clone(),
             };
             threads.push(tpu_to_pack::spawn(
                 self.worker_exit_signal.clone(),
