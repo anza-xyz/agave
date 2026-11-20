@@ -982,10 +982,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_circulating_supply_requires_full_api() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let bank_forks = create_bank_forks();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank);
+        let health = RpcHealth::stub(optimistically_confirmed_bank, blockstore);
 
         for full_api in [false, true] {
             let middleware = RpcRequestMiddleware::new(
