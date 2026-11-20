@@ -2679,6 +2679,7 @@ pub mod tests {
                         access_type,
                         ..BlockstoreOptions::default()
                     },
+                    None,
                 )
                 .expect("Unable to open access to blockstore");
                 test_process_blockstore(genesis_config, &read_only_blockstore, opts)
