@@ -13,61 +13,38 @@ use {
 };
 use {
     crate::packet::{BytesPacketBatch, Meta, PACKET_DATA_SIZE},
-    bytes::BytesMut,
+    bytes::Bytes,
     solana_perf::packet::{BytesPacket, PACKETS_PER_BATCH},
     std::{io, net::UdpSocket},
 };
 
-/// Pool of receive buffers for [`recv_mmsg`].
+/// Receive buffers for [`recv_mmsg`], reused by every call.
 ///
-/// `recvmmsg(2)` has to be handed a buffer for every packet it is allowed to return, but it
-/// may return fewer if socket buffer is drained. The buffers it did not fill are kept here
-/// instead of being dropped.
-///
-/// Buffers that got used for a packet leave the pool, so it must be replenished periodically.
-pub(crate) struct PacketBufferPool(Vec<BytesMut>);
+/// `recvmmsg(2)` has to be handed a buffer for every packet it is allowed to return. Each
+/// received packet is copied out into an exact-size allocation, which costs one allocation
+/// per packet and holds no more memory than the packet needs.
+pub(crate) struct PacketBufferPool(Box<[[u8; PACKET_DATA_SIZE]]>);
 
 impl PacketBufferPool {
     /// Allocates the buffers for one full [`recv_mmsg`] call.
     pub(crate) fn new() -> Self {
-        let mut pool = Self(Vec::with_capacity(PACKETS_PER_BATCH));
-        pool.replenish();
-        pool
-    }
-
-    /// Replaces the buffers consumed by the packets received since the last call. The call
-    /// will allocate only as many buffers as were consumed since last call, so it is idempotent.
-    fn replenish(&mut self) {
-        // we never need to worry about pool being > PACKETS_PER_BATCH since this is
-        // the only place where we add elements to it.
-        self.0.resize_with(PACKETS_PER_BATCH, || {
-            BytesMut::with_capacity(PACKET_DATA_SIZE)
-        });
+        Self(vec![[0; PACKET_DATA_SIZE]; PACKETS_PER_BATCH].into_boxed_slice())
     }
 }
 
 /// Fallback for platforms without `recvmmsg(2)`, see the linux implementation for the
-/// contract. One `recvfrom(2)` per packet, so this one only ever takes a buffer out of
-/// `pool` when it has a packet to put in it.
+/// contract. One `recvfrom(2)` per packet, each into the first buffer of `pool`.
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn recv_mmsg(
     socket: &UdpSocket,
     packets: &mut BytesPacketBatch,
     pool: &mut PacketBufferPool,
 ) -> io::Result</*num packets:*/ usize> {
-    pool.replenish();
     let mut i = 0;
     let count = PACKETS_PER_BATCH.saturating_sub(packets.len());
     packets.reserve(count);
+    let buffer = &mut pool.0[0];
     for _ in 0..count {
-        // Receive into a buffer that is still owned by the pool and only take it out once it
-        // holds a packet, so that no error path can forget to put it back.
-        let buffer = pool
-            .0
-            .last_mut()
-            .expect("count is bounded by the pool size");
-        // Within the capacity every pooled buffer is built with, so this does not allocate.
-        buffer.resize(PACKET_DATA_SIZE, 0);
         match socket.recv_from(buffer) {
             Err(_) if i > 0 => break,
             Err(e) => return Err(e),
@@ -75,12 +52,13 @@ pub(crate) fn recv_mmsg(
                 if i == 0 {
                     socket.set_nonblocking(true)?;
                 }
-                let mut buffer = pool.0.pop().expect("the receive buffer is still pooled");
-                buffer.truncate(nrecv);
                 let mut meta = Meta::default();
                 meta.size = nrecv;
                 meta.set_socket_addr(&from);
-                packets.push(BytesPacket::new(buffer.freeze(), meta));
+                packets.push(BytesPacket::new(
+                    Bytes::copy_from_slice(&buffer[..nrecv]),
+                    meta,
+                ));
             }
         }
         i += 1;
@@ -129,8 +107,8 @@ Packets are appended until `packets` holds `PACKETS_PER_BATCH` packets. The batc
 never cleared and is grown as needed, so the caller can fill up partial batches.
 Returns the number of packets appended.
 
-Receive buffers are taken from `pool` if available there, pool is replenished
-automatically as buffers are consumed.
+Datagrams are received into the buffers of `pool`, and each is copied out into
+its own exact-size buffer.
 
  This function is *supposed to* timeout in 1 second and *may* block forever
  due to a bug in the linux kernel.
@@ -143,7 +121,6 @@ pub(crate) fn recv_mmsg(
     packets: &mut BytesPacketBatch,
     pool: &mut PacketBufferPool,
 ) -> io::Result</*num packets:*/ usize> {
-    pool.replenish();
     let count = PACKETS_PER_BATCH.saturating_sub(packets.len());
     // Should never hit this, but bail if the batch handed to us is already full
     if count == 0 {
@@ -162,7 +139,7 @@ pub(crate) fn recv_mmsg(
         izip!(&mut hdrs, &mut iovs, &mut addrs, pool.0.iter_mut()).take(count)
     {
         iov.write(iovec {
-            iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
+            iov_base: buffer.as_mut_ptr().cast(),
             iov_len: PACKET_DATA_SIZE,
         });
 
@@ -194,8 +171,7 @@ pub(crate) fn recv_mmsg(
     } else {
         usize::try_from(nrecv).unwrap()
     };
-    // Consume the buffers from the pool matching number of received packets.
-    for (addr, hdr, mut buffer) in izip!(addrs, hdrs, pool.0.drain(..nrecv)) {
+    for (addr, hdr, buffer) in izip!(&addrs, &hdrs, pool.0.iter()).take(nrecv) {
         // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
         // passed to recvmmsg() as the limit of messages that can be read. So,
         // `nrevc <= count` which means we initialized this `hdr` and
@@ -204,15 +180,18 @@ pub(crate) fn recv_mmsg(
         // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
         // will have populated it
         let addr_ref = unsafe { addr.assume_init_ref() };
+        // Without MSG_TRUNC in the flags passed to recvmmsg(), msg_len is at most the
+        // iov_len of the buffer.
         let msg_len = hdr_ref.msg_len as usize;
-        // SAFETY: `recvmmsg` wrote `msg_len` initialized bytes into the buffer.
-        unsafe { buffer.set_len(msg_len) };
         let mut meta = Meta::default();
         meta.size = msg_len;
         if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
             meta.set_socket_addr(&addr);
         }
-        packets.push(BytesPacket::new(buffer.freeze(), meta));
+        packets.push(BytesPacket::new(
+            Bytes::copy_from_slice(&buffer[..msg_len]),
+            meta,
+        ));
     }
 
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
@@ -418,37 +397,36 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
-    pub fn test_recv_mmsg_reuses_pool_buffers() {
-        let (reader, reader_addr, sender, _sender_addr) =
+    pub fn test_recv_mmsg_copies_each_datagram() {
+        let (reader, reader_addr, sender, sender_addr) =
             test_setup_reader_sender(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
-        let sent = 2;
-        for _ in 0..sent {
-            let data = [0; PACKET_DATA_SIZE];
-            sender.send_to(&data[..], reader_addr).unwrap();
-        }
-
         let mut pool = PacketBufferPool::new();
-        let mut packets = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
-        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
-        assert_eq!(sent, recv);
-        assert_eq!(
-            pool.0.len(),
-            PACKETS_PER_BATCH - sent,
-            "buffers that did not receive a packet must be left in the pool"
-        );
-
-        // A second call tops the pool back up by exactly the buffers the first one consumed.
-        for _ in 0..sent {
-            let data = [0; PACKET_DATA_SIZE];
-            sender.send_to(&data[..], reader_addr).unwrap();
+        // The second round reuses the buffers for shorter datagrams.
+        for sizes in [[PACKET_DATA_SIZE, 100, 1], [1, 7, 100]] {
+            let datagrams: Vec<_> = sizes
+                .iter()
+                .enumerate()
+                .map(|(i, &size)| vec![i as u8 + 1; size])
+                .collect();
+            for datagram in &datagrams {
+                sender.send_to(datagram, reader_addr).unwrap();
+            }
+            let mut packets = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
+            let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
+            assert_eq!(recv, datagrams.len(), "every datagram must be received");
+            for (packet, datagram) in packets.iter().zip(&datagrams) {
+                assert_eq!(
+                    packet.meta().size,
+                    datagram.len(),
+                    "packet size must match the datagram"
+                );
+                assert_eq!(
+                    packet.data(..),
+                    Some(&datagram[..]),
+                    "packet payload must match the datagram"
+                );
+                assert_eq!(packet.meta().socket_addr(), sender_addr);
+            }
         }
-        let recv = recv_mmsg(&reader, &mut packets, &mut pool).unwrap();
-        assert_eq!(sent, recv);
-        assert_eq!(
-            pool.0.len(),
-            PACKETS_PER_BATCH - sent,
-            "the pool must not grow past the buffers needed for one call"
-        );
     }
 }
