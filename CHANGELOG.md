@@ -173,6 +173,14 @@ Release channels have their own copy of this changelog:
   can fill the shared channel and cause updates to be dropped for all subscribed plugins.
   Plugins loaded later can learn about unchanged nodes from subsequent republishes.
 
+## 4.4.2
+
+### RPC
+
+#### Breaking
+
+* The `/v0/circulating-supply` endpoint now requires `--full-rpc-api`.
+
 ## 4.4.0
 
 ### RPC
