@@ -39,7 +39,10 @@ use {
     },
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
-    solana_entry::entry::Entry,
+    solana_entry::{
+        block_component::{BlockFinalizationCert, VotesAggregate},
+        entry::Entry,
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_rewards_hasher::EpochRewardsHasher,
     solana_epoch_schedule::EpochSchedule,
@@ -153,6 +156,35 @@ fn new_response<T>(bank: &Bank, value: T) -> RpcResponse<T> {
     RpcResponse {
         context: RpcResponseContext::new(bank.slot()),
         value,
+    }
+}
+
+fn block_footer_cert_response(
+    footer_slot: Slot,
+    certificate: &BlockFinalizationCert,
+    shred_version: u16,
+) -> RpcBlockFooterCert {
+    // Keep the wire format explicit, and require a decision when the certificate adds fields.
+    let BlockFinalizationCert {
+        slot,
+        block_id,
+        final_aggregate,
+        notar_aggregate,
+    } = certificate;
+    let aggregate = |aggregate: &VotesAggregate| {
+        let (signature, bitmap) = aggregate.as_parts();
+        RpcVotesAggregate {
+            signature: bs58::encode(signature.0).into_string(),
+            bitmap: bs58::encode(bitmap).into_string(),
+        }
+    };
+    RpcBlockFooterCert {
+        footer_slot,
+        slot: *slot,
+        block_id: block_id.to_string(),
+        shred_version,
+        final_aggregate: aggregate(final_aggregate),
+        notar_aggregate: notar_aggregate.as_ref().map(aggregate),
     }
 }
 
@@ -1014,6 +1046,43 @@ impl JsonRpcRequestProcessor {
                     bitmap: c.signature.bitmap,
                 },
             })
+    }
+
+    /// Returns the finalization certificate carried in the footer of rooted slot `slot`, or
+    /// `None` when there is none. Only rooted slots are served, with `get_block`'s errors and no
+    /// long-term storage fallback: the footer of an unrooted slot may belong to a block the
+    /// cluster never finalizes.
+    pub async fn get_ag_block_footer_cert(&self, slot: Slot) -> Result<Option<RpcBlockFooterCert>> {
+        let result = self
+            .runtime
+            .spawn_blocking({
+                let blockstore = Arc::clone(&self.blockstore);
+                move || blockstore.get_rooted_block_footer_finalization_certificate(slot)
+            })
+            .await
+            .map_err(|_| Error::internal_error())?;
+        self.check_blockstore_root(&result, slot)?;
+        self.check_slot_cleaned_up(&result, slot)?;
+        if matches!(result, Err(BlockstoreError::SlotNotRooted)) && self.blockstore.is_root(slot) {
+            // The root passed `slot` during the read: not available yet, so the client retries.
+            return Err(RpcCustomError::BlockNotAvailable { slot }.into());
+        }
+        if !self
+            .bank_forks
+            .read()
+            .unwrap()
+            .migration_status()
+            .should_allow_block_markers(slot)
+        {
+            // The certificate forwarder's gate. It excludes pre-Alpenglow slots during the
+            // migration epoch; after it every slot passes, and a block without a footer reads
+            // as `None` or an error below.
+            return Ok(None);
+        }
+        // As in `get_block`, other blockstore read errors return `None`.
+        Ok(result.ok().flatten().map(|(certificate, shred_version)| {
+            block_footer_cert_response(slot, &certificate, shred_version)
+        }))
     }
 
     pub async fn get_vat_active_set_rank_map(
@@ -3921,6 +3990,13 @@ pub mod rpc_full {
             config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>>;
 
+        #[rpc(meta, name = "getAgBlockFooterCert")]
+        fn get_ag_block_footer_cert(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+        ) -> BoxFuture<Result<Option<RpcBlockFooterCert>>>;
+
         #[rpc(meta, name = "getBlockTime")]
         fn get_block_time(
             &self,
@@ -4519,6 +4595,15 @@ pub mod rpc_full {
             Box::pin(async move { meta.get_block(slot, config).await })
         }
 
+        fn get_ag_block_footer_cert(
+            &self,
+            meta: Self::Metadata,
+            slot: Slot,
+        ) -> BoxFuture<Result<Option<RpcBlockFooterCert>>> {
+            debug!("get_ag_block_footer_cert rpc request received: {slot}");
+            Box::pin(async move { meta.get_ag_block_footer_cert(slot).await })
+        }
+
         fn get_blocks(
             &self,
             meta: Self::Metadata,
@@ -4963,10 +5048,11 @@ pub mod tests {
         },
         solana_rpc_client_api::{
             custom_error::{
-                JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+                JSON_RPC_SERVER_ERROR_BLOCK_CLEANED_UP, JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
                 JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
                 JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
                 JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
+                JSON_RPC_SERVER_ERROR_SLOT_SKIPPED,
                 JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
                 JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
             },
@@ -5679,6 +5765,126 @@ pub mod tests {
             },
         });
         assert_eq!(result, expected);
+    }
+
+    /// Shred version of the shreds written by `insert_block_with_footer`.
+    const TEST_FOOTER_SHRED_VERSION: u16 = 4_242;
+
+    fn create_finalization_certificate(slot: Slot, slow: bool) -> BlockFinalizationCert {
+        use {
+            agave_votor_messages::{certificate::CertSignature, consensus_message::BlockId},
+            solana_bls_signatures::keypair::Keypair as BLSKeypair,
+        };
+        let aggregate = |message: &[u8]| {
+            VotesAggregate::from_cert_signature(CertSignature {
+                signature: BLSKeypair::new().sign(message).into(),
+                bitmap: vec![0, 3, 0, 0b101],
+            })
+        };
+        BlockFinalizationCert {
+            slot,
+            block_id: BlockId::new_unique(),
+            final_aggregate: aggregate(b"final"),
+            notar_aggregate: slow.then(|| aggregate(b"notar")),
+        }
+    }
+
+    #[test_case(false; "fast")]
+    #[test_case(true; "slow")]
+    fn test_rpc_get_ag_block_footer_cert(slow: bool) {
+        let rpc = RpcHandler::start();
+        let footer_slot = 10;
+        // Not `footer_slot - 1`, so the response cannot derive one slot from the other.
+        let certificate = create_finalization_certificate(footer_slot - 3, slow);
+        let encode_aggregate = |aggregate: &VotesAggregate| {
+            let (signature, bitmap) = aggregate.as_parts();
+            json!({
+                "signature": bs58::encode(signature.0).into_string(),
+                "bitmap": bs58::encode(bitmap).into_string(),
+            })
+        };
+        let expected = json!({
+            "footerSlot": footer_slot,
+            "slot": footer_slot - 3,
+            "blockId": certificate.block_id.to_string(),
+            "shredVersion": TEST_FOOTER_SHRED_VERSION,
+            "finalAggregate": encode_aggregate(&certificate.final_aggregate),
+            "notarAggregate": certificate.notar_aggregate.as_ref().map(encode_aggregate),
+        });
+
+        // Not rooted yet: the same error as getBlock.
+        rpc.blockstore.insert_block_with_footer(
+            footer_slot,
+            Some(certificate),
+            TEST_FOOTER_SHRED_VERSION,
+        );
+        let request = create_test_request("getAgBlockFooterCert", Some(json!([footer_slot])));
+        let (code, _message) = parse_failure_response(rpc.handle_request_sync(request.clone()));
+        assert_eq!(
+            code, JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+            "an unrooted slot is not served"
+        );
+
+        rpc.blockstore
+            .set_roots(std::iter::once(&footer_slot))
+            .unwrap();
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result, expected);
+
+        // A rooted block whose footer carries no finalization certificate.
+        let slot = footer_slot + 1;
+        rpc.blockstore
+            .insert_block_with_footer(slot, None, TEST_FOOTER_SHRED_VERSION);
+        rpc.blockstore.set_roots(std::iter::once(&slot)).unwrap();
+        let request = create_test_request("getAgBlockFooterCert", Some(json!([slot])));
+        let result: Option<RpcBlockFooterCert> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result, None);
+
+        // A slot between two roots that was never rooted is skipped.
+        rpc.blockstore
+            .set_roots(std::iter::once(&(slot + 2)))
+            .unwrap();
+        let request = create_test_request("getAgBlockFooterCert", Some(json!([slot + 1])));
+        let (code, _message) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, JSON_RPC_SERVER_ERROR_SLOT_SKIPPED);
+
+        // A rooted slot whose block is missing cannot be read: null, as in getBlock.
+        rpc.blockstore
+            .set_roots(std::iter::once(&(slot + 1)))
+            .unwrap();
+        let request = create_test_request("getAgBlockFooterCert", Some(json!([slot + 1])));
+        let result: Option<RpcBlockFooterCert> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result, None);
+
+        // A slot at or below the cleanup watermark is cleaned up.
+        *rpc.blockstore.lowest_cleanup_slot.write().unwrap() = footer_slot;
+        let request = create_test_request("getAgBlockFooterCert", Some(json!([footer_slot])));
+        let (code, _message) = parse_failure_response(rpc.handle_request_sync(request));
+        assert_eq!(code, JSON_RPC_SERVER_ERROR_BLOCK_CLEANED_UP);
+    }
+
+    #[test]
+    fn test_rpc_get_ag_block_footer_cert_before_alpenglow() {
+        // Blocks before Alpenglow have no footer, so none is read even where one would parse.
+        let rpc = RpcHandler::start_tower();
+        let slot = 10;
+        let certificate = create_finalization_certificate(slot - 1, false);
+        rpc.blockstore
+            .insert_block_with_footer(slot, Some(certificate), TEST_FOOTER_SHRED_VERSION);
+        rpc.blockstore.set_roots(std::iter::once(&slot)).unwrap();
+        let request = create_test_request("getAgBlockFooterCert", Some(json!([slot])));
+        let result: Option<RpcBlockFooterCert> =
+            parse_success_result(rpc.handle_request_sync(request.clone()));
+        assert_eq!(result, None);
+
+        // The same block is served once the slot counts as an Alpenglow block.
+        let migration_status = rpc.bank_forks.read().unwrap().migration_status();
+        assert!(!migration_status.is_alpenglow_enabled());
+        migration_status.enable_alpenglow_for_tests();
+        let result: Value = parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result["shredVersion"], TEST_FOOTER_SHRED_VERSION);
     }
 
     #[test]

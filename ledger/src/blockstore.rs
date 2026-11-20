@@ -49,9 +49,9 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_entry::{
         block_component::{
-            BlockComponent, ParsedBlockComponent, VersionedBlockFooter, VersionedBlockHeader,
-            VersionedBlockMarker, VersionedUpdateParent, finalization_certificates_from_footer,
-            genesis_certificate_from_shred,
+            BlockComponent, BlockFinalizationCert, ParsedBlockComponent, VersionedBlockFooter,
+            VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
+            finalization_certificates_from_footer, genesis_certificate_from_shred,
         },
         block_component_parser,
         entry::{Entry, EntryView, create_ticks},
@@ -6365,21 +6365,108 @@ impl Blockstore {
         self.insert_shreds(shreds, false).unwrap();
     }
 
-    fn get_block_footer_certificates(
+    /// Inserts a full block laid out the way a leader lays one out: a block header, a footer
+    /// carrying `block_final_cert`, then the final tick in its own FEC set. Returns the slot's
+    /// last index.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn insert_block_with_footer(
+        &self,
+        slot: Slot,
+        block_final_cert: Option<BlockFinalizationCert>,
+        shred_version: u16,
+    ) -> u64 {
+        use solana_entry::block_component::{BlockFooterV1, BlockHeaderV1};
+
+        let parent_slot = slot - 1;
+        let components = [
+            BlockComponent::new_block_marker(VersionedBlockMarker::from_block_header(
+                BlockHeaderV1 {
+                    parent_slot,
+                    parent_block_id: BlockId::new_unique(),
+                },
+            )),
+            BlockComponent::new_block_marker(VersionedBlockMarker::from_block_footer(
+                BlockFooterV1 {
+                    bank_hash: Hash::new_unique(),
+                    block_producer_time_nanos: 0,
+                    block_user_agent: vec![],
+                    block_final_cert,
+                    skip_reward_cert: None,
+                    notar_reward_cert: None,
+                },
+            )),
+            BlockComponent::new_entry_batch(create_ticks(1, 0, Hash::new_unique())).unwrap(),
+        ];
+        let keypair = Keypair::new();
+        let shredder = Shredder::new(slot, parent_slot, 0, shred_version).unwrap();
+        let shreds: Vec<Shred> = components
+            .iter()
+            .enumerate()
+            .flat_map(|(i, component)| {
+                let index = (i * DATA_SHREDS_PER_FEC_BLOCK) as u32;
+                shredder.make_merkle_shreds_from_component(
+                    &keypair,
+                    component,
+                    i + 1 == components.len(),
+                    Hash::new_unique(),
+                    index,
+                    index,
+                    &mut ProcessShredsStats::default(),
+                )
+            })
+            .filter(Shred::is_data)
+            .collect();
+        self.insert_shreds(shreds, false).unwrap();
+        assert!(self.is_full(slot));
+        self.meta(slot).unwrap().unwrap().last_index.unwrap()
+    }
+
+    /// Returns the finalization certificate carried in the footer of rooted slot `slot`, with
+    /// the shred version of the footer's shreds, which the certificate's votes sign. Returns
+    /// `None` when the footer carries no finalization certificate. A block without a footer, as
+    /// before Alpenglow, returns `None` or an error, depending on how its entries are laid out.
+    ///
+    /// A leader's footer carries the highest finalization certificate it has seen, so the
+    /// certificate's `slot` is earlier than `slot`, often but not always `slot - 1`. The original
+    /// block location is read, which holds the rooted version of a slot (see
+    /// `switch_block_from_alternate`).
+    pub fn get_rooted_block_footer_finalization_certificate(
+        &self,
+        slot: Slot,
+    ) -> Result<Option<(BlockFinalizationCert, u16)>> {
+        let _lock = self.check_lowest_cleanup_slot(slot)?;
+        if !self.is_root(slot) {
+            return Err(BlockstoreError::SlotNotRooted);
+        }
+        let Some(last_index) = self
+            .meta(slot)?
+            .filter(|meta| meta.is_full())
+            .and_then(|meta| meta.last_index)
+        else {
+            return Err(BlockstoreError::SlotUnavailable);
+        };
+        self.get_block_footer_finalization_certificate(slot, last_index)
+    }
+
+    /// Reads the finalization certificate from the footer of a full block whose last data shred
+    /// has index `last_index`, with the shred version of the shred that starts the footer's FEC
+    /// set. Components end at FEC set boundaries and only the final tick may follow the footer,
+    /// so the footer is the FEC set before the last one, as long as it fits in one FEC set.
+    fn get_block_footer_finalization_certificate(
         &self,
         slot: Slot,
         last_index: u64,
-    ) -> Result<Vec<UnverifiedCertificate>> {
+    ) -> Result<Option<(BlockFinalizationCert, u16)>> {
         let fec_set_size = DATA_SHREDS_PER_FEC_BLOCK as u32;
         let Some(final_fec_start) = u32::try_from(last_index)
             .ok()
             .and_then(|index| index.checked_add(1))
             .and_then(|end| end.checked_sub(fec_set_size))
         else {
-            return Ok(vec![]);
+            return Ok(None);
         };
         let Some(footer_fec_start) = final_fec_start.checked_sub(fec_set_size) else {
-            return Ok(vec![]);
+            return Ok(None);
         };
         let completed_range = footer_fec_start..final_fec_start;
         let components = self.get_slot_components_in_block(
@@ -6389,13 +6476,13 @@ impl Blockstore {
         )?;
         let [BlockComponent::BlockMarker(VersionedBlockMarker::V1(marker))] = components.as_slice()
         else {
-            return Ok(vec![]);
+            return Ok(None);
         };
         let Some(VersionedBlockFooter::V1(footer)) = marker.as_block_footer() else {
-            return Ok(vec![]);
+            return Ok(None);
         };
         let Some(certificate) = footer.block_final_cert.clone() else {
-            return Ok(vec![]);
+            return Ok(None);
         };
 
         let shred_bytes = self
@@ -6409,7 +6496,20 @@ impl Blockstore {
                 "could not deserialize block footer shred in slot {slot}: {err}"
             ))
         })?;
-        Ok(finalization_certificates_from_footer(certificate, shred.version()).unwrap_or_default())
+        Ok(Some((certificate, shred.version())))
+    }
+
+    fn get_block_footer_certificates(
+        &self,
+        slot: Slot,
+        last_index: u64,
+    ) -> Result<Vec<UnverifiedCertificate>> {
+        let Some((certificate, shred_version)) =
+            self.get_block_footer_finalization_certificate(slot, last_index)?
+        else {
+            return Ok(vec![]);
+        };
+        Ok(finalization_certificates_from_footer(certificate, shred_version).unwrap_or_default())
     }
 }
 

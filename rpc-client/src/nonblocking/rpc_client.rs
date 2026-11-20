@@ -2141,6 +2141,39 @@ impl RpcClient {
         self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
     }
 
+    /// Returns the finalization certificate carried in the footer of the rooted block at `slot`.
+    ///
+    /// The certificate finalizes an earlier slot, often but not always `slot - 1`. Returns `None`
+    /// when the block has no footer, its footer carries no finalization certificate, or the node
+    /// cannot read the block.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getAgBlockFooterCert`] RPC method.
+    ///
+    /// [`getAgBlockFooterCert`]: https://solana.com/docs/rpc/http/getagblockfootercert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::client_error::Error;
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let slot = rpc_client.get_slot().await?;
+    /// let cert = rpc_client.get_ag_block_footer_cert(slot).await?;
+    /// #     Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_ag_block_footer_cert(
+        &self,
+        slot: Slot,
+    ) -> ClientResult<Option<RpcBlockFooterCert>> {
+        self.send(RpcRequest::GetAgBlockFooterCert, json!([slot]))
+            .await
+    }
+
     /// Returns the Validator Admission Ticket (VAT) active-set rank map for the epoch
     /// containing `slot`, with an optional identity filter.
     ///

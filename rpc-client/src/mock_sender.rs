@@ -25,12 +25,13 @@ use {
         config::RpcBlockProductionConfig,
         request::RpcRequest,
         response::{
-            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockProduction,
-            RpcBlockProductionRange, RpcBlockhash, RpcConfirmedTransactionStatusWithSignature,
-            RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
-            RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
-            RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
-            RpcVatActiveSetRankMap, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
+            Response, RpcAccountBalance, RpcBlockCommitment, RpcBlockFooterCert,
+            RpcBlockProduction, RpcBlockProductionRange, RpcBlockhash,
+            RpcConfirmedTransactionStatusWithSignature, RpcContactInfo, RpcIdentity,
+            RpcInflationGovernor, RpcInflationRate, RpcInflationReward, RpcKeyedAccount,
+            RpcPerfSample, RpcPrioritizationFee, RpcResponseContext, RpcSimulateTransactionResult,
+            RpcSnapshotSlotInfo, RpcSupply, RpcVatActiveSetRankMap, RpcVersionInfo,
+            RpcVoteAccountInfo, RpcVoteAccountStatus, RpcVotesAggregate,
         },
     },
     solana_signature::Signature,
@@ -177,6 +178,17 @@ impl RpcSender for MockSender {
                 block_height: 34,
                 transaction_count: Some(123),
             })?,
+            "getAgBlockFooterCert" => serde_json::to_value(Some(RpcBlockFooterCert {
+                footer_slot: 1,
+                slot: 0,
+                block_id: solana_hash::Hash::default().to_string(),
+                shred_version: 0,
+                final_aggregate: RpcVotesAggregate {
+                    signature: String::new(),
+                    bitmap: String::new(),
+                },
+                notar_aggregate: None,
+            }))?,
             "getAgGenesisCert" => {
                 let cert = WireBlockCertMessage {
                     block: Block { slot: 0, block_id: BlockId::default() },
