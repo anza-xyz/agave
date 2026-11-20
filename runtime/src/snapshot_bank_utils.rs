@@ -21,8 +21,8 @@ use {
         },
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
-            self, BankSnapshotInfo, StorageAndNextAccountsFileId, UnarchivedSnapshots,
-            rebuild_storages_from_snapshot_dir, verify_and_unarchive_snapshots,
+            self, BankSnapshotInfo, UnarchivedSnapshots, rebuild_storages_from_snapshot_dir,
+            verify_and_unarchive_snapshots,
         },
     },
     agave_fs::io_setup::IoSetupState,
@@ -44,7 +44,7 @@ use {
     },
     log::*,
     solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, AtomicAccountsFileId},
+        accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
     solana_clock::{Epoch, Slot},
@@ -197,26 +197,24 @@ pub fn bank_from_snapshot_archives(
         storage.extend(incremental_storage);
     }
 
-    let storage_and_next_append_vec_id = StorageAndNextAccountsFileId {
-        storage,
-        next_append_vec_id,
-    };
-
     let mut measure_rebuild = Measure::start("rebuild bank from snapshots");
+    let mut accounts_db = AccountsDb::new_with_config(
+        account_paths.to_vec(),
+        accounts_db_config,
+        accounts_update_notifier,
+        exit,
+    );
+    accounts_db.initialize_storages(storage, next_append_vec_id.into_inner());
     let (bank, info) = reconstruct_bank_from_fields(
         bank_fields,
         accounts_db_fields,
         genesis_config,
         runtime_config,
-        account_paths,
-        storage_and_next_append_vec_id,
+        accounts_db,
         debug_keys,
         leader_for_tests,
         limit_load_slot_count_from_snapshot,
         verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
     )?;
     measure_rebuild.stop();
     info!("{measure_rebuild}");
@@ -384,25 +382,19 @@ pub fn bank_from_snapshot_dir(
     // Storages from this snapshot already live under `account_paths`; the storages list
     // inside the bank snapshot dir tells us which ones belong to it, and stale files
     // (e.g. from later slots) are pruned by `rebuild_storages_from_snapshot_dir`.
-
-    let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
-
-    let ((storage, bank_fields, accounts_db_fields), measure_rebuild_storages) = measure_time!(
-        rebuild_storages_from_snapshot_dir(
-            bank_snapshot,
-            account_paths,
-            next_append_vec_id.clone(),
-        )?,
+    let ((accounts_db, bank_fields, accounts_db_fields), measure_rebuild_storages) = measure_time!(
+        rebuild_storages_from_snapshot_dir(bank_snapshot, account_paths, || {
+            AccountsDb::new_with_config(
+                account_paths.to_vec(),
+                accounts_db_config,
+                accounts_update_notifier,
+                exit,
+            )
+        })?,
         "rebuild storages from snapshot dir"
     );
     info!("{measure_rebuild_storages}");
 
-    let next_append_vec_id =
-        Arc::try_unwrap(next_append_vec_id).expect("this is the only strong reference");
-    let storage_and_next_append_vec_id = StorageAndNextAccountsFileId {
-        storage,
-        next_append_vec_id,
-    };
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
     let ((bank, info), measure_rebuild_bank) = measure_time!(
@@ -411,15 +403,11 @@ pub fn bank_from_snapshot_dir(
             snapshot_accounts_db_fields,
             genesis_config,
             runtime_config,
-            account_paths,
-            storage_and_next_append_vec_id,
+            accounts_db,
             debug_keys,
             leader_for_tests,
             limit_load_slot_count_from_snapshot,
             verify_index,
-            accounts_db_config,
-            accounts_update_notifier,
-            exit,
         )?,
         "rebuild bank from snapshot"
     );
