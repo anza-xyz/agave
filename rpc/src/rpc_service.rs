@@ -1184,12 +1184,8 @@ mod tests {
             ledger_path.path().to_path_buf(),
             None,
             bank_forks,
-<<<<<<< HEAD
             RpcHealth::stub(optimistically_confirmed_bank, blockstore),
-=======
-            RpcHealth::stub(optimistically_confirmed_bank),
             false,
->>>>>>> 28d74d6 (rpc: /v0/circulating-supply requires --full-rpc-api (#16996))
         );
 
         // File does not exist => request should fail.
