@@ -203,21 +203,44 @@ fn test_invalid_worker_pools_are_rejected() {
 }
 
 #[test]
-fn test_loading_bindings_requires_a_named_device() {
-    let error = load_config(
-        r#"
+fn test_explicit_bindings_support_both_device_selectors() {
+    for (device, expected_device) in [
+        (
+            r#"device.route = "default""#,
+            NetworkDeviceSelector::Route(RouteSelector::Default),
+        ),
+        (
+            r#"device.name = "eth0""#,
+            NetworkDeviceSelector::Name("eth0".into()),
+        ),
+    ] {
+        let contents = format!(
+            r#"
 schema_version = 1
 [interfaces.primary]
-device.route = "default"
-xdp.zero_copy = false
-xdp.workers.bindings = [{ queue = 0, cpu = 8 }]
-"#,
-    )
-    .expect_err("explicit queue bindings require a named device");
-    assert!(
-        error.contains("workers.bindings requires device.name"),
-        "{error}"
-    );
+{device}
+xdp.workers.bindings = [{{ queue = 0, cpu = 8 }}, {{ queue = 3, cpu = 9 }}]
+
+[tpu.xdp]
+tx.queues = [3, 0]
+"#
+        );
+        let (config, _) =
+            parse(&contents).expect("explicit bindings should accept either selector");
+        let runtime = config
+            .resolve_xdp(&BTreeSet::from([8, 9, 10]))
+            .expect("sparse queue bindings should resolve")
+            .expect("XDP should be enabled");
+        assert_eq!(runtime.device, expected_device);
+        assert_eq!(
+            runtime.workers,
+            [
+                XdpWorkerBinding { queue: 0, cpu: 8 },
+                XdpWorkerBinding { queue: 3, cpu: 9 },
+            ]
+        );
+        assert_eq!(runtime.sender_positions.tpu.as_ref(), &[1, 0]);
+    }
 }
 
 #[test]

@@ -5,7 +5,7 @@ mod runtime;
 pub use runtime::XdpRuntimeConfig;
 use {
     crate::{
-        Diagnostic, DiagnosticKind, EffectiveConfig, NetworkDeviceSelector, ValidatedConfig,
+        Diagnostic, DiagnosticKind, EffectiveConfig, ValidatedConfig,
         interface::{format_interface_path, format_label},
     },
     serde::Deserialize,
@@ -249,16 +249,6 @@ fn validate_structural(config: &EffectiveConfig) -> Result<(), Diagnostic> {
             .workers
             .validate()
             .map_err(|error| error.at_field(["interfaces", label, "xdp"]))?;
-        if matches!(interface.xdp.workers, XdpWorkerPool::Bindings(_))
-            && !matches!(interface.device, NetworkDeviceSelector::Name(_))
-        {
-            return Err(Diagnostic::new(
-                DiagnosticKind::InvalidValue,
-                "requires device.name; use workers.auto/workers.cpus with device.route, or name \
-                 the device",
-            )
-            .at_field(["interfaces", label, "xdp", "workers", "bindings"]));
-        }
     }
     for (name, endpoint) in config.endpoints().named() {
         endpoint
