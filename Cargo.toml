@@ -117,6 +117,7 @@ members = [
     "unified-scheduler-logic",
     "unified-scheduler-pool",
     "validator",
+    "validator-config",
     "version",
     "vote",
     "votor",
@@ -219,6 +220,7 @@ agave-scheduling-utils = { path = "scheduling-utils", version = "=5.0.0-alpha.1"
 agave-shred-wire-format = { path = "shred/wire-format", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "snapshots", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-transaction-view = "10.1.0"
+agave-validator-config = { path = "validator-config", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-votor = { path = "votor", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-votor-messages = { path = "votor-messages", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-votor-transport = { path = "votor-transport", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
@@ -348,6 +350,7 @@ seqlock = "0.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_bytes = "0.11.19"
 serde_json = "1.0.154"
+serde_path_to_error = "0.1.20"
 serde_yaml = "0.9.34"
 serial_test = "4.0.1"
 shaq = { version = "5.1.1" }
@@ -567,6 +570,7 @@ tokio = "1.53.3"
 tokio-stream = "0.1.19"
 tokio-tungstenite = "0.28.0"
 tokio-util = "0.7.19"
+toml = "1.2.1"
 tonic = { version = "0.14.9", default-features = false }
 tonic-prost = "0.14.9"
 tonic-prost-build = { version = "0.14.9", default-features = false, features = ["transport"] }
