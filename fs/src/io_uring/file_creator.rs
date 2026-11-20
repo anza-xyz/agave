@@ -345,9 +345,12 @@ impl IoUringFileCreator<'_> {
                 }
             }
         }
-        file_state.writes_started += 1;
+        file_state.ops_started += 1;
         if let Some(file) = &file_state.open_file {
             let fd = types::Fd(file.as_raw_fd());
+            if is_final_write {
+                FileCreatorState::schedule_fallocate(&mut self.ring, file_key, fd)?;
+            }
             if write_len == 0 {
                 // EOF was reached consuming input *and* there isn't any data left to write
                 // immediately (there might be some stored for non-direct IO mode). Treat it as
@@ -374,7 +377,7 @@ impl IoUringFileCreator<'_> {
                 buf_offset: 0,
                 write_len,
             };
-            state.submitted_writes_size += write_len as usize;
+            self.ring.context_mut().submitted_writes_size += write_len as usize;
             self.ring.push(FileCreatorOp::Write(op))?;
         } else {
             // Note: `write_len` might be 0 here, but it's handled on open op completion
@@ -450,7 +453,7 @@ impl<'a> FileCreatorState<'a> {
         let this = ring.context_mut();
 
         let file_state = this.files.get_mut(file_key).unwrap();
-        file_state.writes_completed += 1;
+        file_state.ops_completed += 1;
 
         match file_state.non_dio_eof_write.as_mut() {
             Some(eof_write) if is_eof_write => {
@@ -463,13 +466,42 @@ impl<'a> FileCreatorState<'a> {
             _ => this.buffers.push_front(buf),
         }
 
-        if file_state.required_writes_done() {
+        Self::try_finalize_file(ring, file_key, fd)
+    }
+
+    /// Schedules the allocation of the final file size, once it is known and non-zero.
+    ///
+    /// The file then spans one extent, and its writes don't contend on the inode lock to extend it.
+    /// It also lets the filesystem do a single, earlier block allocation and quota update.
+    fn schedule_fallocate(
+        ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
+        file_key: usize,
+        fd: types::Fd,
+    ) -> io::Result<()> {
+        let file_state = ring.context_mut().files.get_mut(file_key).unwrap();
+        let Some(len) = file_state.size_on_eof.filter(|&size| size > 0) else {
+            return Ok(());
+        };
+        file_state.ops_started += 1;
+        ring.push(FileCreatorOp::Fallocate(FallocateOp { file_key, fd, len }))
+    }
+
+    /// Finalize the file once all of its tracked ops have completed.
+    fn try_finalize_file(
+        ring: &mut impl RingAccess<Context = Self, Operation = FileCreatorOp>,
+        file_key: usize,
+        fd: types::Fd,
+    ) -> io::Result<()> {
+        let this = ring.context_mut();
+        let file_state = this.files.get_mut(file_key).unwrap();
+
+        if file_state.required_ops_done() {
             // All aligned writes are done at this point, switch off direct-io before completing file
             file_state.ensure_direct_io_disabled(fd)?;
 
             // After disabling direct-IO, we may still have last write op to schedule.
             if let Some(op) = file_state.try_take_final_write_op(file_key, fd) {
-                file_state.writes_started += 1;
+                file_state.ops_started += 1;
                 this.submitted_writes_size += op.write_len as usize;
                 return ring.push(FileCreatorOp::Write(op));
             }
@@ -559,6 +591,10 @@ impl OpenOp {
         let backlog =
             ring.context_mut()
                 .mark_file_opened(self.file_key, fd, self.write_with_direct_io);
+
+        // Allocate before the writes that fill the file.
+        FileCreatorState::schedule_fallocate(ring, self.file_key, fd)?;
+
         for (buf, offset, write_len) in backlog {
             if write_len == 0 {
                 return FileCreatorState::mark_write_completed(ring, self.file_key, fd, true, buf);
@@ -698,11 +734,44 @@ impl<'a> WriteOp {
     }
 }
 
+/// Allocates the final file size (see [`opcode::Fallocate`]).
+#[derive(Debug)]
+struct FallocateOp {
+    file_key: usize,
+    fd: types::Fd,
+    len: FileSize,
+}
+
+impl<'a> FallocateOp {
+    fn entry(&mut self) -> squeue::Entry {
+        opcode::Fallocate::new(self.fd, self.len).build()
+    }
+
+    fn complete(
+        &mut self,
+        ring: &mut Completion<FileCreatorState<'a>, FileCreatorOp>,
+        res: io::Result<i32>,
+    ) -> io::Result<()>
+    where
+        Self: Sized,
+    {
+        let file_state = ring.context_mut().files.get_mut(self.file_key).unwrap();
+        if let Err(err) = res {
+            // The allocation is only a hint: a real problem, such as a full device, resurfaces
+            // on the writes.
+            log::warn!("fallocate failed for {}: {err}", file_state.path.display());
+        }
+        file_state.ops_completed += 1;
+        FileCreatorState::try_finalize_file(ring, self.file_key, self.fd)
+    }
+}
+
 #[derive(Debug)]
 enum FileCreatorOp {
     Open(OpenOp),
     Close(CloseOp),
     Write(WriteOp),
+    Fallocate(FallocateOp),
 }
 
 impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
@@ -711,6 +780,7 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
             Self::Open(op) => op.entry(),
             Self::Close(op) => op.entry(),
             Self::Write(op) => op.entry(),
+            Self::Fallocate(op) => op.entry(),
         }
     }
 
@@ -726,6 +796,7 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
             Self::Open(op) => op.complete(ring, res),
             Self::Close(op) => op.complete(ring, res),
             Self::Write(op) => op.complete(ring, res),
+            Self::Fallocate(op) => op.complete(ring, res),
         }
     }
 }
@@ -741,8 +812,10 @@ struct PendingFile {
     file_uses_direct_io: bool,
     /// Extra write data populated for direct IO mode if there is non-aligned data at EOF
     non_dio_eof_write: Option<FinalNonDirectIoWrite>,
-    writes_started: usize,
-    writes_completed: usize,
+    /// Number of scheduled ring ops that gate file's finalization.
+    ops_started: usize,
+    /// Number of completed ring ops, file can be finalized only if this reaches `ops_started`.
+    ops_completed: usize,
 }
 
 impl PendingFile {
@@ -751,8 +824,8 @@ impl PendingFile {
             path,
             open_file: None,
             backlog: SmallVec::new(),
-            writes_started: 0,
-            writes_completed: 0,
+            ops_started: 0,
+            ops_completed: 0,
             size_on_eof: None,
             file_uses_direct_io: false,
             non_dio_eof_write: None,
@@ -764,12 +837,12 @@ impl PendingFile {
         CString::new(os_str.as_encoded_bytes()).expect("path mustn't contain interior NULs")
     }
 
-    /// Check if all contents were read from source and scheduled writes are done
+    /// Check if all contents were read from source and all scheduled ops are done.
     ///
-    /// Note: this returns `true` if current stage writes are done, there might still be
+    /// Note: this returns `true` if current stage ops are done, there might still be a
     /// last write to be scheduled using `non_dio_eof_write`
-    fn required_writes_done(&self) -> bool {
-        self.writes_started == self.writes_completed && self.source_fully_read()
+    fn required_ops_done(&self) -> bool {
+        self.ops_started == self.ops_completed && self.source_fully_read()
     }
 
     /// Return true if all contents to be written for this file are already read
