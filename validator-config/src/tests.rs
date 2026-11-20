@@ -31,18 +31,20 @@ fn test_embedded_default_resolves_to_one_shared_worker() {
         .expect("default worker should resolve using the highest allowed CPU")
         .expect("embedded default should enable XDP");
     assert_eq!(
-        runtime.interface_label, "primary",
+        runtime.interface_label(),
+        "primary",
         "embedded default should transmit on the primary interface"
     );
     assert_eq!(
-        runtime.workers,
+        runtime.workers(),
         [XdpWorkerBinding { queue: 0, cpu: 5 }],
         "default worker should use queue 0 and the highest allowed CPU"
     );
-    for component in runtime.sender_positions.get_values() {
+    assert!(!runtime.zero_copy(), "zero-copy should be off by default");
+    for &component in runtime.sender_positions().get_values() {
         assert_eq!(
-            component.as_ref(),
-            &[0][..],
+            component,
+            &[0],
             "every component should select the sole default worker"
         );
     }
@@ -219,6 +221,7 @@ fn test_explicit_bindings_support_both_device_selectors() {
 schema_version = 1
 [interfaces.primary]
 {device}
+xdp.zero_copy = true
 xdp.workers.bindings = [{{ queue = 0, cpu = 8 }}, {{ queue = 3, cpu = 9 }}]
 
 [tpu.xdp]
@@ -231,15 +234,16 @@ tx.queues = [3, 0]
             .resolve_xdp(&BTreeSet::from([8, 9, 10]))
             .expect("sparse queue bindings should resolve")
             .expect("XDP should be enabled");
-        assert_eq!(runtime.device, expected_device);
+        assert_eq!(runtime.device(), &expected_device);
+        assert!(runtime.zero_copy(), "the zero-copy request should persist");
         assert_eq!(
-            runtime.workers,
+            runtime.workers(),
             [
                 XdpWorkerBinding { queue: 0, cpu: 8 },
                 XdpWorkerBinding { queue: 3, cpu: 9 },
             ]
         );
-        assert_eq!(runtime.sender_positions.tpu.as_ref(), &[1, 0]);
+        assert_eq!(runtime.sender_positions().tpu, &[1, 0]);
     }
 }
 
@@ -391,13 +395,14 @@ tx.interface = "fast"
         .expect("updated component references should resolve on the renamed interface")
         .unwrap();
     assert_eq!(
-        runtime.interface_label, "fast",
+        runtime.interface_label(),
+        "fast",
         "runtime should retain the renamed interface label"
     );
-    for component in runtime.sender_positions.get_values() {
+    for &component in runtime.sender_positions().get_values() {
         assert_eq!(
-            component.as_ref(),
-            &[0][..],
+            component,
+            &[0],
             "every component should select the sole worker on the renamed interface"
         );
     }
