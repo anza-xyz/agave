@@ -573,6 +573,7 @@ mod tests {
             root: bank_slot,
             highest_confirmed_slot: bank_slot,
             highest_super_majority_root: bank_slot,
+            ..CommitmentSlots::default()
         });
 
         // Wait to receive a block update.

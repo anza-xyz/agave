@@ -1174,6 +1174,7 @@ mod tests {
             ip_addr,
             solana_net_utils::find_available_port_in_range(ip_addr, port_range).unwrap(),
         );
+        bank.freeze();
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());

@@ -42,5 +42,8 @@ tarpc = { workspace = true, features = ["tokio1"] }
 tokio = { workspace = true, features = ["full"] }
 wincode = { workspace = true }
 
+[dev-dependencies]
+solana-runtime = { path = "../runtime", features = ["dev-context-only-utils"] }
+
 [lints]
 workspace = true
