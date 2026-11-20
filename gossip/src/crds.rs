@@ -72,8 +72,6 @@ pub struct Crds {
     shards: CrdsShards,
     nodes: IndexSet<usize>, // Indices of nodes' ContactInfo.
     num_nodes_removed: u64,
-    // Indices of DuplicateShred keyed by insert order.
-    duplicate_shreds: BTreeMap<u64 /*insert order*/, usize /*index*/>,
     // Indices of all crds values associated with a node.
     records: HashMap<Pubkey, IndexSet<usize>>,
     // Indices of all entries keyed by insert order.
@@ -253,7 +251,6 @@ impl Default for Crds {
             shards: CrdsShards::new(CRDS_SHARDS_BITS),
             nodes: IndexSet::default(),
             num_nodes_removed: 0,
-            duplicate_shreds: BTreeMap::default(),
             records: HashMap::default(),
             entries: BTreeMap::default(),
             purged: VecDeque::default(),
@@ -346,19 +343,13 @@ impl Crds {
                 stats.record_insert(&value, route);
                 let entry_index = entry.index();
                 self.shards.insert(entry_index, &value);
-                match value.value.data() {
-                    CrdsData::ContactInfo(node) => {
-                        self.nodes.insert(entry_index);
-                        emit_contact_info_event(
-                            self.contact_info_sender.as_ref(),
-                            ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
-                        );
-                    }
-                    CrdsData::DuplicateShred(_, _) => {
-                        self.duplicate_shreds.insert(value.ordinal, entry_index);
-                    }
-                    _ => (),
-                };
+                if let CrdsData::ContactInfo(node) = value.value.data() {
+                    self.nodes.insert(entry_index);
+                    emit_contact_info_event(
+                        self.contact_info_sender.as_ref(),
+                        ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
+                    );
+                }
                 self.entries.insert(value.ordinal, entry_index);
                 self.records.entry(pubkey).or_default().insert(entry_index);
                 self.cursor.consume(value.ordinal);
@@ -370,21 +361,14 @@ impl Crds {
                 let entry_index = entry.index();
                 self.shards.remove(entry_index, entry.get());
                 self.shards.insert(entry_index, &value);
-                match value.value.data() {
-                    CrdsData::ContactInfo(node) => {
-                        // self.nodes does not need to be updated since the
-                        // entry at this index was and stays contact-info.
-                        debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
-                        emit_contact_info_event(
-                            self.contact_info_sender.as_ref(),
-                            ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
-                        );
-                    }
-                    CrdsData::DuplicateShred(_, _) => {
-                        self.duplicate_shreds.remove(&entry.get().ordinal);
-                        self.duplicate_shreds.insert(value.ordinal, entry_index);
-                    }
-                    _ => (),
+                if let CrdsData::ContactInfo(node) = value.value.data() {
+                    // self.nodes does not need to be updated since the
+                    // entry at this index was and stays contact-info.
+                    debug_assert_matches!(entry.get().value.data(), CrdsData::ContactInfo(_));
+                    emit_contact_info_event(
+                        self.contact_info_sender.as_ref(),
+                        ContactInfoEvent::Updated(ContactInfoSnapshot::from(node)),
+                    );
                 }
                 self.entries.remove(&entry.get().ordinal);
                 self.entries.insert(value.ordinal, entry_index);
@@ -450,21 +434,6 @@ impl Crds {
         })
     }
 
-    /// Returns duplicate-shreds inserted since the given cursor.
-    /// Updates the cursor as the values are consumed.
-    pub(crate) fn get_duplicate_shreds<'a>(
-        &'a self,
-        cursor: &'a mut Cursor,
-    ) -> impl Iterator<Item = &'a VersionedCrdsValue> {
-        let range = (Bound::Included(cursor.ordinal()), Bound::Unbounded);
-        self.duplicate_shreds
-            .range(range)
-            .map(move |(ordinal, index)| {
-                cursor.consume(*ordinal);
-                self.table.index(*index)
-            })
-    }
-
     /// Returns all entries inserted since the given cursor.
     pub(crate) fn get_entries<'a>(
         &'a self,
@@ -480,18 +449,6 @@ impl Crds {
     /// Returns true if the table has any values from the pubkey.
     pub(crate) fn has_records(&self, pubkey: &Pubkey) -> bool {
         self.records.contains_key(pubkey)
-    }
-
-    /// Returns all records associated with a pubkey.
-    pub(crate) fn get_records(
-        &self,
-        pubkey: &Pubkey,
-    ) -> impl Iterator<Item = &VersionedCrdsValue> + use<'_> {
-        self.records
-            .get(pubkey)
-            .into_iter()
-            .flat_map(|records| records.into_iter())
-            .map(move |i| self.table.index(*i))
     }
 
     /// Returns number of known contact-infos (network size).
@@ -643,25 +600,19 @@ impl Crds {
         };
         self.purged.push_back((*value.value.hash(), now));
         self.shards.remove(index, &value);
-        match value.value.data() {
-            CrdsData::ContactInfo(node) => {
-                self.nodes.swap_remove(&index);
-                self.num_nodes_removed += 1;
-                // Tell any attached Geyser-side listener that this
-                // validator is no longer in CRDS (timeout-based purge
-                // via `purge_active`, or size-based trim via
-                // `trim_crds_table`), so consumers can invalidate any
-                // cached endpoint they hold instead of relying on a
-                // wallclock-staleness heuristic.
-                emit_contact_info_event(
-                    self.contact_info_sender.as_ref(),
-                    ContactInfoEvent::Removed(*node.pubkey()),
-                );
-            }
-            CrdsData::DuplicateShred(_, _) => {
-                self.duplicate_shreds.remove(&value.ordinal);
-            }
-            _ => (),
+        if let CrdsData::ContactInfo(node) = value.value.data() {
+            self.nodes.swap_remove(&index);
+            self.num_nodes_removed += 1;
+            // Tell any attached Geyser-side listener that this
+            // validator is no longer in CRDS (timeout-based purge
+            // via `purge_active`, or size-based trim via
+            // `trim_crds_table`), so consumers can invalidate any
+            // cached endpoint they hold instead of relying on a
+            // wallclock-staleness heuristic.
+            emit_contact_info_event(
+                self.contact_info_sender.as_ref(),
+                ContactInfoEvent::Removed(*node.pubkey()),
+            );
         }
         self.entries.remove(&value.ordinal);
         // Remove the index from records associated with the value's pubkey.
@@ -683,22 +634,16 @@ impl Crds {
             let value = self.table.index(index);
             self.shards.remove(size, value);
             self.shards.insert(index, value);
-            match value.value.data() {
-                CrdsData::ContactInfo(_) => {
-                    // Keep the node's position for NodesCursor.
-                    let k = self
-                        .nodes
-                        .get_index_of(&size)
-                        .expect("the moved ContactInfo is in nodes");
-                    self.nodes
-                        .replace_index(k, index)
-                        .expect("the freed index is not in nodes");
-                }
-                CrdsData::DuplicateShred(_, _) => {
-                    self.duplicate_shreds.insert(value.ordinal, index);
-                }
-                _ => (),
-            };
+            if let CrdsData::ContactInfo(_) = value.value.data() {
+                // Keep the node's position for NodesCursor.
+                let k = self
+                    .nodes
+                    .get_index_of(&size)
+                    .expect("the moved ContactInfo is in nodes");
+                self.nodes
+                    .replace_index(k, index)
+                    .expect("the freed index is not in nodes");
+            }
             self.entries.insert(value.ordinal, index);
             let pubkey = value.value.pubkey();
             let records = self.records.get_mut(&pubkey).unwrap();
@@ -837,7 +782,7 @@ impl CrdsDataStats {
             CrdsData::LegacyVersion(_) => 6,
             CrdsData::Version(_) => 7,
             CrdsData::NodeInstance(_) => 8,
-            CrdsData::DuplicateShred(_, _) => 9,
+            CrdsData::DuplicateShred(_) => 9,
             CrdsData::SnapshotHashes(_) => 10,
             CrdsData::ContactInfo(_) => 11,
             CrdsData::RestartLastVotedForkSlots(_) => 12,
@@ -1614,7 +1559,7 @@ mod tests {
         assert_eq!(crds.get_shred_version(&pubkey), None);
         // Remove the remaining entry with the same pubkey.
         crds.remove(&CrdsValueLabel::SnapshotHashes(pubkey), timestamp());
-        assert_eq!(crds.get_records(&pubkey).count(), 0);
+        assert!(!crds.has_records(&pubkey));
     }
 
     #[test]
