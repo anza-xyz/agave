@@ -1,6 +1,7 @@
 use {
     solana_builtins_default_costs::{
-        BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY, get_builtin_migration_feature_index,
+        BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY, MIGRATING_BUILTINS_COSTS,
+        get_builtin_migration_feature_index,
     },
     solana_pubkey::Pubkey,
 };
@@ -20,26 +21,75 @@ pub(crate) enum ProgramKind {
     },
 }
 
+// A ProgramKind stored in one byte, or UNCHECKED. Plain bytes make `new()` a
+// single 256-byte zero fill; it runs for every transaction that doesn't set a
+// compute unit limit.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EncodedProgramKind(u8);
+
+impl EncodedProgramKind {
+    const UNCHECKED: Self = Self(0);
+    const NOT_BUILTIN: Self = Self(1);
+    const BUILTIN: Self = Self(2);
+    const FIRST_MIGRATING: u8 = 3;
+
+    #[inline]
+    fn decode(self) -> Option<ProgramKind> {
+        match self {
+            Self::UNCHECKED => None,
+            Self::NOT_BUILTIN => Some(ProgramKind::NotBuiltin),
+            Self::BUILTIN => Some(ProgramKind::Builtin),
+            Self(code) => Some(ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index: usize::from(code - Self::FIRST_MIGRATING),
+            }),
+        }
+    }
+}
+
+const _: () = assert!(
+    MIGRATING_BUILTINS_COSTS.len() <= (u8::MAX - EncodedProgramKind::FIRST_MIGRATING) as usize + 1,
+    "every migrating builtin index must fit in an EncodedProgramKind"
+);
+
+impl From<ProgramKind> for EncodedProgramKind {
+    #[inline]
+    fn from(kind: ProgramKind) -> Self {
+        match kind {
+            ProgramKind::NotBuiltin => Self::NOT_BUILTIN,
+            ProgramKind::Builtin => Self::BUILTIN,
+            // Fits in a byte: checked by the const assertion above.
+            ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index,
+            } => Self(Self::FIRST_MIGRATING + core_bpf_migration_feature_index as u8),
+        }
+    }
+}
+
 pub(crate) struct BuiltinProgramsFilter {
     // array of slots for all possible static and sanitized program_id_index,
-    // each slot indicates if a program_id_index has not been checked (eg, None),
-    // or already checked with result (eg, Some(ProgramKind)) that can be reused.
-    program_kind: [Option<ProgramKind>; FILTER_SIZE],
+    // each slot indicates if a program_id_index has not been checked (UNCHECKED),
+    // or already checked with an encoded ProgramKind that can be reused.
+    encoded_program_kinds: [EncodedProgramKind; FILTER_SIZE],
 }
 
 impl BuiltinProgramsFilter {
     pub(crate) fn new() -> Self {
         BuiltinProgramsFilter {
-            program_kind: [None; FILTER_SIZE],
+            encoded_program_kinds: [EncodedProgramKind::UNCHECKED; FILTER_SIZE],
         }
     }
 
     pub(crate) fn get_program_kind(&mut self, index: usize, program_id: &Pubkey) -> ProgramKind {
-        *self
-            .program_kind
+        let slot = self
+            .encoded_program_kinds
             .get_mut(index)
-            .expect("program id index is sanitized")
-            .get_or_insert_with(|| Self::check_program_kind(program_id))
+            .expect("program id index is sanitized");
+        slot.decode().unwrap_or_else(|| {
+            let kind = Self::check_program_kind(program_id);
+            *slot = kind.into();
+            kind
+        })
     }
 
     #[inline]
@@ -77,17 +127,20 @@ mod test {
         let mut index = 9;
 
         // initial state is Unchecked
-        assert!(test_store.program_kind[index].is_none());
+        assert_eq!(
+            test_store.encoded_program_kinds[index],
+            EncodedProgramKind::UNCHECKED
+        );
 
         // non builtin returns None
         assert_eq!(
             test_store.get_program_kind(index, &DUMMY_PROGRAM_ID.parse().unwrap()),
             ProgramKind::NotBuiltin
         );
-        // but its state is now checked (eg, Some(...))
+        // but its state is now checked
         assert_eq!(
-            test_store.program_kind[index],
-            Some(ProgramKind::NotBuiltin)
+            test_store.encoded_program_kinds[index],
+            EncodedProgramKind::NOT_BUILTIN
         );
         // lookup same `index` will return cached data, will not lookup `program_id`
         // again
@@ -144,5 +197,24 @@ mod test {
             test_store.get_program_kind(FILTER_SIZE + 1, &DUMMY_PROGRAM_ID.parse().unwrap(),),
             ProgramKind::NotBuiltin
         );
+    }
+
+    #[test]
+    fn test_encoded_program_kind_round_trip() {
+        assert_eq!(EncodedProgramKind::UNCHECKED.decode(), None);
+
+        let kinds =
+            [ProgramKind::NotBuiltin, ProgramKind::Builtin]
+                .into_iter()
+                .chain((0..MIGRATING_BUILTINS_COSTS.len()).map(
+                    |core_bpf_migration_feature_index| ProgramKind::MigratingBuiltin {
+                        core_bpf_migration_feature_index,
+                    },
+                ));
+        for kind in kinds {
+            let encoded = EncodedProgramKind::from(kind);
+            assert_ne!(encoded, EncodedProgramKind::UNCHECKED);
+            assert_eq!(encoded.decode(), Some(kind));
+        }
     }
 }
