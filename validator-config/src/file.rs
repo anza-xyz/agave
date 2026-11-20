@@ -1,6 +1,6 @@
-//! Configuration file loading, version checks, and default merging.
+//! Configuration TOML parsing, version checks, and default merging.
 
-use {crate::EffectiveConfig, std::path::Path};
+use crate::EffectiveConfig;
 
 /// The built-in defaults and reference for the config file format.
 pub const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
@@ -50,16 +50,14 @@ fn merge_tables(base: &mut toml::Table, user: toml::Table, path: &mut Vec<String
     }
 }
 
-/// Read the built-in defaults merged with the user config file.
-pub(crate) fn read_config(
-    user_path: Option<&Path>,
+/// Parse the built-in defaults merged with the user TOML.
+pub(crate) fn parse_config(
+    user_text: Option<&str>,
     description: &str,
 ) -> Result<EffectiveConfig, String> {
     let mut merged = parse_toml(DEFAULT_CONFIG, "<built-in>")?;
-    if let Some(path) = user_path {
-        let text = std::fs::read_to_string(path)
-            .map_err(|error| format!("failed to read config file `{description}`: {error}"))?;
-        let user = parse_toml(&text, description)?;
+    if let Some(text) = user_text {
+        let user = parse_toml(text, description)?;
         merge_tables(&mut merged, user, &mut Vec::new());
     }
     merged

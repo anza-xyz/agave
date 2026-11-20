@@ -1,6 +1,6 @@
 #![cfg(feature = "agave-unstable-api")]
 
-//! Validator configuration schema, file loading, and policy validation.
+//! Validator configuration schema, TOML parsing, and policy validation.
 //! XDP policy resolution uses supplied CPU information; device lookup and
 //! transmitter setup belong to the validator.
 
@@ -41,7 +41,7 @@ pub(crate) struct EffectiveConfig {
     votor: EffectiveEndpoint,
 }
 
-/// A config that passed validation in `load`
+/// A config that passed validation in [`parse`] or [`load`].
 #[derive(Clone, Debug)]
 pub struct ValidatedConfig {
     xdp: Option<XdpPolicy>,
@@ -68,11 +68,37 @@ impl EffectiveConfig {
 
 /// Load the built-in defaults merged with the user config file and validate the result.
 pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<String>), String> {
-    let description = user_path.map_or_else(
-        || "<built-in>".to_string(),
-        |path| path.display().to_string(),
-    );
-    let config = file::read_config(user_path, &description)?;
+    let Some(path) = user_path else {
+        return parse_with_description(None, "<built-in>");
+    };
+    let description = path.display().to_string();
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read config file `{description}`: {error}"))?;
+    parse_with_description(Some(&text), &description)
+}
+
+/// Parse user TOML, merge it with the built-in defaults, and validate the result.
+///
+/// The input must include the supported `schema_version`. The returned list
+/// contains any validation warnings.
+///
+/// ```
+/// use agave_validator_config::parse;
+///
+/// let (config, warnings) = parse("schema_version = 1\nxdp.enabled = false")?;
+/// assert!(config.xdp().is_none());
+/// assert!(warnings.is_empty());
+/// # Ok::<(), String>(())
+/// ```
+pub fn parse(text: &str) -> Result<(ValidatedConfig, Vec<String>), String> {
+    parse_with_description(Some(text), "<input>")
+}
+
+fn parse_with_description(
+    user_text: Option<&str>,
+    description: &str,
+) -> Result<(ValidatedConfig, Vec<String>), String> {
+    let config = file::parse_config(user_text, description)?;
     let (xdp, warnings) = xdp::validate(&config)
         .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
     Ok((ValidatedConfig { xdp }, warnings))
