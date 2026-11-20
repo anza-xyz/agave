@@ -21,6 +21,9 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* RPC requests that trigger account scans no longer block accounts-db background tasks,
+  and thus long-running requests may return inconsistent results during concurrent cleaning.
+
 ### Validator
 
 #### Breaking
