@@ -160,6 +160,10 @@ impl SlotCache {
         self.unique_account_writes_size.load(Ordering::Relaxed)
             + self.same_account_writes_size.load(Ordering::Relaxed)
     }
+
+    pub(crate) fn data_size(&self) -> u64 {
+        self.size.load(Ordering::Relaxed)
+    }
 }
 
 impl Deref for SlotCache {
