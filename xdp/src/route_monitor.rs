@@ -42,6 +42,7 @@ impl RouteMonitor {
                 on_thread_start();
 
                 let mut state = RouteMonitorState::new(route_table);
+                state.publish(&atomic_router);
 
                 let timeout = Duration::from_millis(10);
                 while !exit.load(Ordering::Relaxed) {
@@ -231,17 +232,21 @@ impl RouteMonitorState {
         update_interval: Duration,
     ) {
         if !self.pending_events.is_empty() && self.last_publish.elapsed() >= update_interval {
-            log_router_rebuild(self.route_table, &self.pending_events);
-            match rebuild_router(self.route_table) {
-                Ok(router) => {
-                    log_router_publish(self.route_table, &router);
-                    atomic_router.store(Arc::new(router));
-                    self.pending_events = PendingEvents::default();
-                }
-                Err(e) => warn!("failed to rebuild router from netlink: {e}"),
-            }
-            self.last_publish = Instant::now();
+            self.publish(atomic_router);
         }
+    }
+
+    fn publish(&mut self, atomic_router: &Arc<ArcSwap<Router>>) {
+        log_router_rebuild(self.route_table, &self.pending_events);
+        match rebuild_router(self.route_table) {
+            Ok(router) => {
+                log_router_publish(self.route_table, &router);
+                atomic_router.store(Arc::new(router));
+                self.pending_events = PendingEvents::default();
+            }
+            Err(e) => warn!("failed to rebuild router from netlink: {e}"),
+        }
+        self.last_publish = Instant::now();
     }
 }
 
