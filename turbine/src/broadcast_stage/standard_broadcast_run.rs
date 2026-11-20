@@ -60,6 +60,8 @@ pub struct StandardBroadcastRun {
     max_data_shreds_per_slot: u32,
     max_code_shreds_per_slot: u32,
     broadcast_blacklist: VecDeque<Slot>,
+    // Empty unless --shred-receiver-address is configured.
+    shred_receivers: Option<Arc<[SocketAddr]>>,
 }
 
 #[derive(Debug)]
@@ -72,7 +74,20 @@ impl StandardBroadcastRun {
         shred_version: u16,
         votor_event_sender: VotorEventSender,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
+        shred_receivers: Vec<SocketAddr>,
     ) -> Self {
+        assert!(
+            shred_receivers.len() <= MAX_SHRED_RECEIVER_ADDRESSES
+                && shred_receivers
+                    .iter()
+                    .all(|addr| addr.is_ipv4() && addr.port() != 0),
+            "shred receivers require at most 32 IPv4 addresses with nonzero ports"
+        );
+        let shred_receivers = if shred_receivers.is_empty() {
+            None
+        } else {
+            Some(Arc::from(shred_receivers))
+        };
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
@@ -104,6 +119,7 @@ impl StandardBroadcastRun {
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
             max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
             broadcast_blacklist: VecDeque::new(),
+            shred_receivers,
         }
     }
 
@@ -575,6 +591,7 @@ impl StandardBroadcastRun {
             bank_forks,
             &self.leader_schedule_cache,
             cluster_info.socket_addr_space(),
+            self.shred_receivers.as_ref(),
         )?;
         transmit_time.stop();
 
@@ -783,6 +800,7 @@ mod test {
             0,
             votor_event_sender,
             test_leader_schedule_cache(&parent_bank),
+            Vec::new(),
         );
         let (blockstore_sender, blockstore_receiver) = bounded(1024);
         let (socket_sender, socket_receiver) = bounded(1024);
@@ -916,8 +934,12 @@ mod test {
         let mut pinnable_slice = blockstore.new_pinnable_slice();
         let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+            Vec::new(),
+        );
 
         standard_broadcast_run
             .process_receive_results(
@@ -943,8 +965,12 @@ mod test {
         let keypair = Arc::new(Keypair::new());
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
-        let mut run =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
+        let mut run = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+            Vec::new(),
+        );
         assert!(run.completed);
 
         // Set up the slot to be interrupted
@@ -995,8 +1021,12 @@ mod test {
 
         // Step 1: Make an incomplete transmission for slot 1
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank0));
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank0),
+            Vec::new(),
+        );
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -1144,8 +1174,12 @@ mod test {
         let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut last_tick_height = bank.tick_height();
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+            Vec::new(),
+        );
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
             last_tick_height += ticks.len() as u64;
@@ -1215,8 +1249,12 @@ mod test {
         };
 
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+            Vec::new(),
+        );
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -1257,8 +1295,12 @@ mod test {
             .unwrap();
 
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank1));
+        let mut standard_broadcast_run = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank1),
+            Vec::new(),
+        );
         let (bsend, brecv) = bounded(1024);
         let (ssend, srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
@@ -1373,8 +1415,12 @@ mod test {
         let keypair = Keypair::new();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
-        let mut bs =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+            Vec::new(),
+        );
         bs.slot = 1;
         bs.parent = 0;
         bs.max_data_shreds_per_slot = 1000;
@@ -1406,8 +1452,12 @@ mod test {
         let keypair = Keypair::new();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
-        let mut bs =
-            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
+        let mut bs = StandardBroadcastRun::new(
+            0,
+            votor_event_sender,
+            test_leader_schedule_cache(&bank),
+            Vec::new(),
+        );
         bs.slot = 12;
         bs.parent = 10;
         let original_parent_block_id = BlockId::new_unique();
