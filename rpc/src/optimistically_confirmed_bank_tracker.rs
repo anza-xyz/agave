@@ -444,8 +444,47 @@ impl OptimisticallyConfirmedBankTracker {
                     drop(w_optimistically_confirmed_bank);
                 }
             }
+
             BankNotification::NewRootBank(bank) => {
                 let root_slot = bank.slot();
+
+                // Deliver pending confirmations for rooted banks before
+                // their Root notifications are emitted. Only confirmations
+                // matching the actual bank hash are valid.
+                if !pending_optimistically_confirmed_banks.is_empty() {
+                    for rooted_bank in bank.clone().parents_inclusive().iter().rev() {
+                        if !rooted_bank.is_frozen() {
+                            continue;
+                        }
+
+                        if pending_optimistically_confirmed_banks
+                            .remove(&(rooted_bank.slot(), rooted_bank.hash()))
+                        {
+                            subscriptions.notify_gossip_subscribers(rooted_bank.slot());
+
+                            Self::notify_slot_status(
+                                slot_notification_subscribers,
+                                SlotNotification::OptimisticallyConfirmed(
+                                    rooted_bank.slot(),
+                                    rooted_bank.bank_id(),
+                                ),
+                            );
+
+                            if let Some(prioritization_fee_cache) = prioritization_fee_cache {
+                                prioritization_fee_cache.finalize_priority_fee(
+                                    rooted_bank.slot(),
+                                    rooted_bank.bank_id(),
+                                );
+                            }
+
+                            *last_notified_confirmed_slot =
+                                (*last_notified_confirmed_slot).max(rooted_bank.slot());
+                            *highest_confirmed_slot =
+                                (*highest_confirmed_slot).max(rooted_bank.slot());
+                        }
+                    }
+                }
+
                 let mut w_optimistically_confirmed_bank =
                     optimistically_confirmed_bank.write().unwrap();
                 if root_slot > w_optimistically_confirmed_bank.bank.slot() {
@@ -453,8 +492,11 @@ impl OptimisticallyConfirmedBankTracker {
                 }
                 drop(w_optimistically_confirmed_bank);
 
+                // Discard obsolete pending confirmations, including those
+                // belonging to a different fork at an already-rooted slot.
                 pending_optimistically_confirmed_banks.retain(|&(slot, _hash)| slot > root_slot);
             }
+
             BankNotification::NewRootedChain(mut roots, oldest_parent) => {
                 Self::notify_new_root_slots(
                     &mut roots,
@@ -800,6 +842,247 @@ mod tests {
         // Obtain the root notifications, we expect 1, which is for bank7 only as its parent bank5 is already notified.
         let notifications = get_root_notifications(&receiver);
         assert_eq!(notifications.len(), 1);
+    }
+
+    #[test]
+    fn test_new_root_does_not_confirm_mismatched_hash() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        bank1.freeze();
+        let bank1_hash = Hash::new_unique();
+        assert_ne!(bank1_hash, bank1.hash());
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+
+        let subscriptions = RpcSubscriptions::new_for_tests(
+            exit,
+            Arc::new(AtomicU64::default()),
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::default())),
+            optimistically_confirmed_bank.clone(),
+        );
+
+        let (sender, receiver) = bounded(16);
+        let subscribers = Some(Arc::new(RwLock::new(vec![sender])));
+
+        let mut pending = PendingOptimisticallyConfirmedBanks::new();
+        let mut last_notified_confirmed_slot = 0;
+        let mut highest_confirmed_slot = 0;
+        let mut newest_root_slot = 0;
+
+        // Confirmation arrives before the local bank is inserted.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::OptimisticallyConfirmed(1, bank1_hash),
+                None,
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        assert!(pending.contains(&(1, bank1_hash)));
+
+        // The matching bank becomes available, but its Frozen
+        // notification has not yet reached the tracker.
+        bank_forks.write().unwrap().insert(bank1);
+        let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+        let (rooted_chain, oldest_parent) = root_slot_notifications(&bank1);
+
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (BankNotification::NewRootBank(bank1.clone()), None),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::NewRootedChain(rooted_chain, oldest_parent),
+                None,
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        let notifications = get_root_notifications(&receiver);
+
+        assert_eq!(
+            notifications.len(),
+            1,
+            "A mismatched hash must not produce a Confirmed notification; got {notifications:?}"
+        );
+
+        assert!(matches!(
+            &notifications[0],
+            SlotNotification::Root((slot, parent, id))
+                if *slot == 1 && *parent == 0 && *id == bank1.bank_id()
+        ));
+
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn test_new_root_delivers_pending_confirmation_before_root() {
+        let exit = Arc::new(AtomicBool::new(false));
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        bank1.freeze();
+        let bank1_hash = bank1.hash();
+
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+
+        let subscriptions = RpcSubscriptions::new_for_tests(
+            exit,
+            Arc::new(AtomicU64::default()),
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::default())),
+            optimistically_confirmed_bank.clone(),
+        );
+
+        let (sender, receiver) = bounded(16);
+        let subscribers = Some(Arc::new(RwLock::new(vec![sender])));
+
+        let mut pending = PendingOptimisticallyConfirmedBanks::new();
+        let mut last_notified_confirmed_slot = 0;
+        let mut highest_confirmed_slot = 0;
+        let mut newest_root_slot = 0;
+
+        // Confirmation arrives before the local bank is inserted.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::OptimisticallyConfirmed(1, bank1_hash),
+                None,
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        assert!(pending.contains(&(1, bank1_hash)));
+
+        // The matching bank becomes available, but its Frozen
+        // notification has not yet reached the tracker.
+        bank_forks.write().unwrap().insert(bank1);
+        let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+        let (rooted_chain, oldest_parent) = root_slot_notifications(&bank1);
+
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (BankNotification::NewRootBank(bank1.clone()), None),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (
+                BankNotification::NewRootedChain(rooted_chain, oldest_parent),
+                None,
+            ),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        let notifications = get_root_notifications(&receiver);
+
+        assert_eq!(
+            notifications.len(),
+            2,
+            "Expected Confirmed followed by Rooted; got {notifications:?}"
+        );
+
+        assert!(matches!(
+            &notifications[0],
+            SlotNotification::OptimisticallyConfirmed(slot, id)
+                if *slot == 1 && *id == bank1.bank_id()
+        ));
+
+        assert!(matches!(
+            &notifications[1],
+            SlotNotification::Root((slot, parent, id))
+                if *slot == 1 && *parent == 0 && *id == bank1.bank_id()
+        ));
+
+        // A delayed Frozen notification must not emit Confirmed again.
+        OptimisticallyConfirmedBankTracker::process_notification(
+            (BankNotification::Frozen(bank1.clone()), None),
+            &bank_forks,
+            &optimistically_confirmed_bank,
+            &subscriptions,
+            &mut pending,
+            &mut last_notified_confirmed_slot,
+            &mut highest_confirmed_slot,
+            &mut newest_root_slot,
+            &subscribers,
+            None,
+            &None,
+        );
+
+        let later_notifications = get_root_notifications(&receiver);
+
+        assert!(
+            !later_notifications.iter().any(|notification| {
+                matches!(
+                    notification,
+                    SlotNotification::OptimisticallyConfirmed(1, _)
+                )
+            }),
+            "Confirmed must not be emitted twice: {later_notifications:?}"
+        );
     }
 
     #[test]
