@@ -46,6 +46,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `agave-ledger-tool program run` now enforces the execution budget specified by `--limit`.
+
 ## 4.5.0
 
 ### RPC
