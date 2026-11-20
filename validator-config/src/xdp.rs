@@ -252,6 +252,10 @@ impl XdpPolicy {
 pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String> {
     for (label, interface) in &config.interfaces {
         interface
+            .device
+            .validate()
+            .map_err(|error| format!("{}.device.{error}", format_interface_path(label)))?;
+        interface
             .xdp
             .workers
             .validate()

@@ -139,6 +139,30 @@ schema_version = 1
 }
 
 #[test]
+fn test_invalid_device_names_are_rejected() {
+    for enabled in [false, true] {
+        for (name, reason) in [
+            (r#""""#, "must not be empty"),
+            (r#""eth\u0000x""#, "must not contain a NUL character"),
+        ] {
+            let contents = format!(
+                r#"
+schema_version = 1
+xdp.enabled = {enabled}
+[interfaces.primary]
+device.name = {name}
+"#
+            );
+            let error = load_config(&contents).expect_err("invalid device names must be rejected");
+            assert!(
+                error.contains(&format!("interfaces.primary.device.name {reason}")),
+                "{contents}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_invalid_worker_pools_are_rejected() {
     for (workers, expected) in [
         ("{}", "found 0 elements"),

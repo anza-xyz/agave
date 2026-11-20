@@ -12,6 +12,16 @@ pub enum NetworkDeviceSelector {
     Name(String),
 }
 
+impl NetworkDeviceSelector {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::Name(name) if name.is_empty() => Err("name must not be empty"),
+            Self::Name(name) if name.contains('\0') => Err("name must not contain a NUL character"),
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteSelector {
