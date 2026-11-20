@@ -149,6 +149,7 @@ struct RpcRequestMiddleware {
     snapshot_config: Option<SnapshotConfig>,
     bank_forks: Arc<RwLock<BankForks>>,
     health: Arc<RpcHealth>,
+    full_api: bool,
 }
 
 impl RpcRequestMiddleware {
@@ -157,6 +158,7 @@ impl RpcRequestMiddleware {
         snapshot_config: Option<SnapshotConfig>,
         bank_forks: Arc<RwLock<BankForks>>,
         health: Arc<RpcHealth>,
+        full_api: bool,
     ) -> Self {
         Self {
             ledger_path,
@@ -171,6 +173,7 @@ impl RpcRequestMiddleware {
             snapshot_config,
             bank_forks,
             health,
+            full_api,
         }
     }
 
@@ -411,6 +414,9 @@ impl RequestMiddleware for RpcRequestMiddleware {
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {
+            if path == "/v0/circulating-supply" && !self.full_api {
+                return RpcRequestMiddleware::not_found().into();
+            }
             process_rest(self.bank_forks.clone(), path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
@@ -739,6 +745,7 @@ impl JsonRpcService {
                     snapshot_config,
                     bank_forks,
                     health.clone(),
+                    full_api,
                 );
                 let server = ServerBuilder::with_meta_extractor(
                     io,
@@ -1273,6 +1280,39 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    async fn test_circulating_supply_requires_full_api() {
+        let bank_forks = create_bank_forks();
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let health = RpcHealth::stub(optimistically_confirmed_bank);
+
+        for full_api in [false, true] {
+            let middleware = RpcRequestMiddleware::new(
+                PathBuf::default(),
+                None,
+                bank_forks.clone(),
+                health.clone(),
+                full_api,
+            );
+            let request = hyper::Request::builder()
+                .uri("/v0/circulating-supply")
+                .body(hyper::Body::empty())
+                .unwrap();
+            let RequestMiddlewareAction::Respond { response, .. } = middleware.on_request(request)
+            else {
+                panic!("Expected a REST response");
+            };
+            let response = response.await.unwrap();
+            let expected_status = if full_api {
+                hyper::StatusCode::OK
+            } else {
+                hyper::StatusCode::NOT_FOUND
+            };
+            assert_eq!(response.status(), expected_status);
+        }
+    }
+
     #[test]
     fn test_strip_prefix() {
         assert_eq!(RpcRequestMiddleware::strip_leading_slash("/"), Some(""));
@@ -1316,12 +1356,14 @@ mod tests {
             None,
             bank_forks.clone(),
             health.clone(),
+            false,
         );
         let rrm_with_snapshot_config = RpcRequestMiddleware::new(
             ledger_path.path().to_path_buf(),
             Some(SnapshotConfig::default()),
             bank_forks,
             health,
+            false,
         );
 
         assert!(rrm.is_file_get_path(DEFAULT_GENESIS_DOWNLOAD_PATH));
@@ -1441,6 +1483,7 @@ mod tests {
             None,
             bank_forks,
             RpcHealth::stub(optimistically_confirmed_bank),
+            false,
         );
 
         // File does not exist => request should fail.
