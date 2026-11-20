@@ -2,7 +2,7 @@ use {
     agave_validator_config::{
         ConfigDocument, Diagnostic, DiagnosticKind, FieldPathSegment, load, parse,
     },
-    std::{collections::BTreeSet, fs},
+    std::{collections::BTreeSet, fs, io},
 };
 
 fn assert_field_path(diagnostic: &Diagnostic, keys: &[&str]) {
@@ -86,13 +86,20 @@ fn test_file_and_reference_diagnostics() {
     let path = directory.path().join("validator.toml");
     let diagnostic = load(Some(&path)).unwrap_err();
     assert_eq!(diagnostic.kind(), DiagnosticKind::Io);
+    assert_eq!(diagnostic.io_error_kind(), Some(io::ErrorKind::NotFound));
     assert_eq!(diagnostic.source_name(), path.to_str());
     assert_eq!(diagnostic.source_span(), None);
+
+    fs::write(&path, [0xff]).expect("write a config with invalid UTF-8");
+    let diagnostic = load(Some(&path)).expect_err("loading should reject invalid UTF-8");
+    assert_eq!(diagnostic.kind(), DiagnosticKind::Io);
+    assert_eq!(diagnostic.io_error_kind(), Some(io::ErrorKind::InvalidData));
 
     let text = "schema_version = 1\ntpu.xdp.tx.queues = [1]";
     fs::write(&path, text).unwrap();
     let diagnostic = load(Some(&path)).unwrap_err();
     assert_eq!(diagnostic.kind(), DiagnosticKind::InvalidReference);
+    assert_eq!(diagnostic.io_error_kind(), None);
     assert_eq!(diagnostic.source_name(), path.to_str());
     assert_field_path(&diagnostic, &["tpu", "xdp", "tx", "queues"]);
     assert_eq!(&text[diagnostic.source_span().unwrap()], "[1]");

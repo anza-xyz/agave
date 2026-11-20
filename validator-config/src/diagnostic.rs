@@ -2,7 +2,7 @@
 
 use {
     crate::interface::format_field_key,
-    std::{fmt, ops::Range},
+    std::{fmt, io, ops::Range},
 };
 
 /// The operation or rule that produced a diagnostic.
@@ -51,6 +51,10 @@ pub struct Diagnostic {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DiagnosticMessage {
     Text(String),
+    Io {
+        kind: io::ErrorKind,
+        message: String,
+    },
     TomlSyntax(Box<toml::de::Error>),
 }
 
@@ -58,6 +62,14 @@ impl Diagnostic {
     /// What produced this diagnostic.
     pub fn kind(&self) -> DiagnosticKind {
         self.kind
+    }
+
+    /// The underlying file read error kind, when available.
+    pub fn io_error_kind(&self) -> Option<io::ErrorKind> {
+        match &self.message {
+            DiagnosticMessage::Io { kind, .. } => Some(*kind),
+            _ => None,
+        }
     }
 
     /// The affected field, from the document root. An empty slice denotes
@@ -79,7 +91,7 @@ impl Diagnostic {
     /// The human-readable diagnostic text, without the file or field path prefix.
     pub fn message(&self) -> &str {
         match &self.message {
-            DiagnosticMessage::Text(message) => message,
+            DiagnosticMessage::Text(message) | DiagnosticMessage::Io { message, .. } => message,
             DiagnosticMessage::TomlSyntax(error) => error.message(),
         }
     }
@@ -104,9 +116,17 @@ impl Diagnostic {
         self
     }
 
-    pub(crate) fn in_source(mut self, source: &str) -> Self {
-        self.source_name = Some(source.to_owned());
-        self
+    pub(crate) fn io(error: &io::Error, source: &str) -> Self {
+        Self {
+            kind: DiagnosticKind::Io,
+            field_path: Vec::new(),
+            message: DiagnosticMessage::Io {
+                kind: error.kind(),
+                message: error.to_string(),
+            },
+            source_name: Some(source.to_owned()),
+            source_span: None,
+        }
     }
 
     pub(crate) fn toml_syntax(error: toml::de::Error, source: &str) -> Self {
@@ -174,8 +194,8 @@ impl fmt::Display for Diagnostic {
             f.write_str(" ")?;
         }
         match &self.message {
-            DiagnosticMessage::Text(message) => f.write_str(message)?,
             DiagnosticMessage::TomlSyntax(error) => write!(f, "{error}")?,
+            _ => f.write_str(self.message())?,
         }
         if self.kind == DiagnosticKind::Schema && !self.field_path.is_empty() {
             f.write_str("\nin `")?;
@@ -189,8 +209,8 @@ impl fmt::Display for Diagnostic {
 impl std::error::Error for Diagnostic {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.message {
-            DiagnosticMessage::Text(_) => None,
             DiagnosticMessage::TomlSyntax(error) => Some(error.as_ref()),
+            _ => None,
         }
     }
 }

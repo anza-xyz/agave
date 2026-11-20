@@ -82,9 +82,8 @@ pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<Diagnostic
         return validate_table(None, DEFAULT_DESCRIPTION, Some(DEFAULT_CONFIG));
     };
     let description = path.display().to_string();
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        Diagnostic::new(DiagnosticKind::Io, error.to_string()).in_source(&description)
-    })?;
+    let text =
+        std::fs::read_to_string(path).map_err(|error| Diagnostic::io(&error, &description))?;
     let table = parse_table(&text, &description)?;
     validate_table(Some(table), &description, Some(&text))
 }
