@@ -53,6 +53,11 @@ $ ./cargo build
 > [!NOTE]
 > Note that this builds a debug version that is **not suitable for running a testnet or mainnet validator**. Please read [the install guide](https://docs.anza.xyz/cli/install#build-from-source) for instructions to build a release version for test and production uses.
 
+> [!TIP]
+> For a release build tuned to your hardware and workload, `scripts/pgo-build.sh` does a two-pass
+> profile-guided optimization (PGO) build: `instrument`, run the instrumented binary on
+> representative traffic, then `build`. See the comments at the top of the script.
+
 ## **4. Grant capabilities for XDP (Linux-only).**
 
 XDP transmit is enabled on Linux by default and requires extra capabilities. After building, grant them to the validator binary:
