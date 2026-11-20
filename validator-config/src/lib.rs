@@ -9,16 +9,20 @@ mod interface;
 mod xdp;
 
 pub use {
-    file::DEFAULT_CONFIG,
-    interface::{NetworkDeviceSelector, RouteSelector},
-    xdp::{XdpEndpoints, XdpPolicy, XdpRuntimeConfig, XdpWorkerBinding},
+    file::{ConfigDocument, DEFAULT_CONFIG},
+    interface::{NetworkDeviceSelector, NetworkInterface, RouteSelector},
+    xdp::{
+        EndpointTx, QueueSelection, XdpEndpoints, XdpPolicy, XdpRuntimeConfig, XdpWorkerBinding,
+        XdpWorkerPool,
+    },
 };
 use {
-    interface::NetworkInterface,
     serde::Deserialize,
     std::{collections::BTreeMap, path::Path},
     xdp::{ConfigXdp, EndpointXdp},
 };
+
+const INPUT_DESCRIPTION: &str = "<input>";
 
 /// An endpoint's section, such as `[tpu]`, after merging the user config file over
 /// the built-in defaults, before validation.
@@ -28,7 +32,7 @@ struct EffectiveEndpoint {
     xdp: EndpointXdp,
 }
 
-/// The built-in defaults merged with the user config file, before validation.
+/// The built-in defaults merged with the user config file.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EffectiveConfig {
@@ -41,13 +45,29 @@ pub(crate) struct EffectiveConfig {
     votor: EffectiveEndpoint,
 }
 
-/// A config that passed validation in [`parse`] or [`load`].
+/// Effective settings that passed host-independent validation.
 #[derive(Clone, Debug)]
 pub struct ValidatedConfig {
+    effective: EffectiveConfig,
     xdp: Option<XdpPolicy>,
 }
 
 impl ValidatedConfig {
+    /// Whether XDP is enabled for all endpoints.
+    pub fn xdp_enabled(&self) -> bool {
+        self.effective.xdp.enabled
+    }
+
+    /// Effective network interfaces by logical label, including when XDP is disabled.
+    pub fn interfaces(&self) -> &BTreeMap<String, NetworkInterface> {
+        &self.effective.interfaces
+    }
+
+    /// Effective XDP transmit settings for each endpoint, including when XDP is disabled.
+    pub fn xdp_endpoints(&self) -> XdpEndpoints<&EndpointTx> {
+        self.effective.endpoints().map(|&endpoint| &endpoint.tx)
+    }
+
     /// The XDP policy, or `None` when XDP is disabled.
     pub fn xdp(&self) -> Option<&XdpPolicy> {
         self.xdp.as_ref()
@@ -55,13 +75,13 @@ impl ValidatedConfig {
 }
 
 impl EffectiveConfig {
-    fn endpoints(&self) -> XdpEndpoints<&EffectiveEndpoint> {
+    fn endpoints(&self) -> XdpEndpoints<&EndpointXdp> {
         XdpEndpoints {
-            gossip: &self.gossip,
-            repair: &self.repair,
-            tpu: &self.tpu,
-            turbine: &self.turbine,
-            votor: &self.votor,
+            gossip: &self.gossip.xdp,
+            repair: &self.repair.xdp,
+            tpu: &self.tpu.xdp,
+            turbine: &self.turbine.xdp,
+            votor: &self.votor.xdp,
         }
     }
 }
@@ -91,17 +111,27 @@ pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<String>), 
 /// # Ok::<(), String>(())
 /// ```
 pub fn parse(text: &str) -> Result<(ValidatedConfig, Vec<String>), String> {
-    parse_with_description(Some(text), "<input>")
+    parse_with_description(Some(text), INPUT_DESCRIPTION)
 }
 
 fn parse_with_description(
     user_text: Option<&str>,
     description: &str,
 ) -> Result<(ValidatedConfig, Vec<String>), String> {
-    let config = file::parse_config(user_text, description)?;
-    let (xdp, warnings) = xdp::validate(&config)
+    let document = user_text
+        .map(|text| ConfigDocument::parse_with_description(text, description))
+        .transpose()?;
+    validate_document(document, description)
+}
+
+fn validate_document(
+    document: Option<ConfigDocument>,
+    description: &str,
+) -> Result<(ValidatedConfig, Vec<String>), String> {
+    let effective = file::merge_config(document, description)?;
+    let (xdp, warnings) = xdp::validate(&effective)
         .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
-    Ok((ValidatedConfig { xdp }, warnings))
+    Ok((ValidatedConfig { effective, xdp }, warnings))
 }
 
 #[cfg(test)]

@@ -1,31 +1,80 @@
 //! Configuration TOML parsing, version checks, and default merging.
 
-use crate::EffectiveConfig;
+use {
+    crate::{EffectiveConfig, INPUT_DESCRIPTION, ValidatedConfig, validate_document},
+    serde::{Deserialize, Serialize},
+};
 
 /// The built-in defaults and reference for the config file format.
 pub const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
 
 const SCHEMA_VERSION: i64 = 1;
 
-fn parse_toml(text: &str, description: &str) -> Result<toml::Table, String> {
-    let mut table: toml::Table = toml::from_str(text)
-        .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
-    let version = table
-        .remove("schema_version")
-        .and_then(|version| version.as_integer())
-        .ok_or_else(|| {
+/// The editable TOML values from a validator config, including its schema version.
+///
+/// Parsing and serialization preserve which fields were supplied and their values.
+/// Serialization regenerates the TOML layout. Use [`Self::validate`] to check
+/// the schema version, apply built-in defaults, and validate the effective settings.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct ConfigDocument {
+    table: toml::Table,
+}
+
+impl ConfigDocument {
+    /// Parse the supplied TOML into an editable document.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Self::parse_with_description(text, INPUT_DESCRIPTION)
+    }
+
+    pub(crate) fn parse_with_description(text: &str, description: &str) -> Result<Self, String> {
+        toml::from_str(text)
+            .map_err(|error| format!("invalid config file `{description}`: {error}"))
+    }
+
+    /// Return the declared schema version if it is an integer.
+    pub fn schema_version(&self) -> Option<i64> {
+        self.table
+            .get("schema_version")
+            .and_then(toml::Value::as_integer)
+    }
+
+    /// The TOML fields supplied in this document.
+    pub fn as_table(&self) -> &toml::Table {
+        &self.table
+    }
+
+    /// Edit the TOML fields in this document.
+    pub fn as_table_mut(&mut self) -> &mut toml::Table {
+        &mut self.table
+    }
+
+    /// Serialize this document to TOML.
+    pub fn to_toml(&self) -> Result<String, String> {
+        toml::to_string_pretty(self).map_err(|error| error.to_string())
+    }
+
+    /// Merge with the built-in defaults and validate the effective settings.
+    pub fn validate(&self) -> Result<(ValidatedConfig, Vec<String>), String> {
+        validate_document(Some(self.clone()), INPUT_DESCRIPTION)
+    }
+
+    fn into_overrides(mut self, description: &str) -> Result<toml::Table, String> {
+        let version = self.schema_version().ok_or_else(|| {
             format!(
                 "invalid config file `{description}`: schema_version must be set to an integer; \
                  this binary supports version {SCHEMA_VERSION}"
             )
         })?;
-    if version != SCHEMA_VERSION {
-        return Err(format!(
-            "invalid config file `{description}`: schema_version {version} is unsupported; this \
-             binary supports version {SCHEMA_VERSION}"
-        ));
+        if version != SCHEMA_VERSION {
+            return Err(format!(
+                "invalid config file `{description}`: schema_version {version} is unsupported; \
+                 this binary supports version {SCHEMA_VERSION}"
+            ));
+        }
+        self.table.remove("schema_version");
+        Ok(self.table)
     }
-    Ok(table)
 }
 
 fn merge_tables(base: &mut toml::Table, user: toml::Table, path: &mut Vec<String>) {
@@ -50,15 +99,19 @@ fn merge_tables(base: &mut toml::Table, user: toml::Table, path: &mut Vec<String
     }
 }
 
-/// Parse the built-in defaults merged with the user TOML.
-pub(crate) fn parse_config(
-    user_text: Option<&str>,
+/// Merge the user document into the built-in defaults.
+pub(crate) fn merge_config(
+    user: Option<ConfigDocument>,
     description: &str,
 ) -> Result<EffectiveConfig, String> {
-    let mut merged = parse_toml(DEFAULT_CONFIG, "<built-in>")?;
-    if let Some(text) = user_text {
-        let user = parse_toml(text, description)?;
-        merge_tables(&mut merged, user, &mut Vec::new());
+    let mut merged = ConfigDocument::parse_with_description(DEFAULT_CONFIG, "<built-in>")?
+        .into_overrides("<built-in>")?;
+    if let Some(user) = user {
+        merge_tables(
+            &mut merged,
+            user.into_overrides(description)?,
+            &mut Vec::new(),
+        );
     }
     merged
         .try_into()

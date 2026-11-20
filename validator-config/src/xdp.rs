@@ -16,11 +16,15 @@ use {
 // 256-channel NIC configurations. This limits worker count, not queue IDs.
 pub(crate) const MAX_XDP_WORKERS: usize = 512;
 
+/// How the XDP worker pool assigns hardware queues to CPUs.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum XdpWorkerPool {
+pub enum XdpWorkerPool {
+    /// Assign CPUs automatically at runtime.
     Auto { count: usize },
+    /// Assign queue IDs in sequence using these CPUs in order.
     Cpus(Vec<usize>),
+    /// Assign each worker an explicit queue ID and CPU.
     Bindings(Vec<XdpWorkerBinding>),
 }
 
@@ -32,13 +36,16 @@ pub struct XdpWorkerBinding {
     pub cpu: usize,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// The queue selection for an endpoint.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(
     rename_all = "snake_case",
     expecting = "\"all\" or an array of non-negative 32-bit queue IDs"
 )]
-pub(crate) enum QueueSelection {
+pub enum QueueSelection {
+    /// Every declared worker queue.
     All,
+    /// Specific hardware queue IDs, in sender order.
     #[serde(untagged)]
     Explicit(Vec<u32>),
 }
@@ -61,9 +68,21 @@ pub(crate) struct EndpointXdp {
 /// The interface and hardware queues an endpoint transmits on.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct EndpointTx {
+pub struct EndpointTx {
     pub(crate) interface: String,
     pub(crate) queues: QueueSelection,
+}
+
+impl EndpointTx {
+    /// The logical interface label.
+    pub fn interface(&self) -> &str {
+        &self.interface
+    }
+
+    /// The effective selector for this endpoint's hardware queues.
+    pub fn queues(&self) -> &QueueSelection {
+        &self.queues
+    }
 }
 
 /// The top-level `[xdp]` section.
@@ -158,7 +177,7 @@ fn collect_worker_queue_ids(workers: &XdpWorkerPool) -> Vec<u32> {
 }
 
 /// One value per validator network endpoint that uses XDP. Generic over what each
-/// endpoint holds: its config section (`EffectiveEndpoint`), its selected queue
+/// endpoint holds: its transmit settings ([`EndpointTx`]), its selected queue
 /// ids ([`XdpPolicy`]), or its sender positions ([`XdpRuntimeConfig`]).
 #[derive(Clone, Debug)]
 pub struct XdpEndpoints<T> {
@@ -170,7 +189,7 @@ pub struct XdpEndpoints<T> {
 }
 
 impl<T> XdpEndpoints<T> {
-    fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> XdpEndpoints<U> {
+    pub(crate) fn map<'a, U>(&'a self, mut f: impl FnMut(&'a T) -> U) -> XdpEndpoints<U> {
         XdpEndpoints {
             gossip: f(&self.gossip),
             repair: f(&self.repair),
@@ -211,6 +230,23 @@ pub struct XdpPolicy {
     pub(crate) queues: XdpEndpoints<Vec<u32>>,
 }
 
+impl XdpPolicy {
+    /// The logical label of the active transmit interface.
+    pub fn interface_label(&self) -> &str {
+        &self.interface_label
+    }
+
+    /// The active interface's device and worker settings.
+    pub fn interface(&self) -> &NetworkInterface {
+        &self.interface
+    }
+
+    /// The selected hardware queue IDs for each endpoint, in sender order.
+    pub fn queues(&self) -> XdpEndpoints<&[u32]> {
+        self.queues.map(Vec::as_slice)
+    }
+}
+
 /// Validate schema constraints independently of host state, even when XDP is
 /// disabled. Deserialization alone does not check them.
 pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String> {
@@ -230,7 +266,7 @@ pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String
             ));
         }
     }
-    for (name, endpoint) in endpoint_xdp(config).named() {
+    for (name, endpoint) in config.endpoints().named() {
         endpoint
             .tx
             .queues
@@ -240,17 +276,13 @@ pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String
     Ok(())
 }
 
-fn endpoint_xdp(config: &EffectiveConfig) -> XdpEndpoints<&EndpointXdp> {
-    config.endpoints().map(|&endpoint| &endpoint.xdp)
-}
-
 /// Validate schema constraints and host-independent cross-references, returning
 /// the XDP policy when XDP is enabled.
 pub(crate) fn validate(
     config: &EffectiveConfig,
 ) -> Result<(Option<XdpPolicy>, Vec<String>), String> {
     validate_structural(config)?;
-    for (name, endpoint) in endpoint_xdp(config).named() {
+    for (name, endpoint) in config.endpoints().named() {
         let label = &endpoint.tx.interface;
         let interface = config.interfaces.get(label).ok_or_else(|| {
             format!(
@@ -292,7 +324,9 @@ pub(crate) fn validate(
         .first_key_value()
         .expect("XDP config should contain exactly one interface after validation");
     let pool = collect_worker_queue_ids(&interface.xdp.workers);
-    let queues = endpoint_xdp(config).map(|endpoint| select_endpoint_queue_ids(endpoint, &pool));
+    let queues = config
+        .endpoints()
+        .map(|endpoint| select_endpoint_queue_ids(endpoint, &pool));
     let selections = queues.get_values();
     let warnings = pool
         .iter()

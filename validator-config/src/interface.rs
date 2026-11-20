@@ -1,6 +1,9 @@
 //! Logical network interfaces and device selectors.
 
-use {crate::xdp::InterfaceXdp, serde::Deserialize};
+use {
+    crate::xdp::{InterfaceXdp, XdpWorkerPool},
+    serde::Deserialize,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -18,9 +21,26 @@ pub enum RouteSelector {
 /// An `[interfaces.<label>]` section: the device to bind and its XDP settings.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct NetworkInterface {
+pub struct NetworkInterface {
     pub(crate) device: NetworkDeviceSelector,
     pub(crate) xdp: InterfaceXdp,
+}
+
+impl NetworkInterface {
+    /// How the device is selected.
+    pub fn device(&self) -> &NetworkDeviceSelector {
+        &self.device
+    }
+
+    /// Whether AF_XDP zero-copy is requested.
+    pub fn zero_copy(&self) -> bool {
+        self.xdp.zero_copy
+    }
+
+    /// The declared XDP worker pool.
+    pub fn workers(&self) -> &XdpWorkerPool {
+        &self.xdp.workers
+    }
 }
 
 pub(crate) fn format_interface_path(label: &str) -> String {
