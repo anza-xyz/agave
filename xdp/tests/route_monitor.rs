@@ -4,11 +4,13 @@ mod common;
 
 use {
     agave_xdp::{
-        netlink::MacAddress,
+        netlink::{MacAddress, netlink_get_neighbors},
         route::{RouteError, RouteTable, Router},
         route_monitor::RouteMonitor,
     },
     arc_swap::ArcSwap,
+    common::NudState,
+    libc::{AF_INET, NUD_REACHABLE, NUD_STALE},
     std::{
         net::{IpAddr, Ipv4Addr},
         sync::{
@@ -74,7 +76,12 @@ fn route_monitor_publishes_live_route_updates() {
         Err(RouteError::NoRouteFound(_))
     ));
 
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
     common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
 
     common::wait_until(
@@ -120,7 +127,12 @@ fn route_monitor_publishes_live_neighbor_updates() {
 
     common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
     let initial_mac = links.right_mac;
-    common::replace_neighbor(links.right_ip, initial_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        initial_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
 
     common::wait_until(
         "the route monitor to publish the initial neighbor",
@@ -141,7 +153,12 @@ fn route_monitor_publishes_live_neighbor_updates() {
     );
 
     let updated_mac = MacAddress([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x44]);
-    common::replace_neighbor(links.right_ip, updated_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        updated_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
 
     common::wait_until(
         "the route monitor to publish a replaced neighbor",
@@ -181,7 +198,12 @@ fn route_monitor_publishes_link_removals() {
     let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair_with_tx_queue_count(1);
 
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
     common::add_route("203.0.113.0/24", links.right_ip, common::LEFT_IFACE);
 
     let monitor = start_route_monitor();
@@ -230,7 +252,12 @@ fn route_monitor_publishes_live_gre_route_updates() {
         Err(RouteError::NoRouteFound(_))
     ));
 
-    common::replace_neighbor(links.right_ip, links.right_mac, common::LEFT_IFACE);
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Permanent,
+    );
     common::add_route_to_dev(&format!("{}/32", links.right_ip), common::LEFT_IFACE);
     let gre = common::setup_gre_tunnel(&links);
     common::add_route_to_dev_with_src("192.0.2.0/24", common::GRE_IFACE, gre.overlay_ip);
@@ -272,4 +299,108 @@ fn route_monitor_publishes_live_gre_route_updates() {
             .then_some(())
         },
     );
+}
+
+/// Test that if a gateway becomes STALE, we don't discard its known MAC address or break
+/// default-route lookup.
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn route_monitor_keeps_stale_default_gateway_neighbor() {
+    let _netns = common::NetNsGuard::new().expect("create network namespace");
+    let links = common::setup_veth_pair_with_tx_queue_count(1);
+
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Reachable,
+    );
+    let monitor = start_route_monitor();
+    common::add_route("default", links.right_ip, common::LEFT_IFACE);
+
+    let routed_destination = Ipv4Addr::new(203, 0, 113, 7);
+    let reachable_router = common::wait_until(
+        "the route monitor to publish the default route through a reachable gateway",
+        Duration::from_secs(2),
+        || {
+            let router = monitor.router.load_full();
+            let next_hop = router.route_v4(routed_destination).ok()?;
+            (next_hop.if_index == links.left_if_index
+                && next_hop.ip_addr == IpAddr::V4(links.right_ip)
+                && next_hop.mac_addr == Some(links.right_mac))
+            .then_some(router)
+        },
+    );
+
+    let gateway_neighbor = || {
+        netlink_get_neighbors(None, AF_INET as u8)
+            .expect("read the gateway neighbor from netlink")
+            .into_iter()
+            .find(|neighbor| {
+                neighbor.ifindex == links.left_if_index as i32
+                    && neighbor.destination == Some(IpAddr::V4(links.right_ip))
+            })
+            .expect("the gateway neighbor should remain in the kernel neighbor table")
+    };
+    assert_eq!(
+        gateway_neighbor().state,
+        NUD_REACHABLE,
+        "the gateway should start REACHABLE so the test exercises a transition to STALE"
+    );
+
+    common::replace_neighbor(
+        links.right_ip,
+        links.right_mac,
+        common::LEFT_IFACE,
+        NudState::Stale,
+    );
+    let stale_neighbor = gateway_neighbor();
+    assert_eq!(
+        stale_neighbor.state, NUD_STALE,
+        "the kernel gateway neighbor should become STALE to exercise the netlink update path"
+    );
+    assert_eq!(
+        stale_neighbor.lladdr,
+        Some(links.right_mac),
+        "becoming STALE must preserve the gateway's cached MAC address"
+    );
+
+    // Both REACHABLE and STALE neighbors require refresh, so next-hop values alone cannot
+    // distinguish the old router from one rebuilt after the STALE notification.
+    let stale_router = common::wait_until(
+        "the route monitor to publish a new router after the gateway becomes STALE",
+        Duration::from_secs(2),
+        || {
+            let router = monitor.router.load_full();
+            (!Arc::ptr_eq(&router, &reachable_router)).then_some(router)
+        },
+    );
+
+    for next_hop in [
+        stale_router
+            .default()
+            .expect("a stale gateway should not remove the cached default route"),
+        stale_router
+            .route_v4(routed_destination)
+            .expect("off-subnet traffic should remain routable through a stale gateway"),
+    ] {
+        assert_eq!(
+            next_hop.if_index, links.left_if_index,
+            "a stale gateway should not change the default route's output interface"
+        );
+        assert_eq!(
+            next_hop.ip_addr,
+            IpAddr::V4(links.right_ip),
+            "the default route should still forward traffic through its configured gateway"
+        );
+        assert_eq!(
+            next_hop.mac_addr,
+            Some(links.right_mac),
+            "a STALE neighbor still has a usable MAC and should not be removed from the router"
+        );
+        assert!(
+            next_hop.neigh_requires_refresh,
+            "the stale gateway should request refresh while its cached MAC remains usable"
+        );
+    }
 }
