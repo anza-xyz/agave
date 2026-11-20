@@ -316,10 +316,7 @@ pub enum BlockstoreProcessorError {
 
 impl From<BlockComponentProcessorError> for BlockstoreProcessorError {
     fn from(err: BlockComponentProcessorError) -> Self {
-        match err {
-            BlockComponentProcessorError::TransactionExecution(err) => err.into(),
-            err => Self::BlockComponentProcessor(err),
-        }
+        Self::BlockComponentProcessor(err)
     }
 }
 
@@ -529,14 +526,16 @@ pub fn process_blockstore_from_root(
 
 /// Verify that a segment of entries has the correct number of ticks and hashes
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+/// Verifies the ticks of `entries`, given the bank's `tick_height` before `entries`.
 fn verify_ticks<D: AsRef<[u8]>>(
     bank: &Bank,
+    tick_height: u64,
     entries: &[EntryView<D>],
     slot_full: bool,
     tick_hash_count: &mut u64,
     migration_status: &MigrationStatus,
 ) -> std::result::Result<(), BlockError> {
-    let next_bank_tick_height = bank.tick_height() + entries.tick_count();
+    let next_bank_tick_height = tick_height + entries.tick_count();
     let max_bank_tick_height = bank.max_tick_height();
 
     if next_bank_tick_height > max_bank_tick_height {
@@ -618,15 +617,17 @@ fn confirm_full_slot(
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
 
+    if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
+        timing.accumulate(&execute_time);
+        result?;
+    }
+
+    finish_slot_replay(bank, progress)?;
+
     if !bank.is_complete() {
         return Err(BlockstoreProcessorError::InvalidBlock(
             BlockError::Incomplete,
         ));
-    }
-
-    if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
-        timing.accumulate(&execute_time);
-        result?;
     }
 
     progress.wait_for_all_verification_results(&mut 0, &mut 0)
@@ -938,6 +939,9 @@ pub struct ConfirmationProgress {
     pub num_entries: usize,
     pub num_txs: usize,
     async_verification: Option<AsyncVerificationProgress>,
+    /// Hash of the bank's final tick, which was replayed but is yet to be registered by
+    /// [`finish_slot_replay`].
+    final_tick_hash: Option<Hash>,
 }
 
 impl ConfirmationProgress {
@@ -963,6 +967,18 @@ impl ConfirmationProgress {
             async_verification,
             ..Self::default()
         }
+    }
+
+    /// Returns whether all of the bank's entries were processed and its transactions scheduled for
+    /// execution, such that only [`finish_slot_replay`] remains to be called once those
+    /// transactions have finished executing.
+    pub fn is_pending_finish(&self) -> bool {
+        self.final_tick_hash.is_some()
+    }
+
+    /// The tick height of `bank` once its replayed ticks are all registered.
+    fn tick_height(&self, bank: &Bank) -> u64 {
+        bank.tick_height() + u64::from(self.final_tick_hash.is_some())
     }
 
     fn async_verification(
@@ -1483,14 +1499,12 @@ pub fn confirm_slot(
                             allow_initial_update_parent,
                             finalization_cert_sender,
                             migration_status,
-                            &mut timing.batch_execute.totals,
                         )
                         .inspect_err(|err| {
                             if !matches!(
                                 err,
                                 BlockComponentProcessorError::AbandonedBank(_)
                                     | BlockComponentProcessorError::AlpenglowMigrationTransition
-                                    | BlockComponentProcessorError::TransactionExecution(_)
                             ) {
                                 warn!(
                                     "BlockComponentProcessor::on_marker() for slot {slot} failed \
@@ -1526,6 +1540,31 @@ pub fn confirm_slot(
         }
     }
 
+    Ok(())
+}
+
+/// Completes the replay of a bank whose entries were all processed by [`confirm_slot`], by applying
+/// its block footer and registering its final tick. This is a no-op if the bank's replay isn't
+/// pending finish (see [`ConfirmationProgress::is_pending_finish`]).
+///
+/// This modifies account state, so it must only be called once all of the bank's transactions have
+/// finished executing (see [`BankWithScheduler::is_scheduler_session_ended`]). The bank is complete
+/// afterwards.
+pub fn finish_slot_replay(
+    bank: &BankWithScheduler,
+    progress: &mut ConfirmationProgress,
+) -> result::Result<(), BlockstoreProcessorError> {
+    let Some(final_tick_hash) = progress.final_tick_hash.take() else {
+        return Ok(());
+    };
+
+    bank.block_component_processor
+        .write()
+        .unwrap()
+        .apply_pending_footer(bank)
+        .map_err(BlockComponentProcessorError::UpdateBankFooter)?;
+
+    bank.register_tick(&final_tick_hash);
     Ok(())
 }
 
@@ -1598,24 +1637,31 @@ fn confirm_slot_entries(
     );
 
     if !skip_verification {
+        let tick_height = progress.tick_height(bank);
         let tick_hash_count = &mut progress.tick_hash_count;
-        verify_ticks(bank, &entries, slot_full, tick_hash_count, migration_status).map_err(
-            |err| {
-                warn!(
-                    "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, \
-                     last_blockhash: {}, shred_index: {}, slot_full: {}",
-                    err,
-                    slot,
-                    num_entries,
-                    bank.tick_height(),
-                    progress.last_entry,
-                    bank.last_blockhash(),
-                    num_shreds,
-                    slot_full,
-                );
-                err
-            },
-        )?;
+        verify_ticks(
+            bank,
+            tick_height,
+            &entries,
+            slot_full,
+            tick_hash_count,
+            migration_status,
+        )
+        .map_err(|err| {
+            warn!(
+                "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, last_blockhash: \
+                 {}, shred_index: {}, slot_full: {}",
+                err,
+                slot,
+                num_entries,
+                tick_height,
+                progress.last_entry,
+                bank.last_blockhash(),
+                num_shreds,
+                slot_full,
+            );
+            err
+        })?;
     }
 
     let last_entry_hash = entries.last().map(|e| e.hash);
@@ -1663,7 +1709,6 @@ fn confirm_slot_entries(
     replay_timer.stop();
     *replay_elapsed += replay_timer.as_us();
 
-    // Submit verification before registering the final tick, which can wait for execution to finish.
     if let Some(verify_entries) = verify_entries {
         let start_hash = progress.last_entry;
         datapoint_debug!(
@@ -1690,13 +1735,17 @@ fn confirm_slot_entries(
             )?;
     }
 
-    let final_tick_hash = schedule_result?;
-    let mut replay_timer = Measure::start("replay_elapsed");
-    if let Some(hash) = final_tick_hash {
-        bank.register_tick(&hash);
+    // Registering the final tick waits for all of the block's transactions to finish executing.
+    // Defer it to `finish_slot_replay()`, so that the caller isn't blocked on execution.
+    if let Some(hash) = schedule_result? {
+        if progress.final_tick_hash.is_some() {
+            return Err(BlockError::TooManyTicks.into());
+        }
+        progress.final_tick_hash = Some(hash);
+        // All of the block's transactions were scheduled, since the final tick must be the last
+        // entry of the block. Let the scheduler end its session once they have finished executing.
+        bank.request_scheduler_session_ending();
     }
-    replay_timer.stop();
-    *replay_elapsed += replay_timer.as_us();
 
     progress
         .collect_available_verification_results(poh_verify_elapsed, transaction_verify_elapsed)?;
@@ -4761,7 +4810,8 @@ pub mod tests {
         let (wait_result, _timings) = bank.wait_for_completed_scheduler().unwrap();
         result?;
         progress.wait_for_all_verification_results(&mut 0, &mut 0)?;
-        Ok(wait_result?)
+        wait_result?;
+        finish_slot_replay(&bank, progress)
     }
 
     fn confirm_slot_entries_for_tests(
@@ -5536,8 +5586,12 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        // Complete bank0, so that the alpentick is bank1's final tick
+        bank0.register_default_tick_for_test();
+        bank0.freeze();
         let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
         bank1.activate_feature(&agave_feature_set::alpenglow::id());
+        assert_eq!(bank1.tick_height() + 1, bank1.max_tick_height());
         assert!(
             bank1
                 .feature_set
@@ -5546,6 +5600,7 @@ pub mod tests {
         let bank1 = bank_forks.write().unwrap().insert(bank1);
         let (entry_notification_sender, entry_notification_receiver) =
             bounded::<EntryNotification>(2);
+        let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
 
         confirm_slot(
             &blockstore,
@@ -5553,7 +5608,7 @@ pub mod tests {
             compute_shred_version(&genesis_config.hash(), None),
             &replay_verification_worker_pool,
             &mut ConfirmationTiming::default(),
-            &mut ConfirmationProgress::new(bank0.last_blockhash()),
+            &mut progress,
             true,
             Some(&entry_notification_sender),
             None,
@@ -5561,6 +5616,20 @@ pub mod tests {
             &MigrationStatus::post_migration_status(),
         )
         .unwrap();
+
+        // The footer and the final tick are only applied once execution completes
+        assert!(progress.is_pending_finish());
+        assert!(!bank1.is_complete());
+        assert_eq!(bank1.expected_bank_hash(), None);
+
+        assert!(bank1.is_scheduler_session_ended());
+        finish_slot_replay(&bank1, &mut progress).unwrap();
+        assert!(!progress.is_pending_finish());
+        assert!(bank1.is_complete());
+        assert_eq!(
+            bank1.expected_bank_hash(),
+            Some(Hash::new_from_array([42; 32]))
+        );
 
         let EntryNotification::BlockFooter {
             slot,

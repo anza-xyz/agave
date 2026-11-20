@@ -624,6 +624,7 @@ pub mod tests {
             bank_forks_controller::BankForksControllerHandle,
         },
         solana_signer::Signer,
+        solana_unified_scheduler_pool::DefaultSchedulerPool,
         std::sync::atomic::{AtomicU64, Ordering},
     };
 
@@ -639,6 +640,9 @@ pub mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(starting_balance);
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        bank_forks.write().unwrap().install_scheduler_pool(
+            DefaultSchedulerPool::new_for_verification(None, None, None, None),
+        );
 
         //start cluster_info1
         let cluster_info1 = ClusterInfo::new(

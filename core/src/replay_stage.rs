@@ -19,7 +19,7 @@ use {
         consensus_message::{Block, BlockId},
         migration::MigrationStatus,
     },
-    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, select},
+    crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, select},
     itertools::Itertools,
     rayon::{ThreadPool, prelude::*},
     smallvec::SmallVec,
@@ -465,7 +465,19 @@ impl ReplayStage {
             .map_or(0, |hfs| hfs.slot());
         *replay_highest_frozen.highest_frozen_slot.lock().unwrap() = highest_frozen_slot;
 
+        let (scheduler_session_completion_sender, scheduler_session_completion_receiver) =
+            bounded(1);
+        bank_forks
+            .read()
+            .unwrap()
+            .scheduler_pool()
+            .expect("scheduler pool must be installed before ReplayStage starts")
+            .register_session_completion_notifier(scheduler_session_completion_sender.clone());
+
         let run_replay = move || {
+            // Keep the channel alive for the duration of the replay thread
+            let _scheduler_session_completion_sender = scheduler_session_completion_sender;
+
             if let Some(arena) = replay_arena {
                 arena
                     .bind_current_thread_permanently()
@@ -684,6 +696,10 @@ impl ReplayStage {
                         recv(set_root_signal_receiver) -> result => match result {
                             Err(_) => break,
                             Ok(()) => trace!("bank forks set-root signal"),
+                        },
+                        recv(scheduler_session_completion_receiver) -> result => {
+                            result.expect("sender is kept alive by the replay loop");
+                            trace!("scheduler session completion signal");
                         },
                         default(timer) => (),
                     }
@@ -1415,6 +1431,11 @@ impl ReplayStage {
         };
         replay_result.and(verify_result)?;
 
+        blockstore_processor::finish_slot_replay(
+            bank,
+            &mut bank_progress.replay_progress.write().unwrap(),
+        )?;
+
         Ok(CompletedBankReplay {
             replay_stats,
             replay_progress: bank_progress.replay_progress.clone(),
@@ -1475,7 +1496,17 @@ impl ReplayStage {
             }
 
             assert_eq!(bank_slot, bank.slot());
-            if bank.is_complete() {
+            // Banks whose transactions were all scheduled are completed once those transactions
+            // have finished executing, without blocking on the execution.
+            let is_replay_complete = bank.is_complete()
+                || (progress.get(&bank_slot).is_some_and(|bank_progress| {
+                    bank_progress
+                        .replay_progress
+                        .read()
+                        .unwrap()
+                        .is_pending_finish()
+                }) && bank.is_scheduler_session_ended());
+            if is_replay_complete {
                 let mut bank_complete_time = Measure::start("bank_complete_time");
                 let bank_progress = progress
                     .get_mut(&bank.slot())
@@ -1655,7 +1686,8 @@ impl ReplayStage {
                 );
             } else {
                 trace!(
-                    "bank {} not completed tick_height: {}, max_tick_height: {}",
+                    "bank {} not completed (or still executing) tick_height: {}, max_tick_height: \
+                     {}",
                     bank.slot(),
                     bank.tick_height(),
                     bank.max_tick_height()

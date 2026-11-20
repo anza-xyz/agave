@@ -58,7 +58,7 @@ use {
         mem,
         sync::{
             Arc, Mutex, OnceLock, Weak,
-            atomic::{AtomicU64, Ordering::Relaxed},
+            atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
         },
         thread::{self, JoinHandle, sleep},
         time::{Duration, Instant},
@@ -134,7 +134,26 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     max_usage_queue_count: usize,
     scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
+    session_completion_notifier: SessionCompletionNotifier,
     _phantom: PhantomData<TH>,
+}
+
+/// Notifies an optionally registered listener whenever a session result is produced. See
+/// [`InstalledSchedulerPool::register_session_completion_notifier`].
+///
+/// This is shared with the scheduler threads instead of being accessed through the pool, to avoid
+/// the threads keeping the pool alive.
+#[derive(Debug, Default, Clone)]
+struct SessionCompletionNotifier(Arc<OnceLock<Sender<()>>>);
+
+impl SessionCompletionNotifier {
+    fn notify(&self) {
+        if let Some(notifier) = self.0.get() {
+            // A full channel already has a pending notification, which is enough to wake up the
+            // listener; the listener is expected to check all of its pending banks then.
+            let _ = notifier.try_send(());
+        }
+    }
 }
 
 #[derive(derive_more::Debug, Clone)]
@@ -431,6 +450,7 @@ where
             max_usage_queue_count,
             scheduler_pool_sender: scheduler_pool_sender.clone(),
             cleaner_thread,
+            session_completion_notifier: SessionCompletionNotifier::default(),
             _phantom: PhantomData,
         });
 
@@ -569,6 +589,13 @@ where
             .lock()
             .unwrap()
             .push((timeout_listener, Instant::now()));
+    }
+
+    fn register_session_completion_notifier(&self, notifier: Sender<()>) {
+        self.session_completion_notifier
+            .0
+            .set(notifier)
+            .expect("session completion notifier is registered only once");
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
@@ -1224,6 +1251,9 @@ struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     session_result_sender: WakeSender<ResultWithTimings>,
     session_result_receiver: agave_wake_channel::Receiver<ResultWithTimings>,
     session_result_with_timings: Option<ResultWithTimings>,
+    // Whether `CloseSubchannel` was sent for the current session, whose result has yet to be
+    // received. Atomic so that ending the session can be requested through a shared reference.
+    is_session_ending_requested: AtomicBool,
     scheduler_thread: Option<JoinHandle<()>>,
     handler_threads: Vec<JoinHandle<()>>,
 }
@@ -1281,6 +1311,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             session_result_sender,
             session_result_receiver,
             session_result_with_timings: None,
+            is_session_ending_requested: AtomicBool::new(false),
             scheduler_thread: None,
             handler_threads: vec![],
         }
@@ -1401,6 +1432,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .replace(result_with_timings)
                 .is_none()
         );
+        self.is_session_ending_requested.store(false, Relaxed);
     }
 
     // This method must take same set of session-related arguments as start_session() to avoid
@@ -1529,6 +1561,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             let handler_context = handler_context.clone_for_scheduler_thread();
             let handler_timings = handler_timings.clone();
             let session_result_sender = self.session_result_sender.clone();
+            let session_completion_notifier = self.pool.session_completion_notifier.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
             // thread died along with the single receiver.
@@ -1673,6 +1706,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     session_result_sender
                         .send(result_with_timings)
                         .expect("always outlived receiver");
+                    session_completion_notifier.notify();
 
                     state_machine.reinitialize();
                     assert!(mem::replace(&mut session_ending, false));
@@ -1763,6 +1797,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 session_result_sender
                     .send(result_with_timings)
                     .expect("always outlived receiver");
+                session_completion_notifier.notify();
 
                 // Next, drop `new_task_receiver`. After that, the paired singleton
                 // `new_task_sender` will start to error when called by external threads, resulting
@@ -1963,10 +1998,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             thread::current(),
         );
 
-        let mut abort_detected = self
-            .new_task_sender
-            .send(NewTaskPayload::CloseSubchannel)
-            .is_err();
+        let abort_detected = self.request_session_ending();
 
         if nonblocking {
             // Bail out session ending bookkeeping under this special case codepath for block
@@ -1989,12 +2021,38 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // Even if abort is detected, it's guaranteed that the scheduler thread puts the last
         // message into the session_result_sender before terminating.
         let result_with_timings = self.session_result_receiver.recv().unwrap();
-        abort_detected = result_with_timings.0.is_err();
+        self.put_received_session_result_with_timings(result_with_timings);
+        debug!("end_session(): ended session at {:?}...", thread::current());
+    }
+
+    /// Returns whether the session has ended, without blocking nor receiving its result.
+    fn is_session_ended(&self) -> bool {
+        // The scheduler thread always sends the session result once the session has ended, even
+        // when aborting.
+        self.are_threads_joined()
+            || self.session_result_with_timings.is_some()
+            || !self.session_result_receiver.is_empty()
+    }
+
+    /// Sends `CloseSubchannel` unless it was already sent for the current session.
+    ///
+    /// Returns whether the scheduler thread is detected to be aborted.
+    #[must_use]
+    fn request_session_ending(&self) -> bool {
+        if self.is_session_ending_requested.swap(true, Relaxed) {
+            return false;
+        }
+        self.new_task_sender
+            .send(NewTaskPayload::CloseSubchannel)
+            .is_err()
+    }
+
+    fn put_received_session_result_with_timings(&mut self, result_with_timings: ResultWithTimings) {
+        let abort_detected = result_with_timings.0.is_err();
         self.put_session_result_with_timings(result_with_timings);
         if abort_detected {
             self.ensure_join_threads_after_abort(false);
         }
-        debug!("end_session(): ended session at {:?}...", thread::current());
     }
 
     fn unpause_started_session(&self) {
@@ -2142,6 +2200,20 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn pause_for_recent_blockhash(&mut self) {
         self.inner.thread_manager.do_end_session(false);
+    }
+
+    fn request_session_ending(&self) {
+        let thread_manager = &self.inner.thread_manager;
+        if thread_manager.is_session_ended() {
+            return;
+        }
+        // An aborted scheduler thread still sends the session result before terminating, which is
+        // then received when waiting for termination, so there's nothing more to do here.
+        let _abort_detected = thread_manager.request_session_ending();
+    }
+
+    fn is_session_ended(&self) -> bool {
+        self.inner.thread_manager.is_session_ended()
     }
 
     fn unpause_after_taken(&self) {
@@ -3251,6 +3323,64 @@ mod tests {
         assert_eq!(bank.transaction_count(), 1);
     }
 
+    #[test_case(true; "success")]
+    #[test_case(false; "failure")]
+    fn test_scheduler_session_ending_with_completion_notification(is_tx_valid: bool) {
+        agave_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let tx = {
+            let recent_blockhash = if is_tx_valid {
+                genesis_config.hash()
+            } else {
+                Hash::new_unique()
+            };
+            ReplayTransaction::from(system_transaction::transfer(
+                &mint_keypair,
+                &solana_pubkey::new_rand(),
+                2,
+                recent_blockhash,
+            ))
+        };
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
+        let (notifier, notification_receiver) = crossbeam_channel::bounded(1);
+        pool.register_session_completion_notifier(notifier);
+
+        let scheduler = pool
+            .take_scheduler(SchedulingContext::new(bank.clone()))
+            .unwrap();
+        scheduler.schedule_execution(tx, 0).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+
+        bank.request_scheduler_session_ending();
+        // Each failed check is followed by a notification once the session ends
+        while !bank.is_scheduler_session_ended() {
+            notification_receiver
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+        }
+        // Requesting again after the session ended is fine
+        bank.request_scheduler_session_ending();
+        assert!(bank.is_scheduler_session_ended());
+
+        let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
+        if is_tx_valid {
+            assert_matches!(result, Ok(()));
+            assert_eq!(bank.transaction_count(), 1);
+        } else {
+            assert_matches!(result, Err(TransactionError::BlockhashNotFound));
+            assert_eq!(bank.transaction_count(), 0);
+        }
+        // There's no installed scheduler anymore
+        assert!(bank.is_scheduler_session_ended());
+    }
+
     fn do_test_scheduler_cost_limits(
         limits: CostTrackerLimits,
         tx_count: usize,
@@ -3884,6 +4014,14 @@ mod tests {
                 return;
             }
             self.do_wait();
+        }
+
+        fn request_session_ending(&self) {
+            unimplemented!();
+        }
+
+        fn is_session_ended(&self) -> bool {
+            unimplemented!();
         }
     }
 

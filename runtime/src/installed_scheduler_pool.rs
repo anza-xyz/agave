@@ -22,6 +22,7 @@
 
 use {
     crate::bank::Bank,
+    crossbeam_channel::Sender,
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -33,7 +34,7 @@ use {
         fmt::{self, Debug},
         mem,
         ops::Deref,
-        sync::{Arc, RwLock},
+        sync::{Arc, RwLock, TryLockError},
         thread,
     },
 };
@@ -65,6 +66,19 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
     /// timing of scheduler returning to reduce latency of the normal block-verification code-path,
     /// relying on eventual stale listener clean-up by `solScCleaner`.
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
+
+    /// Registers a channel which is notified whenever any scheduler from this pool produces the
+    /// result of a session (i.e. all transactions of a bank finished executing, or the scheduler
+    /// aborted).
+    ///
+    /// This allows callers of [`BankWithScheduler::is_scheduler_session_ended`] to be woken up
+    /// instead of polling. Notifications are sent with `try_send()` and not associated with any
+    /// particular bank, so a bounded channel of capacity 1 is sufficient to coalesce them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a notifier is already registered.
+    fn register_session_completion_notifier(&self, notifier: Sender<()>);
 
     fn uninstalled_from_bank_forks(self: Arc<Self>);
 }
@@ -166,6 +180,22 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// `ResultWithTimings` internally until it's `wait_for_termination()`-ed to collect the result
     /// later.
     fn pause_for_recent_blockhash(&mut self);
+
+    /// Request the end of the current session without blocking, signaling that no more
+    /// transactions will be scheduled.
+    ///
+    /// Calling `schedule_execution()` afterwards is a fatal logic error, just like after
+    /// `wait_for_termination()`. Calling this repeatedly is fine.
+    fn request_session_ending(&self);
+
+    /// Returns whether the current session has ended, i.e. all of the scheduled transactions have
+    /// finished executing (or the scheduler has aborted).
+    ///
+    /// The session only ends once ending it was requested (see
+    /// [`Self::request_session_ending`]) or the scheduler aborted. After this returns `true`,
+    /// `pause_for_recent_blockhash()` and `wait_for_termination()` won't block on transaction
+    /// execution.
+    fn is_session_ended(&self) -> bool;
 
     /// Unpause a block production scheduler, immediately after it's taken from the scheduler pool.
     ///
@@ -495,6 +525,39 @@ impl BankWithScheduler {
             &self.inner.scheduler,
             WaitReason::TerminatedToFreeze,
         )
+    }
+
+    /// Signals the installed scheduler, if any, that all of the bank's transactions have been
+    /// scheduled, without blocking on their execution. The session then ends once they have
+    /// finished executing (see [`Self::is_scheduler_session_ended`]).
+    ///
+    /// Scheduling transactions afterwards is a fatal logic error. Calling this repeatedly is fine.
+    pub fn request_scheduler_session_ending(&self) {
+        match &*self.inner.scheduler.read().unwrap() {
+            SchedulerStatus::Active(scheduler) => scheduler.request_session_ending(),
+            // The session already ended
+            SchedulerStatus::Stale(..) | SchedulerStatus::Unavailable => {}
+        }
+    }
+
+    /// Returns whether all of the transactions scheduled during the scheduler session have
+    /// finished executing, in which case [`Self::wait_for_completed_scheduler`] (and the scheduler
+    /// pause done when registering the final tick) returns without blocking on execution. Returns
+    /// `true` if there is no installed scheduler.
+    ///
+    /// Returns `false` if the scheduler is concurrently locked by another thread (e.g. a timeout
+    /// listener returning the scheduler to the pool), since that thread may itself be blocked on
+    /// transaction execution.
+    pub fn is_scheduler_session_ended(&self) -> bool {
+        let scheduler = match self.inner.scheduler.try_read() {
+            Ok(scheduler) => scheduler,
+            Err(TryLockError::WouldBlock) => return false,
+            Err(TryLockError::Poisoned(err)) => panic!("poisoned scheduler lock: {err}"),
+        };
+        match &*scheduler {
+            SchedulerStatus::Active(scheduler) => scheduler.is_session_ended(),
+            SchedulerStatus::Stale(..) | SchedulerStatus::Unavailable => true,
+        }
     }
 
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {

@@ -3839,6 +3839,11 @@ impl Bank {
         self.register_tick_for_test(&Hash::default())
     }
 
+    /// Returns whether the bank's block is complete, i.e. its final tick (the alpentick, for
+    /// Alpenglow blocks) has been registered.
+    ///
+    /// This implies that all of the bank's transactions have finished executing, since the final
+    /// tick is only registered after they have.
     pub fn is_complete(&self) -> bool {
         self.tick_height() == self.max_tick_height()
     }
