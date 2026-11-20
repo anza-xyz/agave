@@ -10,8 +10,7 @@ use {
         genesis_utils::create_genesis_config,
         shred::{
             DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shred, ShredData, Shredder,
-            filter::{ShredRecoveryContext, new_dummy_retransmit_sender},
-            max_entries_per_n_shred, verify_test_data_shred,
+            filter::ShredRecoveryContext, max_entries_per_n_shred, verify_test_data_shred,
         },
     },
     solana_runtime::bank::Bank,
@@ -42,9 +41,7 @@ fn new_shred_recovery_context(shreds: &[Shred]) -> ShredRecoveryContext {
         SlotLeader::default(),
         warp_slot,
     ));
-    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     ShredRecoveryContext::new(
-        dummy_retransmit_sender,
         root_bank,
         shreds.first().map(Shred::version).unwrap_or_default(),
     )
