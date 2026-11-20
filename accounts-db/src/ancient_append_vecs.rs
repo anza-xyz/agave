@@ -472,15 +472,6 @@ impl AccountsDb {
 
         // ok if we have more slots, but NOT ok if we have fewer slots than we have contents
         assert!(accounts_to_combine.target_slots_sorted.len() >= packed_contents.len());
-        // write packed storages containing contents from many original slots
-        // iterate slots in highest to lowest
-        let packer = accounts_to_combine
-            .target_slots_sorted
-            .iter()
-            .rev()
-            .zip(packed_contents)
-            .collect::<Vec<_>>();
-
         // keep track of how many slots were shrunk away
         self.shrink_ancient_stats
             .ancient_append_vecs_shrunk
@@ -488,10 +479,17 @@ impl AccountsDb {
                 accounts_to_combine
                     .target_slots_sorted
                     .len()
-                    .saturating_sub(packer.len()) as u64,
+                    .saturating_sub(packed_contents.len()) as u64,
                 Ordering::Relaxed,
             );
 
+        // write packed storages containing contents from many original slots
+        // iterate slots in highest to lowest
+        let packer = accounts_to_combine
+            .target_slots_sorted
+            .iter()
+            .rev()
+            .zip(packed_contents);
         for (target_slot, pack) in packer {
             self.write_one_packed_storage(&pack, *target_slot, &mut write_ancient_accounts);
         }
