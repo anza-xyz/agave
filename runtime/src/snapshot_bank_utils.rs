@@ -44,7 +44,7 @@ use {
     },
     log::*,
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig},
+        accounts_db::{AccountsDb, AccountsDbConfig, IndexGenerationInfo},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
     solana_clock::{Epoch, Slot},
@@ -211,10 +211,9 @@ pub fn bank_from_snapshot_archives(
         genesis_config,
         runtime_config,
         accounts_db,
+        index_generator(limit_load_slot_count_from_snapshot, verify_index),
         debug_keys,
         leader_for_tests,
-        limit_load_slot_count_from_snapshot,
-        verify_index,
     )?;
     measure_rebuild.stop();
     info!("{measure_rebuild}");
@@ -404,10 +403,9 @@ pub fn bank_from_snapshot_dir(
             genesis_config,
             runtime_config,
             accounts_db,
+            index_generator(limit_load_slot_count_from_snapshot, verify_index),
             debug_keys,
             leader_for_tests,
-            limit_load_slot_count_from_snapshot,
-            verify_index,
         )?,
         "rebuild bank from snapshot"
     );
@@ -452,6 +450,32 @@ pub fn bank_from_snapshot_dir(
         ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
     Ok(bank)
+}
+
+/// Returns the generation of the index of an accounts db from its storages.
+pub(crate) fn index_generator(
+    limit_load_slot_count_from_snapshot: Option<usize>,
+    verify_index: bool,
+) -> impl FnOnce(&AccountsDb) -> IndexGenerationInfo {
+    move |accounts_db| {
+        in_index_generation_pool(|| {
+            accounts_db.generate_index(
+                limit_load_slot_count_from_snapshot,
+                verify_index,
+                &INDEX_OWNERS_OF_INTEREST,
+            )
+        })
+    }
+}
+
+const INDEX_OWNERS_OF_INTEREST: [Pubkey; 2] = [solana_sdk_ids::stake::ID, solana_sdk_ids::vote::ID];
+
+fn in_index_generation_pool<R: Send>(op: impl FnOnce() -> R + Send) -> R {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayonGenIndex{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+        .install(op)
 }
 
 /// Verifies the snapshot's slot and hash matches the bank's
