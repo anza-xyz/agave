@@ -4,6 +4,7 @@ use {
     solana_clap_utils::compute_budget::ComputeUnitLimit,
     solana_compute_budget_interface::{self as compute_budget, ComputeBudgetInstruction},
     solana_message::{VersionedMessage, compiled_instruction::CompiledInstruction},
+    solana_program_runtime::execution_budget::MAX_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
@@ -96,21 +97,23 @@ pub(crate) async fn simulate_and_update_compute_unit_limit(
         if let ComputeUnitLimit::SimulatedWithExtraPercentage(n) = compute_unit_limit {
             (base_compute_unit_limit as u64)
                 .saturating_mul(100_u64.saturating_add(*n as u64))
-                .saturating_div(100) as u32
+                .saturating_div(100)
+                .min(u64::from(MAX_COMPUTE_UNIT_LIMIT)) as u32
         } else {
-            base_compute_unit_limit
+            base_compute_unit_limit.min(MAX_COMPUTE_UNIT_LIMIT)
         };
     set_compute_unit_limit(message, compute_unit_limit, compute_unit_price);
     Ok(Some(compute_unit_limit))
 }
 
-/// Apply a simulated limit, preserving V1's explicit priority fee.
-/// Changing the limit can change Legacy/V0 priority fees.
+/// Apply a simulated limit, capped to the protocol maximum before calculating fees.
+/// Preserve V1's explicit priority fee when no compute unit price is supplied.
 pub(crate) fn set_compute_unit_limit(
     message: &mut VersionedMessage,
     limit: u32,
     compute_unit_price: Option<u64>,
 ) {
+    let limit = limit.min(MAX_COMPUTE_UNIT_LIMIT);
     let (instructions, account_keys) = match message {
         VersionedMessage::Legacy(message) => (&mut message.instructions, &message.account_keys),
         VersionedMessage::V0(message) => (&mut message.instructions, &message.account_keys),
@@ -136,8 +139,12 @@ pub struct ComputeUnitConfig {
 mod tests {
     use {
         super::*,
+        crate::message_builder::MessageBuilder,
+        serde_json::json,
         solana_hash::Hash,
         solana_message::{Message, v0, v1},
+        solana_rpc_client_api::request::RpcRequest,
+        std::collections::HashMap,
     };
 
     #[test]
@@ -185,5 +192,96 @@ mod tests {
         };
         assert_eq!(message.config.compute_unit_limit, Some(40));
         assert_eq!(message.config.priority_fee, Some(40));
+    }
+
+    #[test]
+    fn updated_limit_is_capped_before_calculating_fees() {
+        let payer = Pubkey::new_unique();
+        let instructions = [ComputeBudgetInstruction::set_compute_unit_limit(100)];
+        let mut messages = [
+            VersionedMessage::Legacy(Message::new(&instructions, Some(&payer))),
+            VersionedMessage::V0(
+                v0::Message::try_compile(&payer, &instructions, &[], Hash::default()).unwrap(),
+            ),
+            MessageBuilder::new(vec![]).build(&payer),
+        ];
+        for message in &mut messages {
+            set_compute_unit_limit(message, u32::MAX, Some(1_000_000));
+            let (instructions, account_keys) = match message {
+                VersionedMessage::V1(message) => {
+                    assert_eq!(
+                        message.config.compute_unit_limit,
+                        Some(MAX_COMPUTE_UNIT_LIMIT)
+                    );
+                    assert_eq!(
+                        message.config.priority_fee,
+                        Some(u64::from(MAX_COMPUTE_UNIT_LIMIT))
+                    );
+                    continue;
+                }
+                VersionedMessage::Legacy(message) => (&message.instructions, &message.account_keys),
+                VersionedMessage::V0(message) => (&message.instructions, &message.account_keys),
+            };
+            let index =
+                get_compute_unit_limit_instruction_index(instructions, account_keys).unwrap();
+            assert!(matches!(
+                try_from_slice_unchecked(&instructions[index].data),
+                Ok(ComputeBudgetInstruction::SetComputeUnitLimit(
+                    MAX_COMPUTE_UNIT_LIMIT
+                ))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn simulated_limits_and_padding_are_capped_before_calculating_fees() {
+        for (units_consumed, extra_percentage, expected_limit) in [
+            (100, None, 100),
+            (100, Some(10), 110),
+            (MAX_COMPUTE_UNIT_LIMIT, None, MAX_COMPUTE_UNIT_LIMIT),
+            (MAX_COMPUTE_UNIT_LIMIT + 1, None, MAX_COMPUTE_UNIT_LIMIT),
+            (u32::MAX, None, MAX_COMPUTE_UNIT_LIMIT),
+            (MAX_COMPUTE_UNIT_LIMIT, Some(10), MAX_COMPUTE_UNIT_LIMIT),
+            // This padded estimate would wrap to zero if narrowed before capping.
+            (3_904_515_724, Some(10), MAX_COMPUTE_UNIT_LIMIT),
+            (u32::MAX, Some(255), MAX_COMPUTE_UNIT_LIMIT),
+        ] {
+            let rpc_client = RpcClient::new_mock_with_mocks(
+                String::new(),
+                HashMap::from([(
+                    RpcRequest::SimulateTransaction,
+                    json!({
+                        "context": { "slot": 1 },
+                        "value": { "err": null, "unitsConsumed": units_consumed }
+                    }),
+                )]),
+            );
+            let config = ComputeUnitConfig {
+                compute_unit_price: Some(1_000_000),
+                compute_unit_limit: extra_percentage.map_or(
+                    ComputeUnitLimit::Simulated,
+                    ComputeUnitLimit::SimulatedWithExtraPercentage,
+                ),
+            };
+            let mut message = MessageBuilder::new(vec![])
+                .with_compute_unit_config(&config)
+                .build(&Pubkey::new_unique());
+            assert_eq!(
+                simulate_and_update_compute_unit_limit(
+                    &config.compute_unit_limit,
+                    config.compute_unit_price,
+                    &rpc_client,
+                    &mut message,
+                )
+                .await
+                .unwrap(),
+                Some(expected_limit),
+            );
+            let VersionedMessage::V1(message) = message else {
+                unreachable!()
+            };
+            assert_eq!(message.config.compute_unit_limit, Some(expected_limit));
+            assert_eq!(message.config.priority_fee, Some(u64::from(expected_limit)));
+        }
     }
 }
