@@ -65,6 +65,9 @@ const _: () = const {
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
 
+/// Matches Firedancer's FD_TOPO_ADTL_DESTS_MAX for additional leader destinations.
+pub const MAX_SHRED_RECEIVER_ADDRESSES: usize = 32;
+
 // Capacity in batches. One batch typically packs 1-2 FEC sets worth of bytes
 // (see get_target_batch_bytes_default), so this is at least 4 slots' worth of
 // broadcast traffic. Filling the channel means the consumer (blockstore record
@@ -169,6 +172,7 @@ impl BroadcastStageType {
         shred_version: u16,
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
+        shred_receivers: Vec<SocketAddr>,
     ) -> BroadcastStage {
         match self {
             BroadcastStageType::Standard => BroadcastStage::new(
@@ -178,7 +182,12 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                StandardBroadcastRun::new(shred_version, votor_event_sender, leader_schedule_cache),
+                StandardBroadcastRun::new(
+                    shred_version,
+                    votor_event_sender,
+                    leader_schedule_cache,
+                    shred_receivers,
+                ),
                 xdp_sender,
             ),
 
@@ -437,7 +446,9 @@ fn next_broadcast_leader_pubkey(
 }
 
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
-/// turbine retransmit tree for each shred.
+/// turbine retransmit tree, followed by copies to configured receivers.
+/// Copies use the same UDP socket or XDP queues as Turbine and are best effort.
+#[allow(clippy::too_many_arguments)]
 pub fn broadcast_shreds(
     socket: BroadcastSocket,
     shreds: &[Shred],
@@ -448,6 +459,7 @@ pub fn broadcast_shreds(
     bank_forks: &RwLock<BankForks>,
     leader_schedule_cache: &LeaderScheduleCache,
     socket_addr_space: &SocketAddrSpace,
+    shred_receivers: Option<&Arc<[SocketAddr]>>,
 ) -> Result<()> {
     let mut result = Ok(());
     // Compute destinations for each of the shreds to be sent
@@ -502,6 +514,25 @@ pub fn broadcast_shreds(
             }
             send_mmsg_time.stop();
             transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+            if let Some(shred_receivers) = shred_receivers {
+                let count = shreds.len() * shred_receivers.len();
+                // This Cartesian product has a known length. Stream it directly
+                // into sendmmsg instead of allocating a packet vector per batch.
+                let mirrored = (0..count).map(|i| {
+                    (
+                        shreds[i / shred_receivers.len()].payload(),
+                        &shred_receivers[i % shred_receivers.len()],
+                    )
+                });
+                transmit_stats.mirrored_packets += count;
+                match batch_send(s, mirrored) {
+                    Ok(sent) => transmit_stats.dropped_packets_mirrored += count - sent,
+                    Err(SendPktsError::IoError(err)) => {
+                        log::warn!("shred receiver send failed: {err:?}");
+                        transmit_stats.dropped_packets_mirrored += count;
+                    }
+                }
+            }
         }
         BroadcastSocket::Xdp(s) => {
             for (idx, (payload, addr)) in packets.enumerate() {
@@ -510,6 +541,23 @@ pub fn broadcast_shreds(
                     log::warn!("xdp channel full: {e:?}");
                     transmit_stats.dropped_packets_xdp += 1;
                     result = Err(Error::XdpChannelFull);
+                }
+            }
+            if let Some(shred_receivers) = shred_receivers {
+                let count = shred_receivers.len();
+                transmit_stats.mirrored_packets += count * shreds.len();
+                for (idx, shred) in shreds.iter().enumerate() {
+                    // The existing sender supports several destinations per item.
+                    // Share the address list and payload instead of cloning them per receiver.
+                    if s.try_send(
+                        num_packets + idx,
+                        Arc::clone(shred_receivers),
+                        shred.payload().bytes.clone(),
+                    )
+                    .is_err()
+                    {
+                        transmit_stats.dropped_packets_mirrored += count;
+                    }
                 }
             }
         }
@@ -531,7 +579,7 @@ pub mod test {
         super::*,
         crossbeam_channel::bounded,
         solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
-        solana_gossip::{cluster_info::ClusterInfo, node::Node},
+        solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
@@ -540,10 +588,13 @@ pub mod test {
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
+            shred::{ProcessShredsStats, Shredder},
         },
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
         std::{
+            collections::HashSet,
             num::NonZeroUsize,
             path::Path,
             sync::{Arc, atomic::AtomicBool},
@@ -671,7 +722,7 @@ pub mod test {
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            StandardBroadcastRun::new(0, votor_event_sender, leader_schedule_cache),
+            StandardBroadcastRun::new(0, votor_event_sender, leader_schedule_cache, Vec::new()),
             None,
         );
 
@@ -680,6 +731,114 @@ pub mod test {
             broadcast_service,
             bank,
         }
+    }
+
+    #[test]
+    fn test_shred_receiver_addresses_broadcast_and_failure() {
+        let bind_receiver = || {
+            let socket = bind_to_localhost_unique().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            socket
+        };
+        let turbine_peer = bind_receiver();
+        let receivers: [_; MAX_SHRED_RECEIVER_ADDRESSES] = std::array::from_fn(|_| bind_receiver());
+        let mut addrs = Vec::with_capacity(receivers.len());
+        for receiver in &receivers {
+            addrs.push(receiver.local_addr().unwrap());
+        }
+        let addrs: Arc<[SocketAddr]> = addrs.into();
+        let leader_keypair = Arc::new(Keypair::new());
+        let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
+        let cluster_info = ClusterInfo::new(
+            leader_node.info,
+            leader_keypair.clone(),
+            SocketAddrSpace::Unspecified,
+        );
+        let GenesisConfigInfo {
+            genesis_config,
+            validator_pubkey,
+            ..
+        } = create_genesis_config(10_000);
+        let mut peer = ContactInfo::new_localhost(&validator_pubkey, timestamp());
+        peer.set_tvu(Protocol::UDP, turbine_peer.local_addr().unwrap())
+            .unwrap();
+        cluster_info.insert_info(peer);
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let schedule = LeaderScheduleCache::new_from_bank(&root_bank);
+        let cache = ClusterNodesCache::<BroadcastStage>::new(1, Duration::from_secs(60));
+        let (mut shreds, coding) = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0)
+            .unwrap()
+            .entries_to_merkle_shreds_for_tests(
+                &leader_keypair,
+                &create_ticks(1, 0, Hash::default()),
+                true,
+                Hash::default(),
+                0,
+                0,
+                &mut ProcessShredsStats::default(),
+            );
+        shreds.truncate(4);
+        shreds.extend(coding.into_iter().take(4));
+        let expected: HashSet<_> = shreds
+            .iter()
+            .map(|shred| shred.payload().to_vec())
+            .collect();
+        let socket = bind_to_localhost_unique().unwrap();
+        let broadcast = |addrs: Option<&Arc<[SocketAddr]>>| {
+            let mut stats = TransmitShredsStats::default();
+            broadcast_shreds(
+                BroadcastSocket::Udp(&socket),
+                &shreds,
+                &cache,
+                &AtomicInterval::default(),
+                &mut stats,
+                &cluster_info,
+                &bank_forks,
+                &schedule,
+                &SocketAddrSpace::Unspecified,
+                addrs,
+            )
+            .unwrap();
+            stats
+        };
+        let receive = |receiver: &UdpSocket| {
+            let mut got = HashSet::new();
+            let mut buf = [0u8; 2048];
+            for _ in &shreds {
+                let (len, from) = receiver.recv_from(&mut buf).unwrap();
+                assert_eq!(from, socket.local_addr().unwrap());
+                assert!(got.insert(buf[..len].to_vec()));
+            }
+            assert_eq!(got, expected);
+            receiver.set_nonblocking(true).unwrap();
+            assert_eq!(
+                receiver.recv_from(&mut buf).unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+            receiver.set_nonblocking(false).unwrap();
+        };
+        // Normal Turbine traffic and all 32 receivers each get data and coding shreds once.
+        let stats = broadcast(Some(&addrs));
+        assert_eq!(stats.total_packets, shreds.len());
+        assert_eq!(stats.mirrored_packets, shreds.len() * receivers.len());
+        assert_eq!(stats.dropped_packets_mirrored, 0);
+        for receiver in std::iter::once(&turbine_peer).chain(&receivers) {
+            receive(receiver);
+        }
+        // Broadcast is disabled on the socket, so each optional copy fails with
+        // EACCES. This must not fail or suppress the normal Turbine broadcast.
+        let invalid: Arc<[SocketAddr]> = Arc::from(["255.255.255.255:9001".parse().unwrap()]);
+        let stats = broadcast(Some(&invalid));
+        assert_eq!(stats.total_packets, shreds.len());
+        assert_eq!(stats.dropped_packets_udp, 0);
+        assert_eq!(stats.dropped_packets_mirrored, shreds.len());
+        receive(&turbine_peer);
+        let stats = broadcast(None);
+        assert_eq!(stats.mirrored_packets, 0);
+        receive(&turbine_peer);
     }
 
     #[test]
