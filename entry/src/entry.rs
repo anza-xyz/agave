@@ -595,14 +595,14 @@ fn hash_lanes<const N: usize>(hashes: &mut [Hash; N], iterations: u64) {
 /// scalar hasher, so a kernel that misbehaves on some CPU falls back to the
 /// scalar path instead of producing wrong verification results.
 fn sha256_chains_self_test_passed() -> bool {
-    static PASSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *PASSED.get_or_init(|| {
+    /// `None` without SHA-256 instructions, else whether `N` lanes match.
+    fn kernel_matches_scalar<const N: usize>() -> Option<bool> {
         const ITERATIONS: u64 = 3;
-        let starts: [[u8; 32]; POH_VERIFY_LANES] =
+        let starts: [[u8; 32]; N] =
             std::array::from_fn(|i| solana_sha256_hasher::hash(&i.to_le_bytes()).to_bytes());
         let mut accelerated = starts;
         if !crate::sha256_chains::hash_chains(&mut accelerated, ITERATIONS) {
-            return false; // no SHA-256 instructions: scalar path
+            return None;
         }
         let scalar = starts.map(|mut hash| {
             for _ in 0..ITERATIONS {
@@ -610,11 +610,23 @@ fn sha256_chains_self_test_passed() -> bool {
             }
             hash
         });
-        let passed = accelerated == scalar;
-        if !passed {
-            error!("multi-lane SHA-256 kernel failed its self-test; using the scalar hasher");
+        Some(accelerated == scalar)
+    }
+
+    static PASSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PASSED.get_or_init(|| {
+        // Both lane counts `hash_lanes` is called with.
+        match (
+            kernel_matches_scalar::<1>(),
+            kernel_matches_scalar::<POH_VERIFY_LANES>(),
+        ) {
+            (Some(true), Some(true)) => true,
+            (None, _) | (_, None) => false, // no SHA-256 instructions: scalar path
+            _ => {
+                error!("multi-lane SHA-256 kernel failed its self-test; using the scalar hasher");
+                false
+            }
         }
-        passed
     })
 }
 
@@ -727,20 +739,109 @@ pub fn verify_entries_cpu(
 /// invalid entry.
 ///
 /// This is the check replay's PoH verification jobs run on their share of an
-/// entry batch.
+/// entry batch. Entries are hashed `POH_VERIFY_LANES` at a time (see
+/// `verify_range_lanes`); the result is the same as checking each entry with
+/// `EntryVerificationData::verify`.
 pub fn verify_entries_range(
     entries: &[EntryVerificationData],
     range: Range<usize>,
     start_hash: &Hash,
 ) -> bool {
-    range.into_iter().all(|index| {
-        let previous_hash = if index == 0 {
-            start_hash
-        } else {
-            &entries[index - 1].hash
-        };
-        entries[index].verify(previous_hash)
+    verify_range_lanes::<POH_VERIFY_LANES>(entries, range, start_hash, |entry, computed| {
+        if entry.hash != computed {
+            warn!(
+                "next_hash is invalid expected: {:?} actual: {:?}",
+                entry.hash, computed
+            );
+            return false;
+        }
+        true
     })
+}
+
+/// Verifies `entries[range]` with up to `N` entries' hash chains in flight.
+///
+/// Every entry is independent (it starts from the previous entry's claimed
+/// hash), so each lane takes the next entry in the range as soon as its current
+/// one finishes; entries of uneven length (transaction entries split a tick's
+/// hashes at arbitrary points) then keep all lanes busy instead of waiting on
+/// the longest. All lanes advance together by the smallest remaining hash
+/// count. When fewer than `N` entries are left, they finish one lane at a time.
+///
+/// `check(entry, computed_hash)` is called once per finished entry until it
+/// returns `false`; entries finish out of index order.
+fn verify_range_lanes<const N: usize>(
+    entries: &[EntryVerificationData],
+    range: Range<usize>,
+    start_hash: &Hash,
+    mut check: impl FnMut(&EntryVerificationData, Hash) -> bool,
+) -> bool {
+    let previous_hash = |index: usize| {
+        index
+            .checked_sub(1)
+            .map_or(*start_hash, |previous| entries[previous].hash)
+    };
+    let mut pending = range;
+    // Per lane: (entry index, plain hashes left), and the lane's current hash.
+    let mut lanes: [Option<(usize, u64)>; N] = [None; N];
+    let mut hashes = [Hash::default(); N];
+    loop {
+        for (lane, hash) in lanes.iter_mut().zip(hashes.iter_mut()) {
+            if lane.is_none()
+                && let Some(index) = pending.next()
+            {
+                let entry = &entries[index];
+                *hash = previous_hash(index);
+                *lane = Some((
+                    index,
+                    num_plain_hashes(entry.num_hashes, entry.num_transactions),
+                ));
+            }
+        }
+
+        let active = lanes.iter().flatten().count();
+        if active == 0 {
+            return true;
+        }
+        if active == N {
+            let step = lanes
+                .iter()
+                .flatten()
+                .map(|&(_, left)| left)
+                .min()
+                .unwrap_or(0);
+            hash_lanes(&mut hashes, step);
+            for (_, left) in lanes.iter_mut().flatten() {
+                *left -= step;
+            }
+        } else {
+            // Not enough entries left to fill every lane.
+            for (lane, hash) in lanes.iter_mut().zip(hashes.iter_mut()) {
+                if let Some((_, left)) = lane {
+                    let mut single = [*hash];
+                    hash_lanes(&mut single, *left);
+                    *hash = single[0];
+                    *left = 0;
+                }
+            }
+        }
+
+        for (lane, hash) in lanes.iter_mut().zip(hashes.iter()) {
+            if let Some((index, 0)) = *lane {
+                let entry = &entries[index];
+                let computed = if entry.num_transactions == 0 {
+                    *hash
+                } else {
+                    let mixin = hash_signatures(&entry.signatures);
+                    solana_sha256_hasher::hashv(&[hash.as_ref(), mixin.as_ref()])
+                };
+                if !check(entry, computed) {
+                    return false;
+                }
+                *lane = None;
+            }
+        }
+    }
 }
 
 // an EntrySlice is a slice of Entries
@@ -1472,6 +1573,90 @@ mod tests {
         check::<2>();
         check::<3>();
         check::<4>();
+    }
+
+    /// The per-entry loop replay ran before `verify_entries_range` used lanes.
+    fn reference_verify_range(
+        entries: &[EntryVerificationData],
+        range: std::ops::Range<usize>,
+        start_hash: &Hash,
+    ) -> bool {
+        range.into_iter().all(|index| {
+            let previous = if index == 0 {
+                start_hash
+            } else {
+                &entries[index - 1].hash
+            };
+            entries[index].verify(previous)
+        })
+    }
+
+    #[test]
+    fn test_verify_entries_range_matches_reference() {
+        fn check<const N: usize>() {
+            for _ in 0..300 {
+                let start = Hash::new_unique();
+                let len = rng().random_range(0..24);
+                let mut prev = start;
+                let mut entries: Vec<EntryVerificationData> = (0..len)
+                    .map(|_| {
+                        let entry = random_verification_data(&prev);
+                        prev = entry.hash;
+                        entry
+                    })
+                    .collect();
+                // Corrupt one entry (anywhere, also outside the range) half the time.
+                if len > 0 && rng().random_ratio(1, 2) {
+                    let idx = rng().random_range(0..len);
+                    match rng().random_range(0..3) {
+                        0 => entries[idx].hash = Hash::new_unique(),
+                        1 => entries[idx].num_hashes += 2,
+                        _ => match entries[idx].signatures.first_mut() {
+                            Some(signature) => {
+                                let mut bytes: [u8; 64] = signature.as_ref().try_into().unwrap();
+                                bytes[0] ^= 1;
+                                *signature = Signature::from(bytes);
+                            }
+                            None => entries[idx].hash = Hash::new_unique(),
+                        },
+                    }
+                }
+                let a = rng().random_range(0..=len);
+                let b = rng().random_range(a..=len);
+                let expected = reference_verify_range(&entries, a..b, &start);
+                let got = verify_range_lanes::<N>(&entries, a..b, &start, |entry, computed| {
+                    entry.hash == computed
+                });
+                assert_eq!(got, expected, "N={N} range={a}..{b} len={len}");
+            }
+        }
+        check::<1>();
+        check::<2>();
+        check::<3>();
+        check::<4>();
+    }
+
+    #[test]
+    fn test_verify_entries_range_full_slice_fuzz() {
+        for _ in 0..200 {
+            let start = Hash::new_unique();
+            let len = rng().random_range(1..40);
+            let mut prev = start;
+            let mut entries: Vec<EntryVerificationData> = (0..len)
+                .map(|_| {
+                    let entry = random_verification_data(&prev);
+                    prev = entry.hash;
+                    entry
+                })
+                .collect();
+            assert!(verify_entries_range(&entries, 0..len, &start));
+            assert!(!verify_entries_range(&entries, 0..len, &Hash::new_unique()));
+            let idx = rng().random_range(0..len);
+            entries[idx].hash = Hash::new_unique();
+            assert!(!verify_entries_range(&entries, 0..len, &start));
+            // Entries before the corrupted one still verify on their own.
+            assert!(verify_entries_range(&entries, 0..idx, &start));
+        }
     }
 
     #[test]
