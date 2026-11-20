@@ -1628,7 +1628,6 @@ mod tests {
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,
-            None,
         )
         .unwrap();
         let loaded_addresses = match access {

@@ -46,8 +46,7 @@ impl SamplePerformanceService {
                 last_sample_time = Instant::now();
                 let new_snapshot = StatsSnapshot::from_forks(&bank_forks);
 
-                let (num_transactions, num_non_vote_transactions, num_slots) =
-                    new_snapshot.diff_since(&snapshot);
+                let (num_transactions, num_slots) = new_snapshot.diff_since(&snapshot);
 
                 // Store the new snapshot to compare against in the next iteration of the loop.
                 snapshot = new_snapshot;
@@ -59,7 +58,7 @@ impl SamplePerformanceService {
                     // transactions per slot.
                     num_slots,
                     num_transactions,
-                    num_non_vote_transactions,
+                    num_non_vote_transactions: num_transactions,
                     sample_period_secs: elapsed.as_secs() as u16,
                 };
 
@@ -79,7 +78,6 @@ impl SamplePerformanceService {
 
 struct StatsSnapshot {
     pub num_transactions: u64,
-    pub num_non_vote_transactions: u64,
     pub highest_slot: u64,
 }
 
@@ -89,17 +87,14 @@ impl StatsSnapshot {
         let bank = forks.root_bank();
         Self {
             num_transactions: bank.transaction_count(),
-            num_non_vote_transactions: bank.non_vote_transaction_count_since_restart(),
             highest_slot: forks.highest_slot(),
         }
     }
 
-    fn diff_since(&self, predecessor: &Self) -> (u64, u64, u64) {
+    fn diff_since(&self, predecessor: &Self) -> (u64, u64) {
         (
             self.num_transactions
                 .saturating_sub(predecessor.num_transactions),
-            self.num_non_vote_transactions
-                .saturating_sub(predecessor.num_non_vote_transactions),
             self.highest_slot.saturating_sub(predecessor.highest_slot),
         )
     }

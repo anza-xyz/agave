@@ -5029,7 +5029,7 @@ pub mod tests {
                         let statically_loaded = RuntimeTransaction::<
                             SanitizedTransactionView<Bytes>,
                         >::try_new(
-                            sanitized, MessageHash::Compute, None
+                            sanitized, MessageHash::Compute
                         )?;
                         ReplayTransaction::try_new(
                             statically_loaded,
