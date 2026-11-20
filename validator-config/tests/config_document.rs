@@ -13,7 +13,7 @@ gossip.xdp.tx.queues = [0]
     )
     .unwrap();
     let serialized = document.to_toml().unwrap();
-    let mut round_trip: ConfigDocument = toml::from_str(&serialized).unwrap();
+    let mut round_trip = ConfigDocument::parse(&serialized).unwrap();
     assert_eq!(round_trip.as_table(), document.as_table());
     assert_eq!(round_trip.schema_version(), Some(1));
     assert!(!round_trip.as_table().contains_key("interfaces"));

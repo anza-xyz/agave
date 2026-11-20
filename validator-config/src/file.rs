@@ -5,7 +5,6 @@ use {
         Diagnostic, DiagnosticKind, EffectiveConfig, FieldPathSegment, INPUT_DESCRIPTION,
         ValidatedConfig, validate_document,
     },
-    serde::{Deserialize, Serialize},
     std::{fmt, ops::Range, sync::Arc},
     toml::{
         Spanned,
@@ -23,11 +22,9 @@ const SCHEMA_VERSION: i64 = 1;
 /// Parsing and serialization preserve which fields were supplied and their values.
 /// Serialization regenerates the TOML layout. Use [`Self::validate`] to check
 /// the schema version, apply built-in defaults, and validate the effective settings.
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(transparent)]
+#[derive(Clone)]
 pub struct ConfigDocument {
     table: toml::Table,
-    #[serde(skip)]
     pub(crate) source_text: Option<Arc<str>>,
 }
 
@@ -77,7 +74,7 @@ impl ConfigDocument {
 
     /// Serialize this document to TOML.
     pub fn to_toml(&self) -> Result<String, Diagnostic> {
-        toml::to_string_pretty(self)
+        toml::to_string_pretty(&self.table)
             .map_err(|error| Diagnostic::new(DiagnosticKind::Serialization, error.to_string()))
     }
 
