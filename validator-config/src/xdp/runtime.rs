@@ -47,7 +47,7 @@ impl XdpRuntimeConfig {
 
 fn resolve_declared_workers(
     workers: &XdpWorkerPool,
-    allowed_cpus: &BTreeSet<usize>,
+    initial_affinity: &BTreeSet<usize>,
 ) -> Result<Vec<XdpWorkerBinding>, String> {
     let bind_cpus = |cpus: &[usize]| {
         collect_worker_queue_ids(workers)
@@ -58,7 +58,12 @@ fn resolve_declared_workers(
     };
     match workers {
         XdpWorkerPool::Auto { count } => {
-            let mut eligible: Vec<_> = allowed_cpus.iter().rev().take(*count).copied().collect();
+            let mut eligible: Vec<_> = initial_affinity
+                .iter()
+                .rev()
+                .take(*count)
+                .copied()
+                .collect();
             if eligible.len() < *count {
                 return Err(format!(
                     "not enough CPUs for XDP: workers.auto.count = {count} needs {count} CPUs, \
@@ -76,17 +81,25 @@ fn resolve_declared_workers(
 }
 
 impl ValidatedConfig {
-    /// Resolve the enabled XDP settings against the host CPUs.
+    /// Resolve XDP settings using the validator's initial CPU affinity.
+    ///
+    /// Automatic workers select CPUs from `initial_affinity`. Active workers
+    /// must leave at least one CPU in that set for the main thread. Explicitly
+    /// configured worker CPUs can lie outside the initial affinity.
+    ///
+    /// On Linux, active worker CPU IDs must fit in `cpu_set_t`. Pinning workers
+    /// at startup checks whether those CPUs are online and available in the
+    /// validator's cpuset.
+    ///
     /// Returns `None` when XDP is disabled.
-    /// On Linux, active workers must fit the transmitter's CPU affinity mask.
     pub fn resolve_xdp(
         &self,
-        allowed_cpus: &BTreeSet<usize>,
+        initial_affinity: &BTreeSet<usize>,
     ) -> Result<Option<XdpRuntimeConfig>, Diagnostic> {
         let Some(queue_ids) = &self.xdp_queue_ids else {
             return Ok(None);
         };
-        if allowed_cpus.is_empty() {
+        if initial_affinity.is_empty() {
             return Err(Diagnostic::new(
                 DiagnosticKind::CpuResolution,
                 "cannot resolve XDP workers: the process CPU affinity is empty",
@@ -102,7 +115,7 @@ impl ValidatedConfig {
                 .at_field(workers.field_path().iter().copied())
                 .at_field(["interfaces", interface_label, "xdp"])
         };
-        let declared = resolve_declared_workers(workers, allowed_cpus).map_err(worker_error)?;
+        let declared = resolve_declared_workers(workers, initial_affinity).map_err(worker_error)?;
         let active_ids: BTreeSet<_> = queue_ids
             .get_values()
             .into_iter()
@@ -119,11 +132,11 @@ impl ValidatedConfig {
             .find(|binding| agave_cpu_utils::CpuId::new(binding.cpu).is_err())
         {
             return Err(worker_error(format!(
-                "XDP worker CPU {} is outside the Linux CPU affinity mask",
+                "XDP worker CPU {} cannot be represented in a Linux CPU affinity mask",
                 binding.cpu
             )));
         }
-        if !allowed_cpus
+        if !initial_affinity
             .iter()
             .any(|cpu| !active_workers.iter().any(|binding| binding.cpu == *cpu))
         {
@@ -291,7 +304,9 @@ workers.bindings = [
                 .expect_err("active worker CPU must fit the Linux affinity mask");
             assert_eq!(error.kind(), DiagnosticKind::CpuResolution);
             assert!(
-                error.message().contains("CPU 1000000 is outside"),
+                error
+                    .message()
+                    .contains("CPU 1000000 cannot be represented"),
                 "{error}"
             );
         }
