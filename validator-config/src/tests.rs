@@ -314,7 +314,9 @@ fn test_every_worker_mode_enforces_the_same_cardinality_limit() {
             if should_succeed {
                 result.unwrap_or_else(|error| panic!("{field}/{count}: {error}"));
             } else {
-                let error = result.expect_err("empty or oversized worker pools must be rejected");
+                let error = result
+                    .expect_err("empty or oversized worker pools must be rejected")
+                    .to_string();
                 let expected = format!(
                     "workers.{field} must request between 1 and {MAX_XDP_WORKERS} workers; found \
                      {count}"

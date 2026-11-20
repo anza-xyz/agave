@@ -2,7 +2,7 @@
 
 use {
     super::{XdpEndpoints, XdpPolicy, XdpWorkerBinding, XdpWorkerPool, collect_worker_queue_ids},
-    crate::NetworkDeviceSelector,
+    crate::{Diagnostic, DiagnosticKind, NetworkDeviceSelector},
     std::collections::{BTreeMap, BTreeSet},
 };
 
@@ -72,14 +72,21 @@ impl XdpPolicy {
         &self,
         allowed_cpus: &BTreeSet<usize>,
         poh_core: Option<usize>,
-    ) -> Result<XdpRuntimeConfig, String> {
+    ) -> Result<XdpRuntimeConfig, Diagnostic> {
         if allowed_cpus.is_empty() {
-            return Err(
-                "cannot resolve XDP workers: the process CPU affinity is empty".to_string(),
-            );
+            return Err(Diagnostic::new(
+                DiagnosticKind::CpuResolution,
+                "cannot resolve XDP workers: the process CPU affinity is empty",
+            ));
         }
         let declared =
-            resolve_declared_workers(&self.interface.xdp.workers, allowed_cpus, poh_core)?;
+            resolve_declared_workers(&self.interface.xdp.workers, allowed_cpus, poh_core).map_err(
+                |error| {
+                    Diagnostic::new(DiagnosticKind::CpuResolution, error)
+                        .at_field(self.interface.xdp.workers.field_path().iter().copied())
+                        .at_field(["interfaces", &self.interface_label, "xdp"])
+                },
+            )?;
         let active_ids: BTreeSet<_> = self
             .queues
             .get_values()
@@ -94,11 +101,11 @@ impl XdpPolicy {
         if !allowed_cpus.iter().any(|cpu| {
             Some(*cpu) != poh_core && !active_workers.iter().any(|binding| binding.cpu == *cpu)
         }) {
-            return Err(
+            return Err(Diagnostic::new(
+                DiagnosticKind::CpuResolution,
                 "XDP workers and the PoH core must leave at least one process CPU unreserved for \
-                 the main thread"
-                    .to_string(),
-            );
+                 the main thread",
+            ));
         }
         let positions: BTreeMap<_, _> = active_workers
             .iter()
@@ -238,7 +245,11 @@ workers.bindings = [
             let error = policy
                 .resolve(&BTreeSet::from([8, 9, 10]), Some(9))
                 .expect_err("active explicit workers must not share the PoH core");
-            assert_eq!(error, "XDP worker CPU 9 overlaps the PoH core", "{case}");
+            assert_eq!(
+                error.to_string(),
+                "XDP worker CPU 9 overlaps the PoH core",
+                "{case}"
+            );
         }
     }
 
@@ -263,7 +274,11 @@ xdp.workers = {workers}
             let error = policy
                 .resolve(&BTreeSet::from([8, 9, 10]), Some(9))
                 .expect_err("unreferenced explicit workers must not share the PoH core");
-            assert_eq!(error, "XDP worker CPU 9 overlaps the PoH core", "{case}");
+            assert_eq!(
+                error.to_string(),
+                "XDP worker CPU 9 overlaps the PoH core",
+                "{case}"
+            );
         }
     }
 
@@ -275,7 +290,7 @@ xdp.workers = {workers}
             .resolve(&BTreeSet::from([8, 9]), Some(9))
             .expect_err("auto workers must fail if too few CPUs remain after excluding PoH");
         assert_eq!(
-            error,
+            error.to_string(),
             "not enough CPUs for XDP: workers.auto.count = 2 needs 2 CPUs other than the PoH \
              core, but only 1 are available",
             "the error should report the requested worker count and available CPUs after \
@@ -344,7 +359,7 @@ xdp.workers = {workers}
                     .resolve(&allowed, poh_core)
                     .expect_err("active workers must leave at least one process CPU unreserved");
                 assert!(
-                    error.contains("leave at least one"),
+                    error.to_string().contains("leave at least one"),
                     "{workers} {poh_core:?}: {error}"
                 );
             }
@@ -359,7 +374,7 @@ xdp.workers = {workers}
             .resolve(&BTreeSet::new(), None)
             .expect_err("an empty process CPU affinity cannot leave a CPU unreserved");
         assert_eq!(
-            error,
+            error.to_string(),
             "cannot resolve XDP workers: the process CPU affinity is empty"
         );
     }

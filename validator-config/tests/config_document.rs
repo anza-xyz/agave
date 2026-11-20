@@ -91,11 +91,11 @@ fn test_document_validation_checks_edits() {
     document
         .as_table_mut()
         .insert("schema_version".into(), 2_i64.into());
-    let error = document.validate().unwrap_err();
+    let error = document.validate().unwrap_err().to_string();
     assert!(error.contains("schema_version 2 is unsupported"), "{error}");
 
     let document = ConfigDocument::parse("schema_version = 1\ntpu.xdp.tx.queues = [1]").unwrap();
-    let error = document.validate().unwrap_err();
+    let error = document.validate().unwrap_err().to_string();
     assert!(
         error.contains("tpu.xdp.tx.queues references queue(s) 1"),
         "{error}"
@@ -104,7 +104,7 @@ fn test_document_validation_checks_edits() {
     let document = ConfigDocument::parse("schema_version = 1\ninterfaces = {}").unwrap();
     let round_trip = ConfigDocument::parse(&document.to_toml().unwrap()).unwrap();
     assert_eq!(round_trip.as_table(), document.as_table());
-    let error = round_trip.validate().unwrap_err();
+    let error = round_trip.validate().unwrap_err().to_string();
     assert!(
         error.contains("which is not a declared interface"),
         "{error}"

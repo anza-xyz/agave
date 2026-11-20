@@ -1,8 +1,12 @@
 //! Logical network interfaces and device selectors.
 
 use {
-    crate::xdp::{InterfaceXdp, XdpWorkerPool},
+    crate::{
+        Diagnostic, DiagnosticKind,
+        xdp::{InterfaceXdp, XdpWorkerPool},
+    },
     serde::Deserialize,
+    std::borrow::Cow,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -13,10 +17,15 @@ pub enum NetworkDeviceSelector {
 }
 
 impl NetworkDeviceSelector {
-    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+    pub(crate) fn validate(&self) -> Result<(), Diagnostic> {
+        let invalid = |reason| {
+            Diagnostic::new(DiagnosticKind::InvalidValue, reason).at_field(["device", "name"])
+        };
         match self {
-            Self::Name(name) if name.is_empty() => Err("name must not be empty"),
-            Self::Name(name) if name.contains('\0') => Err("name must not contain a NUL character"),
+            Self::Name(name) if name.is_empty() => Err(invalid("must not be empty")),
+            Self::Name(name) if name.contains('\0') => {
+                Err(invalid("must not contain a NUL character"))
+            }
             _ => Ok(()),
         }
     }
@@ -54,16 +63,19 @@ impl NetworkInterface {
 }
 
 pub(crate) fn format_interface_path(label: &str) -> String {
-    let key = if !label.is_empty()
-        && label
+    format!("interfaces.{}", format_field_key(label))
+}
+
+pub(crate) fn format_field_key(key: &str) -> Cow<'_, str> {
+    if !key.is_empty()
+        && key
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
-        label.to_string()
+        Cow::Borrowed(key)
     } else {
-        format_label(label)
-    };
-    format!("interfaces.{key}")
+        Cow::Owned(format_label(key))
+    }
 }
 
 pub(crate) fn format_label(label: &str) -> String {

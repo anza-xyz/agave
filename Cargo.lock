@@ -554,6 +554,7 @@ version = "5.0.0-alpha.1"
 dependencies = [
  "agave-validator-config",
  "serde",
+ "serde_path_to_error",
  "tempfile",
  "toml 1.1.8+spec-1.1.0",
 ]
@@ -6598,6 +6599,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

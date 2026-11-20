@@ -5,7 +5,7 @@ mod runtime;
 pub use runtime::XdpRuntimeConfig;
 use {
     crate::{
-        EffectiveConfig, NetworkDeviceSelector,
+        Diagnostic, DiagnosticKind, EffectiveConfig, NetworkDeviceSelector,
         interface::{NetworkInterface, format_interface_path, format_label},
     },
     serde::Deserialize,
@@ -92,20 +92,24 @@ pub(crate) struct ConfigXdp {
     pub(crate) enabled: bool,
 }
 
-pub(crate) fn validate_single_interface(config: &EffectiveConfig) -> Result<(), String> {
+fn validate_single_interface(config: &EffectiveConfig) -> Result<(), Diagnostic> {
     if config.interfaces.len() != 1 {
-        return Err(format!(
-            "XDP version 1 supports exactly one effective interface; found {}",
-            config.interfaces.len()
-        ));
+        return Err(Diagnostic::new(
+            DiagnosticKind::InvalidValue,
+            format!(
+                "must contain exactly one effective interface when XDP is enabled; found {}",
+                config.interfaces.len()
+            ),
+        )
+        .at_field(["interfaces"]));
     }
     Ok(())
 }
 
-pub(crate) fn validate_pool_len(len: usize, field: &str) -> Result<(), String> {
+fn validate_pool_len(len: usize) -> Result<(), String> {
     if len == 0 || len > MAX_XDP_WORKERS {
         return Err(format!(
-            "{field} must request between 1 and {MAX_XDP_WORKERS} workers; found {len}"
+            "must request between 1 and {MAX_XDP_WORKERS} workers; found {len}"
         ));
     }
     Ok(())
@@ -116,28 +120,36 @@ fn find_duplicate<T: Copy + Ord>(values: impl IntoIterator<Item = T>) -> Option<
     values.into_iter().find(|value| !seen.insert(*value))
 }
 
-pub(crate) fn validate_unique_cpus(cpus: &[usize], field: &str) -> Result<(), String> {
-    if let Some(cpu) = find_duplicate(cpus.iter().copied()) {
-        return Err(format!("{field} contains duplicate CPU {cpu}"));
-    }
-    Ok(())
-}
-
 impl XdpWorkerPool {
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    fn field_path(&self) -> &'static [&'static str] {
         match self {
-            Self::Auto { count } => validate_pool_len(*count, "workers.auto.count"),
+            Self::Auto { .. } => &["workers", "auto", "count"],
+            Self::Cpus(_) => &["workers", "cpus"],
+            Self::Bindings(_) => &["workers", "bindings"],
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Diagnostic> {
+        let invalid = |message| {
+            Diagnostic::new(DiagnosticKind::InvalidValue, message)
+                .at_field(self.field_path().iter().copied())
+        };
+        match self {
+            Self::Auto { count } => validate_pool_len(*count).map_err(invalid),
             Self::Cpus(cpus) => {
-                validate_pool_len(cpus.len(), "workers.cpus")?;
-                validate_unique_cpus(cpus, "workers.cpus")
+                validate_pool_len(cpus.len()).map_err(invalid)?;
+                if let Some(cpu) = find_duplicate(cpus.iter().copied()) {
+                    return Err(invalid(format!("contains duplicate CPU {cpu}")));
+                }
+                Ok(())
             }
             Self::Bindings(bindings) => {
-                validate_pool_len(bindings.len(), "workers.bindings")?;
+                validate_pool_len(bindings.len()).map_err(invalid)?;
                 if let Some(queue) = find_duplicate(bindings.iter().map(|binding| binding.queue)) {
-                    return Err(format!("workers.bindings contains duplicate queue {queue}"));
+                    return Err(invalid(format!("contains duplicate queue {queue}")));
                 }
                 if let Some(cpu) = find_duplicate(bindings.iter().map(|binding| binding.cpu)) {
-                    return Err(format!("workers.bindings contains duplicate CPU {cpu}"));
+                    return Err(invalid(format!("contains duplicate CPU {cpu}")));
                 }
                 Ok(())
             }
@@ -146,15 +158,18 @@ impl XdpWorkerPool {
 }
 
 impl QueueSelection {
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> Result<(), Diagnostic> {
         let Self::Explicit(queues) = self else {
             return Ok(());
         };
+        let invalid = |message| {
+            Diagnostic::new(DiagnosticKind::InvalidValue, message).at_field(["tx", "queues"])
+        };
         if queues.is_empty() {
-            return Err("tx.queues must not be an empty queue list".to_string());
+            return Err(invalid("must not be an empty queue list".to_owned()));
         }
         if let Some(queue) = find_duplicate(queues.iter().copied()) {
-            return Err(format!("tx.queues contains duplicate queue {queue}"));
+            return Err(invalid(format!("contains duplicate queue {queue}")));
         }
         Ok(())
     }
@@ -249,25 +264,26 @@ impl XdpPolicy {
 
 /// Validate schema constraints independently of host state, even when XDP is
 /// disabled. Deserialization alone does not check them.
-pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String> {
+fn validate_structural(config: &EffectiveConfig) -> Result<(), Diagnostic> {
     for (label, interface) in &config.interfaces {
         interface
             .device
             .validate()
-            .map_err(|error| format!("{}.device.{error}", format_interface_path(label)))?;
+            .map_err(|error| error.at_field(["interfaces", label]))?;
         interface
             .xdp
             .workers
             .validate()
-            .map_err(|error| format!("{}.xdp.{error}", format_interface_path(label)))?;
+            .map_err(|error| error.at_field(["interfaces", label, "xdp"]))?;
         if matches!(interface.xdp.workers, XdpWorkerPool::Bindings(_))
             && !matches!(interface.device, NetworkDeviceSelector::Name(_))
         {
-            return Err(format!(
-                "{}.xdp.workers.bindings requires device.name; use workers.auto/workers.cpus with \
-                 device.route, or name the device",
-                format_interface_path(label)
-            ));
+            return Err(Diagnostic::new(
+                DiagnosticKind::InvalidValue,
+                "requires device.name; use workers.auto/workers.cpus with device.route, or name \
+                 the device",
+            )
+            .at_field(["interfaces", label, "xdp", "workers", "bindings"]));
         }
     }
     for (name, endpoint) in config.endpoints().named() {
@@ -275,7 +291,7 @@ pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String
             .tx
             .queues
             .validate()
-            .map_err(|error| format!("{name}.xdp.{error}"))?;
+            .map_err(|error| error.at_field([name, "xdp"]))?;
     }
     Ok(())
 }
@@ -284,22 +300,25 @@ pub(crate) fn validate_structural(config: &EffectiveConfig) -> Result<(), String
 /// the XDP policy when XDP is enabled.
 pub(crate) fn validate(
     config: &EffectiveConfig,
-) -> Result<(Option<XdpPolicy>, Vec<String>), String> {
+) -> Result<(Option<XdpPolicy>, Vec<Diagnostic>), Diagnostic> {
     validate_structural(config)?;
     for (name, endpoint) in config.endpoints().named() {
         let label = &endpoint.tx.interface;
         let interface = config.interfaces.get(label).ok_or_else(|| {
-            format!(
-                "{name}.xdp.tx.interface names {}, which is not a declared interface; declared: \
-                 [{}]",
-                format_label(label),
-                config
-                    .interfaces
-                    .keys()
-                    .map(|label| format_label(label))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            Diagnostic::new(
+                DiagnosticKind::InvalidReference,
+                format!(
+                    "names {}, which is not a declared interface; declared: [{}]",
+                    format_label(label),
+                    config
+                        .interfaces
+                        .keys()
+                        .map(|label| format_label(label))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
             )
+            .at_field([name, "xdp", "tx", "interface"])
         })?;
         if let QueueSelection::Explicit(queues) = &endpoint.tx.queues {
             let pool: BTreeSet<_> = collect_worker_queue_ids(&interface.xdp.workers)
@@ -311,11 +330,15 @@ pub(crate) fn validate(
                 .map(ToString::to_string)
                 .collect();
             if !missing.is_empty() {
-                return Err(format!(
-                    "{name}.xdp.tx.queues references queue(s) {} not declared by {}.xdp.workers",
-                    missing.join(", "),
-                    format_interface_path(label)
-                ));
+                return Err(Diagnostic::new(
+                    DiagnosticKind::InvalidReference,
+                    format!(
+                        "references queue(s) {} not declared by {}.xdp.workers",
+                        missing.join(", "),
+                        format_interface_path(label)
+                    ),
+                )
+                .at_field([name, "xdp", "tx", "queues"]));
             }
         }
     }
@@ -336,10 +359,15 @@ pub(crate) fn validate(
         .iter()
         .filter(|queue| !selections.iter().any(|selected| selected.contains(queue)))
         .map(|queue| {
-            format!(
-                "worker queue {queue} on interface {} is inactive (unreferenced)",
-                format_label(interface_label)
+            Diagnostic::new(
+                DiagnosticKind::InactiveXdpQueue,
+                format!(
+                    "worker queue {queue} on interface {} is inactive (unreferenced)",
+                    format_label(interface_label)
+                ),
             )
+            .at_field(interface.xdp.workers.field_path().iter().copied())
+            .at_field(["interfaces", interface_label, "xdp"])
         })
         .collect();
     let xdp = XdpPolicy {

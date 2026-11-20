@@ -4,11 +4,13 @@
 //! XDP policy resolution uses supplied CPU information; device lookup and
 //! transmitter setup belong to the validator.
 
+mod diagnostic;
 mod file;
 mod interface;
 mod xdp;
 
 pub use {
+    diagnostic::{Diagnostic, DiagnosticKind, FieldPathSegment},
     file::{ConfigDocument, DEFAULT_CONFIG},
     interface::{NetworkDeviceSelector, NetworkInterface, RouteSelector},
     xdp::{
@@ -87,13 +89,14 @@ impl EffectiveConfig {
 }
 
 /// Load the built-in defaults merged with the user config file and validate the result.
-pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<String>), String> {
+pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
     let Some(path) = user_path else {
         return parse_with_description(None, "<built-in>");
     };
     let description = path.display().to_string();
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read config file `{description}`: {error}"))?;
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        Diagnostic::new(DiagnosticKind::Io, error.to_string()).in_source(&description)
+    })?;
     parse_with_description(Some(&text), &description)
 }
 
@@ -108,16 +111,16 @@ pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<String>), 
 /// let (config, warnings) = parse("schema_version = 1\nxdp.enabled = false")?;
 /// assert!(config.xdp().is_none());
 /// assert!(warnings.is_empty());
-/// # Ok::<(), String>(())
+/// # Ok::<(), agave_validator_config::Diagnostic>(())
 /// ```
-pub fn parse(text: &str) -> Result<(ValidatedConfig, Vec<String>), String> {
+pub fn parse(text: &str) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
     parse_with_description(Some(text), INPUT_DESCRIPTION)
 }
 
 fn parse_with_description(
     user_text: Option<&str>,
     description: &str,
-) -> Result<(ValidatedConfig, Vec<String>), String> {
+) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
     let document = user_text
         .map(|text| ConfigDocument::parse_with_description(text, description))
         .transpose()?;
@@ -127,11 +130,33 @@ fn parse_with_description(
 fn validate_document(
     document: Option<ConfigDocument>,
     description: &str,
-) -> Result<(ValidatedConfig, Vec<String>), String> {
-    let effective = file::merge_config(document, description)?;
-    let (xdp, warnings) = xdp::validate(&effective)
-        .map_err(|error| format!("invalid config file `{description}`: {error}"))?;
-    Ok((ValidatedConfig { effective, xdp }, warnings))
+) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
+    let source_text = document
+        .as_ref()
+        .and_then(|document| document.source_text.clone());
+    let source_text = if document.is_none() {
+        Some(DEFAULT_CONFIG)
+    } else {
+        source_text.as_deref()
+    };
+    let result = file::merge_config(document, description).and_then(|effective| {
+        let (xdp, warnings) = xdp::validate(&effective)?;
+        Ok((ValidatedConfig { effective, xdp }, warnings))
+    });
+    match result {
+        Ok((config, mut warnings)) => {
+            file::attach_source_locations(&mut warnings, description, source_text);
+            Ok((config, warnings))
+        }
+        Err(mut error) => {
+            file::attach_source_locations(
+                std::slice::from_mut(&mut error),
+                description,
+                source_text,
+            );
+            Err(error)
+        }
+    }
 }
 
 #[cfg(test)]

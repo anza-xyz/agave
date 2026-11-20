@@ -8,6 +8,8 @@ pub(crate) fn load_config(contents: &str) -> Result<(ValidatedConfig, Vec<String
     file.write_all(contents.as_bytes())
         .expect("write test config to temporary file");
     load(Some(file.path()))
+        .map(|(config, warnings)| (config, warnings.iter().map(ToString::to_string).collect()))
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn load_xdp_policy(contents: &str) -> XdpPolicy {
