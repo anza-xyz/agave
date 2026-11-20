@@ -22,6 +22,7 @@ clap = { version = "3.2.23", default-features = false, features = ["cargo", "std
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 solana-entry = { workspace = true }
+solana-hash = { workspace = true }
 solana-measure = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }
