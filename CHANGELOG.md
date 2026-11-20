@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
+## 4.4.2
+
+### RPC
+
+#### Breaking
+
+* The `/v0/circulating-supply` endpoint now requires `--full-rpc-api`.
+
 ## 4.4.0
 
 ### RPC
