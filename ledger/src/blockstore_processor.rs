@@ -1065,14 +1065,7 @@ impl PohVerificationJob {
             slot,
             result_sender,
         } = self;
-        let verified = range.into_iter().all(|index| {
-            let previous_hash = if index == 0 {
-                &start_hash
-            } else {
-                &entries.data[index - 1].hash
-            };
-            entries.data[index].verify(previous_hash)
-        });
+        let verified = entry::verify_entries_range(&entries.data, range, &start_hash);
         let elapsed_us = entries.finish_job();
         let error = (!verified).then(|| {
             warn!("Ledger proof of history failed at slot: {slot}");
