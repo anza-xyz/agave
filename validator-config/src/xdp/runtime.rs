@@ -68,6 +68,7 @@ fn resolve_declared_workers(
 impl XdpPolicy {
     /// Resolve this policy against the host CPUs.
     /// All declared workers must avoid the PoH core, including unreferenced workers.
+    /// On Linux, active workers must fit the transmitter's CPU affinity mask.
     pub fn resolve(
         &self,
         allowed_cpus: &BTreeSet<usize>,
@@ -79,14 +80,14 @@ impl XdpPolicy {
                 "cannot resolve XDP workers: the process CPU affinity is empty",
             ));
         }
+        let workers = &self.interface.xdp.workers;
+        let worker_error = |message| {
+            Diagnostic::new(DiagnosticKind::CpuResolution, message)
+                .at_field(workers.field_path().iter().copied())
+                .at_field(["interfaces", &self.interface_label, "xdp"])
+        };
         let declared =
-            resolve_declared_workers(&self.interface.xdp.workers, allowed_cpus, poh_core).map_err(
-                |error| {
-                    Diagnostic::new(DiagnosticKind::CpuResolution, error)
-                        .at_field(self.interface.xdp.workers.field_path().iter().copied())
-                        .at_field(["interfaces", &self.interface_label, "xdp"])
-                },
-            )?;
+            resolve_declared_workers(workers, allowed_cpus, poh_core).map_err(worker_error)?;
         let active_ids: BTreeSet<_> = self
             .queues
             .get_values()
@@ -98,6 +99,16 @@ impl XdpPolicy {
             .into_iter()
             .filter(|binding| active_ids.contains(&binding.queue))
             .collect();
+        #[cfg(target_os = "linux")]
+        if let Some(binding) = active_workers
+            .iter()
+            .find(|binding| agave_cpu_utils::CpuId::new(binding.cpu).is_err())
+        {
+            return Err(worker_error(format!(
+                "XDP worker CPU {} is outside the Linux CPU affinity mask",
+                binding.cpu
+            )));
+        }
         if !allowed_cpus.iter().any(|cpu| {
             Some(*cpu) != poh_core && !active_workers.iter().any(|binding| binding.cpu == *cpu)
         }) {
@@ -313,6 +324,25 @@ xdp.workers = {workers}
             ],
             "auto workers should map queues to the selected CPUs in ascending order"
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_active_workers_must_fit_the_linux_cpu_affinity_mask() {
+        for workers in [
+            "{ cpus = [1000000] }",
+            "{ bindings = [{ queue = 0, cpu = 1000000 }] }",
+        ] {
+            let policy = load_worker_config(workers).unwrap();
+            let error = policy
+                .resolve(&BTreeSet::from([0, 1]), None)
+                .expect_err("active worker CPU must fit the Linux affinity mask");
+            assert_eq!(error.kind(), DiagnosticKind::CpuResolution);
+            assert!(
+                error.message().contains("CPU 1000000 is outside"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

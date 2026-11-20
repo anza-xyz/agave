@@ -552,6 +552,7 @@ dependencies = [
 name = "agave-validator-config"
 version = "5.0.0-alpha.1"
 dependencies = [
+ "agave-cpu-utils",
  "agave-validator-config",
  "serde",
  "serde_path_to_error",
