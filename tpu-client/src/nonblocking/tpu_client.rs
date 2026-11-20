@@ -8,7 +8,7 @@ use {
     solana_connection_cache::{
         connection_cache::{
             ConnectionCache, ConnectionManager, ConnectionPool, DEFAULT_CONNECTION_POOL_SIZE,
-            NewConnectionConfig, Protocol,
+            NewConnectionConfig,
         },
         nonblocking::client_connection::ClientConnection,
     },
@@ -82,7 +82,6 @@ impl LeaderTpuCacheUpdateInfo {
 }
 
 struct LeaderTpuCache {
-    protocol: Protocol,
     first_slot: Slot,
     leaders: Vec<Pubkey>,
     leader_tpu_map: HashMap<Pubkey, SocketAddr>,
@@ -97,11 +96,9 @@ impl LeaderTpuCache {
         last_slot_in_epoch: Slot,
         leaders: Vec<Pubkey>,
         cluster_nodes: Vec<RpcContactInfo>,
-        protocol: Protocol,
     ) -> Self {
-        let leader_tpu_map = Self::extract_cluster_tpu_sockets(protocol, cluster_nodes);
+        let leader_tpu_map = Self::extract_cluster_tpu_sockets(cluster_nodes);
         Self {
-            protocol,
             first_slot,
             leaders,
             leader_tpu_map,
@@ -187,18 +184,13 @@ impl LeaderTpuCache {
     }
 
     fn extract_cluster_tpu_sockets(
-        protocol: Protocol,
         cluster_contact_info: Vec<RpcContactInfo>,
     ) -> HashMap<Pubkey, SocketAddr> {
         cluster_contact_info
             .into_iter()
             .filter_map(|contact_info| {
                 let pubkey = Pubkey::from_str(&contact_info.pubkey).ok()?;
-                let socket = match protocol {
-                    Protocol::QUIC => contact_info.tpu_quic,
-                    Protocol::UDP => contact_info.tpu,
-                }?;
-                Some((pubkey, socket))
+                Some((pubkey, contact_info.tpu_quic?))
             })
             .collect()
     }
@@ -213,8 +205,7 @@ impl LeaderTpuCache {
         if let Some(cluster_nodes) = cache_update_info.maybe_cluster_nodes {
             match cluster_nodes {
                 Ok(cluster_nodes) => {
-                    self.leader_tpu_map =
-                        Self::extract_cluster_tpu_sockets(self.protocol, cluster_nodes);
+                    self.leader_tpu_map = Self::extract_cluster_tpu_sockets(cluster_nodes);
                     cluster_refreshed = true;
                 }
                 Err(err) => {
@@ -249,7 +240,7 @@ impl LeaderTpuCache {
     }
 }
 
-/// Client which sends transactions directly to the current leader's TPU port over UDP.
+/// Client which sends transactions directly to the current leader's TPU port over QUIC.
 /// The client uses RPC to determine the current leader and fetch node contact info
 pub struct TpuClient<
     P, // ConnectionPool
@@ -530,8 +521,7 @@ where
     ) -> Result<Self> {
         let exit = Arc::new(AtomicBool::new(false));
         let leader_tpu_service =
-            LeaderTpuService::new(rpc_client.clone(), websocket_url, M::PROTOCOL, exit.clone())
-                .await?;
+            LeaderTpuService::new(rpc_client.clone(), websocket_url, exit.clone()).await?;
 
         Ok(Self {
             fanout_slots: config.fanout_slots.clamp(1, MAX_FANOUT_SLOTS),
@@ -731,7 +721,6 @@ impl LeaderTpuService {
     pub async fn new(
         rpc_client: Arc<RpcClient>,
         websocket_url: &str,
-        protocol: Protocol,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
         let epoch_schedule = rpc_client.get_epoch_schedule().await?;
@@ -806,7 +795,6 @@ impl LeaderTpuService {
             last_slot_in_epoch,
             leaders,
             cluster_nodes,
-            protocol,
         )));
 
         let pubsub_client = if !websocket_url.is_empty() {

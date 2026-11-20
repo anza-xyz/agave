@@ -46,6 +46,20 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+### solana-client
+
+#### Breaking
+
+* All mechanisms for sending transactions via UDP have been removed since Alpenglow nodes do not have any open UDP ports for transactions.
+* `solana-udp-client` crate has been removed.
+* `ConnectionCache::Udp`, `BlockingClientConnection::Udp`, `NonblockingClientConnection::Udp` variants and `ConnectionCache::protocol()`/`use_quic()` methods have been removed; `Protocol` is no longer re-exported from `solana_client::connection_cache`.
+
+### solana-tpu-client
+
+#### Breaking
+
+* UDP TPU support has been removed; leaders are always reached via their QUIC TPU address. `LeaderTpuService::new()` no longer takes a `protocol` argument.
+
 ## 4.5.0
 
 ### RPC
