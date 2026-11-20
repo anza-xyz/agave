@@ -49,6 +49,13 @@ solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 wincode = { workspace = true }
 
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+# sha2 0.10 only selects its ARMv8 SHA2-instruction backend (runtime-detected via
+# cpufeatures, software fallback) when the `asm` feature is on; otherwise aarch64
+# gets software SHA-256 while x86 auto-detects SHA-NI. Feature unification turns
+# it on for solana-sha256-hasher's sha2, i.e. the PoH hash path.
+sha2 = { version = "0.10.9", features = ["asm"] }
+
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
