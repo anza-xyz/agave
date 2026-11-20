@@ -657,18 +657,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
-                .help(
-                    "IPv4 address to bind the validator ports. Can be repeated. The first \
-                     --bind-address MUST be your public internet address. ALL protocols (gossip, \
-                     repair, IP echo, TVU, TPU, etc.) bind to this address on startup. Additional \
-                     --bind-address values enable multihoming for Gossip/TVU/TPU - these \
-                     protocols bind to ALL interfaces on startup. Gossip reads/sends from one \
-                     interface at a time. TVU/TPU read from ALL interfaces simultaneously but \
-                     send from only one interface at a time. When switching interfaces via \
-                     AdminRPC: Gossip switches to send/receive from the new interface, while \
-                     TVU/TPU continue receiving from ALL interfaces but send from the new \
-                     interface only.",
-                ),
+                .help("IP address to bind the validator ports to"),
         )
         .arg(
             Arg::with_name("advertised_ip")
@@ -681,10 +670,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                     "Use when running a validator behind a NAT. DNS name or IP address for this \
                      validator to advertise in gossip. This address will be used as the target \
                      destination address for peers trying to contact this node. [default: the \
-                     first --bind-address, or ask --entrypoint when --bind-address is not \
-                     provided, or 127.0.0.1 when --entrypoint is not provided]. Note: this \
-                     argument cannot be used in a multihoming context (when multiple \
-                     --bind-address values are provided).",
+                     --bind-address, or ask --entrypoint when --bind-address is not provided, or \
+                     127.0.0.1 when --entrypoint is not provided].",
                 ),
         )
         .arg(

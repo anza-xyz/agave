@@ -16,7 +16,7 @@ mod serde_snapshot_tests {
                 reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
             },
             snapshot_bank_utils,
-            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
+            snapshot_utils::create_tmp_accounts_dir_for_tests,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
         agave_snapshots::snapshot_config::SnapshotConfig,
@@ -47,7 +47,7 @@ mod serde_snapshot_tests {
             io::{self, BufReader, BufWriter, Cursor, Read, Write},
             mem,
             ops::RangeFull,
-            path::{Path, PathBuf},
+            path::Path,
             sync::{Arc, OnceLock, atomic::Ordering},
         },
         tempfile::TempDir,
@@ -64,9 +64,7 @@ mod serde_snapshot_tests {
 
     fn context_accountsdb_from_stream<R>(
         stream: &mut BufReader<R>,
-        account_paths: &[PathBuf],
-        storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-        accounts_db_config: AccountsDbConfig,
+        accounts_db: AccountsDb,
     ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
@@ -79,32 +77,21 @@ mod serde_snapshot_tests {
         };
         let (accounts_db, _) = reconstruct_accountsdb_from_fields(
             snapshot_accounts_db_fields,
-            account_paths,
-            storage_and_next_append_vec_id,
+            accounts_db,
             None,
             false,
-            accounts_db_config,
-            None,
-            Arc::default(),
         )?;
         Ok(accounts_db)
     }
 
     fn accountsdb_from_stream<R>(
         stream: &mut BufReader<R>,
-        account_paths: &[PathBuf],
-        storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-        accounts_db_config: AccountsDbConfig,
+        accounts_db: AccountsDb,
     ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
-        context_accountsdb_from_stream::<R>(
-            stream,
-            account_paths,
-            storage_and_next_append_vec_id,
-            accounts_db_config,
-        )
+        context_accountsdb_from_stream::<R>(stream, accounts_db)
     }
 
     fn accounts_db_fields_to_stream<W>(stream: &mut W, slot: Slot) -> wincode::WriteResult<()>
@@ -115,11 +102,13 @@ mod serde_snapshot_tests {
         serialize_into(stream, &SerializableAccountsDb::new(slot, bank_hash_stats))
     }
 
-    /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
+    /// Simulates the unpacking & storage reconstruction done during snapshot unpacking, attaching
+    /// copies of the storages of `accounts_db` in `output_dir` to `new_accounts_db`.
     fn copy_append_vecs(
         accounts_db: &AccountsDb,
         output_dir: impl AsRef<Path>,
-    ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
+        new_accounts_db: &mut AccountsDb,
+    ) -> Result<(), AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
@@ -158,10 +147,8 @@ mod serde_snapshot_tests {
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
         }
 
-        Ok(StorageAndNextAccountsFileId {
-            storage,
-            next_append_vec_id: AtomicAccountsFileId::new(next_append_vec_id + 1),
-        })
+        new_accounts_db.initialize_storages(storage, next_append_vec_id + 1);
+        Ok(())
     }
 
     fn reconstruct_accounts_db_via_serialization(
@@ -177,15 +164,10 @@ mod serde_snapshot_tests {
         let copied_accounts = TempDir::new().unwrap();
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts, copied_accounts.path()).unwrap();
-        let mut accounts_db = accountsdb_from_stream(
-            &mut reader,
-            &[],
-            storage_and_next_append_vec_id,
-            accounts_db_config,
-        )
-        .unwrap();
+        let mut accounts_db =
+            AccountsDb::new_with_config(Vec::new(), accounts_db_config, None, Arc::default());
+        copy_append_vecs(accounts, copied_accounts.path(), &mut accounts_db).unwrap();
+        let mut accounts_db = accountsdb_from_stream(&mut reader, accounts_db).unwrap();
 
         // The append vecs will be used from `copied_accounts` directly by the new AccountsDb so keep
         // its TempDir alive
@@ -246,20 +228,24 @@ mod serde_snapshot_tests {
         let copied_accounts = TempDir::new().unwrap();
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(&accounts.accounts_db, copied_accounts.path()).unwrap();
+        let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
+        let mut daccounts_db = AccountsDb::new_with_config(
+            daccounts_paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        copy_append_vecs(
+            &accounts.accounts_db,
+            copied_accounts.path(),
+            &mut daccounts_db,
+        )
+        .unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
-        let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
         let daccounts = Accounts::new(Arc::new(
-            accountsdb_from_stream(
-                &mut reader,
-                &daccounts_paths,
-                storage_and_next_append_vec_id,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            )
-            .unwrap(),
+            accountsdb_from_stream(&mut reader, daccounts_db).unwrap(),
         ));
         check_accounts_local(&daccounts, &pubkeys, 100);
         let daccounts_hash = accounts
@@ -932,8 +918,13 @@ mod serde_snapshot_tests {
         let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
         // Create a directory to simulate AppendVecs unpackaged from a snapshot tar
         let copied_accounts = TempDir::new().unwrap();
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts_db, copied_accounts.path()).unwrap();
+        let mut dbank_accounts_db = AccountsDb::new_with_config(
+            dbank_paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        copy_append_vecs(accounts_db, copied_accounts.path(), &mut dbank_accounts_db).unwrap();
 
         let cursor = Cursor::new(buf.as_slice());
         let mut reader = BufReader::new(cursor);
@@ -943,16 +934,12 @@ mod serde_snapshot_tests {
         };
         let (dbank, _) = serde_snapshot::bank_from_streams(
             &mut snapshot_streams,
-            &dbank_paths,
-            storage_and_next_append_vec_id,
+            dbank_accounts_db,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
         )
         .unwrap();
         assert_eq!(dbank.get_balance(&key1), 0);
@@ -1011,20 +998,26 @@ mod serde_snapshot_tests {
         };
         let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
         let copied_accounts = TempDir::new().unwrap();
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(&bank.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
+        let mut dbank_accounts_db = AccountsDb::new_with_config(
+            dbank_paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        copy_append_vecs(
+            &bank.rc.accounts.accounts_db,
+            copied_accounts.path(),
+            &mut dbank_accounts_db,
+        )
+        .unwrap();
         let (dbank, _) = crate::serde_snapshot::bank_from_streams(
             &mut snapshot_streams,
-            &dbank_paths,
-            storage_and_next_append_vec_id,
+            dbank_accounts_db,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
         )
         .unwrap();
 

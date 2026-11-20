@@ -37,7 +37,7 @@ use {
     },
     solana_system_interface::instruction as system_instruction,
     solana_transaction::Transaction,
-    solana_transaction_status::TransactionStatus,
+    solana_transaction_status_client_types::TransactionStatus,
     spl_associated_token_account_interface::address::get_associated_token_address,
     std::{
         cmp::{self},
@@ -1328,7 +1328,7 @@ mod tests {
         solana_signer::Signer,
         solana_stake_interface::instruction::StakeInstruction,
         solana_test_validator::TestValidator,
-        solana_transaction_status::TransactionConfirmationStatus,
+        solana_transaction_status_client_types::TransactionConfirmationStatus,
         std::{slice, thread::sleep, time::Duration},
     };
 

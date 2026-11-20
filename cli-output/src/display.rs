@@ -20,10 +20,10 @@ use {
     solana_signature::Signature,
     solana_stake_interface as stake,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
-    solana_transaction_status::{
-        Rewards, UiReturnDataEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
+    solana_transaction_status_client_types::{
+        Rewards, UiReturnDataEncoding, UiTransactionError, UiTransactionReturnData,
+        UiTransactionStatusMeta,
     },
-    solana_transaction_status_client_types::UiTransactionError,
     spl_memo_interface::{
         v1::id as spl_memo_v1_id, v3::id as spl_memo_v3_id, v4::id as spl_memo_v4_id,
     },
@@ -798,11 +798,12 @@ mod test {
             v1::{self as v1_message, TransactionConfig},
         },
         solana_pubkey::Pubkey,
+        solana_reward_info::RewardType,
         solana_seed_derivable::SeedDerivable,
         solana_signer::Signer,
         solana_transaction::Transaction,
         solana_transaction_context::transaction::TransactionReturnData,
-        solana_transaction_status::{Reward, RewardType, TransactionStatusMeta},
+        solana_transaction_status_client_types::{Reward, TransactionStatusMeta},
         std::io::BufWriter,
     };
 

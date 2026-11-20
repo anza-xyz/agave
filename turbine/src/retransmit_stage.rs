@@ -274,12 +274,6 @@ impl BatchStats {
 enum RetransmitSocket<'a> {
     Socket(&'a UdpSocket),
     Xdp(&'a XdpSender),
-    Multihomed {
-        sockets: &'a [UdpSocket],
-        interface_offset: usize,
-        sockets_per_interface: usize,
-        thread_index: usize,
-    },
 }
 
 impl<'a> RetransmitSocket<'a> {
@@ -287,43 +281,12 @@ impl<'a> RetransmitSocket<'a> {
         thread_index: usize,
         retransmit_sockets: &'a [UdpSocket],
         xdp_sender: Option<&'a XdpSender>,
-        cluster_info: &'a ClusterInfo,
     ) -> Self {
         if let Some(sender) = xdp_sender {
             RetransmitSocket::Xdp(sender)
-        } else if cluster_info.bind_ip_addrs().multihoming_enabled() {
-            let sockets_per_interface =
-                retransmit_sockets.len() / cluster_info.bind_ip_addrs().len();
-            let active_index = cluster_info.bind_ip_addrs().active_index();
-            let interface_offset = sockets_per_interface.saturating_mul(active_index);
-
-            RetransmitSocket::Multihomed {
-                sockets: retransmit_sockets,
-                interface_offset,
-                sockets_per_interface,
-                thread_index,
-            }
         } else {
             let socket: &UdpSocket = &retransmit_sockets[thread_index % retransmit_sockets.len()];
             RetransmitSocket::Socket(socket)
-        }
-    }
-
-    pub fn get_socket(&self) -> &'a UdpSocket {
-        match self {
-            RetransmitSocket::Socket(socket) => socket,
-            RetransmitSocket::Multihomed {
-                sockets,
-                interface_offset,
-                sockets_per_interface,
-                thread_index,
-            } => {
-                let socket_index = interface_offset + (thread_index % sockets_per_interface);
-                &sockets[socket_index]
-            }
-            RetransmitSocket::Xdp(_) => {
-                unreachable!("get_socket() should not be called for XDP variants")
-            }
         }
     }
 }
@@ -384,7 +347,6 @@ fn retransmit_batch(mut shreds: ShredBatch, worker_index: usize, context: &Worke
         worker_index,
         &context.retransmit_sockets,
         context.xdp_sender.as_ref(),
-        &context.cluster_info,
     );
     for shred in shreds.drain(..) {
         let shred_stats = retransmit_shred(
@@ -446,8 +408,7 @@ fn retransmit_shred(
             }
             sent
         }
-        RetransmitSocket::Socket(_) | RetransmitSocket::Multihomed { .. } => {
-            let socket = socket.get_socket();
+        RetransmitSocket::Socket(socket) => {
             match multi_target_send(socket, shred, addrs.as_ref()) {
                 Ok(num_sent) => num_sent,
                 Err(SendPktsError::IoError(ioerr)) => {

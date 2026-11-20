@@ -170,7 +170,6 @@ impl BroadcastStageType {
         xdp_sender: Option<XdpSender>,
         votor_event_sender: VotorEventSender,
     ) -> BroadcastStage {
-        let migration_status = bank_forks.read().unwrap().migration_status();
         match self {
             BroadcastStageType::Standard => BroadcastStage::new(
                 sock,
@@ -179,12 +178,7 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                StandardBroadcastRun::new(
-                    shred_version,
-                    migration_status,
-                    votor_event_sender,
-                    leader_schedule_cache,
-                ),
+                StandardBroadcastRun::new(shred_version, votor_event_sender, leader_schedule_cache),
                 xdp_sender,
             ),
 
@@ -195,12 +189,7 @@ impl BroadcastStageType {
                 exit_sender,
                 blockstore,
                 bank_forks,
-                BroadcastDuplicatesRun::new(
-                    shred_version,
-                    config.clone(),
-                    migration_status,
-                    votor_event_sender,
-                ),
+                BroadcastDuplicatesRun::new(shred_version, config.clone(), votor_event_sender),
                 xdp_sender,
             ),
         }
@@ -355,34 +344,7 @@ impl BroadcastStage {
                 .unwrap()
         };
         let mut thread_hdls = vec![thread_hdl];
-        let num_broadcast_sockets_per_interface = socks.len() / cluster_info.bind_ip_addrs().len();
-        let num_interfaces: usize = cluster_info.bind_ip_addrs().len();
-
-        // Partition by interface
-        // With 2 interfaces and the default of 4 sockets per interface, `sockets_by_interface` is:
-        // sockets_by_interface = [[s0, s1, s2, s3], [s4, s5, s6, s7]]
-        let mut it = socks.into_iter();
-        let sockets_by_interface: Vec<Vec<UdpSocket>> = (0..num_interfaces)
-            .map(|_| {
-                it.by_ref()
-                    .take(num_broadcast_sockets_per_interface)
-                    .collect()
-            })
-            .collect();
-
-        let mut iters: Vec<_> = sockets_by_interface
-            .into_iter()
-            .map(|sockets| sockets.into_iter())
-            .collect();
-
-        // Spawn `num_broadcast_sockets_per_interface` threads
-        // Each thread gets a socket from each interface (i.e. 2 sockets per thread if multihomed w/ 2 interfaces)
-        thread_hdls.extend((0..num_broadcast_sockets_per_interface).map(|_| {
-            let mut group = Vec::with_capacity(num_interfaces);
-            for it in &mut iters {
-                group.push(it.next().expect("aligned lengths"));
-            }
-
+        thread_hdls.extend(socks.into_iter().map(|socket| {
             let socket_receiver = socket_receiver.clone();
             let mut bs_transmit = broadcast_stage_run.clone();
             let cluster_info = cluster_info.clone();
@@ -391,11 +353,7 @@ impl BroadcastStage {
             let run_transmit = move || loop {
                 let sock_variant = match xdp_sender.as_ref() {
                     Some(xdp) => BroadcastSocket::Xdp(xdp),
-                    None => {
-                        let active_index = cluster_info.bind_ip_addrs().active_index();
-                        let active_socket = &group[active_index];
-                        BroadcastSocket::Udp(active_socket)
-                    }
+                    None => BroadcastSocket::Udp(&socket),
                 };
                 let res = bs_transmit.transmit(
                     &socket_receiver,
@@ -571,7 +529,6 @@ impl<T> From<crossbeam_channel::SendError<T>> for Error {
 pub mod test {
     use {
         super::*,
-        agave_votor_messages::migration::MigrationStatus,
         crossbeam_channel::bounded,
         solana_entry::{entry::create_ticks, recorder_message::RecorderMessage},
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -714,12 +671,7 @@ pub mod test {
             exit_sender,
             blockstore.clone(),
             bank_forks,
-            StandardBroadcastRun::new(
-                0,
-                Arc::new(MigrationStatus::default()),
-                votor_event_sender,
-                leader_schedule_cache,
-            ),
+            StandardBroadcastRun::new(0, votor_event_sender, leader_schedule_cache),
             None,
         );
 

@@ -37,7 +37,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
@@ -265,9 +265,6 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "validatorAdmissionTicketStatus")]
     fn vat_status(&self, meta: Self::Metadata) -> Result<AdminRpcValidatorAdmissionTicketStatus>;
-
-    #[rpc(meta, name = "selectActiveInterface")]
-    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -696,24 +693,6 @@ impl AdminRpc for AdminRpcImpl {
                 current_epoch_vote_accounts: epoch_vote_accounts.len(),
                 next_epoch_vat_failure_reason,
             })
-        })
-    }
-
-    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
-        debug!("select_active_interface received: {interface}");
-        meta.with_post_init(|post_init| {
-            let node = post_init.node.as_ref().ok_or_else(|| {
-                jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
-            })?;
-
-            node.switch_active_interface(interface, &post_init.cluster_info)
-                .map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!(
-                        "Switching failed due to error {e}"
-                    ))
-                })?;
-            info!("Switched primary interface to {interface}");
-            Ok(())
         })
     }
 
@@ -1304,7 +1283,6 @@ mod tests {
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
-                    node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,
                     blockstore,

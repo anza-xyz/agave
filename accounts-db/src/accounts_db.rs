@@ -32,7 +32,7 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            AccountStorage, AccountStoragesOrderer, NextItem, ShrinkInProgress,
+            AccountStorage, AccountStorageMap, AccountStoragesOrderer, NextItem, ShrinkInProgress,
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
@@ -923,6 +923,26 @@ impl AccountsDb {
             }
         }
         new
+    }
+
+    /// Takes the storages restored from a snapshot, with `next_id` above all their ids.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` already holds storages, `storage` is empty, or `next_id` exceeds the
+    /// supported range.
+    pub fn initialize_storages(&mut self, storage: AccountStorageMap, next_id: AccountsFileId) {
+        assert!(
+            !storage.is_empty(),
+            "At least one storage entry must exist from deserializing stream"
+        );
+        let max_id = next_id - 1;
+        assert!(
+            max_id <= AccountsFileId::MAX / 2,
+            "Storage id {max_id} larger than allowed max"
+        );
+        self.storage.initialize(storage);
+        self.next_id.store(next_id, Ordering::Release);
     }
 
     pub fn bank_hash_details_dir(&self) -> &Path {

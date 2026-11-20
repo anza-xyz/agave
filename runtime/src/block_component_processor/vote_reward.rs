@@ -1,5 +1,6 @@
 use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
+    agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount},
@@ -510,6 +511,27 @@ fn increment_credits(
         return;
     };
 
+    // Latest element is the marker, start a new entry.
+    if *entry == AG_MIGRATION_EPOCH_CREDIT {
+        // If there was a tower entry before, its final credits forms this entry's initial credits.
+        let len = epoch_credits.len();
+        let final_tower_credits = if len >= 2 {
+            assert_ne!(epoch_credits[len - 2], AG_MIGRATION_EPOCH_CREDIT);
+            epoch_credits[len - 2].1
+        } else {
+            0
+        };
+        epoch_credits.push((
+            epoch,
+            new_credits.get().saturating_add(final_tower_credits),
+            final_tower_credits,
+        ));
+        while epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
+            epoch_credits.remove(0);
+        }
+        return;
+    }
+
     let (entry_epoch, final_credits, initial_credits) = entry;
 
     // Latest element is the same epoch, simply increment final credits.
@@ -655,12 +677,48 @@ mod tests {
         let mut handle = VoteStateHandler::default_v4();
         let epoch = 1234;
         let credits = 543432;
-        handle.increment_credits(epoch, credits);
+        increment_credits(
+            handle.epoch_credits_mut(),
+            epoch,
+            NonZero::new(credits).unwrap(),
+        );
         let (got_epoch, got_final_credits, got_initial_credits) =
             *handle.epoch_credits().last().unwrap();
         assert_eq!(got_epoch, epoch);
         assert_eq!(got_final_credits, credits);
         assert_eq!(got_initial_credits, 0);
+    }
+
+    #[test]
+    fn increment_credits_preserves_migration_marker() {
+        for tower_history_len in [0, 1, MAX_EPOCH_CREDITS_HISTORY - 1] {
+            let mut epoch_credits = (0..tower_history_len as u64)
+                .map(|epoch| (epoch, (epoch + 1) * 10, epoch * 10))
+                .collect::<Vec<_>>();
+            let initial_credits = epoch_credits.last().map_or(0, |entry| entry.1);
+            epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
+            let mut expected = epoch_credits.clone();
+            let epoch = MAX_EPOCH_CREDITS_HISTORY as u64;
+
+            increment_credits(&mut epoch_credits, epoch, NonZero::new(7).unwrap());
+            expected.push((epoch, initial_credits + 7, initial_credits));
+            if expected.len() > MAX_EPOCH_CREDITS_HISTORY {
+                expected.remove(0);
+            }
+            assert_eq!(epoch_credits, expected);
+
+            increment_credits(&mut epoch_credits, epoch, NonZero::new(3).unwrap());
+            expected.last_mut().unwrap().1 += 3;
+            assert_eq!(epoch_credits, expected);
+
+            increment_credits(&mut epoch_credits, epoch + 1, NonZero::new(5).unwrap());
+            expected.push((epoch + 1, initial_credits + 15, initial_credits + 10));
+            if expected.len() > MAX_EPOCH_CREDITS_HISTORY {
+                expected.remove(0);
+            }
+            assert_eq!(epoch_credits, expected);
+            assert!(epoch_credits.contains(&AG_MIGRATION_EPOCH_CREDIT));
+        }
     }
 
     fn calc_reward_for_test(
