@@ -35,11 +35,11 @@ fn test_embedded_default_resolves_to_one_shared_worker() {
         "embedded default should transmit on the primary interface"
     );
     assert_eq!(
-        runtime.queues,
+        runtime.workers,
         [XdpWorkerBinding { queue: 0, cpu: 5 }],
         "default worker should use queue 0 and the highest allowed CPU"
     );
-    for component in runtime.endpoints.get_values() {
+    for component in runtime.sender_positions.get_values() {
         assert_eq!(
             component.as_ref(),
             &[0][..],
@@ -367,7 +367,7 @@ tx.interface = "fast"
         runtime.interface_label, "fast",
         "runtime should retain the renamed interface label"
     );
-    for component in runtime.endpoints.get_values() {
+    for component in runtime.sender_positions.get_values() {
         assert_eq!(
             component.as_ref(),
             &[0][..],

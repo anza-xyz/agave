@@ -12,12 +12,12 @@ pub struct XdpRuntimeConfig {
     pub interface_label: String,
     pub device: NetworkDeviceSelector,
     /// Active queue-to-CPU bindings, in declared worker order.
-    pub queues: Vec<XdpWorkerBinding>,
+    pub workers: Vec<XdpWorkerBinding>,
     pub zero_copy: bool,
-    /// Indices into [`Self::queues`], in each endpoint's sender order.
+    /// Indices into [`Self::workers`], in each endpoint's sender order.
     /// Each index selects an active worker binding; the binding's
     /// [`XdpWorkerBinding::queue`] field contains its hardware queue ID.
-    pub endpoints: XdpEndpoints<Box<[usize]>>,
+    pub sender_positions: XdpEndpoints<Box<[usize]>>,
 }
 
 fn resolve_declared_workers(
@@ -112,7 +112,7 @@ impl ValidatedConfig {
             .enumerate()
             .map(|(position, binding)| (binding.queue, position))
             .collect();
-        let endpoints = queue_ids.map(|queues| {
+        let sender_positions = queue_ids.map(|queues| {
             queues
                 .iter()
                 .map(|queue| {
@@ -125,9 +125,9 @@ impl ValidatedConfig {
         Ok(Some(XdpRuntimeConfig {
             interface_label: interface_label.clone(),
             device: interface.device.clone(),
-            queues: active_workers,
+            workers: active_workers,
             zero_copy: interface.xdp.zero_copy,
-            endpoints,
+            sender_positions,
         }))
     }
 }
@@ -210,25 +210,29 @@ workers.bindings = [
                 .into_iter()
                 .map(|(queue, cpu)| XdpWorkerBinding { queue, cpu })
                 .collect();
-            assert_eq!(runtime.queues, expected_workers, "{case}");
+            assert_eq!(runtime.workers, expected_workers, "{case}");
             assert_eq!(
-                runtime.endpoints.gossip.as_ref(),
+                runtime.sender_positions.gossip.as_ref(),
                 expected_gossip,
                 "{case}/gossip"
             );
             assert_eq!(
-                runtime.endpoints.repair.as_ref(),
+                runtime.sender_positions.repair.as_ref(),
                 expected_repair,
                 "{case}/repair"
             );
-            assert_eq!(runtime.endpoints.tpu.as_ref(), expected_tpu, "{case}/tpu");
             assert_eq!(
-                runtime.endpoints.turbine.as_ref(),
+                runtime.sender_positions.tpu.as_ref(),
+                expected_tpu,
+                "{case}/tpu"
+            );
+            assert_eq!(
+                runtime.sender_positions.turbine.as_ref(),
                 expected_turbine,
                 "{case}/turbine"
             );
             assert_eq!(
-                runtime.endpoints.votor.as_ref(),
+                runtime.sender_positions.votor.as_ref(),
                 expected_votor,
                 "{case}/votor"
             );
@@ -259,7 +263,7 @@ workers.bindings = [
             .expect("auto workers should resolve on the highest CPUs")
             .unwrap();
         assert_eq!(
-            runtime.queues,
+            runtime.workers,
             [
                 XdpWorkerBinding { queue: 0, cpu: 10 },
                 XdpWorkerBinding { queue: 1, cpu: 11 },
@@ -304,7 +308,7 @@ workers.bindings = [
                 .expect("workers outside the process CPU affinity leave its CPUs unreserved")
                 .unwrap();
             assert_eq!(
-                runtime.queues,
+                runtime.workers,
                 [
                     XdpWorkerBinding { queue: 0, cpu: 9 },
                     XdpWorkerBinding { queue: 1, cpu: 11 },
@@ -363,7 +367,7 @@ xdp.workers.cpus = [8, 9]
             .expect("discarding the unreferenced worker should leave a CPU unreserved")
             .unwrap();
         assert_eq!(
-            runtime.queues,
+            runtime.workers,
             [XdpWorkerBinding { queue: 0, cpu: 8 }],
             "only the referenced worker should remain in the runtime configuration"
         );
