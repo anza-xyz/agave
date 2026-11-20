@@ -1075,8 +1075,14 @@ impl Validator {
                 exit.clone(),
             )
         };
-        let (record_sender, record_receiver) = record_channels(transaction_status_sender.is_some());
-        let transaction_recorder = TransactionRecorder::new(record_sender);
+        let leader_transaction_notifier = geyser_plugin_service
+            .as_ref()
+            .and_then(GeyserPluginService::get_leader_transaction_notifier);
+        let (record_sender, record_receiver) = record_channels(
+            transaction_status_sender.is_some() || leader_transaction_notifier.is_some(),
+        );
+        let mut transaction_recorder = TransactionRecorder::new(record_sender);
+        transaction_recorder.leader_transaction_notifier = leader_transaction_notifier.clone();
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let (bank_forks_controller, bank_forks_controller_receiver) =
             BankForksControllerHandle::new();
@@ -1521,6 +1527,7 @@ impl Validator {
             .map(|service| service.sender_cloned());
 
         let block_creation_loop_config = BlockCreationLoopConfig {
+            leader_transaction_notifier,
             exit: exit.clone(),
             bank_forks: bank_forks.clone(),
             alpenglow_slot_clock: alpenglow_slot_clock.clone(),

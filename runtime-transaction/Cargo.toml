@@ -31,8 +31,10 @@ agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 bytes = { workspace = true }
+crossbeam-channel = { workspace = true }
 lazy-lru = { workspace = true }
 rand = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-hash = { workspace = true }
@@ -67,6 +69,10 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "get_signature_details"
+harness = false
+
+[[bench]]
+name = "leader_notifications"
 harness = false
 
 [lints]
