@@ -843,24 +843,25 @@ mod tests {
                 .commit_transactions_result
                 .is_ok()
         );
-        let notification = notifications.try_recv().unwrap();
-        assert_matches!(&notification, LeaderNotification::Transactions(_));
-        if let LeaderNotification::Transactions(batch) = notification {
-            assert_eq!(batch.bank_id, u64::from(bank.bank_id()));
-            assert_eq!(batch.starting_index, 0);
-            let delivered: Vec<_> = batch.transactions().collect();
-            assert_eq!(delivered.len(), 2);
-            assert_eq!(
-                delivered[0].0,
-                wincode::serialize(&VersionedTransaction::from(original[0].clone())).unwrap()
-            );
-            assert!(delivered[0].1.is_ok());
-            assert_eq!(
-                delivered[1].0,
-                wincode::serialize(&VersionedTransaction::from(original[2].clone())).unwrap()
-            );
-            assert!(delivered[1].1.is_err());
-        }
+        let expected_transactions = [
+            (
+                wincode::serialize(&VersionedTransaction::from(original[0].clone())).unwrap(),
+                true,
+            ),
+            (
+                wincode::serialize(&VersionedTransaction::from(original[2].clone())).unwrap(),
+                false,
+            ),
+        ];
+        assert_matches!(
+            notifications.try_recv().unwrap(),
+            LeaderNotification::Transactions(batch)
+                if batch.bank_id == u64::from(bank.bank_id())
+                    && batch.starting_index == 0
+                    && batch.transactions().map(|(bytes, status)| (bytes, status.is_ok())).eq(
+                        expected_transactions.iter().map(|(bytes, success)| (bytes.as_slice(), *success))
+                    )
+        );
         assert!(notifications.is_empty());
 
         // A recorder rejection must not leak a successful execution observation.
