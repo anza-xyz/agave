@@ -11,7 +11,7 @@ use {
     solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_sha256_hasher::hash,
-    std::ops::Range,
+    std::{ops::Range, time::Instant},
 };
 
 fn main() {
@@ -297,4 +297,106 @@ fn run_replay(
         time.as_us() / iterations as u64
     );
     println!("BENCH_RESULT:{:.6}", time.as_us() as f64 / 1_000_000.0);
+
+    print_job_stats(&batches, &jobs, num_workers, thread_pool);
+}
+
+/// One extra, untimed verification pass with per-job timing, to show how evenly
+/// replay's split spreads the work: profilers only see on-CPU time, so idle
+/// workers and stragglers are invisible to a flamegraph. Prints `JOBSTATS:`
+/// lines and `BENCH_PHASE:` values (seconds) that AutoPerf records.
+fn print_job_stats(
+    batches: &[(Hash, &[EntryVerificationData])],
+    jobs: &[(usize, Range<usize>)],
+    num_workers: usize,
+    thread_pool: &rayon::ThreadPool,
+) {
+    struct JobStat {
+        thread: usize,
+        entries: usize,
+        hashes: u64,
+        start_ns: u64,
+        end_ns: u64,
+    }
+    let started = Instant::now();
+    let stats: Vec<JobStat> = thread_pool.install(|| {
+        jobs.par_iter()
+            .map(|(index, range)| {
+                let (batch_start_hash, batch) = &batches[*index];
+                let hashes = batch[range.clone()].iter().map(|e| e.num_hashes).sum();
+                let start_ns = started.elapsed().as_nanos() as u64;
+                assert!(verify_entries_range(batch, range.clone(), batch_start_hash));
+                let end_ns = started.elapsed().as_nanos() as u64;
+                JobStat {
+                    thread: rayon::current_thread_index().unwrap_or(0),
+                    entries: range.len(),
+                    hashes,
+                    start_ns,
+                    end_ns,
+                }
+            })
+            .collect()
+    });
+    let wall_ns = started.elapsed().as_nanos() as u64;
+
+    let threads = num_workers.max(1);
+    let mut thread_busy_ns = vec![0u64; threads];
+    for stat in &stats {
+        thread_busy_ns[stat.thread % threads] += stat.end_ns - stat.start_ns;
+    }
+    let busy_ns: u64 = thread_busy_ns.iter().sum();
+    let max_thread_ns = thread_busy_ns.iter().copied().max().unwrap_or(0);
+    let mean_thread_ns = busy_ns / thread_busy_ns.len() as u64;
+    let last_start_ns = stats.iter().map(|s| s.start_ns).max().unwrap_or(0);
+
+    fn summary(mut values: Vec<f64>) -> String {
+        values.sort_by(f64::total_cmp);
+        let at = |q: f64| values[((values.len() - 1) as f64 * q).round() as usize];
+        format!(
+            "min={:.1} p50={:.1} p90={:.1} max={:.1}",
+            at(0.0),
+            at(0.5),
+            at(0.9),
+            at(1.0)
+        )
+    }
+    let ms = |ns: u64| ns as f64 / 1e6;
+    println!(
+        "JOBSTATS: jobs={} workers={num_workers} wall_ms={:.3} ideal_ms={:.3} \
+         utilization={:.1}% max_thread_ms={:.3} mean_thread_ms={:.3} last_job_start_ms={:.3}",
+        stats.len(),
+        ms(wall_ns),
+        ms(busy_ns) / num_workers as f64,
+        100.0 * busy_ns as f64 / (wall_ns as f64 * num_workers as f64),
+        ms(max_thread_ns),
+        ms(mean_thread_ns),
+        ms(last_start_ns),
+    );
+    println!(
+        "JOBSTATS: entries_per_job {}",
+        summary(stats.iter().map(|s| s.entries as f64).collect())
+    );
+    println!(
+        "JOBSTATS: hashes_per_job {}",
+        summary(stats.iter().map(|s| s.hashes as f64).collect())
+    );
+    println!(
+        "JOBSTATS: job_ms {}",
+        summary(stats.iter().map(|s| ms(s.end_ns - s.start_ns)).collect())
+    );
+    println!(
+        "JOBSTATS: ns_per_hash {}",
+        summary(
+            stats
+                .iter()
+                .filter(|s| s.hashes > 0)
+                .map(|s| (s.end_ns - s.start_ns) as f64 / s.hashes as f64)
+                .collect()
+        )
+    );
+    println!("BENCH_PHASE:stats_wall:{:.6}", wall_ns as f64 / 1e9);
+    println!(
+        "BENCH_PHASE:stats_ideal:{:.6}",
+        busy_ns as f64 / num_workers as f64 / 1e9
+    );
 }
