@@ -1,11 +1,8 @@
 //! Configuration TOML parsing, version checks, and default merging.
 
 use {
-    crate::{
-        Diagnostic, DiagnosticKind, EffectiveConfig, FieldPathSegment, INPUT_DESCRIPTION,
-        ValidatedConfig, validate_document,
-    },
-    std::{fmt, ops::Range, sync::Arc},
+    crate::{Diagnostic, DiagnosticKind, FieldPathSegment, ValidatedConfig, xdp},
+    std::{fmt, ops::Range, path::Path, sync::Arc},
     toml::{
         Spanned,
         de::{DeTable, DeValue},
@@ -16,6 +13,8 @@ use {
 pub const DEFAULT_CONFIG: &str = include_str!("../default_config.toml");
 
 const SCHEMA_VERSION: i64 = 1;
+const DEFAULT_DESCRIPTION: &str = "<built-in>";
+const INPUT_DESCRIPTION: &str = "<input>";
 
 /// The editable TOML values from a validator config, including its schema version.
 ///
@@ -25,7 +24,7 @@ const SCHEMA_VERSION: i64 = 1;
 #[derive(Clone)]
 pub struct ConfigDocument {
     table: toml::Table,
-    pub(crate) source_text: Option<Arc<str>>,
+    source_text: Option<Arc<str>>,
 }
 
 impl fmt::Debug for ConfigDocument {
@@ -39,26 +38,15 @@ impl fmt::Debug for ConfigDocument {
 impl ConfigDocument {
     /// Parse the supplied TOML into an editable document.
     pub fn parse(text: &str) -> Result<Self, Diagnostic> {
-        Self::parse_with_description(text, INPUT_DESCRIPTION)
-    }
-
-    pub(crate) fn parse_with_description(
-        text: &str,
-        description: &str,
-    ) -> Result<Self, Diagnostic> {
-        let table =
-            toml::from_str(text).map_err(|error| Diagnostic::toml_syntax(error, description))?;
         Ok(Self {
-            table,
+            table: parse_table(text, INPUT_DESCRIPTION)?,
             source_text: Some(Arc::from(text)),
         })
     }
 
     /// Return the declared schema version if it is an integer.
     pub fn schema_version(&self) -> Option<i64> {
-        self.table
-            .get("schema_version")
-            .and_then(toml::Value::as_integer)
+        schema_version(&self.table)
     }
 
     /// The TOML fields supplied in this document.
@@ -80,28 +68,71 @@ impl ConfigDocument {
 
     /// Merge with the built-in defaults and validate the effective settings.
     pub fn validate(&self) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
-        validate_document(Some(self.clone()), INPUT_DESCRIPTION)
+        validate_table(
+            Some(self.table.clone()),
+            INPUT_DESCRIPTION,
+            self.source_text.as_deref(),
+        )
     }
+}
 
-    fn into_overrides(mut self, description: &str) -> Result<toml::Table, Diagnostic> {
-        let schema_error = |message| {
-            Diagnostic::new(DiagnosticKind::SchemaVersion, message)
-                .at_field(["schema_version"])
-                .in_source(description)
-        };
-        let version = self.schema_version().ok_or_else(|| {
-            schema_error(format!(
-                "must be set to an integer; this binary supports version {SCHEMA_VERSION}"
-            ))
-        })?;
-        if version != SCHEMA_VERSION {
-            return Err(schema_error(format!(
-                "{version} is unsupported; this binary supports version {SCHEMA_VERSION}"
-            )));
-        }
-        self.table.remove("schema_version");
-        Ok(self.table)
+/// Load the built-in defaults merged with the user config file and validate the result.
+pub fn load(user_path: Option<&Path>) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
+    let Some(path) = user_path else {
+        return validate_table(None, DEFAULT_DESCRIPTION, Some(DEFAULT_CONFIG));
+    };
+    let description = path.display().to_string();
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        Diagnostic::new(DiagnosticKind::Io, error.to_string()).in_source(&description)
+    })?;
+    let table = parse_table(&text, &description)?;
+    validate_table(Some(table), &description, Some(&text))
+}
+
+/// Parse user TOML, merge it with the built-in defaults, and validate the result.
+///
+/// The input must include the supported `schema_version`. The returned list
+/// contains any validation warnings.
+///
+/// ```
+/// use agave_validator_config::parse;
+///
+/// let (config, warnings) = parse("schema_version = 1\nxdp.enabled = false")?;
+/// assert!(!config.xdp_enabled());
+/// assert!(warnings.is_empty());
+/// # Ok::<(), agave_validator_config::Diagnostic>(())
+/// ```
+pub fn parse(text: &str) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
+    let table = parse_table(text, INPUT_DESCRIPTION)?;
+    validate_table(Some(table), INPUT_DESCRIPTION, Some(text))
+}
+
+fn parse_table(text: &str, description: &str) -> Result<toml::Table, Diagnostic> {
+    toml::from_str(text).map_err(|error| Diagnostic::toml_syntax(error, description))
+}
+
+fn schema_version(table: &toml::Table) -> Option<i64> {
+    table
+        .get("schema_version")
+        .and_then(toml::Value::as_integer)
+}
+
+fn remove_schema_version(table: &mut toml::Table) -> Result<(), Diagnostic> {
+    let schema_error = |message| {
+        Diagnostic::new(DiagnosticKind::SchemaVersion, message).at_field(["schema_version"])
+    };
+    let version = schema_version(table).ok_or_else(|| {
+        schema_error(format!(
+            "must be set to an integer; this binary supports version {SCHEMA_VERSION}"
+        ))
+    })?;
+    if version != SCHEMA_VERSION {
+        return Err(schema_error(format!(
+            "{version} is unsupported; this binary supports version {SCHEMA_VERSION}"
+        )));
     }
+    table.remove("schema_version");
+    Ok(())
 }
 
 fn merge_tables(base: &mut toml::Table, user: toml::Table, path: &mut Vec<String>) {
@@ -126,24 +157,37 @@ fn merge_tables(base: &mut toml::Table, user: toml::Table, path: &mut Vec<String
     }
 }
 
-/// Merge the user document into the built-in defaults.
-pub(crate) fn merge_config(
-    user: Option<ConfigDocument>,
+fn validate_table(
+    user: Option<toml::Table>,
     description: &str,
-) -> Result<EffectiveConfig, Diagnostic> {
-    let mut merged = ConfigDocument::parse_with_description(DEFAULT_CONFIG, "<built-in>")?
-        .into_overrides("<built-in>")?;
-    if let Some(user) = user {
-        merge_tables(
-            &mut merged,
-            user.into_overrides(description)?,
-            &mut Vec::new(),
+    source_text: Option<&str>,
+) -> Result<(ValidatedConfig, Vec<Diagnostic>), Diagnostic> {
+    let mut merged = parse_table(DEFAULT_CONFIG, DEFAULT_DESCRIPTION)?;
+    remove_schema_version(&mut merged).map_err(|mut error| {
+        attach_source_locations(
+            std::slice::from_mut(&mut error),
+            DEFAULT_DESCRIPTION,
+            Some(DEFAULT_CONFIG),
         );
+        error
+    })?;
+    let with_source = |mut error| {
+        attach_source_locations(std::slice::from_mut(&mut error), description, source_text);
+        error
+    };
+    if let Some(mut user) = user {
+        remove_schema_version(&mut user).map_err(with_source)?;
+        merge_tables(&mut merged, user, &mut Vec::new());
     }
-    serde_path_to_error::deserialize(merged).map_err(Diagnostic::schema)
+    let (config, mut warnings) = serde_path_to_error::deserialize(merged)
+        .map_err(Diagnostic::schema)
+        .and_then(xdp::validate)
+        .map_err(with_source)?;
+    attach_source_locations(&mut warnings, description, source_text);
+    Ok((config, warnings))
 }
 
-pub(crate) fn attach_source_locations(
+fn attach_source_locations(
     diagnostics: &mut [Diagnostic],
     description: &str,
     source_text: Option<&str>,
@@ -153,18 +197,10 @@ pub(crate) fn attach_source_locations(
     }
     let source_table = source_text.and_then(|text| DeTable::parse(text).ok());
     for diagnostic in diagnostics {
-        if diagnostic
-            .source_name()
-            .is_some_and(|source| source != description)
-        {
-            continue;
-        }
         diagnostic.source_name = Some(description.to_owned());
-        if diagnostic.source_span.is_none() {
-            diagnostic.source_span = source_table
-                .as_ref()
-                .and_then(|table| find_span(table.get_ref(), diagnostic.field_path()));
-        }
+        diagnostic.source_span = source_table
+            .as_ref()
+            .and_then(|table| find_span(table.get_ref(), diagnostic.field_path()));
     }
 }
 
