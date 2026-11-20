@@ -5543,12 +5543,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.14.4"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
+checksum = "3ef0b569d1d907ab3a28596aee62cf1f61dacb0529a4bedcd8e7460e2d5228b4"
 dependencies = [
  "bytes",
- "prost-derive 0.14.4",
+ "prost-derive 0.14.6",
 ]
 
 [[package]]
@@ -5585,7 +5585,7 @@ dependencies = [
  "multimap",
  "petgraph 0.8.3",
  "prettyplease 0.2.37",
- "prost 0.14.4",
+ "prost 0.14.6",
  "prost-types 0.14.4",
  "regex",
  "syn 2.0.117",
@@ -5607,9 +5607,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.14.4"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
+checksum = "1ad9c5423459fa2f729b8d9235fab810aa29628b171467744fc86d21460ad70d"
 dependencies = [
  "anyhow",
  "itertools 0.14.0",
@@ -5633,7 +5633,7 @@ version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
- "prost 0.14.4",
+ "prost 0.14.6",
 ]
 
 [[package]]
@@ -5679,7 +5679,7 @@ version = "17.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4973b0a0adcfb1088d5ca2b58ddd39bc3656ee0ce977d61fafc3eb88cf3459dc"
 dependencies = [
- "prost 0.14.4",
+ "prost 0.14.6",
 ]
 
 [[package]]
@@ -9035,7 +9035,7 @@ dependencies = [
  "num_enum",
  "parking_lot 0.13.0",
  "proptest",
- "prost 0.14.4",
+ "prost 0.14.6",
  "qualifier_attr",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -10739,7 +10739,7 @@ dependencies = [
  "http 1.5.0",
  "hyper-util",
  "log",
- "prost 0.14.4",
+ "prost 0.14.6",
  "prost-types 0.14.4",
  "serde",
  "smpl_jwt",
@@ -10775,7 +10775,7 @@ version = "5.0.0-alpha.1"
 dependencies = [
  "bs58",
  "enum-iterator",
- "prost 0.14.4",
+ "prost 0.14.6",
  "protobuf-src",
  "serde",
  "solana-account-decoder",
@@ -10846,7 +10846,7 @@ dependencies = [
  "env_logger",
  "libsecp256k1",
  "log",
- "prost 0.14.4",
+ "prost 0.14.6",
  "protosol",
  "qualifier_attr",
  "rand 0.9.4",
@@ -12659,7 +12659,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eba464054e2226f182a34489b8b079bf4c6e3e7ab5fd7fc30e024f24aa92a484"
 dependencies = [
  "bytes",
- "prost 0.14.4",
+ "prost 0.14.6",
  "tonic",
 ]
 
