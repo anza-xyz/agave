@@ -2731,9 +2731,37 @@ fn drop_on_failure_batch(statuses: &[bool]) -> Vec<SvmTestEntry> {
 #[test_case(drop_on_failure_batch(&[true, false, true]))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
-        let env = SvmTestEnvironment::create(test_entry);
-        env.execute();
+        // Balance recording also needs the final batch-local account update.
+        for record_balances in [false, true] {
+            let mut env = SvmTestEnvironment::create(test_entry.clone());
+            env.processing_config
+                .recording_config
+                .enable_transaction_balance_recording = record_balances;
+            env.execute();
+        }
     }
+}
+
+#[test_matrix(
+    [false, true],
+    [ExecutionStatus::Succeeded, ExecutionStatus::ExecutedFailed, ExecutionStatus::ProcessedFailed]
+)]
+fn test_final_account_loader_refresh_singleton_nonce(
+    fee_paying_nonce: bool,
+    status: ExecutionStatus,
+) {
+    let mut test_entry = simple_nonce(fee_paying_nonce).pop().unwrap();
+    test_entry
+        .transaction_batch
+        .retain(|item| item.asserts.status == status);
+    assert_eq!(test_entry.transaction_batch.len(), 1);
+    let transaction = &test_entry.transaction_batch.first().unwrap().transaction;
+    // The nonce fixtures use independent accounts for each outcome. Keep just
+    // this transaction and its expected state to exercise every singleton branch.
+    test_entry
+        .final_accounts
+        .retain(|key, _| transaction.message.account_keys.contains(key));
+    svm_integration(vec![test_entry]);
 }
 
 #[test]
