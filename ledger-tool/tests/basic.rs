@@ -3,7 +3,9 @@ use {
         blockstore, blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
         genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete,
     },
+    solana_sbpf::vm::MAX_INSTRUCTION_METER,
     std::{
+        io::Write,
         path::Path,
         process::{Command, Output},
     },
@@ -85,5 +87,70 @@ fn ledger_tool_copy_test() {
         assert!(src_slot_output.status.success());
         assert!(dst_slot_output.status.success());
         assert!(!src_slot_output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn program_run_honors_limit() {
+    let genesis_config = create_genesis_config(100).genesis_config;
+    let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+    let mut program = tempfile::NamedTempFile::new().unwrap();
+    writeln!(program, "mov64 r0, 0\nadd64 r0, 1\nexit").unwrap();
+
+    let modes = [
+        "interpreter",
+        #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
+        "jit",
+    ];
+    for mode in modes {
+        for (limit, result, instruction_count) in [
+            (Some("1"), "Err(ExceededMaxInstructions)", 1),
+            (Some("3"), "Ok(1)", 3),
+            (None, "Ok(1)", 3),
+        ] {
+            let mut args = vec![
+                "--ledger",
+                ledger_path.path().to_str().unwrap(),
+                "--output",
+                "json",
+                "program",
+                "run",
+                program.path().to_str().unwrap(),
+                "--mode",
+                mode,
+            ];
+            if let Some(limit) = limit {
+                args.extend(["--limit", limit]);
+            }
+            let output = run_ledger_tool(&args);
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let output: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(output["result"], result, "{args:?}");
+            assert_eq!(output["instruction_count"], instruction_count, "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn program_run_rejects_invalid_limit() {
+    let ledger_path = tempfile::tempdir().unwrap();
+    let above_max = (MAX_INSTRUCTION_METER + 1).to_string();
+    for limit in ["not-a-number", &above_max] {
+        let output = run_ledger_tool(&[
+            "--ledger",
+            ledger_path.path().to_str().unwrap(),
+            "program",
+            "run",
+            "unused.s",
+            "--limit",
+            limit,
+        ]);
+        assert!(!output.status.success(), "--limit {limit}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Invalid value for '--limit"), "{stderr}");
     }
 }

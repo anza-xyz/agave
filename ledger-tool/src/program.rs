@@ -1,6 +1,6 @@
 use {
     crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
-    clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
+    clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t_or_exit},
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
@@ -32,7 +32,7 @@ use {
         memory_region::{MemoryMapping, MemoryRegion},
         static_analysis::Analysis,
         verifier::RequisiteVerifier,
-        vm::{CallFrame, ExecutionMode},
+        vm::{CallFrame, ExecutionMode, MAX_INSTRUCTION_METER},
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_syscalls::create_program_runtime_environment,
@@ -187,11 +187,16 @@ and the following fields are required
                 )
                 .arg(
                     Arg::with_name("instruction limit")
-                        .help("Limit the number of instructions to execute")
+                        .help("Limit execution to this many compute units")
                         .long("limit")
                         .takes_value(true)
                         .value_name("COUNT")
-                        .default_value("9223372036854775807"),
+                        .validator(|value| match value.parse::<u64>() {
+                            Ok(limit) if limit <= MAX_INSTRUCTION_METER => Ok(()),
+                            _ => Err(format!(
+                                "expected an integer between 0 and {MAX_INSTRUCTION_METER}"
+                            )),
+                        }),
                 )
                 .arg(
                     Arg::with_name("port")
@@ -561,6 +566,10 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         create_vm!(vm, &verified_executable, &mut invoke_context,);
         vm.unwrap()
     };
+    if matches.is_present("instruction limit") {
+        let limit = value_t_or_exit!(matches, "instruction limit", u64);
+        vm.context().mock_set_remaining(limit);
+    }
     let start_time = Instant::now();
 
     let mode = matches.value_of("mode").unwrap();
