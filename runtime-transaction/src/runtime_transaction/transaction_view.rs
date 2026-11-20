@@ -395,6 +395,10 @@ mod tests {
                 None,
             )
             .unwrap();
+            let mut copied = vec![99];
+            runtime_transaction.append_transaction_bytes(&mut copied);
+            assert_eq!(&copied[1..], bytes.as_slice());
+            assert_eq!(copied[0], 99);
             let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 runtime_transaction,
                 loaded_addresses,

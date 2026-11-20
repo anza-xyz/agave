@@ -180,11 +180,11 @@ mod tests {
             }
         ));
         notifier.notify_transactions(batch(2), 3);
-        let LeaderNotification::Transactions(batch) = receiver.recv().unwrap() else {
-            panic!()
-        };
-        assert_eq!(batch.starting_index, 3);
-        assert_eq!(batch.transactions().count(), 2);
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            LeaderNotification::Transactions(batch)
+                if batch.starting_index == 3 && batch.transactions().count() == 2
+        ));
         assert_eq!(notifier.dropped(), (3, 1));
     }
 

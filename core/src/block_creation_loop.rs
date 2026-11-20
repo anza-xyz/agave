@@ -2014,6 +2014,75 @@ mod tests {
     }
 
     #[test]
+    fn test_leader_notification_retired_bank() {
+        use solana_runtime_transaction::leader_transaction_notifier::LeaderNotification;
+
+        for enabled in [false, true] {
+            let identity = Pubkey::new_unique();
+            let fixture = TestFixture::new(identity, identity, None, (1, 1));
+            let TestFixture {
+                mut ctx,
+                root_bank,
+                record_sender,
+                entry_receiver,
+                ..
+            } = fixture;
+            let (notifier, receiver) = LeaderTransactionNotifier::channel(8);
+            ctx.leader_transaction_notifier = enabled.then_some(notifier);
+            create_and_insert_leader_bank(1, root_bank, 0, &mut ctx).unwrap();
+            let bank = ctx.poh_recorder.read().unwrap().bank().unwrap();
+            let bank_id = bank.bank_id();
+            record_sender
+                .try_send(Record::new(
+                    Hash::new_unique(),
+                    vec![versioned_transfer(1), versioned_transfer(2)],
+                    bank_id,
+                ))
+                .unwrap();
+
+            // Root advancement retires the bank before block completion can enter it.
+            bank.quiesce_transaction_execution();
+            let result = record_and_complete_block(
+                &mut ctx,
+                &mut SlotMetrics::new(1, false),
+                1,
+                None,
+                None,
+                &mut Instant::now(),
+                Duration::ZERO,
+            );
+            assert!(matches!(result, Err(PohRecorderError::WindowMovedOn(1))));
+            assert!(!ctx.poh_recorder.read().unwrap().has_bank());
+            assert!(ctx.record_receiver.is_shutdown());
+            assert!(ctx.record_receiver.is_safe_to_restart());
+            assert!(!bank.is_complete());
+            assert!(!bank.is_frozen());
+            drop(entry_receiver);
+
+            let events: Vec<_> = receiver.try_iter().collect();
+            if enabled {
+                assert_eq!(events.len(), 2);
+                assert!(matches!(
+                    events[0],
+                    LeaderNotification::Bank { bank_id: id, status: LeaderBankStatus::Created, .. }
+                        if id == u64::from(bank_id)
+                ));
+                assert!(matches!(
+                    events[1],
+                    LeaderNotification::Bank {
+                        slot: 1,
+                        parent: 0,
+                        bank_id: id,
+                        status: LeaderBankStatus::Abandoned { transaction_count: 2 },
+                    } if id == u64::from(bank_id)
+                ));
+            } else {
+                assert!(events.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn test_leader_notification_bank_replacement() {
         use solana_runtime_transaction::leader_transaction_notifier::LeaderNotification;
         let identity = Pubkey::new_unique();

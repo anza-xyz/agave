@@ -447,10 +447,28 @@ mod tests {
     fn test_service_without_plugins_keeps_notifier_for_dynamic_loading() {
         let (sender, receiver) = unbounded();
         let service = GeyserPluginService::new(receiver, true, &[]).unwrap();
+        assert!(service.get_leader_transaction_notifier().is_some());
         let notifier = service.get_accounts_update_notifier().unwrap();
         assert!(notifier.account_notifications_enabled());
         assert!(!notifier.snapshot_notifications_enabled());
         drop(notifier);
+        drop(sender);
+        service.join().unwrap();
+    }
+
+    #[test]
+    fn test_existing_plugin_does_not_enable_leader_notifications() {
+        let (sender, receiver) = unbounded();
+        let service =
+            GeyserPluginService::new(receiver, false, &[PathBuf::from(TESTPLUGIN_CONFIG)]).unwrap();
+        assert!(
+            service
+                .get_accounts_update_notifier()
+                .unwrap()
+                .account_notifications_enabled()
+        );
+        assert!(service.get_transaction_notifier().is_none());
+        assert!(service.get_leader_transaction_notifier().is_none());
         drop(sender);
         service.join().unwrap();
     }

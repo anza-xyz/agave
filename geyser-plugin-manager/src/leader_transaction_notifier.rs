@@ -6,7 +6,6 @@ use {
         ReplicaLeaderTransactionInfoVersions,
     },
     arc_swap::ArcSwap,
-    crossbeam_channel::RecvTimeoutError,
     log::*,
     solana_runtime_transaction::leader_transaction_notifier::{
         LeaderBankStatus, LeaderNotification, LeaderTransactionNotifier,
@@ -33,7 +32,11 @@ pub(crate) struct LeaderNotificationService {
 
 impl LeaderNotificationService {
     pub fn new(manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
-        let (notifier, receiver) = LeaderTransactionNotifier::channel(QUEUE_CAPACITY);
+        Self::with_capacity(manager, QUEUE_CAPACITY)
+    }
+
+    fn with_capacity(manager: Arc<ArcSwap<GeyserPluginHost>>, capacity: usize) -> Self {
+        let (notifier, receiver) = LeaderTransactionNotifier::channel(capacity);
         let counters = notifier.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
@@ -46,11 +49,8 @@ impl LeaderNotificationService {
                     let message = if thread_stop.load(Ordering::Relaxed) {
                         receiver.try_recv().ok()
                     } else {
-                        match receiver.recv_timeout(Duration::from_millis(100)) {
-                            Ok(message) => Some(message),
-                            Err(RecvTimeoutError::Timeout) => None,
-                            Err(RecvTimeoutError::Disconnected) => break,
-                        }
+                        // `counters` holds a sender, so this can only time out.
+                        receiver.recv_timeout(Duration::from_millis(100)).ok()
                     };
                     let host = manager.load();
                     let loss = counters.dropped();
@@ -174,12 +174,13 @@ mod tests {
         agave_geyser_plugin_interface::geyser_plugin_interface::{
             GeyserPlugin, GeyserPluginError, Result,
         },
+        crossbeam_channel::{Receiver, Sender, bounded, unbounded},
         solana_runtime_transaction::{
             leader_transaction_notifier::LeaderTransactionBatch,
             runtime_transaction::RuntimeTransaction,
         },
         solana_transaction::Transaction,
-        std::sync::Mutex,
+        std::sync::{Mutex, atomic::AtomicUsize},
     };
 
     #[derive(Debug, PartialEq, Eq)]
@@ -247,7 +248,7 @@ mod tests {
         }
     }
 
-    fn loaded(plugin: Plugin) -> Arc<LoadedGeyserPlugin> {
+    fn loaded(plugin: impl GeyserPlugin) -> Arc<LoadedGeyserPlugin> {
         #[cfg(unix)]
         let library = libloading::os::unix::Library::this().into();
         #[cfg(windows)]
@@ -273,6 +274,7 @@ mod tests {
 
     #[test]
     fn opt_in_errors_and_loss_reporting() {
+        agave_logger::setup();
         let events: Vec<_> = (0..3).map(|_| Arc::new(Mutex::new(Vec::new()))).collect();
         let host = GeyserPluginHost::from_plugins(vec![
             loaded(Plugin {
@@ -321,6 +323,151 @@ mod tests {
             ]
         );
         assert!(events[2].lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn worker_retries_loss_reports_while_idle() {
+        #[derive(Debug)]
+        struct BlockingPlugin {
+            events: Sender<Event>,
+            resume: Receiver<()>,
+            loss_attempts: AtomicUsize,
+        }
+
+        impl GeyserPlugin for BlockingPlugin {
+            fn name(&self) -> &'static str {
+                "blocking-leader-test"
+            }
+
+            fn leader_transaction_notifications_enabled(&self) -> bool {
+                true
+            }
+
+            fn notify_leader_bank_status(
+                &self,
+                _slot: u64,
+                _parent: u64,
+                bank: u64,
+                status: PluginBankStatus,
+            ) -> Result<()> {
+                self.events.send(Event::Bank(bank, status)).unwrap();
+                self.resume.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            }
+
+            fn notify_leader_transaction(
+                &self,
+                info: ReplicaLeaderTransactionInfoVersions,
+                _slot: u64,
+                bank: u64,
+            ) -> Result<()> {
+                let ReplicaLeaderTransactionInfoVersions::V0_0_1(info) = info;
+                self.events
+                    .send(Event::Transaction(bank, info.index, info.status.is_ok()))
+                    .unwrap();
+                Ok(())
+            }
+
+            fn notify_leader_notification_loss(&self, transactions: u64, banks: u64) -> Result<()> {
+                self.events.send(Event::Loss(transactions, banks)).unwrap();
+                if self.loss_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                    Err(GeyserPluginError::Custom("retry loss report".into()))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        agave_logger::setup();
+        let (events_sender, events) = unbounded();
+        let (resume, resume_receiver) = bounded(1);
+        let host = GeyserPluginHost::from_plugins(vec![loaded(BlockingPlugin {
+            events: events_sender,
+            resume: resume_receiver,
+            loss_attempts: AtomicUsize::new(0),
+        })]);
+        let service =
+            LeaderNotificationService::with_capacity(Arc::new(ArcSwap::from_pointee(host)), 1);
+        service
+            .notifier
+            .notify_bank(42, 41, 7, LeaderBankStatus::Created);
+        assert_eq!(
+            events.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Event::Bank(7, PluginBankStatus::Created),
+        );
+
+        // Hold the worker inside the plugin so queue overflow is deterministic.
+        service.notifier.notify_transactions(transactions(), 0);
+        service.notifier.notify_transactions(transactions(), 2);
+        service.notifier.notify_bank(
+            42,
+            41,
+            7,
+            LeaderBankStatus::Frozen {
+                transaction_count: 4,
+            },
+        );
+        assert_eq!(service.notifier.dropped(), (2, 1));
+        resume.send(()).unwrap();
+        for expected in [
+            Event::Loss(2, 1),
+            Event::Transaction(7, 0, true),
+            Event::Transaction(7, 1, false),
+            // No new notifications arrive. The idle poll must retry the failed report.
+            Event::Loss(2, 1),
+        ] {
+            assert_eq!(
+                events.recv_timeout(Duration::from_secs(5)).unwrap(),
+                expected
+            );
+        }
+        assert!(events.recv_timeout(Duration::from_millis(250)).is_err());
+        drop(service);
+        assert!(events.try_iter().next().is_none());
+    }
+
+    #[test]
+    fn worker_panic_is_joined_and_later_notifications_count_as_lost() {
+        #[derive(Debug)]
+        struct PanickingPlugin;
+
+        impl GeyserPlugin for PanickingPlugin {
+            fn name(&self) -> &'static str {
+                "panicking-leader-test"
+            }
+
+            fn leader_transaction_notifications_enabled(&self) -> bool {
+                true
+            }
+
+            fn notify_leader_bank_status(
+                &self,
+                _slot: u64,
+                _parent: u64,
+                _bank: u64,
+                _status: PluginBankStatus,
+            ) -> Result<()> {
+                panic!("plugin panicked");
+            }
+        }
+
+        agave_logger::setup();
+        let host = GeyserPluginHost::from_plugins(vec![loaded(PanickingPlugin)]);
+        let service = LeaderNotificationService::new(Arc::new(ArcSwap::from_pointee(host)));
+        let notifier = service.notifier.clone();
+        notifier.notify_bank(42, 41, 7, LeaderBankStatus::Created);
+        // Drop drains the queued event and joins the panicked thread without propagating it.
+        drop(service);
+        notifier.notify_transactions(transactions(), 0);
+        notifier.notify_bank(
+            42,
+            41,
+            7,
+            LeaderBankStatus::Abandoned {
+                transaction_count: 2,
+            },
+        );
+        assert_eq!(notifier.dropped(), (2, 1));
     }
 
     #[test]

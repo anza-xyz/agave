@@ -8638,6 +8638,7 @@ version = "5.0.0-alpha.1"
 dependencies = [
  "agave-geyser-plugin-host",
  "agave-geyser-plugin-interface",
+ "agave-logger",
  "agave-votor-messages",
  "arc-swap",
  "bs58",
