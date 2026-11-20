@@ -1065,6 +1065,7 @@ mod tests {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: Some(1234),
                 cost_units: Some(5678),
+                loaded_accounts_data_size: Some(4096),
             },
         });
         let expected_block = ConfirmedBlock {
@@ -1126,6 +1127,7 @@ mod tests {
                 meta.return_data = None; // Legacy bincode implementation does not support return data
                 meta.compute_units_consumed = None; // Legacy bincode implementation does not support CU consumed
                 meta.cost_units = None; // Legacy bincode implementation does not support CU
+                meta.loaded_accounts_data_size = None; // Legacy bincode implementation does not support loaded accounts data size
             }
             assert_eq!(block, wincode_block.into());
         } else {
