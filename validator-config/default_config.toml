@@ -28,13 +28,12 @@ device.route = "default"
 # Request AF_XDP zero-copy.
 zero_copy = false
 
-# Each worker owns one hardware queue and runs on one CPU. All declared workers
-# must avoid the PoH core, including workers whose queues are unreferenced.
-# Active workers and the PoH core must leave at least one process CPU for other
-# work. Only auto-selected CPUs have to be in the process CPU affinity.
+# Each worker owns one hardware queue and runs on one CPU. Active workers must
+# leave at least one process CPU for other work. Only auto-selected CPUs have to
+# be in the process CPU affinity.
 # Define the pool with exactly one mode, 1 to 512 workers.
-# Select the N highest eligible CPUs, excluding PoH; assign queues 0..N-1 to them
-# in ascending CPU order.
+# Select the N highest eligible CPUs and assign queues 0..N-1 to them in
+# ascending CPU order.
 workers.auto.count = 1
 # Alternative modes replace workers.auto.count:
 # Queue 0 uses CPU 8; queue 1 uses CPU 9.

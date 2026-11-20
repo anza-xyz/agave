@@ -23,57 +23,40 @@ pub struct XdpRuntimeConfig {
 fn resolve_declared_workers(
     workers: &XdpWorkerPool,
     allowed_cpus: &BTreeSet<usize>,
-    poh_core: Option<usize>,
 ) -> Result<Vec<XdpWorkerBinding>, String> {
-    let reject_poh_core = |cpus: Vec<usize>| match poh_core {
-        Some(poh_core) if cpus.contains(&poh_core) => {
-            Err(format!("XDP worker CPU {poh_core} overlaps the PoH core"))
-        }
-        _ => Ok(cpus),
+    let bind_cpus = |cpus: &[usize]| {
+        collect_worker_queue_ids(workers)
+            .into_iter()
+            .zip(cpus.iter().copied())
+            .map(|(queue, cpu)| XdpWorkerBinding { queue, cpu })
+            .collect()
     };
-    // Each mode contributes only the CPU order; collect_worker_queue_ids owns the queue-id
-    // rule so validation and resolution cannot disagree about the declared pool.
-    let cpus: Vec<usize> = match workers {
+    match workers {
         XdpWorkerPool::Auto { count } => {
-            let mut eligible: Vec<_> = allowed_cpus
-                .iter()
-                .rev()
-                .copied()
-                .filter(|cpu| Some(*cpu) != poh_core)
-                .take(*count)
-                .collect();
+            let mut eligible: Vec<_> = allowed_cpus.iter().rev().take(*count).copied().collect();
             if eligible.len() < *count {
                 return Err(format!(
-                    "not enough CPUs for XDP: workers.auto.count = {count} needs {count} CPUs \
-                     other than the PoH core, but only {} are available",
+                    "not enough CPUs for XDP: workers.auto.count = {count} needs {count} CPUs, \
+                     but only {} are available",
                     eligible.len()
                 ));
             }
             // Assign queues in ascending CPU order, like an explicit workers.cpus list.
             eligible.reverse();
-            eligible
+            Ok(bind_cpus(&eligible))
         }
-        XdpWorkerPool::Cpus(cpus) => reject_poh_core(cpus.clone())?,
-        XdpWorkerPool::Bindings(bindings) => {
-            reject_poh_core(bindings.iter().map(|binding| binding.cpu).collect())?
-        }
-    };
-    Ok(collect_worker_queue_ids(workers)
-        .into_iter()
-        .zip(cpus)
-        .map(|(queue, cpu)| XdpWorkerBinding { queue, cpu })
-        .collect())
+        XdpWorkerPool::Cpus(cpus) => Ok(bind_cpus(cpus)),
+        XdpWorkerPool::Bindings(bindings) => Ok(bindings.clone()),
+    }
 }
 
 impl ValidatedConfig {
     /// Resolve the enabled XDP settings against the host CPUs.
     /// Returns `None` when XDP is disabled.
-    /// All declared workers must avoid the PoH core, including unreferenced workers.
     /// On Linux, active workers must fit the transmitter's CPU affinity mask.
     pub fn resolve_xdp(
         &self,
         allowed_cpus: &BTreeSet<usize>,
-        poh_core: Option<usize>,
     ) -> Result<Option<XdpRuntimeConfig>, Diagnostic> {
         let Some(queue_ids) = &self.xdp_queue_ids else {
             return Ok(None);
@@ -94,8 +77,7 @@ impl ValidatedConfig {
                 .at_field(workers.field_path().iter().copied())
                 .at_field(["interfaces", interface_label, "xdp"])
         };
-        let declared =
-            resolve_declared_workers(workers, allowed_cpus, poh_core).map_err(worker_error)?;
+        let declared = resolve_declared_workers(workers, allowed_cpus).map_err(worker_error)?;
         let active_ids: BTreeSet<_> = queue_ids
             .get_values()
             .into_iter()
@@ -116,13 +98,13 @@ impl ValidatedConfig {
                 binding.cpu
             )));
         }
-        if !allowed_cpus.iter().any(|cpu| {
-            Some(*cpu) != poh_core && !active_workers.iter().any(|binding| binding.cpu == *cpu)
-        }) {
+        if !allowed_cpus
+            .iter()
+            .any(|cpu| !active_workers.iter().any(|binding| binding.cpu == *cpu))
+        {
             return Err(Diagnostic::new(
                 DiagnosticKind::CpuResolution,
-                "XDP workers and the PoH core must leave at least one process CPU unreserved for \
-                 the main thread",
+                "XDP workers must leave at least one process CPU unreserved for the main thread",
             ));
         }
         let positions: BTreeMap<_, _> = active_workers
@@ -221,7 +203,7 @@ workers.bindings = [
 "#
             );
             let runtime = load_test_config(&contents)
-                .resolve_xdp(&BTreeSet::from([8, 9, 10, 11, 12]), None)
+                .resolve_xdp(&BTreeSet::from([8, 9, 10, 11, 12]))
                 .expect("valid sparse bindings should resolve while preserving sender order")
                 .unwrap();
             let expected_workers: Vec<_> = expected_workers
@@ -254,66 +236,17 @@ workers.bindings = [
     }
 
     #[test]
-    fn test_active_explicit_workers_must_avoid_the_poh_core() {
-        for (case, workers) in [
-            ("cpus", "{ cpus = [9] }"),
-            ("bindings", "{ bindings = [{ queue = 0, cpu = 9 }] }"),
-        ] {
-            let config = load_worker_config(workers)
-                .expect("worker fixture should pass host-independent validation");
-            let error = config
-                .resolve_xdp(&BTreeSet::from([8, 9, 10]), Some(9))
-                .expect_err("active explicit workers must not share the PoH core");
-            assert_eq!(
-                error.to_string(),
-                "XDP worker CPU 9 overlaps the PoH core",
-                "{case}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_unreferenced_explicit_workers_must_avoid_the_poh_core() {
-        for (case, workers) in [
-            ("cpus", "{ cpus = [8, 9] }"),
-            (
-                "bindings",
-                "{ bindings = [{ queue = 3, cpu = 9 }, { queue = 0, cpu = 8 }] }",
-            ),
-        ] {
-            let config = load_test_config(&format!(
-                r#"
-{ALL_COMPONENTS_QUEUE_ZERO}
-[interfaces.primary]
-device.name = "eth0"
-xdp.zero_copy = false
-xdp.workers = {workers}
-"#
-            ));
-            let error = config
-                .resolve_xdp(&BTreeSet::from([8, 9, 10]), Some(9))
-                .expect_err("unreferenced explicit workers must not share the PoH core");
-            assert_eq!(
-                error.to_string(),
-                "XDP worker CPU 9 overlaps the PoH core",
-                "{case}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_auto_workers_require_enough_cpus_after_excluding_poh() {
+    fn test_auto_workers_require_enough_cpus() {
         let config = load_worker_config("{ auto = { count = 2 } }")
             .expect("two-worker fixture should pass host-independent validation");
         let error = config
-            .resolve_xdp(&BTreeSet::from([8, 9]), Some(9))
-            .expect_err("auto workers must fail if too few CPUs remain after excluding PoH");
+            .resolve_xdp(&BTreeSet::from([8]))
+            .expect_err("auto workers must fail if too few CPUs are available");
         assert_eq!(
             error.to_string(),
-            "not enough CPUs for XDP: workers.auto.count = 2 needs 2 CPUs other than the PoH \
-             core, but only 1 are available",
-            "the error should report the requested worker count and available CPUs after \
-             excluding PoH"
+            "not enough CPUs for XDP: workers.auto.count = 2 needs 2 CPUs, but only 1 are \
+             available",
+            "the error should report the requested worker count and available CPUs"
         );
     }
 
@@ -322,14 +255,14 @@ xdp.workers = {workers}
         let config = load_worker_config("{ auto = { count = 2 } }")
             .expect("two-worker fixture should pass host-independent validation");
         let runtime = config
-            .resolve_xdp(&BTreeSet::from([7, 8, 9, 10, 11]), Some(11))
-            .expect("auto workers should resolve on the highest CPUs other than PoH")
+            .resolve_xdp(&BTreeSet::from([7, 8, 9, 10, 11]))
+            .expect("auto workers should resolve on the highest CPUs")
             .unwrap();
         assert_eq!(
             runtime.queues,
             [
-                XdpWorkerBinding { queue: 0, cpu: 9 },
-                XdpWorkerBinding { queue: 1, cpu: 10 },
+                XdpWorkerBinding { queue: 0, cpu: 10 },
+                XdpWorkerBinding { queue: 1, cpu: 11 },
             ],
             "auto workers should map queues to the selected CPUs in ascending order"
         );
@@ -344,7 +277,7 @@ xdp.workers = {workers}
         ] {
             let config = load_worker_config(workers).unwrap();
             let error = config
-                .resolve_xdp(&BTreeSet::from([0, 1]), None)
+                .resolve_xdp(&BTreeSet::from([0, 1]))
                 .expect_err("active worker CPU must fit the Linux affinity mask");
             assert_eq!(error.kind(), DiagnosticKind::CpuResolution);
             assert!(
@@ -367,7 +300,7 @@ xdp.workers = {workers}
                 .expect("worker fixture should pass host-independent validation");
             // Equal worker and affinity CPU counts catch reservation checks based only on counts.
             let runtime = config
-                .resolve_xdp(&BTreeSet::from([8, 10]), None)
+                .resolve_xdp(&BTreeSet::from([8, 10]))
                 .expect("workers outside the process CPU affinity leave its CPUs unreserved")
                 .unwrap();
             assert_eq!(
@@ -388,21 +321,15 @@ xdp.workers = {workers}
             "{ cpus = [8, 9] }",
             "{ bindings = [{ queue = 0, cpu = 8 }, { queue = 1, cpu = 9 }] }",
         ] {
-            for (allowed, poh_core) in [
-                (BTreeSet::from([8, 9]), None),
-                (BTreeSet::from([7, 8, 9]), Some(7)),
-            ] {
-                let config = load_worker_config(workers).expect(
-                    "worker fixture should pass validation before checking CPU reservations",
-                );
-                let error = config
-                    .resolve_xdp(&allowed, poh_core)
-                    .expect_err("active workers must leave at least one process CPU unreserved");
-                assert!(
-                    error.to_string().contains("leave at least one"),
-                    "{workers} {poh_core:?}: {error}"
-                );
-            }
+            let config = load_worker_config(workers)
+                .expect("worker fixture should pass validation before checking CPU reservations");
+            let error = config
+                .resolve_xdp(&BTreeSet::from([8, 9]))
+                .expect_err("active workers must leave at least one process CPU unreserved");
+            assert!(
+                error.to_string().contains("leave at least one"),
+                "{workers}: {error}"
+            );
         }
     }
 
@@ -411,7 +338,7 @@ xdp.workers = {workers}
         let config = load_worker_config("{ cpus = [8] }")
             .expect("worker fixture should pass host-independent validation");
         let error = config
-            .resolve_xdp(&BTreeSet::new(), None)
+            .resolve_xdp(&BTreeSet::new())
             .expect_err("an empty process CPU affinity cannot leave a CPU unreserved");
         assert_eq!(
             error.to_string(),
@@ -432,7 +359,7 @@ xdp.workers.cpus = [8, 9]
         ))
         .expect("unreferenced workers should only warn");
         let runtime = config
-            .resolve_xdp(&BTreeSet::from([8, 9]), None)
+            .resolve_xdp(&BTreeSet::from([8, 9]))
             .expect("discarding the unreferenced worker should leave a CPU unreserved")
             .unwrap();
         assert_eq!(

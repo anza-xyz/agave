@@ -146,7 +146,7 @@ interfaces.primary.xdp.workers.auto.count = 2
     assert_field_path(warning, &worker_count_path);
     assert_eq!(&text[warning.source_span().unwrap()], "2");
 
-    let diagnostic = config.resolve_xdp(&BTreeSet::from([0]), None).unwrap_err();
+    let diagnostic = config.resolve_xdp(&BTreeSet::from([0])).unwrap_err();
     assert_eq!(diagnostic.kind(), DiagnosticKind::CpuResolution);
     assert_field_path(&diagnostic, &worker_count_path);
 }

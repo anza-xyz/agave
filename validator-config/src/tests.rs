@@ -27,8 +27,8 @@ fn test_embedded_default_resolves_to_one_shared_worker() {
         "embedded default should validate without warnings: {warnings:?}"
     );
     let runtime = config
-        .resolve_xdp(&allowed, Some(5))
-        .expect("default worker should resolve using an eligible CPU distinct from PoH")
+        .resolve_xdp(&allowed)
+        .expect("default worker should resolve using the highest allowed CPU")
         .expect("embedded default should enable XDP");
     assert_eq!(
         runtime.interface_label, "primary",
@@ -36,8 +36,8 @@ fn test_embedded_default_resolves_to_one_shared_worker() {
     );
     assert_eq!(
         runtime.queues,
-        [XdpWorkerBinding { queue: 0, cpu: 3 }],
-        "default worker should use queue 0 and the highest allowed CPU other than PoH"
+        [XdpWorkerBinding { queue: 0, cpu: 5 }],
+        "default worker should use queue 0 and the highest allowed CPU"
     );
     for component in runtime.endpoints.get_values() {
         assert_eq!(
@@ -286,12 +286,7 @@ xdp.workers.cpus = [8]
     ))
     .expect("disabled XDP should accept more than one interface");
     assert!(config.xdp_queue_ids().is_none());
-    assert!(
-        config
-            .resolve_xdp(&BTreeSet::new(), None)
-            .unwrap()
-            .is_none()
-    );
+    assert!(config.resolve_xdp(&BTreeSet::new()).unwrap().is_none());
     assert!(warnings.is_empty(), "{warnings:?}");
     let error = load_config(&format!("schema_version = 1\n{TWO_INTERFACES}"))
         .expect_err("enabled XDP must reject more than one interface");
@@ -365,7 +360,7 @@ tx.interface = "fast"
 "#
     ));
     let runtime = updated_references
-        .resolve_xdp(&BTreeSet::from([8, 9]), None)
+        .resolve_xdp(&BTreeSet::from([8, 9]))
         .expect("updated component references should resolve on the renamed interface")
         .unwrap();
     assert_eq!(
