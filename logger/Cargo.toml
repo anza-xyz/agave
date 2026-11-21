@@ -19,7 +19,11 @@ rustdoc-args = ["--cfg=docsrs"]
 name = "agave_logger"
 
 [features]
+default = ["auto-color"]
 agave-unstable-api = []
+# Colorize records when stderr is a terminal. Without it, records use a plain format
+# that escapes control characters.
+auto-color = ["env_logger/auto-color"]
 
 [dependencies]
 env_logger = { workspace = true }
