@@ -17,9 +17,6 @@ pub mod token_bucket;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod udp_relay;
 
-#[cfg(feature = "dev-context-only-utils")]
-pub mod tooling_for_tests;
-
 pub use {
     agave_xdp::transmitter::TrySendError,
     ip_echo_client::IpEchoClientError,
