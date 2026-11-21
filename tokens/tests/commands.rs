@@ -13,7 +13,10 @@ use {
         test_process_create_stake_with_client, test_process_distribute_stake_with_client,
         test_process_distribute_tokens_with_client,
     },
-    std::{thread::sleep, time::Duration},
+    std::{
+        thread::sleep,
+        time::{Duration, Instant},
+    },
 };
 
 fn simple_test_validator(alice: Pubkey) -> TestValidator {
@@ -22,12 +25,19 @@ fn simple_test_validator(alice: Pubkey) -> TestValidator {
     // Programs deployed at genesis are not immediately available
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
-    while rpc_client
-        .get_slot_with_commitment(CommitmentConfig::processed())
-        .unwrap()
-        < 5
-    {
-        sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut slot = 0;
+    while slot < 5 {
+        assert!(
+            Instant::now() < deadline,
+            "validator did not reach slot 5; last observed slot: {slot}"
+        );
+        slot = rpc_client
+            .get_slot_with_commitment(CommitmentConfig::processed())
+            .unwrap();
+        if slot < 5 {
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT));
+        }
     }
     test_validator
 }
