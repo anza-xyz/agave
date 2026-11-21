@@ -95,6 +95,7 @@ pub struct RpcGetVoteAccountsConfig {
     pub commitment: Option<CommitmentConfig>,
     pub keep_unstaked_delinquents: Option<bool>,
     pub delinquent_slot_distance: Option<u64>,
+    pub include_commission_context: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

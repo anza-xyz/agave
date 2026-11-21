@@ -366,6 +366,9 @@ impl RpcSender for MockSender {
                         epoch_credits: vec![],
                         last_vote: 0,
                         root_slot: Slot::default(),
+                        epoch_commission: None,
+                        epoch_inflation_rewards_commission_bps: None,
+                        epoch_commission_context: None,
                     }],
                 })
             }
