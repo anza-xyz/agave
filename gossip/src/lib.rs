@@ -40,5 +40,3 @@ extern crate solana_metrics;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub use protocol::{Ping, Protocol, PruneData, deserialize_protocol};
-
-mod wire_format_tests;

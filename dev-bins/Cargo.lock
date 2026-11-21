@@ -7167,7 +7167,6 @@ dependencies = [
  "agave-transaction-view",
  "agave-votor-messages",
  "agave-worker-pool",
- "anyhow",
  "bitflags 2.13.2",
  "bytes",
  "bzip2",
