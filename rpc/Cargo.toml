@@ -112,6 +112,7 @@ tokio-util = { workspace = true, features = ["codec", "compat", "rt"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
+reqwest = { workspace = true, features = ["blocking", "json"] }
 agave-fs = { path = "../fs" }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }

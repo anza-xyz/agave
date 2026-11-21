@@ -1,8 +1,5 @@
 use {
-    crate::{
-        cli::{DefaultArgs, thread_args::NumThreadConfig},
-        commands::FromClapArgMatches,
-    },
+    crate::cli::{DefaultArgs, thread_args::NumThreadConfig},
     bytesize::ByteSize,
     clap::{Arg, ArgMatches, value_t, values_t},
     log::warn,
@@ -10,9 +7,8 @@ use {
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::AccountsFileProvider,
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD,
-            DEFAULT_NUM_ENTRIES_TO_EVICT, IndexLimit, IndexLimitThreshold,
-            MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
+            AccountsIndexConfig, DEFAULT_NUM_ENTRIES_OVERHEAD, DEFAULT_NUM_ENTRIES_TO_EVICT,
+            IndexLimit, IndexLimitThreshold, MINIMAL_THRESHOLD_NUM_BYTES, ScanFilter,
         },
         partitioned_rewards::PartitionedEpochRewardsConfig,
     },
@@ -33,8 +29,6 @@ pub(crate) fn new_config(
     num_threads: &NumThreadConfig,
     use_direct_io: bool,
 ) -> Result<AccountsDbConfig, Box<dyn Error>> {
-    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
-
     let accounts_shrink_optimize_total_space =
         value_t!(matches, "accounts_shrink_optimize_total_space", bool)?;
 
@@ -168,7 +162,7 @@ pub(crate) fn new_config(
 
     Ok(AccountsDbConfig {
         index: Some(accounts_index_config),
-        account_indexes: Some(account_indexes),
+        account_indexes: None,
         bank_hash_details_dir: ledger_path.to_path_buf(),
         shrink_ratio,
         read_cache_limit_bytes,

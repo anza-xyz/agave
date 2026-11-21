@@ -6,7 +6,8 @@ use {
         loader_v3_allow_prefunded_programdata, loader_v3_remove_extend_program,
         loader_v3_set_program_data_to_elf_length,
     },
-    serde_json::Value,
+    async_trait::async_trait,
+    serde_json::{Value, json},
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
@@ -34,9 +35,14 @@ use {
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::{
-        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+        http_sender::HttpSender,
+        nonblocking::rpc_client::RpcClient,
+        rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClientConfig},
+        rpc_sender::{RpcSender, RpcTransportStats},
     },
-    solana_rpc_client_api::config::RpcTransactionConfig,
+    solana_rpc_client_api::{
+        client_error::Result as RpcResult, config::RpcTransactionConfig, request::RpcRequest,
+    },
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
@@ -46,15 +52,63 @@ use {
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status_client_types::UiTransactionEncoding,
     std::{
+        collections::VecDeque,
         env,
         fs::File,
         io::{Read, Seek, SeekFrom},
         path::{Path, PathBuf},
         str::FromStr,
-        sync::Arc,
+        sync::{Arc, Mutex},
     },
     test_case::test_case,
 };
+
+// Listing is provided by an external RPC service in v5.0. Use responses built
+// from known live accounts while keeping deployment and account reads on the validator.
+struct ProgramListingSender {
+    http: HttpSender,
+    responses: Mutex<VecDeque<(usize, Value)>>,
+}
+
+#[async_trait]
+impl RpcSender for ProgramListingSender {
+    async fn send(&self, request: RpcRequest, params: Value) -> RpcResult<Value> {
+        if request == RpcRequest::GetProgramAccounts {
+            assert_eq!(params[0], bpf_loader_upgradeable::id().to_string());
+            let (length, response) = self.responses.lock().unwrap().pop_front().unwrap();
+            assert_eq!(params[1]["dataSlice"]["length"], length);
+            return Ok(response);
+        }
+        self.http.send(request, params).await
+    }
+    fn get_transport_stats(&self) -> RpcTransportStats {
+        self.http.get_transport_stats()
+    }
+    fn url(&self) -> String {
+        self.http.url()
+    }
+}
+
+async fn listing_response(client: &RpcClient, pubkey: Pubkey, length: usize) -> (usize, Value) {
+    let account: Value = client.send(RpcRequest::GetAccountInfo, json!([pubkey.to_string(), {
+        "encoding":"base64", "commitment":"processed", "dataSlice":{"offset":0,"length":length}
+    }])).await.unwrap();
+    assert!(!account["value"].is_null());
+    (
+        length,
+        json!([{"pubkey":pubkey.to_string(),"account":account["value"]}]),
+    )
+}
+
+fn set_listing_responses(config: &mut CliConfig, responses: Vec<(usize, Value)>) {
+    config.rpc_client = Some(Arc::new(RpcClient::new_sender(
+        ProgramListingSender {
+            http: HttpSender::new(config.json_rpc_url.clone()),
+            responses: Mutex::new(responses.into()),
+        },
+        RpcClientConfig::with_commitment(config.commitment),
+    )));
+}
 
 pub struct LoaderV3Features {
     pub set_programdata_to_elf_length: bool,
@@ -3423,7 +3477,18 @@ async fn test_cli_program_show() {
         .unwrap();
     assert_eq!(max_len, data_len as usize);
 
-    // Verify show --buffers
+    // Verify show --buffers against an external listing response.
+    set_listing_responses(
+        &mut config,
+        vec![
+            listing_response(
+                &rpc_client,
+                buffer_keypair.pubkey(),
+                UpgradeableLoaderState::size_of_buffer_metadata(),
+            )
+            .await,
+        ],
+    );
     config.command = CliCommand::Program(ProgramCliCommand::Show {
         account_pubkey: None,
         authority_pubkey: authority_keypair.pubkey(),
@@ -3452,6 +3517,8 @@ async fn test_cli_program_show() {
         buffer.get("dataLen").unwrap().as_u64().unwrap(),
         max_len as u64
     );
+
+    config.rpc_client = Some(rpc_client.clone());
 
     // Deploy
     let program_keypair = Keypair::new();
@@ -3546,7 +3613,19 @@ async fn test_cli_program_show() {
         .unwrap();
     assert_eq!(max_len, data_len as usize);
 
-    // Verify show --programs
+    // Verify show --programs against external programdata and program listings.
+    set_listing_responses(
+        &mut config,
+        vec![
+            listing_response(
+                &rpc_client,
+                programdata_pubkey,
+                UpgradeableLoaderState::size_of_programdata_metadata(),
+            )
+            .await,
+            listing_response(&rpc_client, program_keypair.pubkey(), 0).await,
+        ],
+    );
     config.command = CliCommand::Program(ProgramCliCommand::Show {
         account_pubkey: None,
         authority_pubkey: authority_keypair.pubkey(),

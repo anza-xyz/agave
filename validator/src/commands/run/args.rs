@@ -26,10 +26,6 @@ use {
     std::{collections::HashSet, net::SocketAddr, path::PathBuf},
 };
 
-const EXCLUDE_KEY: &str = "account-index-exclude-key";
-const INCLUDE_KEY: &str = "account-index-include-key";
-
-pub mod account_secondary_indexes;
 pub(super) mod accounts_db_config;
 pub mod blockstore_options;
 pub mod json_rpc_config;
@@ -641,37 +637,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .long("process-ledger-before-services")
             .hidden(hidden_unless_forced())
             .help("Process the local ledger fully before starting networking services"),
-    )
-    .arg(
-        Arg::with_name("account_indexes")
-            .long("account-index")
-            .takes_value(true)
-            .multiple(true)
-            .possible_values(&["program-id", "spl-token-owner", "spl-token-mint"])
-            .value_name("INDEX")
-            .help("Enable an accounts index, indexed by the selected account field"),
-    )
-    .arg(
-        Arg::with_name("account_index_exclude_key")
-            .long(EXCLUDE_KEY)
-            .takes_value(true)
-            .validator(is_pubkey)
-            .multiple(true)
-            .value_name("KEY")
-            .help("When account indexes are enabled, exclude this key from the index."),
-    )
-    .arg(
-        Arg::with_name("account_index_include_key")
-            .long(INCLUDE_KEY)
-            .takes_value(true)
-            .validator(is_pubkey)
-            .conflicts_with("account_index_exclude_key")
-            .multiple(true)
-            .value_name("KEY")
-            .help(
-                "When account indexes are enabled, only include specific keys in the index. This \
-                 overrides --account-index-exclude-key.",
-            ),
     )
     .arg(
         Arg::with_name("no_accounts_db_snapshots_direct_io")

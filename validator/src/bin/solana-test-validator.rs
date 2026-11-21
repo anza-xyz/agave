@@ -9,7 +9,6 @@ use {
     itertools::Itertools,
     log::*,
     solana_account::AccountSharedData,
-    solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkeys_of},
         input_validators::normalize_to_url_if_moniker,
@@ -75,22 +74,6 @@ fn main() {
 
     let ledger_path = value_t_or_exit!(matches, "ledger_path", PathBuf);
     let reset_ledger = matches.is_present("reset");
-
-    let indexes: HashSet<AccountIndex> = matches
-        .values_of("account_indexes")
-        .unwrap_or_default()
-        .map(|value| match value {
-            "program-id" => AccountIndex::ProgramId,
-            "spl-token-mint" => AccountIndex::SplTokenMint,
-            "spl-token-owner" => AccountIndex::SplTokenOwner,
-            _ => unreachable!(),
-        })
-        .collect();
-
-    let account_indexes = AccountSecondaryIndexes {
-        keys: None,
-        indexes,
-    };
 
     if !ledger_path.exists() {
         fs::create_dir(&ledger_path).unwrap_or_else(|err| {
@@ -514,7 +497,6 @@ fn main() {
         enable_extended_tx_metadata_storage: true,
         rpc_bigtable_config,
         faucet_addr: Some(faucet_addr),
-        account_indexes,
         ..JsonRpcConfig::default_for_test()
     });
 

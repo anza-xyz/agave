@@ -440,15 +440,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Log mode: stream the validator log"),
         )
         .arg(
-            Arg::with_name("account_indexes")
-                .long("account-index")
-                .takes_value(true)
-                .multiple(true)
-                .possible_values(&["program-id", "spl-token-owner", "spl-token-mint"])
-                .value_name("INDEX")
-                .help("Enable an accounts index, indexed by the selected account field"),
-        )
-        .arg(
             Arg::with_name("faucet_port")
                 .long("faucet-port")
                 .value_name("PORT")
