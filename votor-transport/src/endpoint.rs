@@ -42,6 +42,22 @@ pub struct Datagram {
     pub message: Bytes,
 }
 
+/// Outbound message for the endpoint: broadcast to all peers or unicast to one.
+#[derive(Debug)]
+pub enum EgressMessage {
+    /// Send to every connected peer.
+    Broadcast(Bytes),
+    /// Send to a single peer over its existing connection (if any).
+    Unicast { peer: Pubkey, message: Bytes },
+}
+
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl From<Bytes> for EgressMessage {
+    fn from(message: Bytes) -> Self {
+        Self::Broadcast(message)
+    }
+}
+
 /// Datagram-only QUIC endpoint.
 pub struct QuicDatagramEndpoint {
     cancel: CancellationToken,
@@ -83,7 +99,7 @@ impl QuicDatagramEndpoint {
         socket_addr_space: SocketAddrSpace,
         max_datagrams_per_second_per_peer: usize,
         cancel: CancellationToken,
-    ) -> Result<(mpsc::Sender<Bytes>, Self), Error> {
+    ) -> Result<(mpsc::Sender<EgressMessage>, Self), Error> {
         assert!(!inbound_sockets.is_empty(), "Must have sockets provided");
         assert!(
             inbound_sockets.len() <= MAX_ENDPOINTS,
@@ -386,7 +402,7 @@ pub fn stub_ban_channel_for_tests(capacity: usize) -> (BanSender, mpsc::Receiver
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use {
-        super::{BanSender, Datagram, QuicDatagramEndpoint},
+        super::{BanSender, Datagram, EgressMessage, QuicDatagramEndpoint},
         crate::{
             METRICS_INTERVAL, PeerList, PeerListSender,
             client::{HANDSHAKE_TIMEOUT as CLIENT_HANDSHAKE_TIMEOUT, RECONCILE_INTERVAL},
@@ -439,7 +455,7 @@ mod tests {
 
     struct Node {
         endpoint: QuicDatagramEndpoint,
-        egress: mpsc::Sender<Bytes>,
+        egress: mpsc::Sender<EgressMessage>,
         ingress_receiver: Receiver<Datagram>,
         addr: SocketAddr,
         keypair: Keypair,
@@ -464,7 +480,16 @@ mod tests {
         /// Broadcast `payload` to every peer in this node's peer_list.
         fn send(&self, payload: &Bytes) {
             self.egress
-                .try_send(payload.clone())
+                .try_send(payload.clone().into())
+                .expect("This channel must never overflow");
+        }
+
+        fn unicast(&self, peer: Pubkey, payload: &Bytes) {
+            self.egress
+                .try_send(EgressMessage::Unicast {
+                    peer,
+                    message: payload.clone(),
+                })
                 .expect("This channel must never overflow");
         }
 
@@ -571,12 +596,22 @@ mod tests {
         sender: &Node,
         payload: &Bytes,
         receiver: &Receiver<Datagram>,
+        cond: impl FnMut(&Datagram) -> Option<T>,
+        timeout: Duration,
+    ) -> Result<T, ()> {
+        retry_until_received(|| sender.send(payload), receiver, cond, timeout)
+    }
+
+    /// Call `send` until `cond` matches a received datagram or `timeout` elapses.
+    fn retry_until_received<T>(
+        mut send: impl FnMut(),
+        receiver: &Receiver<Datagram>,
         mut cond: impl FnMut(&Datagram) -> Option<T>,
         timeout: Duration,
     ) -> Result<T, ()> {
         let start = Instant::now();
         while start.elapsed() < timeout {
-            sender.send(payload);
+            send();
             if let Ok(item) = receiver.recv_timeout(Duration::from_millis(100))
                 && let Some(t) = cond(&item)
             {
@@ -715,6 +750,51 @@ mod tests {
             (d.peer_pubkey == pubkey_b && d.message == from_b).then_some(())
         })
         .expect("A never received B's datagram");
+    }
+
+    #[test]
+    fn test_unicast_reaches_only_target_peer() {
+        let rt = make_runtime_for_tests();
+        let keypair_a = Keypair::new();
+        let keypair_b = Keypair::new();
+        let keypair_c = Keypair::new();
+        let pubkey_a = keypair_a.pubkey();
+        let pubkey_b = keypair_b.pubkey();
+        let pubkey_c = keypair_c.pubkey();
+        let node_a = Node::spawn_node(&rt, keypair_a, HashMap::new(), HIGH_PPS);
+        let node_b = Node::spawn_node(&rt, keypair_b, HashMap::new(), HIGH_PPS);
+        let node_c = Node::spawn_node(&rt, keypair_c, HashMap::new(), HIGH_PPS);
+        node_b.set_peer_list(peer_list_of(pubkey_a, node_a.addr));
+        node_c.set_peer_list(peer_list_of(pubkey_a, node_a.addr));
+        node_a.set_peer_list(HashMap::from([
+            (pubkey_b, Some(node_b.addr)),
+            (pubkey_c, Some(node_c.addr)),
+        ]));
+
+        let warmup = Bytes::from_static(b"warmup");
+        for receiver in [&node_b.ingress_receiver, &node_c.ingress_receiver] {
+            send_until_received(&node_a, &warmup, receiver, |d| {
+                (d.peer_pubkey == pubkey_a && d.message == warmup).then_some(())
+            })
+            .expect("A never connected to a peer");
+        }
+        drain_backlog(&node_b.ingress_receiver);
+        drain_backlog(&node_c.ingress_receiver);
+
+        let unicast = Bytes::from_static(b"unicast-to-B");
+        retry_until_received(
+            || node_a.unicast(pubkey_b, &unicast),
+            &node_b.ingress_receiver,
+            |d| (d.peer_pubkey == pubkey_a && d.message == unicast).then_some(()),
+            Duration::from_secs(5),
+        )
+        .expect("B never received the unicast");
+        while let Ok(d) = node_c
+            .ingress_receiver
+            .recv_timeout(Duration::from_millis(300))
+        {
+            assert_ne!(d.message, unicast, "a unicast to B must not reach C");
+        }
     }
 
     /// A peer in the server's peer_list is admitted; one that is not is rejected
@@ -1005,7 +1085,7 @@ mod tests {
         rt.block_on(async {
             for i in 0..(BURST * 4) {
                 let payload = Bytes::from(format!("burst-{i:04}").into_bytes());
-                let _ = client.egress.send(payload).await;
+                let _ = client.egress.send(payload.into()).await;
             }
         });
         std::thread::sleep(Duration::from_secs(1));
@@ -1061,7 +1141,7 @@ mod tests {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
             loop {
                 for _ in 0..2000 {
-                    let _ = client.egress.send(flood.clone()).await;
+                    let _ = client.egress.send(flood.clone().into()).await;
                 }
                 if server
                     .endpoint
@@ -1167,7 +1247,7 @@ mod tests {
         let sender = std::thread::spawn(move || {
             let mut seq = 0u32;
             while !sender_stop.load(Ordering::Relaxed) {
-                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()));
+                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()).into());
                 seq = seq.wrapping_add(1);
                 std::thread::sleep(SEND_INTERVAL);
             }

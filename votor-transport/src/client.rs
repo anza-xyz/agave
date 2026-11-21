@@ -2,12 +2,11 @@
 use {
     crate::{
         METRICS_INTERVAL, PeerListReceiver, close_codes,
-        endpoint::KeyUpdateListener,
+        endpoint::{EgressMessage, KeyUpdateListener},
         error::Error,
         stats::{self, ClientStats, record_client_error},
         transport::new_client_config,
     },
-    bytes::Bytes,
     log::{debug, error, info, warn},
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_keypair::{Keypair, Signer},
@@ -98,8 +97,8 @@ async fn connect(
 pub(crate) struct OutboundLoop {
     endpoint: Endpoint,
     local_pubkey: Pubkey,
-    /// Channel for outbound messages to be broadcast
-    egress_receiver: mpsc::Receiver<Bytes>,
+    /// Channel for outbound messages
+    egress_receiver: mpsc::Receiver<EgressMessage>,
     key_updates: KeyUpdateListener,
     peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
@@ -116,7 +115,7 @@ impl OutboundLoop {
     pub(crate) fn new(
         endpoint: Endpoint,
         local_pubkey: Pubkey,
-        egress_receiver: mpsc::Receiver<Bytes>,
+        egress_receiver: mpsc::Receiver<EgressMessage>,
         key_updates: KeyUpdateListener,
         peer_list_receiver: PeerListReceiver,
         cancel: CancellationToken,
@@ -189,7 +188,7 @@ impl OutboundLoop {
                         error!("OutboundLoop: egress channel closed, exiting.");
                         break;
                     };
-                    self.perform_broadcast(message);
+                    self.handle_egress_message(message);
                 }
                 // Periodic reconcile: connect to missing peers, drop departed peers.
                 _ = reconcile_timer.tick() => self.reconcile(),
@@ -336,12 +335,33 @@ impl OutboundLoop {
         }
     }
 
-    /// Broadcast one message to every live connection. Broken connections are
-    /// dropped from the table so the next reconcile remakes them.
-    fn perform_broadcast(&mut self, message: Bytes) {
+    /// Send one message to every live connection (broadcast) or to a single peer
+    /// (unicast). Unicast never triggers a connect: without a live connection the
+    /// message is dropped. Broken connections are dropped from the table so the
+    /// next reconcile remakes them.
+    fn handle_egress_message(&mut self, egress_message: EgressMessage) {
+        // Both arms build the same chain type, with one side always empty.
+        let (message, targets) = match egress_message {
+            EgressMessage::Broadcast(message) => {
+                let targets = Some(self.peer_state.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(None);
+                (message, targets)
+            }
+            EgressMessage::Unicast { peer, message } => {
+                let target = self.peer_state.get_key_value(&peer);
+                if !matches!(target, Some((_, PeerState::Established { .. }))) {
+                    self.stats
+                        .unicast_dropped_no_connection
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                (message, None.into_iter().flatten().chain(target))
+            }
+        };
         let mut sent = 0u64;
         let mut dead_peers = Vec::new();
-        for (peer, state) in self.peer_state.iter() {
+        for (peer, state) in targets {
             let PeerState::Established { connection, .. } = state else {
                 continue;
             };
@@ -414,21 +434,25 @@ mod tests {
     use {
         super::*,
         crate::PeerList,
+        bytes::Bytes,
         solana_net_utils::sockets::unique_port_range_for_tests,
         std::net::Ipv4Addr,
         tokio::{sync::watch, time::sleep},
     };
 
-    /// Recreates an edge case when client identity changes while a peer is in `Connecting`
-    /// state, we must correctly terminate the handshake and leave things in a clean state.
-    #[tokio::test]
-    async fn identity_change_drops_handshakes() {
-        let old_kp = Keypair::new();
-        let old_pubkey = old_kp.pubkey();
-        let port = unique_port_range_for_tests(1).next().unwrap();
+    /// OutboundLoop with no peers, for driving its handlers directly.
+    /// Its input channels are closed, so it must not be `run`.
+    fn test_outbound_loop(keypair: &Keypair) -> OutboundLoop {
+        let max_datagrams_per_second_per_peer = 50;
+        let port = unique_port_range_for_tests(1)
+            .next()
+            .expect("port range must not be empty");
         let mut endpoint = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
             .expect("bind client endpoint");
-        endpoint.set_default_client_config(new_client_config(&old_kp, 50));
+        endpoint.set_default_client_config(new_client_config(
+            keypair,
+            max_datagrams_per_second_per_peer,
+        ));
 
         let (_egress_tx, egress_rx) = mpsc::channel(1);
         let (_identity_tx, identity_rx) = watch::channel(Keypair::new());
@@ -437,10 +461,9 @@ mod tests {
             peers: HashMap::default(),
             push_enabled: true,
         }));
-
-        let mut outbound = OutboundLoop::new(
+        OutboundLoop::new(
             endpoint,
-            old_pubkey,
+            keypair.pubkey(),
             egress_rx,
             KeyUpdateListener {
                 receiver: identity_rx,
@@ -448,8 +471,15 @@ mod tests {
             },
             peer_list_rx,
             CancellationToken::new(),
-            50,
-        );
+            max_datagrams_per_second_per_peer,
+        )
+    }
+
+    /// Recreates an edge case when client identity changes while a peer is in `Connecting`
+    /// state, we must correctly terminate the handshake and leave things in a clean state.
+    #[tokio::test]
+    async fn identity_change_drops_handshakes() {
+        let mut outbound = test_outbound_loop(&Keypair::new());
 
         // Add a fake peer whose handshake is not finished at the moment of id change.
         let stuck_peer = Keypair::new().pubkey();
@@ -491,6 +521,48 @@ mod tests {
         assert_eq!(
             outbound.local_pubkey, new_pubkey,
             "identity change must adopt the new pubkey",
+        );
+    }
+
+    #[tokio::test]
+    async fn unicast_without_connection_is_dropped() {
+        let mut outbound = test_outbound_loop(&Keypair::new());
+        let connecting_peer = Pubkey::new_unique();
+        outbound
+            .peer_state
+            .insert(connecting_peer, PeerState::Connecting);
+        let unknown_peer = Pubkey::new_unique();
+
+        for peer in [connecting_peer, unknown_peer] {
+            outbound.handle_egress_message(EgressMessage::Unicast {
+                peer,
+                message: Bytes::from_static(b"unicast"),
+            });
+        }
+
+        assert_eq!(
+            outbound
+                .stats
+                .unicast_dropped_no_connection
+                .load(Ordering::Relaxed),
+            2,
+            "both unicasts lack an established connection"
+        );
+        assert_eq!(outbound.stats.datagrams_sent.load(Ordering::Relaxed), 0);
+        assert!(
+            outbound.in_flight_handshakes.is_empty(),
+            "unicast must never start a connection attempt"
+        );
+        assert!(
+            matches!(
+                outbound.peer_state.get(&connecting_peer),
+                Some(PeerState::Connecting)
+            ),
+            "unicast must not disturb a pending connection"
+        );
+        assert!(
+            !outbound.peer_state.contains_key(&unknown_peer),
+            "unicast must not add peer state"
         );
     }
 
