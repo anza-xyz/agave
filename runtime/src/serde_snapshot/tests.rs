@@ -11,9 +11,10 @@ mod serde_snapshot_tests {
             },
             runtime_config::RuntimeConfig,
             serde_snapshot::{
-                self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountsDb,
-                SnapshotAccountsDbFields, SnapshotStreams, deserialize_wincode_from,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
+                self, AccountsDbFields, BANK_SNAPSHOT_CONFIG, ExtraFieldsToSerialize,
+                SerializableAccountsDb, SnapshotAccountsDbFields, SnapshotStreams,
+                deserialize_from, reconstruct_accountsdb_from_fields, remap_append_vec_file,
+                serialize_into,
             },
             snapshot_bank_utils,
             snapshot_utils::create_tmp_accounts_dir_for_tests,
@@ -70,7 +71,8 @@ mod serde_snapshot_tests {
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields: AccountsDbFields = deserialize_wincode_from(&mut *stream)?;
+        let accounts_db_fields: AccountsDbFields =
+            deserialize_from(&mut *stream, BANK_SNAPSHOT_CONFIG)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
@@ -99,7 +101,11 @@ mod serde_snapshot_tests {
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        serialize_into(stream, &SerializableAccountsDb::new(slot, bank_hash_stats))
+        serialize_into(
+            stream,
+            &SerializableAccountsDb::new(slot, bank_hash_stats),
+            BANK_SNAPSHOT_CONFIG,
+        )
     }
 
     /// Simulates the unpacking & storage reconstruction done during snapshot unpacking, attaching
