@@ -56,6 +56,7 @@ solana-gossip = { path = "../gossip", features = ["agave-unstable-api", "dev-con
 solana-keypair = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-reward-info = { workspace = true }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-transaction-error = { workspace = true }
 
