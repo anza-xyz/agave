@@ -1042,24 +1042,105 @@ pub fn list(config_file: &str) -> Result<(), String> {
         )
     })?;
 
-    let current_version =
-        load_release_version(&config.active_release_dir().join("version.yml"))?.channel;
+    let current_version = load_release_version(&config.active_release_dir().join("version.yml"))?;
 
+    let mut release_names = vec![];
     for entry in entries {
         match entry {
-            Ok(entry) => {
-                let dir_name = entry.file_name();
-                let current = if current_version.contains(dir_name.to_string_lossy().as_ref()) {
-                    " (current)"
-                } else {
-                    ""
-                };
-                println!("{}{}", dir_name.to_string_lossy(), current);
-            }
+            Ok(entry) => release_names.push(entry.file_name().to_string_lossy().into_owned()),
             Err(err) => {
                 eprintln!("error listing installed versions: {err:?}");
             }
         };
     }
+
+    for release_name in sort_release_names(release_names) {
+        let current = if is_current_release(&release_name, &current_version) {
+            " (current)"
+        } else {
+            ""
+        };
+        println!("{release_name}{current}");
+    }
     Ok(())
+}
+
+/// Orders semver releases newest first, followed by everything else (channel
+/// installs named `<channel>-<commit>`) sorted by name
+fn sort_release_names(release_names: Vec<String>) -> Vec<String> {
+    let (mut semver_releases, mut other_releases): (Vec<_>, Vec<_>) = release_names
+        .into_iter()
+        .map(|name| (semver_of(&name).ok(), name))
+        .partition(|(semver, _)| semver.is_some());
+    semver_releases.sort_by(|a, b| b.0.cmp(&a.0));
+    other_releases.sort_by(|a, b| a.1.cmp(&b.1));
+    semver_releases
+        .into_iter()
+        .chain(other_releases)
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Semver installs live in `<semver>` with channel `v<semver>`, channel
+/// installs live in `<channel>-<commit>`
+fn is_current_release(release_name: &str, current_version: &ReleaseVersion) -> bool {
+    let channel = &current_version.channel;
+    channel.strip_prefix('v') == Some(release_name)
+        || release_name == format!("{channel}-{}", current_version.commit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release_version(channel: &str, commit: &str) -> ReleaseVersion {
+        ReleaseVersion {
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            commit: commit.to_string(),
+            channel: channel.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_sort_release_names() {
+        let names = [
+            "1.18.9",
+            "stable-bbbb",
+            "1.18.10",
+            "beta-aaaa",
+            "1.18.10-rc.1",
+            "2.0.0",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            sort_release_names(names),
+            [
+                "2.0.0",
+                "1.18.10",
+                "1.18.10-rc.1",
+                "1.18.9",
+                "beta-aaaa",
+                "stable-bbbb",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_is_current_release_semver() {
+        let current = release_version("v1.18.10", "abcd");
+        assert!(is_current_release("1.18.10", &current));
+        assert!(!is_current_release("1.18.1", &current));
+        assert!(!is_current_release("1.18", &current));
+        assert!(!is_current_release("stable-abcd", &current));
+    }
+
+    #[test]
+    fn test_is_current_release_channel() {
+        let current = release_version("stable", "abcd");
+        assert!(is_current_release("stable-abcd", &current));
+        assert!(!is_current_release("stable-ab", &current));
+        assert!(!is_current_release("beta-abcd", &current));
+        assert!(!is_current_release("stable", &current));
+    }
 }
