@@ -316,6 +316,15 @@ impl<T> Error for TrySendError<T> {}
 
 pub trait Receiver<T> {
     fn try_recv(&self) -> Result<T, TryRecvError>;
+
+    /// Receives an item that gives way to those returned by [`Receiver::try_recv`]: the loop
+    /// asks for one only when `try_recv` is empty. `admit` is asked only when such an item
+    /// waits, and the item stays queued when it says no. An item sent with
+    /// [`TxSender::try_send_lowest_priority`] is returned only when none sent with
+    /// [`TxSender::try_send_low_priority`] waits.
+    fn try_recv_low_priority(&self, admit: impl FnOnce() -> bool) -> Option<T>
+    where
+        Self: Sized;
 }
 
 pub struct TxSender<T> {
@@ -328,13 +337,21 @@ pub struct TxReceiver<T> {
 
 struct SharedQueue<T> {
     queue: ArrayQueue<T>,
+    low_priority: ArrayQueue<T>,
+    lowest_priority: ArrayQueue<T>,
     senders: AtomicUsize,
     receivers: AtomicUsize,
 }
 
-pub fn channel<T>(capacity: usize) -> (TxSender<T>, TxReceiver<T>) {
+/// Returns a channel of `capacity` items, with room for `low_priority_capacity` more that are
+/// sent with [`TxSender::try_send_low_priority`] and for as many that are sent with
+/// [`TxSender::try_send_lowest_priority`]. Once every sender is dropped,
+/// [`Receiver::try_recv`] reports the channel disconnected even if some of those still wait.
+pub fn channel<T>(capacity: usize, low_priority_capacity: usize) -> (TxSender<T>, TxReceiver<T>) {
     let queue = Arc::new(SharedQueue {
         queue: ArrayQueue::new(capacity),
+        low_priority: ArrayQueue::new(low_priority_capacity),
+        lowest_priority: ArrayQueue::new(low_priority_capacity),
         senders: AtomicUsize::new(1),
         receivers: AtomicUsize::new(1),
     });
@@ -368,6 +385,30 @@ impl<T> TxSender<T> {
         }
         self.queue.queue.push(item).map_err(TrySendError::Full)
     }
+
+    /// Like [`TxSender::try_send`], for an item that gives way to those sent with `try_send`:
+    /// see [`Receiver::try_recv_low_priority`].
+    pub fn try_send_low_priority(&self, item: T) -> Result<(), TrySendError<T>> {
+        if self.queue.receivers.load(Ordering::Relaxed) == 0 {
+            return Err(TrySendError::Disconnected(item));
+        }
+        self.queue
+            .low_priority
+            .push(item)
+            .map_err(TrySendError::Full)
+    }
+
+    /// Like [`TxSender::try_send_low_priority`], for an item that gives way to those as well.
+    /// The two kinds wait apart, so neither takes the room of the other.
+    pub fn try_send_lowest_priority(&self, item: T) -> Result<(), TrySendError<T>> {
+        if self.queue.receivers.load(Ordering::Relaxed) == 0 {
+            return Err(TrySendError::Disconnected(item));
+        }
+        self.queue
+            .lowest_priority
+            .push(item)
+            .map_err(TrySendError::Full)
+    }
 }
 
 impl<T> Drop for TxReceiver<T> {
@@ -386,6 +427,38 @@ impl<T> Receiver<T> for TxReceiver<T> {
         }
         self.queue.queue.pop().ok_or(TryRecvError::Disconnected)
     }
+
+    fn try_recv_low_priority(&self, admit: impl FnOnce() -> bool) -> Option<T> {
+        let queue = &self.queue;
+        if (queue.low_priority.is_empty() && queue.lowest_priority.is_empty()) || !admit() {
+            return None;
+        }
+        // After `admit`, so that a low priority item sent meanwhile still goes first.
+        queue
+            .low_priority
+            .pop()
+            .or_else(|| queue.lowest_priority.pop())
+    }
+}
+
+/// A low priority item is taken only while fewer frames than this are written to the TX ring
+/// and not yet reported as sent, so an item from [`Receiver::try_recv`] is always behind fewer
+/// low priority frames than this plus the destinations of one item.
+const LOW_PRIORITY_MAX_IN_FLIGHT: usize = 64;
+
+/// Counts the frames written to the TX ring that the device has not reported as sent, after
+/// collecting the completions that are ready.
+fn in_flight<U: Umem>(
+    completion: &mut TxCompletionRing,
+    umem: &U,
+    umem_tx_capacity: usize,
+) -> usize {
+    completion.sync(false);
+    while let Some(frame) = completion.read() {
+        umem.release_completed(frame);
+    }
+    completion.commit();
+    umem_tx_capacity.saturating_sub(umem.available())
 }
 
 impl<U: Umem> TxLoop<U> {
@@ -440,14 +513,26 @@ impl<U: Umem> TxLoop<U> {
                 Err(TryRecvError::Empty) => {
                     if timeouts < MAX_TIMEOUTS {
                         timeouts += 1;
-                        thread::sleep(RECV_TIMEOUT);
+                        // Nothing else to send, so a low priority item may go in place of the
+                        // wait. `timeouts` is not reset: if `try_recv` is empty again on the
+                        // next pass, that pass commits what the item wrote, and with it any
+                        // frames written before the item. On an idle queue that is one commit
+                        // and kick per low priority item.
+                        let Some(item) = receiver.try_recv_low_priority(|| {
+                            in_flight(&mut completion, umem, umem_tx_capacity)
+                                < LOW_PRIORITY_MAX_IN_FLIGHT
+                        }) else {
+                            thread::sleep(RECV_TIMEOUT);
+                            continue;
+                        };
+                        item
                     } else {
                         timeouts = 0;
                         commit_pending(&mut ring, &mut written_uncommitted);
                         // we haven't received anything in a while, kick the driver
                         kick(&ring);
+                        continue;
                     }
-                    continue;
                 }
                 Err(TryRecvError::Disconnected) => break,
             };
@@ -790,7 +875,7 @@ mod tests {
 
     #[test]
     fn test_send_full() {
-        let (sender, _receiver) = channel(1);
+        let (sender, _receiver) = channel(1, 1);
 
         assert!(sender.try_send(1).is_ok());
         match sender.try_send(2) {
@@ -801,18 +886,26 @@ mod tests {
 
     #[test]
     fn test_send_disconnected() {
-        let (sender, receiver) = channel(1);
+        let (sender, receiver) = channel(1, 1);
         drop(receiver);
 
         match sender.try_send(1) {
             Err(TrySendError::Disconnected(item)) => assert_eq!(item, 1),
             result => panic!("expected disconnected queue, got {result:?}"),
         }
+        assert!(matches!(
+            sender.try_send_low_priority(2),
+            Err(TrySendError::Disconnected(2))
+        ));
+        assert!(matches!(
+            sender.try_send_lowest_priority(3),
+            Err(TrySendError::Disconnected(3))
+        ));
     }
 
     #[test]
     fn test_recv_disconnected() {
-        let (sender, receiver) = channel(1);
+        let (sender, receiver) = channel(1, 1);
         sender
             .try_send(1)
             .expect("send item before dropping sender");
@@ -827,12 +920,120 @@ mod tests {
 
     #[test]
     fn test_recv_waits_for_cloned_sender() {
-        let (sender, receiver) = channel::<i32>(1);
+        let (sender, receiver) = channel::<i32>(1, 1);
         let sender_clone = sender.clone();
         drop(sender);
 
         assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
         drop(sender_clone);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn test_low_priority_items_are_kept_apart() {
+        let (sender, receiver) = channel(2, 2);
+
+        sender
+            .try_send_low_priority(10)
+            .expect("send low priority item");
+        sender
+            .try_send_low_priority(11)
+            .expect("send low priority item");
+        assert!(matches!(
+            sender.try_send_low_priority(12),
+            Err(TrySendError::Full(12))
+        ));
+        sender.try_send(1).expect("send item");
+
+        // `try_recv` never returns a low priority item.
+        assert_eq!(receiver.try_recv().expect("receive queued item"), 1);
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+
+        // A refused item stays queued, and the items keep their order.
+        assert_eq!(receiver.try_recv_low_priority(|| false), None);
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(10));
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(11));
+        // Nothing waits, so nothing is asked.
+        let admit = || -> bool { panic!("asked to admit a low priority item with none waiting") };
+        assert_eq!(receiver.try_recv_low_priority(admit), None);
+    }
+
+    #[test]
+    fn test_lowest_priority_items_wait_behind_low_priority_ones() {
+        let (sender, receiver) = channel(1, 2);
+
+        // Each kind has its own room: neither takes the other's.
+        for item in [20, 21] {
+            sender
+                .try_send_lowest_priority(item)
+                .expect("send lowest priority item");
+        }
+        assert!(matches!(
+            sender.try_send_lowest_priority(22),
+            Err(TrySendError::Full(22))
+        ));
+        for item in [10, 11] {
+            sender
+                .try_send_low_priority(item)
+                .expect("send low priority item");
+        }
+        assert!(matches!(
+            sender.try_send_low_priority(12),
+            Err(TrySendError::Full(12))
+        ));
+
+        // `try_recv` returns neither kind.
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+
+        // The low priority items go first, though the others were sent before them, and a refused
+        // item stays queued.
+        assert_eq!(receiver.try_recv_low_priority(|| false), None);
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(10));
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(11));
+        assert_eq!(receiver.try_recv_low_priority(|| false), None);
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(20));
+        // One that arrives while lowest priority items still wait goes ahead of them.
+        sender
+            .try_send_low_priority(13)
+            .expect("send low priority item");
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(13));
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(21));
+        let admit = || -> bool { panic!("asked to admit an item with none waiting") };
+        assert_eq!(receiver.try_recv_low_priority(admit), None);
+    }
+
+    #[test]
+    fn test_low_priority_item_sent_while_admit_runs_goes_first() {
+        let (sender, receiver) = channel(1, 1);
+        sender
+            .try_send_lowest_priority(20)
+            .expect("send lowest priority item");
+
+        let admit = || {
+            sender
+                .try_send_low_priority(10)
+                .expect("send low priority item");
+            true
+        };
+        assert_eq!(receiver.try_recv_low_priority(admit), Some(10));
+        assert_eq!(receiver.try_recv_low_priority(|| true), Some(20));
+    }
+
+    #[test]
+    fn test_recv_disconnected_with_low_priority_items_queued() {
+        let (sender, receiver) = channel::<i32>(1, 1);
+
+        sender
+            .try_send_low_priority(10)
+            .expect("send low priority item");
+        sender
+            .try_send_lowest_priority(20)
+            .expect("send lowest priority item");
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        drop(sender);
         assert!(matches!(
             receiver.try_recv(),
             Err(TryRecvError::Disconnected)
