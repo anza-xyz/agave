@@ -5,7 +5,7 @@ use {
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    std::{fmt::Debug, time::Instant},
+    std::{fmt::Debug, num::NonZeroUsize, time::Instant},
 };
 
 #[derive(Debug)]
@@ -208,45 +208,11 @@ impl Shredder {
     where
         I: IntoIterator<Item = T>,
     {
-        let (data, _, data_complete) = shreds.into_iter().try_fold(
-            <(Vec<u8>, Option<u32>, bool)>::default(),
-            |(mut data, prev, data_complete), shred| {
-                // No trailing shreds if we have already observed
-                // DATA_COMPLETE_SHRED.
-                if data_complete {
-                    return Err(Error::InvalidDeshredSet);
-                }
-                let shred = shred.as_ref();
-                // Shreds' indices should be consecutive.
-                let index = Some(
-                    shred::layout::get_index(shred)
-                        .ok_or_else(|| Error::InvalidPayloadSize(shred.len()))?,
-                );
-                if let Some(prev) = prev
-                    && prev.checked_add(1) != index
-                {
-                    return Err(Error::from(TooFewDataShards));
-                }
-                data.extend_from_slice(shred::layout::get_data(shred)?);
-                let flags = shred::layout::get_flags(shred)?;
-                let data_complete = flags.contains(ShredFlags::DATA_COMPLETE_SHRED);
-                Ok((data, index, data_complete))
-            },
-        )?;
-        // The last shred should be DATA_COMPLETE_SHRED.
-        if !data_complete {
-            return Err(Error::from(TooFewDataShards));
+        let mut deshredder = Deshredder::default();
+        for shred in shreds {
+            deshredder.push(shred.as_ref())?;
         }
-        if data.is_empty() {
-            // For backward compatibility. This is needed when the data shred
-            // payload is None, so that deserializing to Vec<Entry> results in
-            // an empty vector.
-            let data_buffer_size =
-                ShredData::capacity(/*proof_size:*/ 0, /*resigned:*/ false).unwrap();
-            Ok(vec![0u8; data_buffer_size])
-        } else {
-            Ok(data)
-        }
+        deshredder.finish()
     }
     /// Produce a single shred with no payload
     /// for use in tests and such
@@ -263,6 +229,82 @@ impl Shredder {
             &mut ProcessShredsStats::default(),
         );
         shreds.pop().unwrap()
+    }
+}
+
+/// Recreates the original buffer from data shreds pushed one at a time, so
+/// that callers can feed it payloads they only hold briefly.
+#[derive(Default)]
+pub(crate) struct Deshredder {
+    data: Vec<u8>,
+    prev_index: Option<u32>,
+    data_complete: bool,
+    num_shreds_to_reserve: Option<NonZeroUsize>,
+}
+
+impl Deshredder {
+    /// Expects a batch of `expected_shreds` shreds, so that a dense batch can
+    /// be buffered without growing in steps. Without a count, the buffer grows
+    /// on demand.
+    pub(crate) fn with_expected_shreds(expected_shreds: Option<NonZeroUsize>) -> Self {
+        Self {
+            num_shreds_to_reserve: expected_shreds,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn push(&mut self, shred: &[u8]) -> Result<(), Error> {
+        // No trailing shreds if we have already observed
+        // DATA_COMPLETE_SHRED.
+        if self.data_complete {
+            return Err(Error::InvalidDeshredSet);
+        }
+        // Shreds' indices should be consecutive.
+        let index = shred::layout::get_index(shred)
+            .ok_or_else(|| Error::InvalidPayloadSize(shred.len()))?;
+        if self
+            .prev_index
+            .is_some_and(|prev_index| prev_index.checked_add(1) != Some(index))
+        {
+            return Err(Error::from(TooFewDataShards));
+        }
+        let data = shred::layout::get_data(shred)?;
+        self.reserve_for_dense_batch(data);
+        self.data.extend_from_slice(data);
+        let flags = shred::layout::get_flags(shred)?;
+        self.data_complete = flags.contains(ShredFlags::DATA_COMPLETE_SHRED);
+        self.prev_index = Some(index);
+        Ok(())
+    }
+
+    /// Reserves all shreds if `data` (typically the second shred) holds at least
+    /// as much as the shreds buffered so far, i.e. the batch has more than one
+    /// full shred.
+    fn reserve_for_dense_batch(&mut self, data: &[u8]) {
+        if !self.data.is_empty()
+            && data.len() >= self.data.len()
+            && let Some(num_shreds) = self.num_shreds_to_reserve.take()
+        {
+            self.data.reserve_exact((num_shreds.get() - 1) * data.len());
+        }
+    }
+
+    pub(crate) fn finish(self) -> Result<Vec<u8>, Error> {
+        // The last shred should be DATA_COMPLETE_SHRED.
+        if !self.data_complete {
+            return Err(Error::from(TooFewDataShards));
+        }
+        if self.data.is_empty() {
+            // For backward compatibility. This is needed when the data shred
+            // payload is None, so that deserializing to Vec<Entry> results in
+            // an empty vector.
+            const PROOF_SIZE: u8 = 0;
+            const RESIGNED: bool = false;
+            let data_buffer_size = ShredData::capacity(PROOF_SIZE, RESIGNED).unwrap();
+            Ok(vec![0u8; data_buffer_size])
+        } else {
+            Ok(self.data)
+        }
     }
 }
 
