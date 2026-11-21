@@ -226,6 +226,7 @@ where
 {
     let sock = Socket::new(Domain::IPV4, sock_type, None)?;
     let mut sz = sock_opt.get(&sock)?;
+    #[allow(clippy::arithmetic_side_effects)]
     if sz < MAX_BUF_SIZ {
         let (mut lo, mut hi) = (sz + 1, MAX_BUF_SIZ);
         while lo <= hi {

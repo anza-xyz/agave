@@ -75,27 +75,19 @@ impl Node {
         const QUIC_CONTROL_TRAFFIC_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MiB
 
         let max_recv_buffer_size = get_max_udp_recv_buffer_size()
-            .map(|sz| {
-                info!("Maximum UDP socket receive buffer size is {}", sz);
-                sz
+            .inspect(|sz| {
+                info!("Maximum UDP socket receive buffer size is {sz}");
             })
-            .map_err(|err| {
-                error!(
-                    "Maximum UDP socket receive buffer size could not be determined: {}",
-                    err
-                )
+            .inspect_err(|err| {
+                error!("Maximum UDP socket receive buffer size could not be determined: {err}")
             })
             .ok();
         let max_send_buffer_size = get_max_udp_send_buffer_size()
-            .map(|sz| {
-                info!("Maximum UDP socket send buffer size is {}", sz);
-                sz
+            .inspect(|sz| {
+                info!("Maximum UDP socket send buffer size is {sz}");
             })
-            .map_err(|err| {
-                error!(
-                    "Maximum UDP socket send buffer size could not be determined: {}",
-                    err
-                )
+            .inspect_err(|err| {
+                error!("Maximum UDP socket send buffer size could not be determined: {err}")
             })
             .ok();
         let set_max_recv_send_buffer_size =
@@ -109,14 +101,14 @@ impl Node {
                 }
                 // As UDP socket sends on freebsd & macos are always
                 // unbuffered, do not change the send buffer size.
-                if cfg!(target_os = "linux") {
-                    if let Some(send_size) = match (send_size, max_send_buffer_size) {
+                if cfg!(target_os = "linux")
+                    && let Some(send_size) = match (send_size, max_send_buffer_size) {
                         (Some(sz), Some(max_sz)) => Some(std::cmp::min(sz, max_sz)),
                         (Some(sz), _) | (_, Some(sz)) => Some(sz),
                         _ => None,
-                    } {
-                        *c = c.send_buffer_size(send_size);
                     }
+                {
+                    *c = c.send_buffer_size(send_size);
                 }
             };
         let mut c = SocketConfigs::default();
