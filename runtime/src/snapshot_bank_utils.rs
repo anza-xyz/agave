@@ -21,8 +21,8 @@ use {
         },
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
-            self, BankSnapshotInfo, UnarchivedSnapshots, rebuild_storages_from_snapshot_dir,
-            verify_and_unarchive_snapshots,
+            self, BankSnapshotInfo, UnarchivedSnapshots, list_storages_from_snapshot_dir,
+            snapshot_storage_rebuilder::StorageToOpen, verify_and_unarchive_snapshots,
         },
     },
     agave_fs::io_setup::IoSetupState,
@@ -43,8 +43,9 @@ use {
         snapshot_hash::SnapshotHash,
     },
     log::*,
+    rand::{rng, seq::SliceRandom},
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig},
+        accounts_db::{AccountsDb, AccountsDbConfig, IndexGenerationInfo},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
     },
     solana_clock::{Epoch, Slot},
@@ -57,7 +58,7 @@ use {
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
         path::PathBuf,
-        sync::{Arc, atomic::AtomicBool},
+        sync::{Arc, Mutex, atomic::AtomicBool},
     },
 };
 
@@ -211,10 +212,9 @@ pub fn bank_from_snapshot_archives(
         genesis_config,
         runtime_config,
         accounts_db,
+        index_generator(limit_load_slot_count_from_snapshot, verify_index),
         debug_keys,
         leader_for_tests,
-        limit_load_slot_count_from_snapshot,
-        verify_index,
     )?;
     measure_rebuild.stop();
     info!("{measure_rebuild}");
@@ -381,9 +381,9 @@ pub fn bank_from_snapshot_dir(
 
     // Storages from this snapshot already live under `account_paths`; the storages list
     // inside the bank snapshot dir tells us which ones belong to it, and stale files
-    // (e.g. from later slots) are pruned by `rebuild_storages_from_snapshot_dir`.
-    let ((accounts_db, bank_fields, accounts_db_fields), measure_rebuild_storages) = measure_time!(
-        rebuild_storages_from_snapshot_dir(bank_snapshot, account_paths, || {
+    // (e.g. from later slots) are pruned by `list_storages_from_snapshot_dir`.
+    let ((accounts_db, storages_to_open, bank_fields, accounts_db_fields), measure_list_storages) = measure_time!(
+        list_storages_from_snapshot_dir(bank_snapshot, account_paths, || {
             AccountsDb::new_with_config(
                 account_paths.to_vec(),
                 accounts_db_config,
@@ -391,9 +391,9 @@ pub fn bank_from_snapshot_dir(
                 exit,
             )
         })?,
-        "rebuild storages from snapshot dir"
+        "list storages from snapshot dir"
     );
-    info!("{measure_rebuild_storages}");
+    info!("{measure_list_storages}");
 
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
@@ -404,10 +404,13 @@ pub fn bank_from_snapshot_dir(
             genesis_config,
             runtime_config,
             accounts_db,
+            index_generator_from_storages_to_open(
+                storages_to_open,
+                limit_load_slot_count_from_snapshot,
+                verify_index,
+            ),
             debug_keys,
             leader_for_tests,
-            limit_load_slot_count_from_snapshot,
-            verify_index,
         )?,
         "rebuild bank from snapshot"
     );
@@ -448,10 +451,67 @@ pub fn bank_from_snapshot_dir(
 
     datapoint_info!(
         "bank_from_snapshot_dir",
-        ("rebuild_storages_us", measure_rebuild_storages.as_us(), i64),
+        ("list_storages_us", measure_list_storages.as_us(), i64),
         ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
     Ok(bank)
+}
+
+/// Returns the generation of the index of an accounts db from its storages.
+pub(crate) fn index_generator(
+    limit_load_slot_count_from_snapshot: Option<usize>,
+    verify_index: bool,
+) -> impl FnOnce(&AccountsDb) -> IndexGenerationInfo {
+    move |accounts_db| {
+        in_index_generation_pool(|| {
+            accounts_db.generate_index(
+                limit_load_slot_count_from_snapshot,
+                verify_index,
+                &INDEX_OWNERS_OF_INTEREST,
+            )
+        })
+    }
+}
+
+/// Like `index_generator`, but from `storages` that the index generation threads open as they scan
+/// them.
+fn index_generator_from_storages_to_open(
+    mut storages: Vec<StorageToOpen>,
+    limit_load_slot_count_from_snapshot: Option<usize>,
+    verify_index: bool,
+) -> impl FnOnce(&AccountsDb) -> IndexGenerationInfo {
+    move |accounts_db| {
+        storages.sort_unstable_by_key(|storage| storage.item.slot_and_id().0);
+        if let Some(limit) = limit_load_slot_count_from_snapshot {
+            storages.truncate(limit); // get rid of the newer slots and keep just the older
+        }
+        let num_storages = storages.len();
+        storages.shuffle(&mut rng());
+        let storages = Mutex::new(storages.into_iter());
+        in_index_generation_pool(|| {
+            accounts_db.generate_index_from(
+                num_storages,
+                || {
+                    let storage = storages.lock().unwrap().next()?;
+                    Some(Arc::new(
+                        storage.open().unwrap_or_else(|err| panic!("{err}")),
+                    ))
+                },
+                verify_index,
+                &INDEX_OWNERS_OF_INTEREST,
+            )
+        })
+    }
+}
+
+const INDEX_OWNERS_OF_INTEREST: [Pubkey; 2] = [solana_sdk_ids::stake::ID, solana_sdk_ids::vote::ID];
+
+fn in_index_generation_pool<R: Send>(op: impl FnOnce() -> R + Send) -> R {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayonGenIndex{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+        .install(op)
 }
 
 /// Verifies the snapshot's slot and hash matches the bank's
@@ -2374,9 +2434,14 @@ mod tests {
         .unwrap();
     }
 
-    #[test_case(AccountsFileProvider::AppendVec)]
-    #[test_case(AccountsFileProvider::Split)]
-    fn test_bank_from_snapshot_dir_good(accounts_file_provider: AccountsFileProvider) {
+    #[test_case(AccountsFileProvider::AppendVec, false)]
+    #[test_case(AccountsFileProvider::AppendVec, true)]
+    #[test_case(AccountsFileProvider::Split, false)]
+    #[test_case(AccountsFileProvider::Split, true)]
+    fn test_bank_from_snapshot_dir_good(
+        accounts_file_provider: AccountsFileProvider,
+        verify_index: bool,
+    ) {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::new_unique(),
@@ -2420,7 +2485,7 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
+            verify_index,
             accounts_db_config,
             None,
             Arc::default(),

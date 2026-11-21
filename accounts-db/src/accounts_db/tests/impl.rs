@@ -98,7 +98,7 @@ fn generate_index_for_storage(
 ) {
     let mut reader = accounts_file::new_scan_accounts_reader();
     storage.accounts.set_file_on_reader(&mut reader).unwrap();
-    db.generate_index_for_slot(&mut reader, accum, 0, storage, &[]);
+    db.generate_index_for_slot(&mut reader, accum, storage, &[]);
 }
 
 #[test]
@@ -190,6 +190,13 @@ fn test_generate_index_with_direct_io() {
         buffered.calculated_accounts_lt_hash
     );
     assert_eq!(direct_alive, buffered_alive);
+}
+
+#[test]
+#[should_panic(expected = "scanned 0 storages instead of the 2 expected")]
+fn test_generate_index_from_unexpected_number_of_storages() {
+    let db = AccountsDb::new_for_tests_with_config(Vec::new(), DEFAULT_ACCOUNTS_DB_CONFIG);
+    db.generate_index_from(2, || None, false, &[]);
 }
 
 #[test]
