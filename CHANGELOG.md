@@ -46,6 +46,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Support signing with Ed25519 keys held in AWS KMS using `aws-kms:<key-id|key-arn|alias/name>` signer sources, in builds with the `aws-kms` feature
+
 ### solana-client
 
 #### Breaking

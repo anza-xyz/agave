@@ -237,6 +237,8 @@ assert_cmd = "2.2.2"
 async-lock = "3.5.0"
 async-trait = "0.1.92"
 atomic-wait = "1.1.0"
+aws-config = { version = "1.13.3", features = ["behavior-version-latest", "credentials-login", "sso"] }
+aws-sdk-kms = { version = "1.133.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aya = "0.16.0"
 aya-ebpf = "0.3.0"
 base64 = "0.23.1"
