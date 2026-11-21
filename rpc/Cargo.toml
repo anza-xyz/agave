@@ -44,15 +44,12 @@ jsonrpc-core = { workspace = true }
 jsonrpc-core-client = { workspace = true }
 jsonrpc-derive = { workspace = true }
 jsonrpc-http-server = { workspace = true }
-jsonrpc-pubsub = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
-rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
-soketto = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
@@ -105,7 +102,6 @@ solana-vote-program = { workspace = true }
 spl-generic-token = { workspace = true }
 spl-token-2022-interface = { workspace = true }
 spl-token-interface = { workspace = true }
-stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat", "rt"] }

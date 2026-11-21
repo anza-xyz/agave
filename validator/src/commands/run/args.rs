@@ -19,7 +19,7 @@ use {
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
-    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
+    solana_rpc::rpc::JsonRpcConfig,
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -29,7 +29,6 @@ use {
 pub(super) mod accounts_db_config;
 pub mod blockstore_options;
 pub mod json_rpc_config;
-pub mod pub_sub_config;
 pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
 pub mod send_transaction_config;
@@ -48,7 +47,6 @@ pub struct RunArgs {
     pub rpc_bootstrap_config: RpcBootstrapConfig,
     pub blockstore_options: BlockstoreOptions,
     pub json_rpc_config: JsonRpcConfig,
-    pub pub_sub_config: PubSubConfig,
     pub send_transaction_service_config: SendTransactionServiceConfig,
     pub filter_keys: HashSet<Pubkey>,
 }
@@ -112,7 +110,6 @@ impl FromClapArgMatches for RunArgs {
             rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
             json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
-            pub_sub_config: PubSubConfig::from_clap_arg_match(matches)?,
             send_transaction_service_config: SendTransactionServiceConfig::from_clap_arg_match(
                 matches,
             )?,
@@ -220,7 +217,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("PORT")
             .takes_value(true)
             .validator(port_validator)
-            .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
+            .help("Enable JSON RPC on this port"),
     )
     .arg(
         Arg::with_name("private_rpc")
@@ -743,7 +740,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .validator(|s| is_within_range(s, 1..))
             .help("Number of jemalloc arenas shared by replay and banking."),
     )
-    .args(&pub_sub_config::args(/*test_validator:*/ false))
     .args(&json_rpc_config::args())
     .args(&rpc_bigtable_config::args())
     .args(&send_transaction_config::args())
@@ -813,15 +809,6 @@ mod tests {
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
                 json_rpc_config,
-                pub_sub_config: PubSubConfig {
-                    worker_threads: 4,
-                    notification_threads: None,
-                    queue_capacity_items:
-                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_ITEMS,
-                    queue_capacity_bytes:
-                        solana_rpc::rpc_pubsub_service::DEFAULT_QUEUE_CAPACITY_BYTES,
-                    ..PubSubConfig::default_for_tests()
-                },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
                 filter_keys: HashSet::new(),
             }
@@ -840,7 +827,6 @@ mod tests {
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
                 blockstore_options: self.blockstore_options.clone(),
                 json_rpc_config: self.json_rpc_config.clone(),
-                pub_sub_config: self.pub_sub_config.clone(),
                 send_transaction_service_config: self.send_transaction_service_config.clone(),
                 filter_keys: self.filter_keys.clone(),
             }

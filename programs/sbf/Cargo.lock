@@ -5488,17 +5488,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha1"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
-dependencies = [
- "cfg-if 1.0.5",
- "cpufeatures 0.2.17",
- "digest 0.10.7",
-]
-
-[[package]]
 name = "sha2"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5713,21 +5702,6 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.0",
-]
-
-[[package]]
-name = "soketto"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e859df029d160cb88608f5d7df7fb4753fd20fdfb4de5644f3d8b8440841721"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures 0.3.34",
- "httparse",
- "log",
- "rand 0.8.6",
- "sha1",
 ]
 
 [[package]]
@@ -7869,15 +7843,12 @@ dependencies = [
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-http-server",
- "jsonrpc-pubsub",
  "libc",
  "log",
  "lru 0.19.0",
- "rayon",
  "regex",
  "serde",
  "serde_json",
- "soketto",
  "solana-account",
  "solana-account-decoder",
  "solana-accounts-db",
@@ -7929,7 +7900,6 @@ dependencies = [
  "spl-generic-token",
  "spl-token-2022-interface",
  "spl-token-interface",
- "stream-cancel",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util 0.7.19",
@@ -10336,17 +10306,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "stream-cancel"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f9fbf9bd71e4cf18d68a8a0951c0e5b7255920c0cd992c4ff51cddd6ef514a3"
-dependencies = [
- "futures-core",
- "pin-project",
- "tokio",
-]
 
 [[package]]
 name = "strsim"

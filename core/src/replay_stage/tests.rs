@@ -155,7 +155,6 @@ impl ProcessActiveBanksContext {
             transaction_status_sender: None,
             entry_notification_sender: None,
             bank_notification_sender: None,
-            rpc_subscriptions: None,
             slot_status_notifier: None,
             cost_update_sender,
             block_metadata_notifier: None,
@@ -261,7 +260,6 @@ fn dead_slot_context_for_tests(blockstore: Arc<Blockstore>) -> DeadSlotContext {
     DeadSlotContext {
         notifications: DeadSlotNotifications {
             blockstore,
-            rpc_subscriptions: None,
             slot_status_notifier: None,
         },
     }
@@ -505,7 +503,6 @@ where
             &DeadSlotContext {
                 notifications: DeadSlotNotifications {
                     blockstore: blockstore.clone(),
-                    rpc_subscriptions: None,
                     slot_status_notifier: Some(slot_status_notifier),
                 },
             },
@@ -611,7 +608,6 @@ fn test_process_set_root_command_requires_matching_frozen_bank() {
             sender: transaction_status_sender,
             dependency_tracker: None,
         }),
-        rpc_subscriptions: None,
         drop_bank_sender,
         leader_schedule_cache,
         votor_commitment_sender,
@@ -1410,7 +1406,6 @@ fn test_headerless_update_parent(transaction_status_disconnected: bool) {
             blockstore: &blockstore,
             bank_forks: &bank_forks,
             leader_schedule_cache: &leader_schedule_cache,
-            rpc_subscriptions: None,
             slot_status_notifier: &None,
             transaction_status_sender: Some(&transaction_status_sender),
             my_pubkey: &my_pubkey,
@@ -1712,7 +1707,6 @@ fn test_spurious_update_parent_boundary(replayed_shreds: u64, should_be_hard: bo
         &blockstore,
         &bank_forks,
         &None,
-        &None,
         &mut progress,
         &mut Vec::new(),
         None,
@@ -1793,7 +1787,6 @@ fn test_soft_dead_restarts() {
         &blockstore,
         &bank_forks,
         &None,
-        &None,
         &mut progress,
         &mut Vec::new(),
         None,
@@ -1832,7 +1825,6 @@ fn test_full_soft_dead_hardens() {
         &Pubkey::new_unique(),
         &blockstore,
         &bank_forks,
-        &None,
         &None,
         &mut progress,
         &mut Vec::new(),
@@ -1885,7 +1877,6 @@ fn test_replay_own_update_full() {
             blockstore: &blockstore,
             bank_forks: &bank_forks,
             leader_schedule_cache: &leader_schedule_cache,
-            rpc_subscriptions: None,
             slot_status_notifier: &None,
             transaction_status_sender: None,
             my_pubkey: &my_pubkey,

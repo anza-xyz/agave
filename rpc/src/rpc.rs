@@ -50,12 +50,10 @@ use {
     solana_rpc_client_api::{
         config::*,
         custom_error::RpcCustomError,
-        filter::RpcFilterType,
         request::{
             DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_GET_CONFIRMED_BLOCKS_RANGE,
             MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT, MAX_GET_INFLATION_REWARD_ADDRESSES,
-            MAX_GET_PROGRAM_ACCOUNT_FILTERS, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
-            MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
+            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
             MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY,
         },
         response::{Response as RpcResponse, *},
@@ -2133,35 +2131,6 @@ impl JsonRpcRequestProcessor {
     }
 }
 
-pub(crate) fn optimize_filters(filters: &mut [RpcFilterType]) {
-    filters.iter_mut().for_each(|filter_type| {
-        if let RpcFilterType::Memcmp(compare) = filter_type
-            && let Err(err) = compare.convert_to_raw_bytes()
-        {
-            // All filters should have been previously verified
-            warn!("Invalid filter: bytes could not be decoded, {err}");
-        }
-    })
-}
-
-pub(crate) fn verify_filters(filters: &[RpcFilterType]) -> Result<()> {
-    if filters.len() > MAX_GET_PROGRAM_ACCOUNT_FILTERS {
-        return Err(Error::invalid_params(format!(
-            "Too many filters provided; max {MAX_GET_PROGRAM_ACCOUNT_FILTERS}"
-        )));
-    }
-    for filter in filters {
-        verify_filter(filter)?;
-    }
-    Ok(())
-}
-
-fn verify_filter(input: &RpcFilterType) -> Result<()> {
-    input
-        .verify()
-        .map_err(|e| Error::invalid_params(format!("Invalid param: {e:?}")))
-}
-
 pub fn verify_pubkey(input: &str) -> Result<Pubkey> {
     input
         .parse()
@@ -4027,7 +3996,6 @@ pub mod tests {
                 BankNotification, OptimisticallyConfirmedBankTracker,
             },
             rpc_service::service_runtime,
-            rpc_subscriptions::RpcSubscriptions,
         },
         jsonrpc_core::{ErrorCode, MetaIoHandler, Output, Response, Value, futures},
         jsonrpc_core_client::transports::local,
@@ -4062,16 +4030,13 @@ pub mod tests {
             invoke_context::InvokeContext, program_cache::entry::ProgramCacheEntry,
             solana_sbpf::declare_builtin_function,
         },
-        solana_rpc_client_api::{
-            custom_error::{
-                JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
-                JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
-                JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
-                JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
-                JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
-                JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
-            },
-            filter::{Memcmp, MemcmpEncodedBytes},
+        solana_rpc_client_api::custom_error::{
+            JSON_RPC_SERVER_ERROR_BLOCK_NOT_AVAILABLE,
+            JSON_RPC_SERVER_ERROR_BLOCK_STATUS_NOT_AVAILABLE_YET,
+            JSON_RPC_SERVER_ERROR_LEADER_SCHEDULE_IDENTITY_NOT_FOUND,
+            JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
+            JSON_RPC_SERVER_ERROR_TRANSACTION_HISTORY_NOT_AVAILABLE,
+            JSON_RPC_SERVER_ERROR_UNSUPPORTED_TRANSACTION_VERSION,
         },
         solana_runtime::{
             bank::{BankTestConfig, SlotLeader},
@@ -6992,21 +6957,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_verify_filter() {
-        let filter = RpcFilterType::Memcmp(Memcmp::new(
-            0,                                                                                      // offset
-            MemcmpEncodedBytes::Base58("13LeFbG6m2EP1fqCj9k66fcXsoTHMMtgr7c78AivUrYD".to_string()), // encoded bytes
-        ));
-        assert_eq!(verify_filter(&filter), Ok(()));
-        // Invalid base-58
-        let filter = RpcFilterType::Memcmp(Memcmp::new(
-            0,                                             // offset
-            MemcmpEncodedBytes::Base58("III".to_string()), // encoded bytes
-        ));
-        assert!(verify_filter(&filter).is_err());
-    }
-
-    #[test]
     fn test_rpc_verify_pubkey() {
         let pubkey = solana_pubkey::new_rand();
         assert_eq!(verify_pubkey(&pubkey.to_string()).unwrap(), pubkey);
@@ -8657,13 +8607,6 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let mut pending_optimistically_confirmed_banks = HashSet::new();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
-            exit,
-            max_complete_transaction_status_slot.clone(),
-            bank_forks.clone(),
-            block_commitment_cache.clone(),
-            optimistically_confirmed_bank.clone(),
-        ));
 
         let config = JsonRpcConfig::default();
         let JsonRpcConfig {
@@ -8714,7 +8657,6 @@ pub mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -8738,7 +8680,6 @@ pub mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -8762,7 +8703,6 @@ pub mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,
@@ -8790,7 +8730,6 @@ pub mod tests {
             ),
             &bank_forks,
             &optimistically_confirmed_bank,
-            &subscriptions,
             &mut pending_optimistically_confirmed_banks,
             &mut last_notified_confirmed_slot,
             &mut highest_confirmed_slot,

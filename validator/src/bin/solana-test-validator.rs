@@ -1,7 +1,7 @@
 use {
     agave_validator::{
-        admin_rpc_service, cli, commands::FromClapArgMatches, dashboard::Dashboard,
-        ledger_lockfile, lock_ledger, println_name_value,
+        admin_rpc_service, cli, dashboard::Dashboard, ledger_lockfile, lock_ledger,
+        println_name_value,
     },
     agave_votor::vote_history_storage::FileVoteHistoryStorage,
     clap::{crate_name, value_t, value_t_or_exit, values_t_or_exit},
@@ -23,10 +23,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
-        rpc_pubsub_service::PubSubConfig,
-    },
+    solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_system_interface::program as system_program,
@@ -150,8 +147,6 @@ fn main() {
         });
 
     let rpc_port = value_t_or_exit!(matches, "rpc_port", u16);
-    let pub_sub_config =
-        PubSubConfig::from_clap_arg_match(&matches).unwrap_or(PubSubConfig::default_for_tests());
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
@@ -478,7 +473,6 @@ fn main() {
             faucet_pubkey,
             AccountSharedData::empty(faucet_lamports, &system_program::id()),
         )
-        .pubsub_config(pub_sub_config)
         .rpc_port(rpc_port)
         .add_upgradeable_programs_with_path(&upgradeable_programs_to_load)
         .add_accounts_from_json_files(&accounts_to_load)

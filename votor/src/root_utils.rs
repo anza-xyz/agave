@@ -9,9 +9,8 @@ use {
     solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_pubkey::Pubkey,
-    solana_rpc::{
-        optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
-        rpc_subscriptions::RpcSubscriptions,
+    solana_rpc::optimistically_confirmed_bank_tracker::{
+        BankNotification, BankNotificationSenderConfig,
     },
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
@@ -110,7 +109,6 @@ pub fn check_and_handle_new_root<CB>(
     blockstore: &Blockstore,
     leader_schedule_cache: &Arc<LeaderScheduleCache>,
     bank_forks: &RwLock<BankForks>,
-    rpc_subscriptions: Option<&RpcSubscriptions>,
     my_pubkey: &Pubkey,
     callback: CB,
 ) where
@@ -158,9 +156,6 @@ pub fn check_and_handle_new_root<CB>(
         transaction_status_sender.send_transaction_status_rooted_message(&root_bank);
     }
     blockstore.slots_stats.mark_rooted(new_root);
-    if let Some(rpc_subscriptions) = rpc_subscriptions {
-        rpc_subscriptions.notify_roots(rooted_slots);
-    }
     if let Some(sender) = bank_notification_sender {
         let dependency_work = sender
             .dependency_tracker

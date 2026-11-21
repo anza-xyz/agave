@@ -20,7 +20,7 @@ use {
     },
     solana_download_utils::download_snapshot_archive,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
-    solana_gossip::{contact_info::Protocol, gossip_service::discover_validators},
+    solana_gossip::gossip_service::discover_validators,
     solana_keypair::{Keypair, keypair_from_seed},
     solana_leader_schedule::FixedSchedule,
     solana_ledger::{
@@ -45,11 +45,9 @@ use {
     },
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_poh_config::PohConfig,
-    solana_pubsub_client::pubsub_client::PubsubClient,
-    solana_rpc_client_api::{config::RpcSignatureSubscribeConfig, response::RpcSignatureResult},
     solana_runtime::snapshot_utils,
     solana_signer::Signer,
-    solana_stake_interface as stake, solana_system_transaction as system_transaction,
+    solana_stake_interface as stake,
     std::{
         assert_matches,
         collections::{HashMap, HashSet},
@@ -105,110 +103,6 @@ fn test_spend_and_verify_all_nodes() {
     );
 }
 
-/// Ensures a follower RPC PubSub endpoint emits both receive and processed signature
-/// notifications, not just the leader-facing send/confirm path covered elsewhere.
-#[test]
-#[serial]
-fn test_local_cluster_signature_subscribe() {
-    agave_logger::setup_with_default(RUST_LOG_FILTER);
-    let num_nodes = 2;
-    let cluster = LocalCluster::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-        SocketAddrSpace::Unspecified,
-    );
-    let nodes = cluster.get_node_pubkeys();
-
-    // Get non leader
-    let non_bootstrap_id = nodes
-        .into_iter()
-        .find(|id| id != cluster.entry_point_info.pubkey())
-        .unwrap();
-    let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
-
-    let rpc_client = cluster
-        .build_rpc_client(cluster.entry_point_info.pubkey())
-        .unwrap();
-
-    let (blockhash, _) = rpc_client
-        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
-        .unwrap();
-
-    let mut transaction = system_transaction::transfer(
-        &cluster.funding_keypair,
-        &solana_pubkey::new_rand(),
-        10,
-        blockhash,
-    );
-
-    let (mut sig_subscribe_client, receiver) = PubsubClient::signature_subscribe(
-        format!("ws://{}", non_bootstrap_info.rpc_pubsub().unwrap()),
-        &transaction.signatures[0],
-        Some(RpcSignatureSubscribeConfig {
-            commitment: Some(CommitmentConfig::processed()),
-            enable_received_notification: Some(true),
-        }),
-    )
-    .unwrap();
-
-    let tpu_sender = cluster_tests::TpuSender::new();
-    let leader_pubkey = rpc_client
-        .get_slot_leader()
-        .expect("test_bad_handshake: get_slot_leader");
-    let tpu_addr = rpc_client
-        .get_cluster_nodes()
-        .expect("test_bad_handshake: get_cluster_nodes")
-        .into_iter()
-        .find(|n| n.pubkey == leader_pubkey.to_string())
-        .and_then(|n| n.tpu_quic)
-        .or_else(|| {
-            cluster
-                .get_contact_info(cluster.entry_point_info.pubkey())
-                .unwrap()
-                .tpu(Protocol::QUIC)
-        })
-        .expect("test_bad_handshake: leader has no QUIC TPU address");
-    tpu_sender
-        .send_transaction_with_retries(
-            tpu_addr,
-            &rpc_client,
-            &[&cluster.funding_keypair],
-            &mut transaction,
-            5,
-        )
-        .unwrap();
-
-    let mut got_received_notification = false;
-    loop {
-        let responses: Vec<_> = receiver.try_iter().collect();
-        let mut should_break = false;
-        for response in responses {
-            match response.value {
-                RpcSignatureResult::ProcessedSignature(_) => {
-                    should_break = true;
-                    break;
-                }
-                RpcSignatureResult::ReceivedSignature(_) => {
-                    got_received_notification = true;
-                }
-            }
-        }
-
-        if should_break {
-            break;
-        }
-        sleep(Duration::from_millis(100));
-    }
-
-    // If we don't drop the cluster, the blocking web socket service
-    // won't return, and the `sig_subscribe_client` won't shut down
-    drop(cluster);
-    sig_subscribe_client.shutdown().unwrap();
-    assert!(got_received_notification);
-}
-/// Exercises TPU forwarding by sending transactions to a validator that never leads.
-/// Other spend tests assume direct leader delivery; this one proves the forwarding path itself.
 #[test]
 #[serial]
 fn test_forwarding() {

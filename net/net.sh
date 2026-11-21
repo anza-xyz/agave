@@ -24,9 +24,9 @@ usage() {
                                      supplied to the client program as command line parameters.
                                      extraArgs use solana-transaction-bench argument names.
                                      For example,
-                                         -c transaction-bench=2="--target-tps 5000 ws-leader-tracker"
+                                         -c transaction-bench=2="--target-tps 5000 yellowstone-leader-tracker http://127.0.0.1:10000"
                                      This will start 2 solana-transaction-bench clients, and supply
-                                     "--target-tps 5000 ws-leader-tracker" to each of them.
+                                     "--target-tps 5000 yellowstone-leader-tracker http://127.0.0.1:10000" to each of them.
 --use-unstaked-connection          - Use unstaked connection. By default, staked connection with
                                      bootstrap node credentials is used.
 EOM

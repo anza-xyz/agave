@@ -95,11 +95,9 @@ impl Node {
             num_votor_quic_endpoints: DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
         };
         let mut node = Self::new_with_external_ip(pubkey, config);
-        let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
+        let rpc_ports: [u16; 1] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
         let rpc_addr = SocketAddr::new(bind_ip_addr, rpc_ports[0]);
-        let rpc_pubsub_addr = SocketAddr::new(bind_ip_addr, rpc_ports[1]);
         node.info.set_rpc(rpc_addr).unwrap();
-        node.info.set_rpc_pubsub(rpc_pubsub_addr).unwrap();
         node
     }
 

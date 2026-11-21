@@ -222,7 +222,6 @@ pub(super) fn process_soft_dead_slots(
     my_pubkey: &Pubkey,
     blockstore: &Arc<Blockstore>,
     bank_forks: &RwLock<BankForks>,
-    rpc_subscriptions: &Option<Arc<solana_rpc::rpc_subscriptions::RpcSubscriptions>>,
     slot_status_notifier: &Option<solana_rpc::slot_status_notifier::SlotStatusNotifier>,
     progress: &mut ProgressMap,
     async_verification_freelist: &mut Vec<AsyncVerificationProgress>,
@@ -292,7 +291,6 @@ pub(super) fn process_soft_dead_slots(
             if let Some(bank) = bank {
                 let notifications = DeadSlotNotifications {
                     blockstore: blockstore.clone(),
-                    rpc_subscriptions: rpc_subscriptions.clone(),
                     slot_status_notifier: slot_status_notifier.clone(),
                 };
                 mark_hard_dead_slot_notifications(&bank, err, log_level, progress, &notifications);

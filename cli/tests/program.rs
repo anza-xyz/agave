@@ -279,7 +279,7 @@ async fn setup_extend_program_test<'a>(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -363,7 +363,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -414,7 +414,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -476,7 +476,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -505,7 +505,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -588,7 +588,7 @@ async fn test_cli_program_deploy_no_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -620,7 +620,7 @@ async fn test_cli_program_deploy_no_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -708,7 +708,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -741,7 +741,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             compute_unit_price: None,
             max_sign_attempts: 5,
             auto_extend: true,
-            use_rpc: false,
+            use_rpc: true,
             generate_ephemeral_program_id: true,
             skip_feature_verification: true,
         });
@@ -860,7 +860,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: false,
     });
@@ -1015,7 +1015,7 @@ async fn test_cli_program_deploy_local_verifier() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1049,7 +1049,7 @@ async fn test_cli_program_deploy_local_verifier() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1082,7 +1082,7 @@ async fn test_cli_program_deploy_local_verifier() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1164,7 +1164,7 @@ async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enable
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1264,7 +1264,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1321,7 +1321,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -1369,7 +1369,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1449,7 +1449,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1533,7 +1533,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1560,7 +1560,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -1699,7 +1699,7 @@ async fn test_cli_program_upgrade_auto_extend(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1725,7 +1725,7 @@ async fn test_cli_program_upgrade_auto_extend(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false, // --no-auto-extend flag is present
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1756,7 +1756,7 @@ async fn test_cli_program_upgrade_auto_extend(
             compute_unit_price: None,
             max_sign_attempts: 5,
             auto_extend: false, // --no-auto-extend flag is present
-            use_rpc: false,
+            use_rpc: true,
             generate_ephemeral_program_id: false,
             skip_feature_verification: true,
         });
@@ -1813,7 +1813,7 @@ async fn test_cli_program_upgrade_auto_extend(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true, // --no-auto-extend flag is absent
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1950,7 +1950,7 @@ async fn test_cli_program_close_program() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -2087,7 +2087,7 @@ async fn test_cli_program_extend_program() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -2143,7 +2143,7 @@ async fn test_cli_program_extend_program() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -2377,7 +2377,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2417,7 +2417,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -2487,7 +2487,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -2533,7 +2533,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -2617,7 +2617,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2686,7 +2686,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2705,7 +2705,7 @@ async fn test_cli_program_write_buffer() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -2795,7 +2795,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2823,7 +2823,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
             skip_fee_check: false,
             compute_unit_price: None,
             max_sign_attempts: 5,
-            use_rpc: false,
+            use_rpc: true,
             skip_feature_verification: true,
         });
 
@@ -2892,7 +2892,7 @@ async fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2954,7 +2954,7 @@ async fn test_cli_program_set_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3016,7 +3016,7 @@ async fn test_cli_program_set_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3084,7 +3084,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3115,7 +3115,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3146,7 +3146,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3241,7 +3241,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -3429,7 +3429,7 @@ async fn test_cli_program_show() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3537,7 +3537,7 @@ async fn test_cli_program_show() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -3719,7 +3719,7 @@ async fn test_cli_program_dump() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3766,7 +3766,7 @@ async fn create_buffer_with_offline_authority<'a>(
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(config).await.unwrap();
@@ -3802,9 +3802,8 @@ async fn create_buffer_with_offline_authority<'a>(
 
 #[allow(clippy::assertions_on_constants)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[test_case(None, false; "default")]
-#[test_case(Some(10), false; "with_compute_unit_price")]
 #[test_case(None, true; "use_rpc")]
+#[test_case(Some(10), true; "with_compute_unit_price")]
 async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -4039,7 +4038,7 @@ async fn test_cli_program_deploy_prefunded_programdata(allow_prefunded_programda
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });

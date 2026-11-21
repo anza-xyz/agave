@@ -44,7 +44,6 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
-        rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
@@ -196,7 +195,6 @@ struct ProcessActiveBanksContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     entry_notification_sender: Option<EntryNotifierSender>,
     bank_notification_sender: Option<BankNotificationSenderConfig>,
-    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     cost_update_sender: Sender<CostUpdate>,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
@@ -212,7 +210,6 @@ struct ProcessBankForksContext {
     snapshot_controller: Option<Arc<SnapshotController>>,
     bank_notification_sender: Option<BankNotificationSenderConfig>,
     transaction_status_sender: Option<TransactionStatusSender>,
-    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     drop_bank_sender: Sender<Vec<BankWithScheduler>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     votor_commitment_sender: Sender<CommitmentAggregationData>,
@@ -223,7 +220,6 @@ impl ProcessActiveBanksContext {
     fn dead_slot_notifications(&self) -> DeadSlotNotifications {
         DeadSlotNotifications {
             blockstore: self.blockstore.clone(),
-            rpc_subscriptions: self.rpc_subscriptions.clone(),
             slot_status_notifier: self.slot_status_notifier.clone(),
         }
     }
@@ -246,7 +242,6 @@ struct NewBankForksContext<'a> {
     /// Leader schedule used to construct child banks.
     leader_schedule_cache: &'a LeaderScheduleCache,
     /// Optional RPC fanout for bank-created notifications.
-    rpc_subscriptions: Option<&'a RpcSubscriptions>,
     /// Optional slot-status fanout for bank-created notifications.
     slot_status_notifier: &'a Option<SlotStatusNotifier>,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
@@ -272,7 +267,6 @@ pub struct ReplayStageConfig {
 }
 
 pub struct ReplaySenders {
-    pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
@@ -430,7 +424,6 @@ impl ReplayStage {
         } = config;
 
         let ReplaySenders {
-            rpc_subscriptions,
             slot_status_notifier,
             transaction_status_sender,
             entry_notification_sender,
@@ -500,7 +493,6 @@ impl ReplayStage {
                 transaction_status_sender: transaction_status_sender.clone(),
                 entry_notification_sender: entry_notification_sender.clone(),
                 bank_notification_sender: bank_notification_sender.clone(),
-                rpc_subscriptions: rpc_subscriptions.clone(),
                 slot_status_notifier: slot_status_notifier.clone(),
                 cost_update_sender: cost_update_sender.clone(),
                 block_metadata_notifier: block_metadata_notifier.clone(),
@@ -515,7 +507,6 @@ impl ReplayStage {
                 snapshot_controller: snapshot_controller.clone(),
                 bank_notification_sender: bank_notification_sender.clone(),
                 transaction_status_sender: transaction_status_sender.clone(),
-                rpc_subscriptions: rpc_subscriptions.clone(),
                 drop_bank_sender: drop_bank_sender.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 votor_commitment_sender,
@@ -562,7 +553,6 @@ impl ReplayStage {
                         blockstore: &blockstore,
                         bank_forks: &bank_forks,
                         leader_schedule_cache: &leader_schedule_cache,
-                        rpc_subscriptions: rpc_subscriptions.as_deref(),
                         slot_status_notifier: &slot_status_notifier,
                         transaction_status_sender: transaction_status_sender.as_ref(),
                         my_pubkey: &my_pubkey,
@@ -612,7 +602,6 @@ impl ReplayStage {
                     &my_pubkey,
                     &blockstore,
                     &bank_forks,
-                    &rpc_subscriptions,
                     &slot_status_notifier,
                     &mut progress,
                     &mut async_verification_freelist,
@@ -1890,7 +1879,6 @@ impl ReplayStage {
             &context.blockstore,
             &context.leader_schedule_cache,
             &context.bank_forks,
-            context.rpc_subscriptions.as_deref(),
             my_pubkey,
             |bank_forks| progress.handle_new_root(bank_forks),
         );
@@ -1978,7 +1966,6 @@ impl ReplayStage {
             blockstore,
             bank_forks,
             leader_schedule_cache,
-            rpc_subscriptions,
             slot_status_notifier,
             transaction_status_sender,
             my_pubkey,
@@ -2061,9 +2048,7 @@ impl ReplayStage {
                 let child_bank = Self::new_bank_from_parent_with_notify(
                     parent_bank.clone(),
                     child_slot,
-                    root,
                     leader,
-                    rpc_subscriptions,
                     slot_status_notifier,
                 );
                 blockstore_processor::set_alpenglow_ticks(&child_bank, &migration_status);
@@ -2128,14 +2113,9 @@ impl ReplayStage {
     pub(crate) fn new_bank_from_parent_with_notify(
         parent: Arc<Bank>,
         slot: u64,
-        root_slot: u64,
         leader: SlotLeader,
-        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
     ) -> Bank {
-        if let Some(rpc_subscriptions) = rpc_subscriptions {
-            rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
-        }
         let parent_slot = parent.slot();
         let bank = Bank::new_from_parent(parent, leader, slot);
         if let Some(slot_status_notifier) = slot_status_notifier {

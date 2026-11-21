@@ -459,16 +459,9 @@ pub fn execute(
         rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
-        rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
-            (
-                SocketAddr::new(rpc_bind_address, rpc_port),
-                SocketAddr::new(rpc_bind_address, rpc_port + 1),
-                // If additional ports are added, +2 needs to be skipped to avoid a conflict with
-                // the websocket port (which is +2) in web3.js This odd port shifting is tracked at
-                // https://github.com/solana-labs/solana/issues/12250
-            )
-        }),
-        pubsub_config: run_args.pub_sub_config,
+        rpc_addr: value_t!(matches, "rpc_port", u16)
+            .ok()
+            .map(|rpc_port| SocketAddr::new(rpc_bind_address, rpc_port)),
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
         known_validators: run_args.known_validators,
@@ -606,7 +599,7 @@ pub fn execute(
     admin_rpc_service::run(
         &ledger_path,
         admin_rpc_service::AdminRpcRequestMetadata {
-            rpc_addr: validator_config.rpc_addrs.map(|(rpc_addr, _)| rpc_addr),
+            rpc_addr: validator_config.rpc_addr,
             start_time: std::time::SystemTime::now(),
             validator_exit: validator_config.validator_exit.clone(),
             validator_exit_backpressure: validator_config.validator_exit_backpressure.clone(),
@@ -651,15 +644,13 @@ pub fn execute(
         }
         if let Some(public_rpc_addr) = public_rpc_addr {
             set_socket!(set_rpc, public_rpc_addr, "RPC");
-            set_socket!(set_rpc_pubsub, public_rpc_addr, "RPC-pubsub");
-        } else if let Some((rpc_addr, rpc_pubsub_addr)) = validator_config.rpc_addrs {
+        } else if let Some(rpc_addr) = validator_config.rpc_addr {
             let addr = node
                 .info
                 .gossip()
                 .expect("Operator must spin up node with valid gossip address")
                 .ip();
             set_socket!(set_rpc, (addr, rpc_addr.port()), "RPC");
-            set_socket!(set_rpc_pubsub, (addr, rpc_pubsub_addr.port()), "RPC-pubsub");
         }
     }
 

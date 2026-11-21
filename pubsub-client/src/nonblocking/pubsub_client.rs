@@ -30,12 +30,10 @@
 //!
 //! This pattern is illustrated in the example below.
 //!
-//! By default the [`block_subscribe`] event is disabled on RPC nodes. It can be
-//! enabled by passing `--rpc-pubsub-enable-block-subscription` to
-//! `agave-validator`. When this method is disabled, the RPC server will return
-//! a "Method not found" error message.
+//! Connect to an RPC provider that supports subscriptions. Agave v5.0 no longer
+//! serves WebSocket RPC. Availability of [`block_subscribe`] depends on the provider.
 //!
-//! [`block_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.block_subscribe
+//! [`block_subscribe`]: https://solana.com/docs/rpc/websocket/blocksubscribe
 //!
 //! # Examples
 //!
@@ -378,8 +376,7 @@ impl PubsubClient {
     ///
     /// Receives messages of type [`RpcBlockUpdate`] when a block is confirmed or finalized.
     ///
-    /// This method is disabled by default. It can be enabled by passing
-    /// `--rpc-pubsub-enable-block-subscription` to `agave-validator`.
+    /// Availability of this method depends on the RPC provider.
     ///
     /// # RPC Reference
     ///

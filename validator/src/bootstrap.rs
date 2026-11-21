@@ -99,18 +99,13 @@ fn verify_reachable_ports(
     }
 
     let mut tcp_listeners = vec![];
-    if let Some((rpc_addr, rpc_pubsub_addr)) = validator_config.rpc_addrs {
-        for (purpose, bind_addr, public_addr) in &[
-            ("RPC", rpc_addr, node.info.rpc()),
-            ("RPC pubsub", rpc_pubsub_addr, node.info.rpc_pubsub()),
-        ] {
-            if verify_address(public_addr) {
-                tcp_listeners.push(TcpListener::bind(bind_addr).unwrap_or_else(|err| {
-                    error!("Unable to bind to tcp {bind_addr:?} for {purpose}: {err}");
-                    exit(1);
-                }));
-            }
-        }
+    if let Some(rpc_addr) = validator_config.rpc_addr
+        && verify_address(&node.info.rpc())
+    {
+        tcp_listeners.push(TcpListener::bind(rpc_addr).unwrap_or_else(|err| {
+            error!("Unable to bind to tcp {rpc_addr:?} for RPC: {err}");
+            exit(1);
+        }));
     }
 
     if let Some(ip_echo) = &node.sockets.ip_echo {

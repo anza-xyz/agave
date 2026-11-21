@@ -175,17 +175,12 @@ pub(super) mod tests {
         super::*,
         crate::commands::run::args::{
             RunArgs,
-            pub_sub_config::DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
             tests::{
                 verify_args_struct_by_command_run_is_error_with_identity_setup,
                 verify_args_struct_by_command_run_with_identity_setup,
             },
         },
-        solana_rpc::rpc_pubsub_service::PubSubConfig,
-        std::{
-            net::{Ipv4Addr, SocketAddr},
-            num::NonZeroUsize,
-        },
+        std::net::{Ipv4Addr, SocketAddr},
     };
 
     pub fn default_json_rpc_config() -> JsonRpcConfig {
@@ -393,17 +388,6 @@ pub(super) mod tests {
                 json_rpc_config: JsonRpcConfig {
                     full_api: true,
                     ..default_run_args.json_rpc_config.clone()
-                },
-                pub_sub_config: PubSubConfig {
-                    notification_threads: Some(
-                        NonZeroUsize::new(
-                            DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS
-                                .parse::<usize>()
-                                .unwrap(),
-                        )
-                        .unwrap(),
-                    ),
-                    ..default_run_args.pub_sub_config.clone()
                 },
                 ..default_run_args.clone()
             };

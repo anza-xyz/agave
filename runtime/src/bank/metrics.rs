@@ -35,7 +35,6 @@ pub(crate) struct NewBankTimings {
     pub(crate) builtin_program_ids_time_us: u64,
     pub(crate) executor_cache_time_us: u64,
     pub(crate) transaction_debug_keys_time_us: u64,
-    pub(crate) transaction_log_collector_config_time_us: u64,
     pub(crate) feature_set_time_us: u64,
     pub(crate) ancestors_time_us: u64,
     pub(crate) update_epoch_time_us: u64,
@@ -136,11 +135,6 @@ pub(crate) fn report_new_bank_metrics(
         (
             "transaction_debug_keys_us",
             timings.transaction_debug_keys_time_us,
-            i64
-        ),
-        (
-            "transaction_log_collector_config_us",
-            timings.transaction_log_collector_config_time_us,
             i64
         ),
         ("feature_set_us", timings.feature_set_time_us, i64),

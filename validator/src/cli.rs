@@ -1,5 +1,5 @@
 use {
-    crate::{commands, commands::run::args::pub_sub_config},
+    crate::commands,
     agave_snapshots::{
         DEFAULT_ARCHIVE_COMPRESSION, SnapshotVersion,
         snapshot_config::{
@@ -455,7 +455,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .default_value(&default_args.rpc_port)
                 .validator(port_validator)
-                .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
+                .help("Enable JSON RPC on this port"),
         )
         .arg(
             Arg::with_name("enable_rpc_bigtable_ledger_storage")
@@ -863,7 +863,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
-        .args(&pub_sub_config::args(/*test_validator:*/ true))
 }
 
 pub struct DefaultTestArgs {
