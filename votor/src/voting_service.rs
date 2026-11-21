@@ -502,7 +502,7 @@ mod tests {
         crate::peer_list_updater::PeerListService,
         agave_votor_messages::{
             certificate::{Certificate, CertificateType},
-            consensus_message::{ConsensusMessage, VoteMessage},
+            consensus_message::{Block, ConsensusMessage, VoteMessage},
             migration::MigrationStatus,
             stake::NonZeroStake,
             vote::Vote,
@@ -610,6 +610,185 @@ mod tests {
                 "limit {limit} is below the honest rate at {duration:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_reward_vote_copies_fit_rate_limit() {
+        let limit = votor_rate_limit_pps();
+        for (_, params) in slot_time_feature_gates() {
+            let slot_ms = Duration::from_nanos_u128(params.ns_per_slot()).as_millis() as usize;
+            let packets_per_slot = NEW_PACKETS_PER_SLOT + REWARD_VOTE_COPY_DELAYS.len();
+            let pps = (packets_per_slot * 1_000).div_ceil(slot_ms);
+            assert!(
+                pps <= limit,
+                "{pps} pps at {slot_ms}ms slots, with copies of at most one reward vote per slot, \
+                 exceeds the receiver limit of {limit} pps"
+            );
+        }
+    }
+
+    fn test_leader_schedule_cache() -> LeaderScheduleCache {
+        let num_validators = 4;
+        let validator_keypairs = (0..num_validators)
+            .map(|_| ValidatorVoteKeypairs::new_rand())
+            .collect::<Vec<_>>();
+        let genesis = create_genesis_config_with_vote_accounts(
+            1_000_000_000,
+            &validator_keypairs,
+            vec![100; num_validators],
+        );
+        LeaderScheduleCache::new_from_bank(&Bank::new_for_tests(&genesis.genesis_config))
+    }
+
+    fn reward_leader(vote: &Vote, leader_schedule_cache: &LeaderScheduleCache) -> Pubkey {
+        leader_schedule_cache
+            .slot_leader_at(vote.slot() + NUM_SLOTS_FOR_REWARD, None)
+            .expect("leader schedule must cover the reward slot")
+            .id
+    }
+
+    #[test_case(Vote::new_unique_notar(5), true; "notarize")]
+    #[test_case(Vote::new_skip_vote(5), true; "skip")]
+    #[test_case(Vote::new_finalization_vote(5), false; "finalize")]
+    #[test_case(Vote::new_unique_notar_fallback(5), false; "notarize_fallback")]
+    #[test_case(Vote::new_skip_fallback_vote(5), false; "skip_fallback")]
+    #[test_case(Vote::new_genesis_vote(Block::new_unique(5)), false; "genesis")]
+    fn test_reward_vote_copies_schedule(vote: Vote, counts_for_rewards: bool) {
+        let leader_schedule_cache = test_leader_schedule_cache();
+        let reward_leader = reward_leader(&vote, &leader_schedule_cache);
+        let message = Bytes::from_static(b"vote");
+        let mut copies = RewardVoteCopies::default();
+
+        let before = Instant::now();
+        copies.schedule(
+            &vote,
+            &message,
+            Pubkey::new_unique(),
+            &leader_schedule_cache,
+        );
+        let after = Instant::now();
+
+        if !counts_for_rewards {
+            assert!(
+                copies.pending.is_empty(),
+                "{vote:?} does not count for rewards and must not be copied"
+            );
+            return;
+        }
+        assert_eq!(copies.pending.len(), REWARD_VOTE_COPY_DELAYS.len());
+        for (copy, delay) in copies.pending.iter().zip(REWARD_VOTE_COPY_DELAYS) {
+            assert!(
+                before + delay <= copy.due && copy.due <= after + delay,
+                "copy must be due {delay:?} after scheduling"
+            );
+            assert_eq!(copy.reward_leader, reward_leader);
+            assert_eq!(copy.message, message);
+        }
+    }
+
+    #[test]
+    fn test_reward_vote_copies_not_scheduled_for_self() {
+        let leader_schedule_cache = test_leader_schedule_cache();
+        let vote = Vote::new_skip_vote(5);
+        let my_pubkey = reward_leader(&vote, &leader_schedule_cache);
+        let mut copies = RewardVoteCopies::default();
+
+        copies.schedule(
+            &vote,
+            &Bytes::from_static(b"vote"),
+            my_pubkey,
+            &leader_schedule_cache,
+        );
+
+        assert!(
+            copies.pending.is_empty(),
+            "no copies when we build the reward certificate ourselves"
+        );
+    }
+
+    #[test]
+    fn test_reward_vote_copies_capped() {
+        let leader_schedule_cache = test_leader_schedule_cache();
+        let vote = Vote::new_skip_vote(5);
+        let message = Bytes::from_static(b"vote");
+        let mut copies = RewardVoteCopies::default();
+
+        for _ in 0..MAX_PENDING_REWARD_VOTE_COPIES {
+            copies.schedule(
+                &vote,
+                &message,
+                Pubkey::new_unique(),
+                &leader_schedule_cache,
+            );
+        }
+
+        let max_votes = MAX_PENDING_REWARD_VOTE_COPIES / REWARD_VOTE_COPY_DELAYS.len();
+        assert_eq!(
+            copies.pending.len(),
+            max_votes * REWARD_VOTE_COPY_DELAYS.len(),
+            "scheduling must stop once another vote's copies would exceed the cap"
+        );
+    }
+
+    fn due_and_future_copies() -> RewardVoteCopies {
+        let now = Instant::now();
+        RewardVoteCopies {
+            pending: vec![
+                RewardVoteCopy {
+                    due: now,
+                    reward_leader: Pubkey::new_unique(),
+                    message: Bytes::from_static(b"due"),
+                },
+                RewardVoteCopy {
+                    due: now + Duration::from_secs(60),
+                    reward_leader: Pubkey::new_unique(),
+                    message: Bytes::from_static(b"future"),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_reward_vote_copies_send_due() {
+        let (egress, mut egress_receiver) = mpsc::channel(16);
+        let mut copies = due_and_future_copies();
+        let due_leader = copies.pending[0].reward_leader;
+        let future = copies.pending[1].due;
+
+        let in_standstill = false;
+        copies.send_due(in_standstill, &egress);
+
+        match egress_receiver.try_recv() {
+            Ok(EgressMessage::Unicast { peer, message }) => {
+                assert_eq!(peer, due_leader);
+                assert_eq!(message, Bytes::from_static(b"due"));
+            }
+            other => panic!("expected a unicast of the due copy, got {other:?}"),
+        }
+        assert!(
+            egress_receiver.try_recv().is_err(),
+            "copies not yet due must not be sent"
+        );
+        assert_eq!(copies.next_due(), Some(future));
+    }
+
+    #[test]
+    fn test_reward_vote_copies_cleared_in_standstill() {
+        let (egress, mut egress_receiver) = mpsc::channel(16);
+        let mut copies = due_and_future_copies();
+
+        let in_standstill = true;
+        copies.send_due(in_standstill, &egress);
+
+        assert!(
+            egress_receiver.try_recv().is_err(),
+            "nothing is sent in standstill"
+        );
+        assert_eq!(
+            copies.next_due(),
+            None,
+            "standstill drops all pending copies"
+        );
     }
 
     #[test]
