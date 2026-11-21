@@ -1,4 +1,4 @@
-# Agave Style Guidelines
+# Agave Contribution Guidelines
 
 The goal of these guidelines is to improve developer productivity by allowing
 developers to jump into any file in the codebase and not need to adapt to
@@ -18,6 +18,60 @@ will be deemed consequential or not on a case by case basis. As an example,
 spelling and/or grammar fixes will almost always be considered inconsequential,
 unless they materially correct the message.
 
+## Pull Request Process
+
+There is no single person assigned to watching GitHub for new PRs and ushering
+contributors through the process. Rather, it is the responsibility of the PR
+author to progress their PR along. The general process is outlined below.
+
+### Pull Request Prerequisites
+
+CI will kickoff immediately when a PR is created or updated. CI is a shared
+resource so the following sanity steps should be run locally *before* pushing a
+PR to avoid wasting/slowing down CI for everyone else:
+
+```bash
+$ ./ci/test-sanity.sh
+$ ./ci/test-checks.sh
+$ ./ci/feature-check/test-feature.sh
+```
+
+### Draft Pull Requests
+
+Consider opening all PRs as draft PRs first. Using a draft PR allows CI to
+kickoff while you fill out the PR description and self-review the change.
+Additionally, draft PRs defer requesting reviews from any CODEOWNERS until the
+PR is marked "Ready to Review".
+
+Once the PR description is written and CI succeeds, click the "Ready to Review"
+button and add reviewers. Adding reviewers before CI succeeds will needlessly
+notify reviewers and diminish reviewer engagement. Don't bug the humans until
+you have gotten past the bots.
+
+If a PR has received a lot of feedback and needs substantial rework, feel free
+to convert the PR back to draft until issues are resolved and CI is green.
+Similarly, draft PRs provide a nice venue for discussion to get "directional
+approval". Mentioning a specific user in a comment and asking for specific
+feedback may be appropriate to get approval on an idea before spending time to
+to fully polish the PR.
+
+### Pull Request Review
+
+#### Reviewers
+
+All PRs require at least one approval in order to merge. Reviews should be
+requested from people knowledgable on the component. The "correct" reviewer(s)
+may be automatically added as a CODEOWNER, suggested as a reviewer by GitHub, or
+can be determined with `git blame`. If in doubt, ask.
+
+#### Timeline
+
+It would be ideal if all PRs could be reviewed and merged very shortly after
+creation. However, it is important to remember that reviewers may be occupied
+with higher priority tasks than reviewing your PR. If a PR has green CI and is
+waiting for review for 7 days without feedback, it is acceptable to gently
+nudge the reviewer(s). Finally, keep in mind that PRs that are easier to review
+are more likely to be reviewed quickly.
 
 ## Pull Request style
 
@@ -50,14 +104,6 @@ cherry-picked commit:
 
 ```bash
 $ git pull --rebase upstream master
-```
-
-Before pushing the code do not forget to run:
-
-```bash
-$ ./ci/test-sanity.sh
-$ ./ci/test-checks.sh
-$ ./ci/feature-check/test-feature.sh
 ```
 
 Any changes that break consensus must be behind a feature gate and must have
@@ -110,40 +156,10 @@ may be pulled in through crates.io.
 
 ## Getting Pull Requests Merged
 
-There is no single person assigned to watching GitHub PR queue and ushering you
-through the process. Typically, you will ask the person that wrote a component
-to review changes to it. You can find the author using `git blame` or asking on
-Discord.  When working to get your PR merged, it's most important to understand
-that changing the code is your priority and not necessarily a priority of the
-person you need an approval from. Also, while you may interact the most with
+Also, while you may interact the most with
 the component author, you should aim to be inclusive of others. Providing a
 detailed problem description is the most effective means of engaging both the
 component author and other potentially interested parties.
-
-### Draft Pull Requests
-
-Consider opening all PRs as Draft Pull Requests first. Using a draft PR allows
-you to start the CI automation, review the changes, write a detailed problem
-description and explain your solution.
-
-Once the description is written and CI succeeds, click the "Ready to Review" button
-and add reviewers. Adding reviewers before CI succeeds is a fast path to losing
-reviewer engagement. Not only will they be notified and see the PR is not yet
-ready for them, they will also be bombarded with additional notifications
-each time you push a commit to get past CI or until they "mute" the PR. Once
-muted, you'll need to reach out over some other medium, such as Discord, to
-request they have another look. When you use draft PRs, no notifications are
-sent when you push commits and edit the PR description. Use draft PRs
-liberally.  Don't bug the humans until you have gotten past the bots.
-
-If your PR has received a lot of feedback and needs a lot of rework, feel free
-to convert it into a draft until issues are resolved and CI is green.
-
-Do not add reviewers to draft PRs.  GitHub doesn't automatically clear
-approvals when you click "Ready for Review", so a review that meant "I approve
-of the direction" suddenly has the appearance of "I approve of these changes."
-Instead, add a comment that mentions the usernames that you would like a review
-from. Ask explicitly what you would like feedback on.
 
 ### What should be in my PR description?
 
@@ -225,14 +241,6 @@ qualified as "automerge".
 * "good first issue": If you happen to find an issue that is non-urgent and
 self-contained with moderate scope, you might want to consider attaching
 "good first issue" to it as it might be a good practice for newcomers.
-
-### When will my PR be reviewed?
-
-PRs are typically reviewed and merged in under 7 days. If your PR has been open
-for longer, it's a strong indicator that the reviewers aren't confident the
-change meets the quality standards of the codebase. You might consider closing
-it and coming back with smaller PRs and longer descriptions detailing what
-problem it solves and how it solves it.
 
 ### How to manage review feedback?
 
