@@ -40,6 +40,15 @@ pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
     )
 }
 
+pub fn bind_gossip_port_in_range(
+    gossip_addr: &SocketAddr,
+    port_range: PortRange,
+    bind_ip_addr: IpAddr,
+) -> (u16, (UdpSocket, TcpListener)) {
+    let config = SocketConfiguration::default();
+    bind_gossip_port_in_range_with_config(gossip_addr, port_range, bind_ip_addr, config)
+}
+
 pub fn bind_gossip_port_in_range_with_config(
     gossip_addr: &SocketAddr,
     port_range: PortRange,
@@ -141,24 +150,43 @@ pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<
 }
 
 pub fn get_max_udp_recv_buffer_size() -> io::Result<usize> {
-    get_max_socket_buffer_size(Type::DGRAM, nix::sys::socket::sockopt::RcvBuf)
-}
-pub fn get_max_udp_send_buffer_size() -> io::Result<usize> {
-    get_max_socket_buffer_size(Type::DGRAM, nix::sys::socket::sockopt::SndBuf)
+    probe_max_socket_buffer_size_capped(Type::DGRAM, nix::sys::socket::sockopt::RcvBuf)
 }
 
-// The get_max_socket_buffer_size() functions below will probe buffer sizes
+pub fn get_max_udp_send_buffer_size() -> io::Result<usize> {
+    probe_max_socket_buffer_size_capped(Type::DGRAM, nix::sys::socket::sockopt::SndBuf)
+}
+
+// The probe_max_socket_buffer_size() functions below will probe buffer sizes
 // up to this limit which should be both sufficiently large and within the
 // allowable range on all the platforms below. It has been conservatively
-// set as the maximum value representable by a signed 32-bit integer.
+// set to 64MB which is sufficient for 50ms's worth of 10Gbit/s line rate data.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-const MAX_BUF_SIZ: usize = 0x7fff_ffff;
+const MAX_BUF_SIZ: usize = 0x0400_0000;
+
+// probe_max_socket_buffer_size_capped() calls the platform specific probe
+// function and caps the result to MAX_BUF_SIZ. This is needed as the probe
+// function can return values in excess of MAX_BUF_SIZ in certain circumstances.
+fn probe_max_socket_buffer_size_capped<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+where
+    T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
+{
+    if cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    )) {
+        probe_max_socket_buffer_size(sock_type, sock_opt).map(|sz| std::cmp::min(MAX_BUF_SIZ, sz))
+    } else {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
 
 // Linux normally always succeeds, clamping the size to the system limit.
 // A quirk of Linux is that it doubles buffer size internally and returns
 // the doubled buffer size when queried hence the division by two below.
 #[cfg(target_os = "linux")]
-fn get_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+fn probe_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
 where
     T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
 {
@@ -176,7 +204,7 @@ where
 // fail. Hence we intentionally disregard any error when requesting the
 // maximum buffer size.
 #[cfg(target_os = "macos")]
-fn get_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+fn probe_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
 where
     T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
 {
@@ -192,7 +220,7 @@ where
 // error if the size requested exceeds the system limit. Thus a binary
 // search algorithm is employed to determine the maximum available size.
 #[cfg(target_os = "freebsd")]
-fn get_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
+fn probe_max_socket_buffer_size<T>(sock_type: Type, sock_opt: T) -> io::Result<usize>
 where
     T: nix::sys::socket::GetSockOpt<Val = usize> + nix::sys::socket::SetSockOpt<Val = usize>,
 {

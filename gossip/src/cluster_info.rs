@@ -56,9 +56,7 @@ use {
     solana_net_utils::{
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
         multihomed_sockets::BindIpAddrs,
-        sockets::{
-            SocketConfiguration, bind_gossip_port_in_range_with_config, bind_to_localhost_unique,
-        },
+        sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         token_bucket::{KeyedRateLimiter, TokenBucket},
     },
     solana_perf::{
@@ -2160,12 +2158,8 @@ impl ClusterInfo {
         shred_version: u16,
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let (port, (gossip_socket, ip_echo)) = bind_gossip_port_in_range_with_config(
-            gossip_addr,
-            VALIDATOR_PORT_RANGE,
-            bind_ip_addr,
-            SocketConfiguration::default(),
-        );
+        let (port, (gossip_socket, ip_echo)) =
+            bind_gossip_port_in_range(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
         let contact_info =
             Self::gossip_contact_info(id, SocketAddr::new(gossip_addr.ip(), port), shred_version);
 
