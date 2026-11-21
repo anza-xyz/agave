@@ -1143,7 +1143,6 @@ mod tests {
                 &self.blockstore,
                 &self.leader_schedule_cache,
                 &self.bank_forks,
-                None,
                 &self.my_pubkey,
                 |_| {},
             );

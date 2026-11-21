@@ -53,7 +53,6 @@ pub enum ExecuteTimingType {
     UpdateStakesCacheUs,
     UpdateExecutorsUs,
     NumExecuteBatches,
-    CollectLogsUs,
     TotalBatchesLen,
     UpdateTransactionStatuses,
     ProgramCacheUs,
@@ -143,13 +142,6 @@ eager_macro_rules! { $eager_1
                 $self
                     .metrics
                     .index(ExecuteTimingType::CollectBalancesUs).0,
-                i64
-            ),
-            (
-                "collect_logs_us",
-                $self
-                    .metrics
-                    .index(ExecuteTimingType::CollectLogsUs).0,
                 i64
             ),
             (

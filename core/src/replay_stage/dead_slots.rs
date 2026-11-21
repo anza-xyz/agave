@@ -8,10 +8,8 @@ use {
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::BlockstoreProcessorError,
     },
-    solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
-    solana_rpc_client_api::response::SlotUpdate,
+    solana_rpc::slot_status_notifier::SlotStatusNotifier,
     solana_runtime::{bank::Bank, block_component_processor::BlockComponentProcessorError},
-    solana_time_utils::timestamp,
     std::sync::Arc,
 };
 
@@ -64,15 +62,13 @@ pub(super) struct DeadSlotNotifications {
     /// Persistent ledger state. Hard-dead slots are written here; soft-dead
     /// slots intentionally are not.
     pub(super) blockstore: Arc<Blockstore>,
-    /// RPC subscription fanout for durable dead-slot notifications.
-    pub(super) rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     /// Optional test/runtime hook used by slot-status observers.
     pub(super) slot_status_notifier: Option<SlotStatusNotifier>,
 }
 
 /// All state needed to decide and publish a replay dead-slot transition.
 pub(super) struct DeadSlotContext {
-    /// Persistent/RPC notification sinks.
+    /// Persistent ledger state and Geyser notification sink.
     pub(super) notifications: DeadSlotNotifications,
 }
 
@@ -214,14 +210,6 @@ pub(super) fn mark_hard_dead_slot_notifications(
             bank.bank_id(),
             err.clone(),
         );
-    }
-
-    if let Some(rpc_subscriptions) = notifications.rpc_subscriptions.as_ref() {
-        rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
-            slot,
-            err,
-            timestamp: timestamp(),
-        });
     }
 }
 

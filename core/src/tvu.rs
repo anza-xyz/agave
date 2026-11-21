@@ -57,7 +57,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc::{
         max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
-        rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
+        slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
         bank_forks::BankForks,
@@ -200,7 +200,6 @@ impl Tvu {
         blockstore: Arc<Blockstore>,
         ledger_signal_receiver: Receiver<bool>,
         update_parent_receiver: UpdateParentReceiver,
-        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         poh_leader_state: SharedLeaderState,
         vote_history: VoteHistory,
         vote_history_storage: Arc<dyn VoteHistoryStorage>,
@@ -363,7 +362,6 @@ impl Tvu {
             cluster_info.clone(),
             Arc::new(retransmit_sockets),
             max_slots.clone(),
-            rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.turbine_xdp_sender,
             votor_event_sender.clone(),
@@ -443,11 +441,8 @@ impl Tvu {
         let (drop_bank_sender, drop_bank_receiver) = unbounded();
         let (bls_sender, bls_receiver) = bounded(MAX_BLS_MESSAGES_TO_SEND);
 
-        let (votor_commitment_sender, commitment_service) = AggregateCommitmentService::new(
-            exit.clone(),
-            block_commitment_cache.clone(),
-            rpc_subscriptions.clone(),
-        );
+        let (votor_commitment_sender, commitment_service) =
+            AggregateCommitmentService::new(exit.clone(), block_commitment_cache.clone());
         let (own_votes_sender, own_votes_receiver) =
             EvictingSender::new_bounded(MAX_ALPENGLOW_PACKET_NUM);
         let (footer_certs_sender, footer_certs_receiver) = bounded(MAX_ALPENGLOW_PACKET_NUM);
@@ -488,7 +483,6 @@ impl Tvu {
         let votor = Votor::new(votor_config);
 
         let replay_senders = ReplaySenders {
-            rpc_subscriptions,
             slot_status_notifier,
             transaction_status_sender,
             entry_notification_sender,
@@ -615,13 +609,12 @@ pub mod tests {
         },
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_poh::poh_recorder::PohRecorder,
-        solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks_controller::BankForksControllerHandle,
         },
         solana_signer::Signer,
-        std::sync::atomic::{AtomicU64, Ordering},
+        std::sync::atomic::Ordering,
     };
 
     #[test]
@@ -681,7 +674,6 @@ pub mod tests {
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let (verified_voter_slots_sender, verified_voter_slots_receiver) =
             EvictingSender::new_bounded(1024);
-        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let replay_highest_frozen = Arc::new(ReplayHighestFrozen::default());
         let (leader_window_info_sender, _leader_window_info_receiver) = bounded(1024);
@@ -714,13 +706,6 @@ pub mod tests {
             blockstore,
             ledger_signal_receiver,
             update_parent_receiver,
-            Some(Arc::new(RpcSubscriptions::new_for_tests(
-                exit.clone(),
-                max_complete_transaction_status_slot,
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
-            ))),
             poh_recorder.read().unwrap().shared_leader_state(),
             VoteHistory::default(),
             Arc::new(NullVoteHistoryStorage::default()),

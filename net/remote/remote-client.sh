@@ -156,11 +156,10 @@ solana-transaction-bench)
     contains_arg --staked-identity-file "${runArgs[@]}" || runArgs+=(--staked-identity-file ./validator-identity.json)
   fi
 
-  # In a multinode cluster the leader rotates, so follow the leader schedule
-  # over the RPC websocket by default. Operators can override by passing a
-  # leader-tracker subcommand in the extra args.
   if [[ ${#leaderTrackerArgs[@]} -eq 0 ]]; then
-    leaderTrackerArgs=(ws-leader-tracker)
+    echo "Choose a leader tracker in the extra args. Agave v5.0 no longer serves WebSocket RPC."
+    echo "Use yellowstone-leader-tracker or custom-leader-tracker for a rotating cluster, or pinned-leader-tracker for a fixed TPU."
+    exit 1
   fi
 
   clientCommand="\

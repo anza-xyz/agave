@@ -4,7 +4,6 @@ use {
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
-    solana_rpc::rpc_subscriptions::RpcSubscriptions,
     solana_runtime::commitment::{BlockCommitmentCache, CommitmentSlots},
     std::{
         sync::{
@@ -24,7 +23,6 @@ impl AggregateCommitmentService {
     pub fn new(
         exit: Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        subscriptions: Option<Arc<RpcSubscriptions>>,
     ) -> (Sender<CommitmentAggregationData>, Self) {
         // Votor normally emits no more than two commitment updates per slot.
         // Keep a generous bound for catch-up and standstill recovery.
@@ -65,10 +63,6 @@ impl AggregateCommitmentService {
                             i64
                         ),
                     );
-
-                    if let Some(subscriptions) = subscriptions.as_deref() {
-                        subscriptions.notify_subscribers(commitment_slots);
-                    }
                 }
             })
             .unwrap();

@@ -1,5 +1,5 @@
 use {
-    crate::{commands, commands::run::args::pub_sub_config},
+    crate::commands,
     agave_snapshots::{
         DEFAULT_ARCHIVE_COMPRESSION, SnapshotVersion,
         snapshot_config::{
@@ -440,15 +440,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .help("Log mode: stream the validator log"),
         )
         .arg(
-            Arg::with_name("account_indexes")
-                .long("account-index")
-                .takes_value(true)
-                .multiple(true)
-                .possible_values(&["program-id", "spl-token-owner", "spl-token-mint"])
-                .value_name("INDEX")
-                .help("Enable an accounts index, indexed by the selected account field"),
-        )
-        .arg(
             Arg::with_name("faucet_port")
                 .long("faucet-port")
                 .value_name("PORT")
@@ -464,7 +455,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .default_value(&default_args.rpc_port)
                 .validator(port_validator)
-                .help("Enable JSON RPC on this port, and the next port for the RPC websocket"),
+                .help("Enable JSON RPC on this port"),
         )
         .arg(
             Arg::with_name("enable_rpc_bigtable_ledger_storage")
@@ -872,7 +863,6 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      silently ignored",
                 ),
         )
-        .args(&pub_sub_config::args(/*test_validator:*/ true))
 }
 
 pub struct DefaultTestArgs {

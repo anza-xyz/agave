@@ -38,7 +38,7 @@ use {
         record_channels::RecordReceiver,
     },
     solana_pubkey::Pubkey,
-    solana_rpc::{rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier},
+    solana_rpc::slot_status_notifier::SlotStatusNotifier,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankForks, SharableBanks},
@@ -142,7 +142,6 @@ pub struct BlockCreationLoopConfig {
     pub cluster_info: Arc<ClusterInfo>,
     pub poh_recorder: Arc<RwLock<PohRecorder>>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
-    pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
 
     // Notifiers
     pub slot_status_notifier: Option<SlotStatusNotifier>,
@@ -181,7 +180,6 @@ struct LeaderContext {
     sharable_banks: SharableBanks,
     alpenglow_slot_clock: SharedAlpenglowSlotClock,
     bank_forks_controller: Arc<dyn BankForksController>,
-    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     entry_notification_sender: Option<EntryNotifierSender>,
     transaction_status_sender: Option<TransactionStatusSender>,
@@ -262,7 +260,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         cluster_info,
         poh_recorder,
         leader_schedule_cache,
-        rpc_subscriptions,
         slot_status_notifier,
         entry_notification_sender,
         transaction_status_sender,
@@ -299,7 +296,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         sharable_banks,
         alpenglow_slot_clock,
         bank_forks_controller,
-        rpc_subscriptions,
         slot_status_notifier,
         entry_notification_sender,
         transaction_status_sender,
@@ -1437,9 +1433,7 @@ fn create_and_insert_leader_bank(
     let tpu_bank = ReplayStage::new_bank_from_parent_with_notify(
         parent_bank.clone(),
         slot,
-        root_slot,
         leader,
-        ctx.rpc_subscriptions.as_deref(),
         &ctx.slot_status_notifier,
     )
     .mark_leader_bank();
@@ -1633,7 +1627,6 @@ mod tests {
                 alpenglow_slot_clock: SharedAlpenglowSlotClock::default(),
                 bank_forks: bank_forks.clone(),
                 bank_forks_controller,
-                rpc_subscriptions: None,
                 slot_status_notifier: None,
                 entry_notification_sender: None,
                 transaction_status_sender: None,

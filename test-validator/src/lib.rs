@@ -52,7 +52,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
+    solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_rpc_client_api::{
         client_error::Error as RpcClientError, request::MAX_MULTIPLE_ACCOUNTS,
@@ -138,8 +138,7 @@ pub struct TestValidatorGenesis {
     ledger_path: Option<PathBuf>,
     pub rent: Rent,
     rpc_config: JsonRpcConfig,
-    pubsub_config: PubSubConfig,
-    rpc_ports: Option<(u16, u16)>, // (JsonRpc, JsonRpcPubSub), None == random ports
+    rpc_port: Option<u16>, // None selects an available port.
     warp_slot: Option<Slot>,
     accounts: HashMap<Pubkey, AccountSharedData>,
     upgradeable_programs: Vec<UpgradeableProgramInfo>,
@@ -170,8 +169,7 @@ impl Default for TestValidatorGenesis {
             ledger_path: Option::<PathBuf>::default(),
             rent: Rent::default(),
             rpc_config: JsonRpcConfig::default_for_test(),
-            pubsub_config: PubSubConfig::default_for_tests(),
-            rpc_ports: Option::<(u16, u16)>::default(),
+            rpc_port: None,
             warp_slot: Option::<Slot>::default(),
             accounts: HashMap::<Pubkey, AccountSharedData>::default(),
             upgradeable_programs: Vec::<UpgradeableProgramInfo>::default(),
@@ -304,13 +302,8 @@ impl TestValidatorGenesis {
         self
     }
 
-    pub fn pubsub_config(&mut self, pubsub_config: PubSubConfig) -> &mut Self {
-        self.pubsub_config = pubsub_config;
-        self
-    }
-
     pub fn rpc_port(&mut self, rpc_port: u16) -> &mut Self {
-        self.rpc_ports = Some((rpc_port, rpc_port + 1));
+        self.rpc_port = Some(rpc_port);
         self
     }
 
@@ -825,7 +818,6 @@ impl TestValidatorGenesis {
 pub struct TestValidator {
     ledger_path: PathBuf,
     preserve_ledger: bool,
-    rpc_pubsub_url: String,
     rpc_url: String,
     tpu_quic: SocketAddr,
     gossip: SocketAddr,
@@ -1088,22 +1080,18 @@ impl TestValidator {
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
-            let (rpc, rpc_pubsub) = config.rpc_ports.unwrap_or_else(|| {
-                let rpc_ports: [u16; 2] =
+            let rpc = config.rpc_port.unwrap_or_else(|| {
+                let [rpc] =
                     find_available_ports_in_range(bind_ip_addr, config.node_config.port_range)
                         .unwrap();
-                (rpc_ports[0], rpc_ports[1])
+                rpc
             });
             node.info.set_rpc((bind_ip_addr, rpc)).unwrap();
-            node.info
-                .set_rpc_pubsub((bind_ip_addr, rpc_pubsub))
-                .unwrap();
             node
         };
 
         let vote_account_address = validator_vote_account.pubkey();
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());
-        let rpc_pubsub_url = format!("ws://{}/", node.info.rpc_pubsub().unwrap());
         let tpu_quic = node.info.tpu(Protocol::QUIC).unwrap();
         let gossip = node.info.gossip().unwrap();
 
@@ -1121,7 +1109,6 @@ impl TestValidator {
 
         let accounts_db_config = AccountsDbConfig {
             index: Some(AccountsIndexConfig::default()),
-            account_indexes: Some(config.rpc_config.account_indexes.clone()),
             scan_filter_for_shrinking: ScanFilter::All,
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
@@ -1144,18 +1131,11 @@ impl TestValidator {
 
         let validator_config = ValidatorConfig {
             on_start_geyser_plugin_config_files: config.geyser_plugin_config_files.clone(),
-            rpc_addrs: Some((
-                SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    node.info.rpc().unwrap().port(),
-                ),
-                SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    node.info.rpc_pubsub().unwrap().port(),
-                ),
+            rpc_addr: Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                node.info.rpc().unwrap().port(),
             )),
             rpc_config: config.rpc_config.clone(),
-            pubsub_config: config.pubsub_config.clone(),
             account_paths: vec![create_accounts_run_dir(ledger_path.join("accounts")).unwrap()],
             run_verification: false, // Skip PoH verification of ledger on startup for speed
             snapshot_config: SnapshotConfig {
@@ -1199,7 +1179,6 @@ impl TestValidator {
         let test_validator = TestValidator {
             ledger_path,
             preserve_ledger,
-            rpc_pubsub_url,
             rpc_url,
             tpu_quic,
             gossip,
@@ -1328,11 +1307,6 @@ impl TestValidator {
         self.rpc_url.clone()
     }
 
-    /// Return the validator's JSON RPC PubSub URL
-    pub fn rpc_pubsub_url(&self) -> String {
-        self.rpc_pubsub_url.clone()
-    }
-
     /// Return the validator's vote account address
     pub fn vote_account_address(&self) -> Pubkey {
         self.vote_account_address
@@ -1416,6 +1390,36 @@ mod test {
                 assert!(feature_account.is_none());
             }
         }
+    }
+
+    #[test]
+    fn rpc_does_not_use_or_advertise_websocket_port() {
+        // Occupy the old WebSocket port before startup. RPC must still start.
+        let (rpc_port, websocket_listener) = loop {
+            let listener = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            if port > 1024 && std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port - 1)).is_ok()
+            {
+                break (port - 1, listener);
+            }
+        };
+        let (validator, _) = TestValidatorGenesis::default_for_tests()
+            .rpc_port(rpc_port)
+            .start();
+        let client = validator.get_rpc_client();
+        client.get_health().unwrap();
+        let nodes = client.get_cluster_nodes().unwrap();
+        assert!(!nodes.is_empty());
+        assert!(nodes.iter().all(|node| node.pubsub.is_none()));
+        assert!(
+            validator
+                .cluster_info()
+                .my_contact_info()
+                .rpc_pubsub()
+                .is_none()
+        );
+        drop(validator);
+        drop(websocket_listener);
     }
 
     #[test]

@@ -20,9 +20,8 @@ use {
     solana_measure::measure::Measure,
     solana_message::v0::LoadedAddresses,
     solana_metrics::*,
-    solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
+    solana_rpc::max_slots::MaxSlots,
     solana_runtime::bank_forks::BankForks,
-    solana_signature::Signature,
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
     solana_transaction::versioned::VersionedTransaction,
     std::{
@@ -90,9 +89,6 @@ impl CompletedDataSetsService {
     pub fn new(
         completed_sets_receiver: CompletedDataSetsReceiver,
         blockstore: Arc<Blockstore>,
-        // None when the node has no RPC subscriptions (e.g. a geyser node without --rpc-port); the
-        // deshred-transaction sink still runs, only the signatureSubscribe path is skipped.
-        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         deshred_transaction_notifier: Option<DeshredTransactionNotifierArc>,
         exit: Arc<AtomicBool>,
         max_slots: Arc<MaxSlots>,
@@ -109,7 +105,6 @@ impl CompletedDataSetsService {
                     if let Err(RecvTimeoutError::Disconnected) = Self::recv_completed_data_sets(
                         &completed_sets_receiver,
                         &blockstore,
-                        rpc_subscriptions.as_deref(),
                         &deshred_transaction_notifier,
                         &max_slots,
                         &bank_forks,
@@ -126,7 +121,6 @@ impl CompletedDataSetsService {
     fn recv_completed_data_sets(
         completed_sets_receiver: &CompletedDataSetsReceiver,
         blockstore: &Blockstore,
-        rpc_subscriptions: Option<&RpcSubscriptions>,
         deshred_transaction_notifier: &Option<DeshredTransactionNotifierArc>,
         max_slots: &Arc<MaxSlots>,
         bank_forks: &RwLock<BankForks>,
@@ -148,6 +142,9 @@ impl CompletedDataSetsService {
             .flatten()
             .map(|completed_data_set_info| {
                 let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
+                if deshred_transaction_notifier.is_none() {
+                    return slot;
+                }
                 let completed_data_set_starting_shred_index = indices.start;
                 let completed_data_set_ending_shred_index_exclusive = indices.end;
                 match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
@@ -177,13 +174,6 @@ impl CompletedDataSetsService {
                             root_bank.as_deref(),
                             &mut stats,
                         );
-
-                        if let Some(rpc_subscriptions) = rpc_subscriptions {
-                            let transactions = Self::get_transaction_signatures(entries);
-                            if !transactions.is_empty() {
-                                rpc_subscriptions.notify_signatures_received((slot, transactions));
-                            }
-                        }
                     }
                     Err(e) => warn!("completed-data-set-service deserialize error: {e:?}"),
                 }
@@ -276,17 +266,6 @@ impl CompletedDataSetsService {
         }
     }
 
-    fn get_transaction_signatures(entries: Vec<Entry>) -> Vec<Signature> {
-        entries
-            .into_iter()
-            .flat_map(|e| {
-                e.transactions
-                    .into_iter()
-                    .filter_map(|mut t| t.signatures.drain(..).next())
-            })
-            .collect::<Vec<Signature>>()
-    }
-
     pub fn join(self) -> thread::Result<()> {
         self.thread_hdl.join()
     }
@@ -318,19 +297,12 @@ pub mod test {
             v0::{self, LoadedAddresses},
         },
         solana_pubkey::Pubkey,
-        solana_rpc::{
-            max_slots::MaxSlots,
-            optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-            rpc_subscriptions::RpcSubscriptions,
-        },
-        solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache},
+        solana_rpc::max_slots::MaxSlots,
+        solana_runtime::{bank::Bank, bank_forks::BankForks},
         solana_signature::Signature,
         solana_signer::Signer,
-        solana_transaction::{Transaction, versioned::VersionedTransaction},
-        std::sync::{
-            Arc, Mutex, RwLock,
-            atomic::{AtomicBool, AtomicU64, Ordering},
-        },
+        solana_transaction::versioned::VersionedTransaction,
+        std::sync::{Arc, Mutex, atomic::Ordering},
     };
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -404,28 +376,29 @@ pub mod test {
     }
 
     #[test]
-    fn test_zero_signatures() {
-        let tx = Transaction::new_with_payer(&[], None);
-        let entries = vec![Entry::new(&Hash::default(), 1, vec![tx])];
-        let signatures = CompletedDataSetsService::get_transaction_signatures(entries);
-        assert!(signatures.is_empty());
-    }
-
-    #[test]
-    fn test_multi_signatures() {
-        let kp = Keypair::new();
-        let tx =
-            Transaction::new_signed_with_payer(&[], Some(&kp.pubkey()), &[&kp], Hash::default());
-        let entries = vec![Entry::new(&Hash::default(), 1, vec![tx.clone()])];
-        let signatures = CompletedDataSetsService::get_transaction_signatures(entries);
-        assert_eq!(signatures.len(), 1);
-
-        let entries = vec![
-            Entry::new(&Hash::default(), 1, vec![tx.clone(), tx.clone()]),
-            Entry::new(&Hash::default(), 1, vec![tx]),
-        ];
-        let signatures = CompletedDataSetsService::get_transaction_signatures(entries);
-        assert_eq!(signatures.len(), 3);
+    fn test_shred_progress_without_deshred_notifier() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
+        let max_slots = Arc::new(MaxSlots::default());
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        for slot in [12, 10, 11] {
+            sender
+                .send(vec![CompletedDataSetInfo {
+                    slot,
+                    indices: 0..32,
+                }])
+                .unwrap();
+        }
+        CompletedDataSetsService::recv_completed_data_sets(
+            &receiver,
+            &blockstore,
+            &None,
+            &max_slots,
+            &bank_forks,
+        )
+        .unwrap();
+        assert_eq!(max_slots.shred_insert.load(Ordering::Relaxed), 12);
     }
 
     #[test]
@@ -522,14 +495,6 @@ pub mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
-        let rpc_subscriptions = RpcSubscriptions::new_for_tests_with_blockstore(
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicU64::default()),
-            blockstore.clone(),
-            bank_forks.clone(),
-            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
-        );
         let max_slots = Arc::new(MaxSlots::default());
         let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
         let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
@@ -552,7 +517,6 @@ pub mod test {
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
             &blockstore,
-            Some(&rpc_subscriptions),
             &notifier,
             &max_slots,
             &bank_forks,
@@ -578,7 +542,6 @@ pub mod test {
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
             &blockstore,
-            Some(&rpc_subscriptions),
             &notifier,
             &max_slots,
             &bank_forks,
@@ -636,7 +599,6 @@ pub mod test {
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
             &blockstore,
-            None,
             &notifier,
             &max_slots,
             &bank_forks,
@@ -659,14 +621,6 @@ pub mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&GenesisConfig::default()));
-        let rpc_subscriptions = RpcSubscriptions::new_for_tests_with_blockstore(
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicU64::default()),
-            blockstore.clone(),
-            bank_forks.clone(),
-            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
-        );
         let max_slots = Arc::new(MaxSlots::default());
         let test_notifier = Arc::new(TestDeshredTransactionNotifier::default());
         let notifier = Some(test_notifier.clone() as DeshredTransactionNotifierArc);
@@ -699,7 +653,6 @@ pub mod test {
         CompletedDataSetsService::recv_completed_data_sets(
             &receiver,
             &blockstore,
-            Some(&rpc_subscriptions),
             &notifier,
             &max_slots,
             &bank_forks,

@@ -144,11 +144,10 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
         .get_fee_for_versioned_message(&VersionedMessage::Legacy(fee_message))
         .unwrap()
         .saturating_mul(messages.len() as u64);
-    let ws_url = test_validator.rpc_pubsub_url();
     let tpu_client_fut = TpuClient::new(
         "temp",
         rpc_client.get_inner_client().clone(),
-        ws_url.as_str(),
+        "", // Use HTTP polling for leader slots.
         solana_client::tpu_client::TpuClientConfig::default(),
     );
     let tpu_client = rpc_client.runtime().block_on(tpu_client_fut).unwrap();

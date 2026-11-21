@@ -285,10 +285,7 @@ impl LocalCluster {
         let mut leader_config = safe_clone_config(&config.validator_configs[0]);
         let (leader_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
-        leader_config.rpc_addrs = Some((
-            leader_node.info.rpc().unwrap(),
-            leader_node.info.rpc_pubsub().unwrap(),
-        ));
+        leader_config.rpc_addr = Some(leader_node.info.rpc().unwrap());
         Self::sync_ledger_path_across_nested_config_fields(&mut leader_config, &leader_ledger_path);
         let leader_keypair = Arc::new(leader_keypair.insecure_clone());
         let leader_vote_keypair = Arc::new(leader_vote_keypair.insecure_clone());
@@ -556,10 +553,7 @@ impl LocalCluster {
         }
 
         let mut config = safe_clone_config(validator_config);
-        config.rpc_addrs = Some((
-            validator_node.info.rpc().unwrap(),
-            validator_node.info.rpc_pubsub().unwrap(),
-        ));
+        config.rpc_addr = Some(validator_node.info.rpc().unwrap());
         Self::sync_ledger_path_across_nested_config_fields(&mut config, &ledger_path);
         let validator_server = Validator::new(
             validator_node,
@@ -680,10 +674,7 @@ impl LocalCluster {
                 let (ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
 
                 let mut config = validator_config;
-                config.rpc_addrs = Some((
-                    validator_node.info.rpc().unwrap(),
-                    validator_node.info.rpc_pubsub().unwrap(),
-                ));
+                config.rpc_addr = Some(validator_node.info.rpc().unwrap());
                 Self::sync_ledger_path_across_nested_config_fields(&mut config, &ledger_path);
 
                 let validator_server = Validator::new(
@@ -1155,8 +1146,7 @@ impl Cluster for LocalCluster {
         let mut node = Node::new_localhost_with_pubkey(pubkey);
         node.info.set_shred_version(self.shred_version());
         cluster_validator_info.info.contact_info = node.info.clone();
-        cluster_validator_info.config.rpc_addrs =
-            Some((node.info.rpc().unwrap(), node.info.rpc_pubsub().unwrap()));
+        cluster_validator_info.config.rpc_addr = Some(node.info.rpc().unwrap());
 
         if pubkey == self.entry_point_info.pubkey() {
             self.entry_point_info = node.info.clone();

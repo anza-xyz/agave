@@ -26,11 +26,7 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_perf::deduper::Deduper,
     solana_pubkey::Pubkey,
-    solana_rpc::{
-        max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions,
-        slot_status_notifier::SlotStatusNotifier,
-    },
-    solana_rpc_client_api::response::SlotUpdate,
+    solana_rpc::{max_slots::MaxSlots, slot_status_notifier::SlotStatusNotifier},
     solana_runtime::{
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::{BankForks, BankPair, SharableBanks},
@@ -122,7 +118,6 @@ struct RetransmitStats {
 }
 
 struct RetransmitNotifiers {
-    rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     slot_status_notifier: Option<SlotStatusNotifier>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: Sender<VotorEvent>,
@@ -472,7 +467,6 @@ impl RetransmitStage {
         cluster_info: Arc<ClusterInfo>,
         retransmit_sockets: Arc<Vec<UdpSocket>>,
         max_slots: Arc<MaxSlots>,
-        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         xdp_sender: Option<XdpSender>,
         votor_event_sender: Sender<VotorEvent>,
@@ -526,7 +520,6 @@ impl RetransmitStage {
             shred_deduper,
             is_xdp,
             notifiers: RetransmitNotifiers {
-                rpc_subscriptions,
                 slot_status_notifier,
                 migration_status,
                 votor_event_sender,
@@ -673,12 +666,7 @@ impl RetransmitStats {
             match self.slot_stats.get_mut(&slot) {
                 None => {
                     if slot > root {
-                        notify_subscribers(
-                            slot,
-                            slot_stats.outset,
-                            notifiers,
-                            pending_first_shred_event,
-                        );
+                        notify_subscribers(slot, notifiers, pending_first_shred_event);
                     }
                     self.slot_stats.put(slot, slot_stats);
                 }
@@ -774,15 +762,9 @@ impl RetransmitSlotStats {
 // Notifies subscribers of shreds received from a new slot.
 fn notify_subscribers(
     slot: Slot,
-    timestamp: u64, // When the first shred in the slot was received.
     notifiers: &RetransmitNotifiers,
     pending_first_shred_event: &mut Option<VotorEvent>,
 ) {
-    if let Some(rpc_subscriptions) = notifiers.rpc_subscriptions.as_ref() {
-        let slot_update = SlotUpdate::FirstShredReceived { slot, timestamp };
-        rpc_subscriptions.notify_slot_update(slot_update);
-        datapoint_info!("retransmit-first-shred", ("slot", slot, i64));
-    }
     if let Some(slot_status_notifier) = notifiers.slot_status_notifier.as_ref() {
         slot_status_notifier
             .read()
@@ -973,7 +955,6 @@ mod tests {
         let migration_status = Arc::new(MigrationStatus::post_migration_status());
         let genesis_slot = migration_status.genesis_block().unwrap().slot;
         let notifiers = RetransmitNotifiers {
-            rpc_subscriptions: None,
             slot_status_notifier: None,
             migration_status,
             votor_event_sender,
@@ -982,12 +963,7 @@ mod tests {
 
         let slot = genesis_slot.checked_add(1).unwrap();
         assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
-        notify_subscribers(
-            slot,
-            /*timestamp:*/ 0,
-            &notifiers,
-            &mut pending_first_shred_event,
-        );
+        notify_subscribers(slot, &notifiers, &mut pending_first_shred_event);
 
         assert!(matches!(
             votor_event_receiver.try_recv(),
@@ -998,12 +974,7 @@ mod tests {
         // Later unaligned slots do not need a FirstShred event.
         let slot = slot.checked_add(1).unwrap();
         assert!(!slot.is_multiple_of(NUM_CONSECUTIVE_LEADER_SLOTS.get() as Slot));
-        notify_subscribers(
-            slot,
-            /*timestamp:*/ 0,
-            &notifiers,
-            &mut pending_first_shred_event,
-        );
+        notify_subscribers(slot, &notifiers, &mut pending_first_shred_event);
         assert!(matches!(
             votor_event_receiver.try_recv(),
             Err(TryRecvError::Empty)

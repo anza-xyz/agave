@@ -5,8 +5,8 @@ use {
         cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
-        rpc_cache::{LargestAccountsCache, RankMapCache},
+        rpc::{rpc_accounts::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
+        rpc_cache::RankMapCache,
         rpc_health::*,
     },
     agave_snapshots::{
@@ -34,8 +34,7 @@ use {
     solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
-        non_circulating_supply::calculate_non_circulating_supply,
+        bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
@@ -69,7 +68,6 @@ use {
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
-const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 /// Default minimum snapshot download speed is 10 MB/s
 /// Full snapshots are ~90 GB, incremental are ~1 GB today but both will increase over time
 /// Full: 120 GB / 10 MB/s = 12,000 seconds -> ~30k slots
@@ -149,7 +147,6 @@ struct RpcRequestMiddleware {
     snapshot_config: Option<SnapshotConfig>,
     bank_forks: Arc<RwLock<BankForks>>,
     health: Arc<RpcHealth>,
-    full_api: bool,
 }
 
 impl RpcRequestMiddleware {
@@ -158,7 +155,6 @@ impl RpcRequestMiddleware {
         snapshot_config: Option<SnapshotConfig>,
         bank_forks: Arc<RwLock<BankForks>>,
         health: Arc<RpcHealth>,
-        full_api: bool,
     ) -> Self {
         Self {
             ledger_path,
@@ -173,7 +169,6 @@ impl RpcRequestMiddleware {
             snapshot_config,
             bank_forks,
             health,
-            full_api,
         }
     }
 
@@ -414,9 +409,6 @@ impl RequestMiddleware for RpcRequestMiddleware {
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {
-            if path == "/v0/circulating-supply" && !self.full_api {
-                return RpcRequestMiddleware::not_found().into();
-            }
             process_rest(self.bank_forks.clone(), path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
@@ -434,38 +426,13 @@ impl RequestMiddleware for RpcRequestMiddleware {
 
 fn match_supply_path(path: &str) -> Option<&str> {
     match path {
-        "/v0/circulating-supply" | "/v0/total-supply" => Some(path),
+        "/v0/total-supply" => Some(path),
         _ => None,
     }
 }
 
-#[derive(Debug)]
-pub enum SupplyCalcError {
-    Scan(String),
-}
-
-async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, SupplyCalcError> {
-    let total_supply = bank.capitalization();
-    let bank = Arc::clone(bank);
-    let non_circulating_supply =
-        tokio::task::spawn_blocking(move || calculate_non_circulating_supply(&bank))
-            .await
-            .expect("Failed to spawn blocking task")
-            .map_err(|e| SupplyCalcError::Scan(e.to_string()))?;
-
-    Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
-}
-
 async fn handle_rest(bank_forks: &RwLock<BankForks>, path: &str) -> Option<String> {
     match path {
-        "/v0/circulating-supply" => {
-            let bank = bank_forks.read().unwrap().root_bank();
-            let supply_result = calculate_circulating_supply_async(&bank).await;
-            match supply_result {
-                Ok(supply) => Some(build_balance_message(supply, false, false)),
-                Err(_) => None,
-            }
-        }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
@@ -630,10 +597,6 @@ impl JsonRpcService {
             override_health_check,
         ));
 
-        let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
-            LARGEST_ACCOUNTS_CACHE_DURATION,
-        )));
-
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
         let (bigtable_ledger_storage, _bigtable_ledger_upload_service) =
@@ -701,7 +664,6 @@ impl JsonRpcService {
             genesis_hash,
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
-            largest_accounts_cache,
             Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots,
             leader_schedule_cache,
@@ -736,7 +698,6 @@ impl JsonRpcService {
                 if full_api {
                     io.extend_with(rpc_bank::BankDataImpl.to_delegate());
                     io.extend_with(rpc_accounts::AccountsDataImpl.to_delegate());
-                    io.extend_with(rpc_accounts_scan::AccountsScanImpl.to_delegate());
                     io.extend_with(rpc_full::FullImpl.to_delegate());
                 }
 
@@ -745,7 +706,6 @@ impl JsonRpcService {
                     snapshot_config,
                     bank_forks,
                     health.clone(),
-                    full_api,
                 );
                 let server = ServerBuilder::with_meta_extractor(
                     io,
@@ -1164,8 +1124,9 @@ mod tests {
         assert!(server.await.unwrap().is_err());
     }
 
-    #[test]
-    fn test_rpc_new() {
+    #[test_case::test_case(false)]
+    #[test_case::test_case(true)]
+    fn test_rpc_new(full_api: bool) {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -1175,19 +1136,23 @@ mod tests {
         let validator_exit = create_validator_exit(exit.clone());
         let bank = Bank::new_for_tests(&genesis_config);
         let cluster_info = Arc::new(new_test_cluster_info());
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         let rpc_addr = SocketAddr::new(
             ip_addr,
             solana_net_utils::find_available_port_in_range(ip_addr, port_range).unwrap(),
         );
+        let total_supply = build_balance_message(bank.capitalization(), false, false);
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let json_rpc_config = JsonRpcConfig::default();
+        let json_rpc_config = JsonRpcConfig {
+            full_api,
+            ..JsonRpcConfig::default()
+        };
         let runtime = service_runtime(
             json_rpc_config.rpc_threads,
             json_rpc_config.rpc_blocking_threads,
@@ -1218,7 +1183,7 @@ mod tests {
             &PathBuf::from("farf"),
             validator_exit,
             exit,
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(true)),
             optimistically_confirmed_bank,
             Arc::default(),
             send_transaction_service_config,
@@ -1243,6 +1208,46 @@ mod tests {
                 .unwrap()
                 .value
         );
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let url = format!("http://{rpc_addr}");
+        for method in [
+            "getProgramAccounts",
+            "getLargestAccounts",
+            "getSupply",
+            "getTokenLargestAccounts",
+            "getTokenAccountsByOwner",
+            "getTokenAccountsByDelegate",
+        ] {
+            let response: serde_json::Value = client
+                .post(&url)
+                .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": []}))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+            assert_eq!(response["error"]["code"], -32601, "{method}: {response}");
+        }
+        let response: serde_json::Value = client
+            .post(&url)
+            .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [mint_keypair.pubkey().to_string()]}))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(response["result"]["value"], 10_000);
+        for path in ["/v0/circulating-supply", "/v0/circulating-supply?test=1"] {
+            let response = client.get(format!("{url}{path}")).send().unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let response = client.get(format!("{url}/v0/total-supply")).send().unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.text().unwrap(), total_supply);
+        let response = client.get(format!("{url}/health")).send().unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.text().unwrap(), "ok");
         rpc_service.exit();
         rpc_service.join().unwrap();
     }
@@ -1268,49 +1273,11 @@ mod tests {
             );
 
             let circulating_supply = handle_rest(&bank_forks, "/v0/circulating-supply").await;
-            assert!(circulating_supply.is_some());
+            assert!(circulating_supply.is_none());
 
             let total_supply = handle_rest(&bank_forks, "/v0/total-supply").await;
             assert!(total_supply.is_some());
-
-            assert_eq!(
-                handle_rest(&bank_forks, "/v0/circulating-supply").await,
-                handle_rest(&bank_forks, "/v0/total-supply").await
-            );
         });
-    }
-
-    #[tokio::test]
-    async fn test_circulating_supply_requires_full_api() {
-        let bank_forks = create_bank_forks();
-        let optimistically_confirmed_bank =
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank);
-
-        for full_api in [false, true] {
-            let middleware = RpcRequestMiddleware::new(
-                PathBuf::default(),
-                None,
-                bank_forks.clone(),
-                health.clone(),
-                full_api,
-            );
-            let request = hyper::Request::builder()
-                .uri("/v0/circulating-supply")
-                .body(hyper::Body::empty())
-                .unwrap();
-            let RequestMiddlewareAction::Respond { response, .. } = middleware.on_request(request)
-            else {
-                panic!("Expected a REST response");
-            };
-            let response = response.await.unwrap();
-            let expected_status = if full_api {
-                hyper::StatusCode::OK
-            } else {
-                hyper::StatusCode::NOT_FOUND
-            };
-            assert_eq!(response.status(), expected_status);
-        }
     }
 
     #[test]
@@ -1356,14 +1323,12 @@ mod tests {
             None,
             bank_forks.clone(),
             health.clone(),
-            false,
         );
         let rrm_with_snapshot_config = RpcRequestMiddleware::new(
             ledger_path.path().to_path_buf(),
             Some(SnapshotConfig::default()),
             bank_forks,
             health,
-            false,
         );
 
         assert!(rrm.is_file_get_path(DEFAULT_GENESIS_DOWNLOAD_PATH));
@@ -1483,7 +1448,6 @@ mod tests {
             None,
             bank_forks,
             RpcHealth::stub(optimistically_confirmed_bank),
-            false,
         );
 
         // File does not exist => request should fail.

@@ -1,25 +1,20 @@
 use {
-    crossbeam_channel::bounded,
-    futures_util::StreamExt,
+    futures_util::{SinkExt, StreamExt},
     log::*,
     reqwest::{self, header::CONTENT_TYPE},
     serde_json::{Value, json},
-    solana_account_decoder::UiAccount,
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::{SocketAddrSpace, sockets},
     solana_pubkey::Pubkey,
-    solana_pubsub_client::nonblocking::pubsub_client::PubsubClient,
     solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{ErrorKind as ClientErrorKind, Result as ClientResult},
-        config::{RpcAccountInfoConfig, RpcSignatureSubscribeConfig, RpcSimulateTransactionConfig},
+        config::RpcSimulateTransactionConfig,
         request::RpcError,
-        response::{Response as RpcResponse, RpcSignatureResult, SlotUpdate},
     },
-    solana_signature::Signature,
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
@@ -28,14 +23,9 @@ use {
         node_address_service::LeaderTpuCacheServiceConfig,
         websocket_node_address_service::WebsocketNodeAddressService,
     },
-    solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     std::{
-        collections::HashSet,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        sync::Arc,
         thread::sleep,
         time::{Duration, Instant},
     },
@@ -218,300 +208,6 @@ fn test_rpc_invalid_requests() {
 }
 
 #[test]
-fn test_rpc_slot_updates() {
-    agave_logger::setup();
-
-    let test_validator =
-        TestValidator::start_with_config(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
-
-    // Track when slot updates are ready
-    let (update_sender, update_receiver) = bounded::<SlotUpdate>(1024);
-    // Create the pub sub runtime
-    let rt = Runtime::new().unwrap();
-    let rpc_pubsub_url = test_validator.rpc_pubsub_url();
-
-    rt.spawn(async move {
-        let pubsub_client = PubsubClient::new(&rpc_pubsub_url).await.unwrap();
-        let (mut slot_notifications, slot_unsubscribe) =
-            pubsub_client.slot_updates_subscribe().await.unwrap();
-
-        while let Some(slot_update) = slot_notifications.next().await {
-            update_sender.send(slot_update).unwrap();
-        }
-        slot_unsubscribe().await;
-    });
-
-    let first_update = update_receiver
-        .recv_timeout(Duration::from_secs(2))
-        .unwrap();
-
-    // Verify that updates are received for an upcoming slot
-    let verify_slot = first_update.slot() + 2;
-    let expected_updates = ["CreatedBank", "Frozen"];
-    let mut expected_updates = expected_updates.into_iter().peekable();
-    // Root will be emitted twice as we emit the parent when rooting a
-    // new slot so tolerate repeated Root notifications.
-    let mut expected_unordered_updates = vec!["OptimisticConfirmation", "Root", "Root"];
-    // SlotUpdate::Completed is sent asynchronous to banking-stage and replay
-    // when shreds are inserted into blockstore. When the leader generates
-    // blocks, replay may freeze the bank before shreds are all inserted into
-    // blockstore; and so SlotUpdate::Completed may be received _after_
-    // SlotUpdate::Frozen.
-    let mut slot_update_completed = false;
-
-    let test_start = Instant::now();
-    while expected_updates.peek().is_some()
-        || !expected_unordered_updates.is_empty()
-        || !slot_update_completed
-    {
-        assert!(test_start.elapsed() < Duration::from_secs(30));
-        let update = update_receiver
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap();
-        if update.slot() == verify_slot {
-            let update_name = match update {
-                SlotUpdate::CreatedBank { .. } => "CreatedBank",
-                SlotUpdate::Completed { .. } => {
-                    slot_update_completed = true;
-                    continue;
-                }
-                SlotUpdate::Frozen { .. } => "Frozen",
-                SlotUpdate::OptimisticConfirmation { .. } => "OptimisticConfirmation",
-                SlotUpdate::Root { .. } => "Root",
-                _ => continue,
-            };
-            if expected_updates.peek().is_some() {
-                assert_eq!(Some(update_name), expected_updates.next());
-            } else {
-                assert!(
-                    expected_unordered_updates
-                        .iter()
-                        .position(|&update| update == update_name)
-                        .map(|pos| expected_unordered_updates.swap_remove(pos))
-                        .is_some(),
-                    "unexpected slot update: {update_name}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn test_rpc_subscriptions() {
-    agave_logger::setup();
-
-    let alice = Keypair::new();
-    let test_validator =
-        TestValidator::start_with_config(alice.pubkey(), None, SocketAddrSpace::Unspecified);
-
-    let rpc_client = Arc::new(RpcClient::new(test_validator.rpc_url()));
-    let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
-
-    // Create transaction signatures to subscribe to
-    let transfer_amount = Rent::default().minimum_balance(0);
-    let transactions: Vec<Transaction> = (0..100)
-        .map(|_| {
-            system_transaction::transfer(
-                &alice,
-                &solana_pubkey::new_rand(),
-                transfer_amount,
-                recent_blockhash,
-            )
-        })
-        .collect();
-    let mut signature_set: HashSet<Signature> =
-        transactions.iter().map(|tx| tx.signatures[0]).collect();
-    let mut account_set: HashSet<Pubkey> = transactions
-        .iter()
-        .map(|tx| tx.message.account_keys[1])
-        .collect();
-
-    // Track account notifications are received
-    let (account_sender, account_receiver) = bounded::<(Pubkey, RpcResponse<UiAccount>)>(1024);
-    // Track when status notifications are received
-    let (status_sender, status_receiver) =
-        bounded::<(Signature, RpcResponse<RpcSignatureResult>)>(1024);
-
-    // Create the pub sub runtime
-    let rt = Runtime::new().unwrap();
-    let rpc_pubsub_url = test_validator.rpc_pubsub_url();
-    let signature_set_clone = signature_set.clone();
-    let account_set_clone = account_set.clone();
-    let signature_subscription_ready = Arc::new(AtomicUsize::new(0));
-    let account_subscription_ready = Arc::new(AtomicUsize::new(0));
-    let signature_subscription_ready_clone = signature_subscription_ready.clone();
-    let account_subscription_ready_clone = account_subscription_ready.clone();
-
-    rt.spawn(async move {
-        let pubsub_client = Arc::new(PubsubClient::new(&rpc_pubsub_url).await.unwrap());
-
-        // Subscribe to signature notifications
-        for signature in signature_set_clone {
-            let status_sender = status_sender.clone();
-            let signature_subscription_ready_clone = signature_subscription_ready_clone.clone();
-            tokio::spawn({
-                let pubsub_client = Arc::clone(&pubsub_client);
-                async move {
-                    let (mut sig_notifications, sig_unsubscribe) = pubsub_client
-                        .signature_subscribe(
-                            &signature,
-                            Some(RpcSignatureSubscribeConfig {
-                                commitment: Some(CommitmentConfig::confirmed()),
-                                ..RpcSignatureSubscribeConfig::default()
-                            }),
-                        )
-                        .await
-                        .unwrap();
-
-                    signature_subscription_ready_clone.fetch_add(1, Ordering::SeqCst);
-
-                    let response = sig_notifications.next().await.unwrap();
-                    status_sender.send((signature, response)).unwrap();
-                    sig_unsubscribe().await;
-                }
-            });
-        }
-
-        // Subscribe to account notifications
-        for pubkey in account_set_clone {
-            let account_sender = account_sender.clone();
-            let account_subscription_ready_clone = account_subscription_ready_clone.clone();
-            tokio::spawn({
-                let pubsub_client = Arc::clone(&pubsub_client);
-                async move {
-                    let (mut account_notifications, account_unsubscribe) = pubsub_client
-                        .account_subscribe(
-                            &pubkey,
-                            Some(RpcAccountInfoConfig {
-                                commitment: Some(CommitmentConfig::confirmed()),
-                                ..RpcAccountInfoConfig::default()
-                            }),
-                        )
-                        .await
-                        .unwrap();
-
-                    account_subscription_ready_clone.fetch_add(1, Ordering::SeqCst);
-
-                    let response = account_notifications.next().await.unwrap();
-                    account_sender.send((pubkey, response)).unwrap();
-                    account_unsubscribe().await;
-                }
-            });
-        }
-    });
-
-    let now = Instant::now();
-    while (signature_subscription_ready.load(Ordering::SeqCst) != transactions.len()
-        || account_subscription_ready.load(Ordering::SeqCst) != transactions.len())
-        && now.elapsed() < Duration::from_secs(15)
-    {
-        sleep(Duration::from_millis(100))
-    }
-
-    // check signature subscription
-    let num = signature_subscription_ready.load(Ordering::SeqCst);
-    if num != transactions.len() {
-        error!(
-            "signature subscription didn't setup properly, want: {}, got: {}",
-            transactions.len(),
-            num
-        );
-    }
-
-    // check account subscription
-    let num = account_subscription_ready.load(Ordering::SeqCst);
-    if num != transactions.len() {
-        error!(
-            "account subscriptions didn't setup properly, want: {}, got: {}",
-            transactions.len(),
-            num
-        );
-    }
-
-    let mut mint_balance = rpc_client
-        .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
-        .unwrap()
-        .value;
-    assert!(mint_balance >= transactions.len() as u64);
-
-    let bind_socket = sockets::bind_to_localhost_unique().unwrap();
-    let tpu_address = *test_validator.tpu_quic();
-
-    let leader_updater = create_pinned_leader_updater(tpu_address);
-
-    let (transaction_sender, _client) = rt.block_on(async {
-        ClientBuilder::new(leader_updater)
-            .bind_socket(bind_socket)
-            .identity(&alice)
-            .build()
-            .expect("Failed to build TPU client")
-    });
-
-    // Send all transactions
-    rt.block_on(async {
-        for tx in transactions.iter() {
-            let wire_tx = wincode::serialize(tx).unwrap();
-            let _ = transaction_sender.send_transaction(wire_tx).await;
-        }
-    });
-
-    // Track mint balance to know when transactions have completed
-    let now = Instant::now();
-    let expected_mint_balance = mint_balance - (transfer_amount * transactions.len() as u64);
-    while mint_balance != expected_mint_balance && now.elapsed() < Duration::from_secs(10) {
-        mint_balance = rpc_client
-            .get_balance_with_commitment(&alice.pubkey(), CommitmentConfig::processed())
-            .unwrap()
-            .value;
-        sleep(Duration::from_millis(100));
-    }
-    if mint_balance != expected_mint_balance {
-        error!("mint-check timeout. mint_balance {mint_balance:?}");
-    }
-
-    // Wait for all signature subscriptions
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !signature_set.is_empty() {
-        let timeout = deadline.saturating_duration_since(Instant::now());
-        match status_receiver.recv_timeout(timeout) {
-            Ok((sig, result)) => {
-                if let RpcSignatureResult::ProcessedSignature(result) = result.value {
-                    assert!(result.err.is_none());
-                    assert!(signature_set.remove(&sig));
-                } else {
-                    panic!("Unexpected result");
-                }
-            }
-            Err(_err) => {
-                panic!(
-                    "recv_timeout, {}/{} signatures remaining",
-                    signature_set.len(),
-                    transactions.len()
-                );
-            }
-        }
-    }
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while !account_set.is_empty() {
-        let timeout = deadline.saturating_duration_since(Instant::now());
-        match account_receiver.recv_timeout(timeout) {
-            Ok((pubkey, result)) => {
-                assert_eq!(result.value.lamports, Rent::default().minimum_balance(0));
-                assert!(account_set.remove(&pubkey));
-            }
-            Err(_err) => {
-                panic!(
-                    "recv_timeout, {}/{} accounts remaining",
-                    account_set.len(),
-                    transactions.len()
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn test_run_tpu_send_transaction() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
@@ -572,10 +268,43 @@ fn test_node_address_service_slot_updates() {
         .unwrap();
     rt.block_on(async {
         let rpc_client = Arc::new(test_validator.get_async_rpc_client());
+        let mut slot = rpc_client.get_slot().await.unwrap();
+        // Stand in for an external subscription provider while HTTP requests still
+        // go to the local validator.
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request: Value = serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(request["method"], "slotsUpdatesSubscribe");
+            socket.send(tokio_tungstenite::tungstenite::Message::Text(json!({"jsonrpc":"2.0","id":request["id"],"result":42}).to_string().into())).await.unwrap();
+            let mut interval = tokio::time::interval(Duration::from_millis(50));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        slot = slot.checked_add(1).unwrap();
+                        socket.send(tokio_tungstenite::tungstenite::Message::Text(json!({"jsonrpc":"2.0","method":"slotsUpdatesNotification","params":{"subscription":42,"result":{"type":"completed","slot":slot,"timestamp":0}}}).to_string().into())).await.unwrap();
+                    }
+                    message = socket.next() => {
+                        match message {
+                            Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                                let request: Value = serde_json::from_str(&text).unwrap();
+                                assert_eq!(request["method"], "slotsUpdatesUnsubscribe");
+                                assert_eq!(request["params"], json!([42]));
+                                socket.send(tokio_tungstenite::tungstenite::Message::Text(json!({"jsonrpc":"2.0","id":request["id"],"result":true}).to_string().into())).await.unwrap();
+                            }
+                            Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => break,
+                            other => panic!("unexpected WebSocket message: {other:?}"),
+                        }
+                    }
+                }
+            }
+        });
         let cancel = CancellationToken::new();
         let (provider, service) = WebsocketNodeAddressService::run(
             rpc_client,
-            test_validator.rpc_pubsub_url(),
+            url,
             LeaderTpuCacheServiceConfig::default(),
             cancel.clone(),
         )
@@ -597,7 +326,8 @@ fn test_node_address_service_slot_updates() {
         }
 
         cancel.cancel();
-        service.shutdown().await.expect("clean shutdown");
+        tokio::time::timeout(Duration::from_secs(5), service.shutdown()).await.unwrap().expect("clean shutdown");
+        peer.await.unwrap();
     });
 }
 

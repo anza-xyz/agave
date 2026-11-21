@@ -40,7 +40,7 @@ usage: $0 [extra args]
 
  Examples:
    $0 --duration 30 --target-tps 5000
-   $0 --num-payers 1024 --send-fanout 2 ws-leader-tracker
+   $0 --num-payers 1024 --send-fanout 2
 
 EOF
   exit 1

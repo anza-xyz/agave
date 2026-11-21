@@ -1,7 +1,6 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
     clap::{Arg, ArgMatches, value_t},
-    solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_clap_utils::input_validators::is_parsable,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
     std::sync::LazyLock,
@@ -18,7 +17,6 @@ static DEFAULT_RPC_BLOCKING_THREADS: LazyLock<String> =
 const DEFAULT_RPC_NICENESS_ADJ: &str = "0";
 static DEFAULT_RPC_MAX_REQUEST_BODY_SIZE: LazyLock<String> =
     LazyLock::new(|| solana_rpc::rpc::MAX_REQUEST_BODY_SIZE.to_string());
-const MB: usize = 1_024 * 1_024;
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
@@ -48,20 +46,12 @@ impl FromClapArgMatches for JsonRpcConfig {
             skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
             rpc_bigtable_config,
             max_multiple_accounts: Some(value_t!(matches, "rpc_max_multiple_accounts", usize)?),
-            account_indexes: AccountSecondaryIndexes::from_clap_arg_match(matches)?,
             rpc_threads: value_t!(matches, "rpc_threads", usize)?,
             rpc_blocking_threads: value_t!(matches, "rpc_blocking_threads", usize)?,
             rpc_niceness_adj: value_t!(matches, "rpc_niceness_adj", i8)?,
             full_api: matches.is_present("full_rpc_api"),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
             max_request_body_size: Some(value_t!(matches, "rpc_max_request_body_size", usize)?),
-            scan_results_limit_bytes: value_t!(
-                matches,
-                "accounts_index_scan_results_limit_mb",
-                usize
-            )
-            .ok()
-            .map(|mb| mb * MB),
             disable_health_check: false,
         })
     }
@@ -176,33 +166,21 @@ pub(crate) fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
             .validator(is_parsable::<usize>)
             .default_value(&DEFAULT_RPC_MAX_REQUEST_BODY_SIZE)
             .help("The maximum request body size accepted by rpc service"),
-        Arg::with_name("accounts_index_scan_results_limit_mb")
-            .long("accounts-index-scan-results-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help(
-                "How large accumulated results from an accounts index scan can become. If this is \
-                 exceeded, the scan aborts.",
-            ),
     ]
 }
 
 #[cfg(test)]
 pub(super) mod tests {
-    #[cfg(not(target_os = "linux"))]
-    use crate::commands::run::args::tests::verify_args_struct_by_command_run_is_error_with_identity_setup;
     use {
         super::*,
         crate::commands::run::args::{
-            RunArgs, pub_sub_config::DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS,
-            tests::verify_args_struct_by_command_run_with_identity_setup,
+            RunArgs,
+            tests::{
+                verify_args_struct_by_command_run_is_error_with_identity_setup,
+                verify_args_struct_by_command_run_with_identity_setup,
+            },
         },
-        solana_rpc::rpc_pubsub_service::PubSubConfig,
-        std::{
-            net::{Ipv4Addr, SocketAddr},
-            num::NonZeroUsize,
-        },
+        std::net::{Ipv4Addr, SocketAddr},
     };
 
     pub fn default_json_rpc_config() -> JsonRpcConfig {
@@ -411,17 +389,6 @@ pub(super) mod tests {
                     full_api: true,
                     ..default_run_args.json_rpc_config.clone()
                 },
-                pub_sub_config: PubSubConfig {
-                    notification_threads: Some(
-                        NonZeroUsize::new(
-                            DEFAULT_RPC_PUBSUB_NUM_NOTIFICATION_THREADS
-                                .parse::<usize>()
-                                .unwrap(),
-                        )
-                        .unwrap(),
-                    ),
-                    ..default_run_args.pub_sub_config.clone()
-                },
                 ..default_run_args.clone()
             };
             verify_args_struct_by_command_run_with_identity_setup(
@@ -473,6 +440,17 @@ pub(super) mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test_case::test_case("--account-index", "program-id")]
+    #[test_case::test_case("--account-index-include-key", "11111111111111111111111111111111")]
+    #[test_case::test_case("--account-index-exclude-key", "11111111111111111111111111111111")]
+    #[test_case::test_case("--accounts-index-scan-results-limit-mb", "100")]
+    fn test_removed_scan_options(flag: &str, value: &str) {
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            RunArgs::default(),
+            vec![flag, value],
+        );
     }
 
     #[test]

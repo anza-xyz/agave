@@ -19,6 +19,21 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Removed the WebSocket RPC server from `agave-validator` and `solana-test-validator`.
+  Subscription clients must use an external RPC service. Neither binary opens or advertises
+  a WebSocket port. Geyser notifications remain available.
+  Use `solana program deploy --use-rpc` for local program deployments. Multinode benchmarks
+  need an explicit leader tracker backed by Geyser or an external subscription provider.
+* Removed `--rpc-pubsub-enable-block-subscription`, `--rpc-pubsub-max-active-subscriptions`,
+  `--rpc-pubsub-queue-capacity-items`, `--rpc-pubsub-queue-capacity-bytes`,
+  `--rpc-pubsub-worker-threads`, and `--rpc-pubsub-notification-threads`.
+* Removed `getProgramAccounts`, `getLargestAccounts`, `getSupply`, `getTokenLargestAccounts`,
+  `getTokenAccountsByOwner`, and `getTokenAccountsByDelegate` from `agave-validator` and `solana-test-validator`.
+  The `/v0/circulating-supply` HTTP endpoint has also been removed. Use an external RPC service
+  for these requests.
+* Removed `--account-index`, `--account-index-include-key`, `--account-index-exclude-key`, and
+  `--accounts-index-scan-results-limit-mb`.
+
 #### Changes
 
 ### Validator

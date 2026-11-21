@@ -4,11 +4,8 @@
 //! frozen banks it receives.
 
 use {
-    crate::{
-        rpc_subscriptions::{NotificationEntry, TimestampedNotificationEntry},
-        transaction_notifier_interface::TransactionNotifierArc,
-    },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    crate::transaction_notifier_interface::TransactionNotifierArc,
+    crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::izip,
     solana_clock::Slot,
     solana_ledger::blockstore::{Blockstore, BlockstoreError},
@@ -61,7 +58,6 @@ pub struct TransactionStatusServiceConfig {
     pub transaction_notifier: Option<TransactionNotifierArc>,
     pub enable_extended_tx_metadata_storage: bool,
     pub dependency_tracker: Option<Arc<DependencyTracker>>,
-    pub transaction_history_notification_sender: Option<Sender<TimestampedNotificationEntry>>,
 }
 
 impl TransactionStatusServiceConfig {
@@ -72,7 +68,6 @@ impl TransactionStatusServiceConfig {
             transaction_notifier: None,
             enable_extended_tx_metadata_storage: false,
             dependency_tracker: None,
-            transaction_history_notification_sender: None,
         }
     }
 }
@@ -413,10 +408,6 @@ impl TransactionStatusService {
                 // forks don't impact things because the non-canonical fork(s) will never send a
                 // Rooted message by definition
                 max_complete_and_rooted_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
-                Self::notify_transaction_history_complete(
-                    slot,
-                    &config.transaction_history_notification_sender,
-                );
                 Ok(false)
             }
             TransactionStatusMessage::PurgeTransactionHistory {
@@ -461,16 +452,6 @@ impl TransactionStatusService {
 
                 Ok(false)
             }
-        }
-    }
-
-    fn notify_transaction_history_complete(
-        slot: Slot,
-        notification_sender: &Option<Sender<TimestampedNotificationEntry>>,
-    ) {
-        if let Some(notification_sender) = notification_sender {
-            let _ = notification_sender
-                .send(NotificationEntry::TransactionHistoryComplete(slot).into());
         }
     }
 
@@ -618,11 +599,7 @@ pub(crate) mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let max_complete_slot = Arc::new(AtomicU64::default());
         let max_complete_and_rooted_slot = Arc::new(AtomicU64::default());
-        let (notification_sender, notification_receiver) = bounded(2);
-        let config = TransactionStatusServiceConfig {
-            transaction_history_notification_sender: Some(notification_sender),
-            ..TransactionStatusServiceConfig::default_for_tests()
-        };
+        let config = TransactionStatusServiceConfig::default_for_tests();
 
         TransactionStatusService::write_transaction_status_batch(
             TransactionStatusMessage::Freeze(bank),
@@ -635,7 +612,6 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(max_complete_slot.load(Ordering::SeqCst), 1);
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 0);
-        assert!(notification_receiver.is_empty());
 
         TransactionStatusService::write_transaction_status_batch(
             TransactionStatusMessage::Rooted { slot: 1 },
@@ -647,10 +623,6 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(max_complete_and_rooted_slot.load(Ordering::SeqCst), 1);
-        assert!(matches!(
-            notification_receiver.recv().unwrap().entry,
-            NotificationEntry::TransactionHistoryComplete(1)
-        ));
     }
 
     #[test]

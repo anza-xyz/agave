@@ -120,7 +120,9 @@ use {
         rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
-        transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
+        transaction_execution_result::{
+            AccountsDeltas, ExecutedTransaction, TransactionExecutionDetails,
+        },
     },
     solana_svm_timings::ExecuteTimings,
     solana_svm_transaction::svm_message::{SVMMessage, SVMStaticMessage},
@@ -8900,50 +8902,6 @@ fn test_vote_epoch_panic() {
 }
 
 #[test]
-fn test_collect_transaction_logs() {
-    let sender = Keypair::new();
-    let recipient = Pubkey::new_unique();
-    let execution_details = TransactionExecutionDetails {
-        status: Ok(()),
-        log_messages: Some(vec!["transaction log".to_string()]),
-        inner_instructions: None,
-        return_data: None,
-        executed_units: 0,
-        accounts_deltas: Some(AccountsDeltas {
-            accounts_resize_delta: 0,
-            accounts_uninitialized_size: 0,
-        }),
-    };
-
-    let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
-        system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
-        solana_transaction::sanitized::MessageHash::Compute,
-        solana_message::SimpleAddressLoader::Disabled,
-        &HashSet::new(),
-    )
-    .unwrap();
-    let mut config = TransactionLogCollectorConfig {
-        filter: TransactionLogCollectorFilter::All,
-        mentioned_addresses: HashSet::new(),
-    };
-    let (logs, mentions) =
-        Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
-    assert_eq!(logs.signature, *transaction.signature());
-    assert_eq!(logs.log_messages, vec!["transaction log"]);
-    assert!(mentions.is_empty());
-
-    config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
-    assert!(Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none());
-    config.mentioned_addresses.insert(recipient);
-    let (_, mentions) =
-        Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
-    assert_eq!(mentions, vec![recipient]);
-
-    config.filter = TransactionLogCollectorFilter::None;
-    assert!(Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none());
-}
-
-#[test]
 fn test_tx_log_order() {
     let GenesisConfigInfo {
         genesis_config,
@@ -8956,10 +8914,6 @@ fn test_tx_log_order() {
     );
     let bank = Bank::new_for_tests(&genesis_config);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    *bank.transaction_log_collector_config.write().unwrap() = TransactionLogCollectorConfig {
-        mentioned_addresses: HashSet::new(),
-        filter: TransactionLogCollectorFilter::All,
-    };
     let blockhash = bank.last_blockhash();
 
     let sender0 = Keypair::new();
@@ -8972,9 +8926,7 @@ fn test_tx_log_order() {
     let recipient0 = Pubkey::new_unique();
     let recipient1 = Pubkey::new_unique();
     let tx0 = system_transaction::transfer(&sender0, &recipient0, 10, blockhash);
-    let success_sig = tx0.signatures[0];
     let tx1 = system_transaction::transfer(&sender1, &recipient1, 110, blockhash); // Should produce insufficient funds log
-    let failure_sig = tx1.signatures[0];
     let tx2 = system_transaction::transfer(&sender0, &recipient0, 1, blockhash);
     let txs = vec![tx0, tx1, tx2];
     let batch = bank.prepare_batch_for_tests(txs);
@@ -9016,22 +8968,6 @@ fn test_tx_log_order() {
             .contains(&"failed".to_string())
     );
     assert!(commit_results[2].is_ok());
-
-    let stored_logs = &bank.transaction_log_collector.read().unwrap().logs;
-    let success_log_info = stored_logs
-        .iter()
-        .find(|transaction_log_info| transaction_log_info.signature == success_sig)
-        .unwrap();
-    assert!(success_log_info.result.is_ok());
-    let success_log = success_log_info.log_messages.clone().pop().unwrap();
-    assert!(success_log.contains(&"success".to_string()));
-    let failure_log_info = stored_logs
-        .iter()
-        .find(|transaction_log_info| transaction_log_info.signature == failure_sig)
-        .unwrap();
-    assert!(failure_log_info.result.is_err());
-    let failure_log = failure_log_info.log_messages.clone().pop().unwrap();
-    assert!(failure_log.contains(&"failed".to_string()));
 }
 
 #[test]
@@ -10205,21 +10141,6 @@ fn test_an_empty_instruction_without_program() {
 
     let err = bank.process_transaction(&tx).unwrap_err();
     assert_eq!(err, TransactionError::ProgramAccountNotFound);
-}
-
-#[test]
-fn test_transaction_log_collector_get_logs_for_address() {
-    let address = Pubkey::new_unique();
-    let mut mentioned_address_map = HashMap::new();
-    mentioned_address_map.insert(address, vec![0]);
-    let transaction_log_collector = TransactionLogCollector {
-        mentioned_address_map,
-        ..TransactionLogCollector::default()
-    };
-    assert_eq!(
-        transaction_log_collector.get_logs_for_address(Some(&address)),
-        Some(Vec::<TransactionLogInfo>::new()),
-    );
 }
 
 /// Test processing a good transaction correctly modifies the accounts data size

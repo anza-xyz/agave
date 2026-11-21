@@ -181,9 +181,7 @@ use {
         transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_execution_result::{
-            TransactionExecutionDetails, TransactionLoadedAccountsStats,
-        },
+        transaction_execution_result::TransactionLoadedAccountsStats,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResult,
             TransactionProcessingResultExtensions,
@@ -431,55 +429,6 @@ pub type TransactionBalances = Vec<Vec<u64>>;
 
 pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
-pub enum TransactionLogCollectorFilter {
-    All,
-    #[default]
-    None,
-    OnlyMentionedAddresses,
-}
-
-#[derive(Debug, Default)]
-pub struct TransactionLogCollectorConfig {
-    pub mentioned_addresses: HashSet<Pubkey>,
-    pub filter: TransactionLogCollectorFilter,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransactionLogInfo {
-    pub signature: Signature,
-    pub result: Result<()>,
-    pub log_messages: TransactionLogMessages,
-}
-
-#[derive(Default, Debug)]
-pub struct TransactionLogCollector {
-    // All the logs collected for from this Bank.  Exact contents depend on the
-    // active `TransactionLogCollectorFilter`
-    pub logs: Vec<TransactionLogInfo>,
-
-    // For each `mentioned_addresses`, maintain a list of indices into `logs` to easily
-    // locate the logs from transactions that included the mentioned addresses.
-    pub mentioned_address_map: HashMap<Pubkey, Vec<usize>>,
-}
-
-impl TransactionLogCollector {
-    pub fn get_logs_for_address(
-        &self,
-        address: Option<&Pubkey>,
-    ) -> Option<Vec<TransactionLogInfo>> {
-        match address {
-            None => Some(self.logs.clone()),
-            Some(address) => self.mentioned_address_map.get(address).map(|log_indices| {
-                log_indices
-                    .iter()
-                    .filter_map(|i| self.logs.get(*i).cloned())
-                    .collect()
-            }),
-        }
-    }
-}
-
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum VATHealthError {
     #[error("vote account not found")]
@@ -690,8 +639,6 @@ impl PartialEq for Bank {
             rewards: _,
             cluster_type: _,
             transaction_debug_keys: _,
-            transaction_log_collector_config: _,
-            transaction_log_collector: _,
             feature_set: _,
             reserved_account_keys: _,
             drop_callback: _,
@@ -943,13 +890,6 @@ pub struct Bank {
     pub cluster_type: Option<ClusterType>,
 
     transaction_debug_keys: Option<Arc<HashSet<Pubkey>>>,
-
-    // Global configuration for how transaction logs should be collected across all banks
-    pub transaction_log_collector_config: Arc<RwLock<TransactionLogCollectorConfig>>,
-
-    // Logs from transactions that this Bank executed collected according to the criteria in
-    // `transaction_log_collector_config`
-    pub transaction_log_collector: Arc<RwLock<TransactionLogCollector>>,
 
     pub feature_set: Arc<FeatureSet>,
 
@@ -1253,9 +1193,6 @@ impl Bank {
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
             cluster_type: Option::<ClusterType>::default(),
             transaction_debug_keys: Option::<Arc<HashSet<Pubkey>>>::default(),
-            transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
-            ),
-            transaction_log_collector: Arc::<RwLock<TransactionLogCollector>>::default(),
             feature_set: Arc::<FeatureSet>::default(),
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
@@ -1433,9 +1370,6 @@ impl Bank {
         let (transaction_debug_keys, transaction_debug_keys_time_us) =
             measure_us!(parent.transaction_debug_keys.clone());
 
-        let (transaction_log_collector_config, transaction_log_collector_config_time_us) =
-            measure_us!(parent.transaction_log_collector_config.clone());
-
         let (feature_set, feature_set_time_us) = measure_us!(parent.feature_set.clone());
 
         let accounts_data_size_initial = parent.load_accounts_data_size();
@@ -1496,8 +1430,6 @@ impl Bank {
             rewards: RwLock::new(vec![]),
             cluster_type: parent.cluster_type,
             transaction_debug_keys,
-            transaction_log_collector_config,
-            transaction_log_collector: Arc::new(RwLock::new(TransactionLogCollector::default())),
             feature_set: Arc::clone(&feature_set),
             reserved_account_keys: parent.reserved_account_keys.clone(),
             drop_callback: RwLock::new(OptionalDropCallback(
@@ -1565,7 +1497,6 @@ impl Bank {
                 builtin_program_ids_time_us,
                 executor_cache_time_us: 0,
                 transaction_debug_keys_time_us,
-                transaction_log_collector_config_time_us,
                 feature_set_time_us,
                 ancestors_time_us,
                 update_epoch_time_us: prepare_timings.update_epoch_time_us,
@@ -2259,9 +2190,6 @@ impl Bank {
             rewards: RwLock::new(vec![]),
             cluster_type: Some(genesis_config.cluster_type),
             transaction_debug_keys: debug_keys,
-            transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
-            ),
-            transaction_log_collector: Arc::<RwLock<TransactionLogCollector>>::default(),
             feature_set: Arc::<FeatureSet>::default(),
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
@@ -4318,10 +4246,6 @@ impl Bank {
         // Accumulate the transaction batch execution timings.
         timings.accumulate(&sanitized_output.execute_timings);
 
-        let ((), collect_logs_us) =
-            measure_us!(self.collect_logs(sanitized_txs, &sanitized_output.processing_results));
-        timings.saturating_add_in_place(ExecuteTimingType::CollectLogsUs, collect_logs_us);
-
         let mut processed_counts = ProcessedTransactionCounts::default();
         let err_count = &mut error_counters.total;
 
@@ -4367,94 +4291,6 @@ impl Bank {
             processing_results: sanitized_output.processing_results,
             processed_counts,
             balance_collector: sanitized_output.balance_collector,
-        }
-    }
-
-    fn collect_logs(
-        &self,
-        transactions: &[impl TransactionWithMeta],
-        processing_results: &[TransactionProcessingResult],
-    ) {
-        let transaction_log_collector_config =
-            self.transaction_log_collector_config.read().unwrap();
-        if transaction_log_collector_config.filter == TransactionLogCollectorFilter::None {
-            return;
-        }
-
-        let collected_logs: Vec<_> = processing_results
-            .iter()
-            .zip(transactions)
-            .filter_map(|(processing_result, transaction)| {
-                // Skip log collection for unprocessed transactions
-                let processed_tx = processing_result.processed_transaction()?;
-                // Skip log collection for unexecuted transactions
-                let execution_details = processed_tx.execution_details()?;
-                Self::collect_transaction_logs(
-                    &transaction_log_collector_config,
-                    transaction,
-                    execution_details,
-                )
-            })
-            .collect();
-
-        if !collected_logs.is_empty() {
-            let mut transaction_log_collector = self.transaction_log_collector.write().unwrap();
-            for (log, filtered_mentioned_addresses) in collected_logs {
-                let transaction_log_index = transaction_log_collector.logs.len();
-                transaction_log_collector.logs.push(log);
-                for key in filtered_mentioned_addresses.into_iter() {
-                    transaction_log_collector
-                        .mentioned_address_map
-                        .entry(key)
-                        .or_default()
-                        .push(transaction_log_index);
-                }
-            }
-        }
-    }
-
-    fn collect_transaction_logs(
-        transaction_log_collector_config: &TransactionLogCollectorConfig,
-        transaction: &impl TransactionWithMeta,
-        execution_details: &TransactionExecutionDetails,
-    ) -> Option<(TransactionLogInfo, Vec<Pubkey>)> {
-        // Skip log collection if no log messages were recorded
-        let log_messages = execution_details.log_messages.as_ref()?;
-
-        let mut filtered_mentioned_addresses = Vec::new();
-        if !transaction_log_collector_config
-            .mentioned_addresses
-            .is_empty()
-        {
-            for key in transaction.account_keys().iter() {
-                if transaction_log_collector_config
-                    .mentioned_addresses
-                    .contains(key)
-                {
-                    filtered_mentioned_addresses.push(*key);
-                }
-            }
-        }
-
-        let store = match transaction_log_collector_config.filter {
-            TransactionLogCollectorFilter::All => true,
-            TransactionLogCollectorFilter::None => false,
-            TransactionLogCollectorFilter::OnlyMentionedAddresses => {
-                !filtered_mentioned_addresses.is_empty()
-            }
-        };
-
-        if store {
-            Some((
-                TransactionLogInfo {
-                    signature: *transaction.signature(),
-                    result: execution_details.status.clone(),
-                    log_messages: log_messages.clone(),
-                },
-                filtered_mentioned_addresses,
-            ))
-        } else {
-            None
         }
     }
 
@@ -5366,16 +5202,6 @@ impl Bank {
         self.rc
             .accounts
             .load_by_program_slot(self.slot(), self.bank_id(), Some(program_id))
-    }
-
-    pub fn get_transaction_logs(
-        &self,
-        address: Option<&Pubkey>,
-    ) -> Option<Vec<TransactionLogInfo>> {
-        self.transaction_log_collector
-            .read()
-            .unwrap()
-            .get_logs_for_address(address)
     }
 
     /// Returns all the accounts stored in this slot

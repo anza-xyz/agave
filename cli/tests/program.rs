@@ -6,7 +6,8 @@ use {
         loader_v3_allow_prefunded_programdata, loader_v3_remove_extend_program,
         loader_v3_set_program_data_to_elf_length,
     },
-    serde_json::Value,
+    async_trait::async_trait,
+    serde_json::{Value, json},
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
@@ -34,9 +35,14 @@ use {
     solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::{
-        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+        http_sender::HttpSender,
+        nonblocking::rpc_client::RpcClient,
+        rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClientConfig},
+        rpc_sender::{RpcSender, RpcTransportStats},
     },
-    solana_rpc_client_api::config::RpcTransactionConfig,
+    solana_rpc_client_api::{
+        client_error::Result as RpcResult, config::RpcTransactionConfig, request::RpcRequest,
+    },
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
@@ -46,15 +52,63 @@ use {
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status_client_types::UiTransactionEncoding,
     std::{
+        collections::VecDeque,
         env,
         fs::File,
         io::{Read, Seek, SeekFrom},
         path::{Path, PathBuf},
         str::FromStr,
-        sync::Arc,
+        sync::{Arc, Mutex},
     },
     test_case::test_case,
 };
+
+// Listing is provided by an external RPC service in v5.0. Use responses built
+// from known live accounts while keeping deployment and account reads on the validator.
+struct ProgramListingSender {
+    http: HttpSender,
+    responses: Mutex<VecDeque<(usize, Value)>>,
+}
+
+#[async_trait]
+impl RpcSender for ProgramListingSender {
+    async fn send(&self, request: RpcRequest, params: Value) -> RpcResult<Value> {
+        if request == RpcRequest::GetProgramAccounts {
+            assert_eq!(params[0], bpf_loader_upgradeable::id().to_string());
+            let (length, response) = self.responses.lock().unwrap().pop_front().unwrap();
+            assert_eq!(params[1]["dataSlice"]["length"], length);
+            return Ok(response);
+        }
+        self.http.send(request, params).await
+    }
+    fn get_transport_stats(&self) -> RpcTransportStats {
+        self.http.get_transport_stats()
+    }
+    fn url(&self) -> String {
+        self.http.url()
+    }
+}
+
+async fn listing_response(client: &RpcClient, pubkey: Pubkey, length: usize) -> (usize, Value) {
+    let account: Value = client.send(RpcRequest::GetAccountInfo, json!([pubkey.to_string(), {
+        "encoding":"base64", "commitment":"processed", "dataSlice":{"offset":0,"length":length}
+    }])).await.unwrap();
+    assert!(!account["value"].is_null());
+    (
+        length,
+        json!([{"pubkey":pubkey.to_string(),"account":account["value"]}]),
+    )
+}
+
+fn set_listing_responses(config: &mut CliConfig, responses: Vec<(usize, Value)>) {
+    config.rpc_client = Some(Arc::new(RpcClient::new_sender(
+        ProgramListingSender {
+            http: HttpSender::new(config.json_rpc_url.clone()),
+            responses: Mutex::new(responses.into()),
+        },
+        RpcClientConfig::with_commitment(config.commitment),
+    )));
+}
 
 pub struct LoaderV3Features {
     pub set_programdata_to_elf_length: bool,
@@ -225,7 +279,7 @@ async fn setup_extend_program_test<'a>(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -309,7 +363,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -360,7 +414,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -422,7 +476,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -451,7 +505,7 @@ async fn test_cli_program_deploy_non_upgradeable() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -534,7 +588,7 @@ async fn test_cli_program_deploy_no_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -566,7 +620,7 @@ async fn test_cli_program_deploy_no_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -654,7 +708,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -687,7 +741,7 @@ async fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: b
             compute_unit_price: None,
             max_sign_attempts: 5,
             auto_extend: true,
-            use_rpc: false,
+            use_rpc: true,
             generate_ephemeral_program_id: true,
             skip_feature_verification: true,
         });
@@ -806,7 +860,7 @@ async fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: false,
     });
@@ -961,7 +1015,7 @@ async fn test_cli_program_deploy_local_verifier() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -995,7 +1049,7 @@ async fn test_cli_program_deploy_local_verifier() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1028,7 +1082,7 @@ async fn test_cli_program_deploy_local_verifier() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1110,7 +1164,7 @@ async fn test_cli_program_deploy_sbpf_v0(disable_sbpf_v0_v1_v2_deployment_enable
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: false,
     });
@@ -1210,7 +1264,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1267,7 +1321,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -1315,7 +1369,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1395,7 +1449,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1479,7 +1533,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1506,7 +1560,7 @@ async fn test_cli_program_deploy_with_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -1645,7 +1699,7 @@ async fn test_cli_program_upgrade_auto_extend(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1671,7 +1725,7 @@ async fn test_cli_program_upgrade_auto_extend(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false, // --no-auto-extend flag is present
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1702,7 +1756,7 @@ async fn test_cli_program_upgrade_auto_extend(
             compute_unit_price: None,
             max_sign_attempts: 5,
             auto_extend: false, // --no-auto-extend flag is present
-            use_rpc: false,
+            use_rpc: true,
             generate_ephemeral_program_id: false,
             skip_feature_verification: true,
         });
@@ -1759,7 +1813,7 @@ async fn test_cli_program_upgrade_auto_extend(
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true, // --no-auto-extend flag is absent
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -1896,7 +1950,7 @@ async fn test_cli_program_close_program() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -2033,7 +2087,7 @@ async fn test_cli_program_extend_program() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -2089,7 +2143,7 @@ async fn test_cli_program_extend_program() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: false,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -2323,7 +2377,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2363,7 +2417,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -2433,7 +2487,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -2479,7 +2533,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     let response = process_command(&config).await;
@@ -2563,7 +2617,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2632,7 +2686,7 @@ async fn test_cli_program_write_buffer() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2651,7 +2705,7 @@ async fn test_cli_program_write_buffer() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -2741,7 +2795,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: false,
     });
     config.output_format = OutputFormat::JsonCompact;
@@ -2769,7 +2823,7 @@ async fn test_cli_program_write_buffer_feature(enable_feature: bool) {
             skip_fee_check: false,
             compute_unit_price: None,
             max_sign_attempts: 5,
-            use_rpc: false,
+            use_rpc: true,
             skip_feature_verification: true,
         });
 
@@ -2838,7 +2892,7 @@ async fn test_cli_program_set_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -2900,7 +2954,7 @@ async fn test_cli_program_set_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -2962,7 +3016,7 @@ async fn test_cli_program_set_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3030,7 +3084,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3061,7 +3115,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3092,7 +3146,7 @@ async fn test_cli_program_mismatch_buffer_authority() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: true,
         skip_feature_verification: true,
     });
@@ -3187,7 +3241,7 @@ async fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -3375,7 +3429,7 @@ async fn test_cli_program_show() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3423,7 +3477,18 @@ async fn test_cli_program_show() {
         .unwrap();
     assert_eq!(max_len, data_len as usize);
 
-    // Verify show --buffers
+    // Verify show --buffers against an external listing response.
+    set_listing_responses(
+        &mut config,
+        vec![
+            listing_response(
+                &rpc_client,
+                buffer_keypair.pubkey(),
+                UpgradeableLoaderState::size_of_buffer_metadata(),
+            )
+            .await,
+        ],
+    );
     config.command = CliCommand::Program(ProgramCliCommand::Show {
         account_pubkey: None,
         authority_pubkey: authority_keypair.pubkey(),
@@ -3453,6 +3518,8 @@ async fn test_cli_program_show() {
         max_len as u64
     );
 
+    config.rpc_client = Some(rpc_client.clone());
+
     // Deploy
     let program_keypair = Keypair::new();
     config.signers = vec![&keypair, &authority_keypair, &program_keypair];
@@ -3470,7 +3537,7 @@ async fn test_cli_program_show() {
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });
@@ -3546,7 +3613,19 @@ async fn test_cli_program_show() {
         .unwrap();
     assert_eq!(max_len, data_len as usize);
 
-    // Verify show --programs
+    // Verify show --programs against external programdata and program listings.
+    set_listing_responses(
+        &mut config,
+        vec![
+            listing_response(
+                &rpc_client,
+                programdata_pubkey,
+                UpgradeableLoaderState::size_of_programdata_metadata(),
+            )
+            .await,
+            listing_response(&rpc_client, program_keypair.pubkey(), 0).await,
+        ],
+    );
     config.command = CliCommand::Program(ProgramCliCommand::Show {
         account_pubkey: None,
         authority_pubkey: authority_keypair.pubkey(),
@@ -3640,7 +3719,7 @@ async fn test_cli_program_dump() {
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(&config).await.unwrap();
@@ -3687,7 +3766,7 @@ async fn create_buffer_with_offline_authority<'a>(
         skip_fee_check: false,
         compute_unit_price: None,
         max_sign_attempts: 5,
-        use_rpc: false,
+        use_rpc: true,
         skip_feature_verification: true,
     });
     process_command(config).await.unwrap();
@@ -3723,9 +3802,8 @@ async fn create_buffer_with_offline_authority<'a>(
 
 #[allow(clippy::assertions_on_constants)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[test_case(None, false; "default")]
-#[test_case(Some(10), false; "with_compute_unit_price")]
 #[test_case(None, true; "use_rpc")]
+#[test_case(Some(10), true; "with_compute_unit_price")]
 async fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: bool) {
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     noop_path.push("tests");
@@ -3960,7 +4038,7 @@ async fn test_cli_program_deploy_prefunded_programdata(allow_prefunded_programda
         compute_unit_price: None,
         max_sign_attempts: 5,
         auto_extend: true,
-        use_rpc: false,
+        use_rpc: true,
         generate_ephemeral_program_id: false,
         skip_feature_verification: true,
     });

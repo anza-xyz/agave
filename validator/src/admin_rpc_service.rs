@@ -1465,17 +1465,14 @@ mod tests {
             let voting_pubkey = voting_keypair.pubkey();
             let authorized_voter_keypairs = Arc::new(RwLock::new(vec![voting_keypair]));
             let validator_config = ValidatorConfig {
-                rpc_addrs: Some((
-                    validator_node.info.rpc().unwrap(),
-                    validator_node.info.rpc_pubsub().unwrap(),
-                )),
+                rpc_addr: Some(validator_node.info.rpc().unwrap()),
                 ..ValidatorConfig::default_for_test()
             };
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
 
             let post_init = Arc::new(RwLock::new(None));
             let meta = AdminRpcRequestMetadata {
-                rpc_addr: validator_config.rpc_addrs.map(|(rpc_addr, _)| rpc_addr),
+                rpc_addr: validator_config.rpc_addr,
                 start_time: SystemTime::now(),
                 start_progress: start_progress.clone(),
                 validator_exit: validator_config.validator_exit.clone(),
