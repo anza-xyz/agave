@@ -2,7 +2,7 @@
 use {
     agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
+        ReplicaAccountInfoV5, ReplicaAccountInfoVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -115,38 +115,38 @@ impl AccountsUpdateNotifierImpl {
         txn: &'a Option<&'a SanitizedTransaction>,
         pubkey: &'a Pubkey,
         write_version: u64,
-    ) -> ReplicaAccountInfoV3<'a> {
-        ReplicaAccountInfoV3 {
+    ) -> ReplicaAccountInfoV5<'a> {
+        ReplicaAccountInfoV5 {
             pubkey: pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
             executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
             data: account.data(),
             write_version,
             txn: *txn,
+            txn_index: None,
         }
     }
 
     fn accountinfo_from_account_for_geyser<'a>(
         &self,
         account: &'a AccountForGeyser<'_>,
-    ) -> ReplicaAccountInfoV3<'a> {
-        ReplicaAccountInfoV3 {
+    ) -> ReplicaAccountInfoV5<'a> {
+        ReplicaAccountInfoV5 {
             pubkey: account.pubkey.as_ref(),
             lamports: account.lamports(),
             owner: account.owner().as_ref(),
             executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
             data: account.data(),
             write_version: 0, // can/will be populated afterwards
             txn: None,
+            txn_index: None,
         }
     }
 
     fn notify_plugins_of_account_update_from_snapshot(
         &self,
-        account: ReplicaAccountInfoV3,
+        account: ReplicaAccountInfoV5,
         slot: Slot,
     ) {
         let plugin_manager = self.plugin_manager.load();
@@ -159,7 +159,7 @@ impl AccountsUpdateNotifierImpl {
                 continue;
             }
             match plugin
-                .update_account_from_snapshot(ReplicaAccountInfoVersions::V0_0_3(&account), slot)
+                .update_account_from_snapshot(ReplicaAccountInfoVersions::V0_0_5(&account), slot)
             {
                 Err(err) => {
                     error!(
@@ -184,7 +184,7 @@ impl AccountsUpdateNotifierImpl {
 
     fn notify_plugins_of_account_update_for_bank(
         &self,
-        account: ReplicaAccountInfoV3,
+        account: ReplicaAccountInfoV5,
         slot: Slot,
         bank_id: BankId,
     ) {
@@ -198,7 +198,7 @@ impl AccountsUpdateNotifierImpl {
                 continue;
             }
             match plugin.update_account_for_bank(
-                ReplicaAccountInfoVersions::V0_0_3(&account),
+                ReplicaAccountInfoVersions::V0_0_5(&account),
                 slot,
                 bank_id.into(),
             ) {
@@ -260,8 +260,8 @@ mod tests {
             _slot: Slot,
             bank_id: u64,
         ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
-            let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
-                panic!("expected V0_0_3 account info");
+            let ReplicaAccountInfoVersions::V0_0_5(_account) = account else {
+                panic!("expected V0_0_5 account info");
             };
             self.account_update_bank_ids.lock().unwrap().push(bank_id);
             self.account_update_count.fetch_add(1, Ordering::Relaxed);
@@ -273,8 +273,8 @@ mod tests {
             account: ReplicaAccountInfoVersions,
             _slot: Slot,
         ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
-            let ReplicaAccountInfoVersions::V0_0_3(_account) = account else {
-                panic!("expected V0_0_3 account info");
+            let ReplicaAccountInfoVersions::V0_0_5(_account) = account else {
+                panic!("expected V0_0_5 account info");
             };
             self.account_update_count.fetch_add(1, Ordering::Relaxed);
             Ok(())
@@ -351,7 +351,6 @@ mod tests {
             lamports: 1,
             owner: &owner,
             executable: false,
-            rent_epoch: 0,
             data: &data,
         };
 

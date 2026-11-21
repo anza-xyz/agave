@@ -4615,7 +4615,6 @@ impl AccountsDb {
                         lamports: account.lamports(),
                         owner: account.owner(),
                         executable: account.executable(),
-                        rent_epoch: account.rent_epoch(),
                         data: account.data(),
                     };
                     geyser_notifier.notify_account_restore_from_snapshot(
