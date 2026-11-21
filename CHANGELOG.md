@@ -19,6 +19,13 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* Removed `getProgramAccounts`, `getLargestAccounts`, `getSupply`, `getTokenLargestAccounts`,
+  `getTokenAccountsByOwner`, and `getTokenAccountsByDelegate` from the Agave RPC server.
+  The `/v0/circulating-supply` HTTP endpoint has also been removed. Use an external RPC service
+  for these requests.
+* Removed `--account-index`, `--account-index-include-key`, `--account-index-exclude-key`, and
+  `--accounts-index-scan-results-limit-mb`.
+
 #### Changes
 
 ### Validator
