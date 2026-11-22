@@ -128,7 +128,7 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         })
         .collect();
 
-    InstrEffects {
+    let effects = InstrEffects {
         custom_err: if let Err(InstructionError::Custom(code)) = result {
             Some(code)
         } else {
@@ -139,8 +139,23 @@ pub fn execute_instr_with_callback<C: InvokeContextCallback>(
         cu_avail,
         return_data,
         logs,
-    }
+    };
+
+    #[cfg(feature = "conformance")]
+    INSTR_FIXTURE_WRITER.emit_if_requested(|| {
+        (
+            input.into(),
+            super::effects::apply_firedancer_transformations(input, &effects),
+        )
+    });
+
+    effects
 }
+
+#[cfg(feature = "conformance")]
+const INSTR_FIXTURE_WRITER: crate::conformance::fixture::FixtureWriter<
+    protosol::protos::InstrFixture,
+> = crate::conformance::fixture::FixtureWriter::new("sol_compat_instr_execute_v1", "instr");
 
 #[cfg(test)]
 mod tests {
@@ -325,5 +340,52 @@ mod tests {
         let effects = execute_instr(&context);
         assert_eq!(effects.result, None);
         assert_eq!(effects.custom_err, None);
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn test_written_fixture_replays() {
+        use {
+            crate::conformance::instr::effects::apply_firedancer_transformations,
+            prost::Message,
+            protosol::protos::{InstrContext as ProtoInstrContext, InstrFixture},
+            std::{env, fs},
+        };
+
+        let from = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let context = InstrContext {
+            feature_set: agave_feature_set::FeatureSet::all_enabled().runtime_features(),
+            ..build_system_transfer_context(&from, &to, 1_000)
+        };
+        let effects = execute_instr(&context);
+        assert_eq!(effects.result, None);
+
+        let directory = env::temp_dir().join(format!("instr-fixture-{}", Pubkey::new_unique()));
+        let path = INSTR_FIXTURE_WRITER.write(
+            &directory,
+            (&context).into(),
+            apply_firedancer_transformations(&context, &effects),
+        );
+        let file = fs::read(path).unwrap();
+        fs::remove_dir_all(&directory).unwrap();
+
+        let fixture = InstrFixture::decode(file.as_slice()).unwrap();
+        assert_eq!(
+            fixture.metadata.unwrap().fn_entrypoint,
+            "sol_compat_instr_execute_v1"
+        );
+        let input = fixture.input.unwrap();
+        let output = fixture.output.unwrap();
+        assert_eq!(input, ProtoInstrContext::from(&context));
+        assert_eq!(output, apply_firedancer_transformations(&context, &effects));
+
+        // The fixture alone must reproduce the run, including its features.
+        let replayed_context = InstrContext::from(input.clone());
+        assert_eq!(ProtoInstrContext::from(&replayed_context), input);
+        assert_eq!(
+            apply_firedancer_transformations(&replayed_context, &execute_instr(&replayed_context)),
+            output,
+        );
     }
 }
