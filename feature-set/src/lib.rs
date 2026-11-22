@@ -1616,7 +1616,7 @@ pub mod invoke_signed_v2 {
 }
 
 pub mod alt_bn128_pairing_map {
-    solana_pubkey::declare_id!("2WudV9cH9XgUFtxEzCo1eRY15uJNxcwyGhj9EHYJF1QN");
+    solana_pubkey::declare_id!("pariYzw5XQq89npwyyUS3N2GFJ4h1SEFBWgZhfq3Kjo");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
