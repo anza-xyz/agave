@@ -12,9 +12,6 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::{DeserializableVersionedEpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
-        snapshot_utils::StorageAndNextAccountsFileId,
-        stake_account::StakeAccount,
-        stakes::{DeserializableDelegationStakes, Stakes},
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
@@ -23,12 +20,9 @@ use {
     smallvec::SmallVec,
     solana_accounts_db::{
         accounts::Accounts,
-        accounts_db::{
-            AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
-        },
+        accounts_db::{AccountsDb, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo},
         accounts_file::AccountsFile,
         accounts_hash::AccountsLtHash,
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
         blockhash_queue::BlockhashQueue,
     },
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -41,23 +35,19 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_leader_schedule::SlotLeader,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
     std::{
         collections::{HashMap, HashSet},
         io::{self, BufReader, Read, Write},
-        path::PathBuf,
         result::Result,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
+        sync::{Arc, atomic::Ordering},
         thread,
         time::Instant,
     },
-    types::{SerdeAccountsLtHash, UnusedRentCollector},
+    types::{SerdeAccountsLtHash, UnusedRentCollector, UnusedStakes},
     wincode::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         adapter::{DefaultOnEmptyRead, DiscardSeq},
+        config::Config,
         io::{Reader, std_write::WriteAdapter},
         len::BincodeLen,
     },
@@ -83,8 +73,26 @@ pub(crate) use {
     storages_list::{LegacyStoragesList, StorageListItem, StoragesList},
 };
 
-const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
-type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>;
+type SnapshotConfig<const PREALLOCATION_SIZE_LIMIT: usize> =
+    wincode::config::Configuration<true, PREALLOCATION_SIZE_LIMIT>;
+
+// Each limit caps the in-memory size of a single collection. Current sizes come from a mainnet
+// snapshot at slot 452539277.
+/// Stake delegations from older writers are the largest, at 133 MB for 1.39M stake accounts
+/// (96 B each) in the manifest's stakes field, so the limit allows 11M stake accounts. Current
+/// writers leave that field empty.
+pub(crate) const BANK_SNAPSHOT_CONFIG: SnapshotConfig<{ 1 << 30 }> = SnapshotConfig::new();
+/// One blockhash's statuses in one slot are the largest, at 66 KB for 1178 statuses (56 B each),
+/// so the limit allows 19M statuses per slot under a single blockhash.
+pub(crate) const STATUS_CACHE_CONFIG: SnapshotConfig<{ 1 << 30 }> = SnapshotConfig::new();
+/// The list of storages is the largest, at 20.6 MB for 430k storages (48 B each), so the limit
+/// allows 5.6M storages. Each storage's list of obsolete accounts (24 B each) has its own limit
+/// of 11M accounts.
+pub(crate) const OBSOLETE_ACCOUNTS_CONFIG: SnapshotConfig<{ 256 << 20 }> = SnapshotConfig::new();
+/// The list takes 6.9 MB for 430k storages (16 B each), so the limit allows 4.2M storages.
+pub(crate) const STORAGES_LIST_CONFIG: SnapshotConfig<{ 64 << 20 }> = SnapshotConfig::new();
+/// The list takes 16 B for its single hint, so the limit allows 8k hints.
+pub(crate) const STARTUP_HINTS_CONFIG: SnapshotConfig<{ 128 << 10 }> = SnapshotConfig::new();
 
 /// A slot paired with its account storage entries; only kept to name the wire shape of the
 /// no-longer-used storage entries map in [`AccountsDbFields`] and [`SerializableAccountsDb`].
@@ -200,7 +208,7 @@ struct DeserializableVersionedBank {
     _unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    _unused_stakes: DeserializableDelegationStakes,
+    _unused_stakes: UnusedStakes,
     _unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -289,7 +297,7 @@ struct SerializableVersionedBank {
     unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: Stakes<StakeAccount<Delegation>>,
+    unused_stakes: UnusedStakes,
     unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -326,7 +334,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             unused_rent_collector: UnusedRentCollector::zeroed(),
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
-            stakes: rhs.stakes,
+            unused_stakes: UnusedStakes::default(),
             unused_accounts: UnusedAccounts::default(),
             unused_epoch_stakes: HashMap::default(),
             is_delta: rhs.is_delta,
@@ -401,20 +409,20 @@ impl SnapshotAccountsDbFields {
     }
 }
 
-pub(crate) fn serialize_into<W, T>(writer: W, value: &T) -> WriteResult<()>
+pub(crate) fn serialize_into<T, C>(writer: impl Write, value: &T, config: C) -> WriteResult<()>
 where
-    W: Write,
-    T: SchemaWrite<MaxStreamSizeConfig, Src = T>,
+    T: SchemaWrite<C, Src = T>,
+    C: Config,
 {
-    wincode::config::serialize_into(WriteAdapter::new(writer), value, MaxStreamSizeConfig::new())
+    wincode::config::serialize_into(WriteAdapter::new(writer), value, config)
 }
 
-pub(crate) fn deserialize_wincode_from<'a, R, T>(reader: R) -> ReadResult<T>
+pub(crate) fn deserialize_from<'a, T, C>(reader: impl Reader<'a>, config: C) -> ReadResult<T>
 where
-    R: Reader<'a>,
-    T: SchemaReadOwned<MaxStreamSizeConfig, Dst = T>,
+    T: SchemaReadOwned<C, Dst = T>,
+    C: Config,
 {
-    wincode::config::deserialize_from(reader, MaxStreamSizeConfig::new())
+    wincode::config::deserialize_from(reader, config)
 }
 
 /// Extra fields that are deserialized from the end of snapshots.
@@ -480,7 +488,7 @@ pub struct ExtraFieldsToSerialize {
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
 /// the parts sequentially, matching separate reads).
 ///
-/// Its abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
+/// Its abi digest must equal [`SerializableBankSnapshot`]'s, so the read and write
 /// wire formats can't diverge.
 #[cfg_attr(
     feature = "stable-abi",
@@ -537,7 +545,8 @@ impl DeserializableBankSnapshot {
 pub(crate) fn fields_from_stream<R: Read>(
     snapshot_stream: &mut BufReader<R>,
 ) -> wincode::ReadResult<(BankFieldsToDeserialize, AccountsDbFields)> {
-    deserialize_wincode_from::<_, DeserializableBankSnapshot>(snapshot_stream)?.into_fields()
+    deserialize_from::<DeserializableBankSnapshot, _>(snapshot_stream, BANK_SNAPSHOT_CONFIG)?
+        .into_fields()
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -573,20 +582,15 @@ pub struct BankFromStreamsInfo {
     pub calculated_accounts_lt_hash: AccountsLtHash,
 }
 
-#[allow(clippy::too_many_arguments)]
 #[cfg(test)]
 pub(crate) fn bank_from_streams<R>(
     snapshot_streams: &mut SnapshotStreams<R>,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+    accounts_db: AccountsDb,
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
 ) -> std::result::Result<(Bank, BankFromStreamsInfo), SnapshotError>
 where
     R: Read,
@@ -597,15 +601,11 @@ where
         accounts_db_fields,
         genesis_config,
         runtime_config,
-        account_paths,
-        storage_and_next_append_vec_id,
+        accounts_db,
         debug_keys,
         None, // leader_for_tests
         limit_load_slot_count_from_snapshot,
         verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
     )?;
     Ok((
         bank,
@@ -679,7 +679,7 @@ pub fn serialize_bank_snapshot_into(
     };
     // The caller reports the time spent here, e.g. as `bank_serialize_us` in the
     // `snapshot_bank` datapoint.
-    serialize_into(stream, &snapshot)
+    serialize_into(stream, &snapshot, BANK_SNAPSHOT_CONFIG)
 }
 
 // Serializable counterpart of `AccountsDbFields`. Sync fields with `AccountsDbFields`!
@@ -737,21 +737,16 @@ pub(crate) struct ReconstructedBankInfo {
     pub(crate) calculated_capitalization: u64,
 }
 
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn reconstruct_bank_from_fields(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields,
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+    accounts_db: AccountsDb,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     leader_for_tests: Option<SlotLeader>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
 ) -> Result<(Bank, ReconstructedBankInfo), SnapshotError> {
     let mut bank_fields = bank_fields.collapse_into();
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
@@ -766,13 +761,9 @@ pub(crate) fn reconstruct_bank_from_fields(
         })?;
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
-        account_paths,
-        storage_and_next_append_vec_id,
+        accounts_db,
         limit_load_slot_count_from_snapshot,
         verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
     )?;
     bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
@@ -900,21 +891,10 @@ pub struct ReconstructedAccountsDbInfo {
 
 fn reconstruct_accountsdb_from_fields(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
+    accounts_db: AccountsDb,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
-    accounts_db_config: AccountsDbConfig,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), SnapshotError> {
-    let mut accounts_db = AccountsDb::new_with_config(
-        account_paths.to_vec(),
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
-    );
-
     let snapshot_bank_hash_info = snapshot_accounts_db_fields.into_bank_hash_info();
 
     // Ensure all account paths exist
@@ -923,29 +903,6 @@ fn reconstruct_accountsdb_from_fields(
             .unwrap_or_else(|err| panic!("Failed to create directory {}: {}", path.display(), err));
     }
 
-    let StorageAndNextAccountsFileId {
-        storage,
-        next_append_vec_id,
-    } = storage_and_next_append_vec_id;
-
-    assert!(
-        !storage.is_empty(),
-        "At least one storage entry must exist from deserializing stream"
-    );
-
-    let next_append_vec_id = next_append_vec_id.load(Ordering::Acquire);
-    let max_append_vec_id = next_append_vec_id - 1;
-    assert!(
-        max_append_vec_id <= AccountsFileId::MAX / 2,
-        "Storage id {max_append_vec_id} larger than allowed max"
-    );
-
-    // Process deserialized data, set necessary fields in self
-    accounts_db.storage.initialize(storage);
-    accounts_db
-        .next_id
-        .store(next_append_vec_id, Ordering::Release);
-
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
@@ -953,11 +910,17 @@ fn reconstruct_accountsdb_from_fields(
         calculated_accounts_lt_hash,
         calculated_capitalization,
         pubkeys_by_owner,
-    } = accounts_db.generate_index(
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
-    );
+    } = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayonGenIndex{i:02}"))
+        .build()
+        .expect("new rayon threadpool")
+        .install(|| {
+            accounts_db.generate_index(
+                limit_load_slot_count_from_snapshot,
+                verify_index,
+                &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
+            )
+        });
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     Ok((

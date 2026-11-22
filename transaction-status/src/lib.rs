@@ -85,7 +85,6 @@ pub trait EncodableWithMeta {
         encoding: UiTransactionEncoding,
         meta: &TransactionStatusMeta,
     ) -> Self::Encoded;
-    fn json_encode(&self) -> Self::Encoded;
 }
 
 trait JsonAccounts {
@@ -651,7 +650,10 @@ impl EncodableWithMeta for VersionedTransaction {
                 BASE64_STANDARD.encode(serialize_versioned_transaction(self)),
                 TransactionBinaryEncoding::Base64,
             ),
-            UiTransactionEncoding::Json => self.json_encode(),
+            UiTransactionEncoding::Json => EncodedTransaction::Json(UiTransaction {
+                signatures: self.signatures.iter().map(ToString::to_string).collect(),
+                message: UiMessage::Raw(UiRawMessage::from(&self.message)),
+            }),
             UiTransactionEncoding::JsonParsed => EncodedTransaction::Json(UiTransaction {
                 signatures: self.signatures.iter().map(ToString::to_string).collect(),
                 message: match &self.message {
@@ -667,16 +669,6 @@ impl EncodableWithMeta for VersionedTransaction {
                 },
             }),
         }
-    }
-    fn json_encode(&self) -> Self::Encoded {
-        EncodedTransaction::Json(UiTransaction {
-            signatures: self.signatures.iter().map(ToString::to_string).collect(),
-            message: match &self.message {
-                VersionedMessage::Legacy(message) => message.encode(UiTransactionEncoding::Json),
-                VersionedMessage::V0(message) => message.json_encode(),
-                VersionedMessage::V1(message) => message.encode(UiTransactionEncoding::Json),
-            },
-        })
     }
 }
 
@@ -773,20 +765,7 @@ impl Encodable for Message {
                 transaction_config: None,
             })
         } else {
-            UiMessage::Raw(UiRawMessage {
-                header: self.header,
-                account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
-                recent_blockhash: self.recent_blockhash.to_string(),
-                instructions: self
-                    .instructions
-                    .iter()
-                    .map(|ix| {
-                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
-                    })
-                    .collect(),
-                address_table_lookups: None,
-                transaction_config: None,
-            })
+            UiMessage::Raw(UiRawMessage::from(self))
         }
     }
 }
@@ -817,20 +796,7 @@ impl Encodable for v0::Message {
                 transaction_config: None,
             })
         } else {
-            UiMessage::Raw(UiRawMessage {
-                header: self.header,
-                account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
-                recent_blockhash: self.recent_blockhash.to_string(),
-                instructions: self
-                    .instructions
-                    .iter()
-                    .map(|ix| {
-                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
-                    })
-                    .collect(),
-                address_table_lookups: None,
-                transaction_config: None,
-            })
+            UiMessage::Raw(UiRawMessage::from(self))
         }
     }
 }
@@ -870,26 +836,8 @@ impl EncodableWithMeta for v0::Message {
                 transaction_config: None,
             })
         } else {
-            self.json_encode()
+            UiMessage::Raw(UiRawMessage::from(self))
         }
-    }
-    fn json_encode(&self) -> Self::Encoded {
-        UiMessage::Raw(UiRawMessage {
-            header: self.header,
-            account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
-            recent_blockhash: self.recent_blockhash.to_string(),
-            instructions: self
-                .instructions
-                .iter()
-                .map(|ix| {
-                    UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
-                })
-                .collect(),
-            address_table_lookups: Some(
-                self.address_table_lookups.iter().map(Into::into).collect(),
-            ),
-            transaction_config: None,
-        })
     }
 }
 
@@ -916,20 +864,7 @@ impl Encodable for solana_message::v1::Message {
                 transaction_config: Some(UiTransactionConfig::from(&self.config)),
             })
         } else {
-            UiMessage::Raw(UiRawMessage {
-                header: self.header,
-                account_keys: self.account_keys.iter().map(ToString::to_string).collect(),
-                recent_blockhash: self.lifetime_specifier.to_string(),
-                instructions: self
-                    .instructions
-                    .iter()
-                    .map(|ix| {
-                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
-                    })
-                    .collect(),
-                address_table_lookups: None,
-                transaction_config: Some(UiTransactionConfig::from(&self.config)),
-            })
+            UiMessage::Raw(UiRawMessage::from(self))
         }
     }
 }

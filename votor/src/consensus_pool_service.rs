@@ -992,8 +992,13 @@ mod tests {
 
         // Verify that we received a finalized slot event
         let finalized_event = events.iter().find(|event| match event {
-            VotorEvent::Finalized(block, is_fast_finalized) => {
-                block.slot == target_slot && block.block_id == block_id && *is_fast_finalized
+            VotorEvent::Finalized {
+                block,
+                finalization_type,
+            } => {
+                block.slot == target_slot
+                    && block.block_id == block_id
+                    && finalization_type.as_bool()
             }
             _ => false,
         });

@@ -6,7 +6,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
-    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_sysvar_id::SysvarId,
 };
 
@@ -50,15 +49,13 @@ where
 {
     let serialized_len = wincode::config::serialized_size(sysvar, solana_account::WINCODE_CONFIG)
         .expect("failed to get serialized sysvar size") as usize;
-    let mut account = AccountSharedData::new_data_with_space(
+    AccountSharedData::new_data_with_space(
         lamports,
         sysvar,
         required_data_len(&T::id(), serialized_len),
         &sysvar::id(),
     )
-    .unwrap_or_else(|err| panic!("failed to serialize sysvar {}: {err}", T::id()));
-    account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-    account
+    .unwrap_or_else(|err| panic!("failed to serialize sysvar {}: {err}", T::id()))
 }
 
 pub(crate) fn from_account<T>(account: &AccountSharedData) -> Option<T>

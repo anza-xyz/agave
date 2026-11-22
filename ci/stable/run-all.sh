@@ -12,4 +12,4 @@ export JOBS
 #shellcheck source=ci/stable/common.sh
 source "$here"/common.sh
 
-_ ci/intercept.sh cargo test --jobs "$JOBS" --workspace --tests --verbose -- --nocapture
+_ cargo test --jobs "$JOBS" --workspace --tests --verbose

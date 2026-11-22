@@ -2,9 +2,9 @@
 
 use {
     crate::bank::Bank,
-    solana_program_runtime::{
-        loaded_programs::ProgramRuntimeEnvironment,
-        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryType},
+    solana_program_runtime::program_cache::{
+        entry::{ProgramCacheEntry, ProgramCacheEntryType},
+        env::ProgramRuntimeEnvironment,
     },
     solana_pubkey::Pubkey,
     std::sync::Arc,

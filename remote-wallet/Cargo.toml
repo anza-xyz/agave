@@ -57,7 +57,6 @@ ur-registry = { workspace = true, optional = true }
 uriparse = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
 serial_test = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 

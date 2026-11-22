@@ -30,7 +30,6 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
         block_height: Option<u64>,
         executed_transaction_count: u64,
         entry_count: u64,
-        commission_rate_in_basis_points: bool,
     ) {
         let plugin_manager = self.plugin_manager.load();
         if plugin_manager.plugins().next().is_none() {
@@ -44,8 +43,7 @@ impl BlockMetadataNotifier for BlockMetadataNotifierImpl {
             .iter()
             .map(|(pubkey, _)| pubkey.to_string())
             .collect();
-        let mirror_rewards: Vec<Reward> =
-            Self::build_rewards(rewards, &reward_pubkeys, commission_rate_in_basis_points);
+        let mirror_rewards: Vec<Reward> = Self::build_rewards(rewards, &reward_pubkeys);
         let rewards = RewardsAndNumPartitions {
             rewards: &mirror_rewards,
             num_partitions: rewards.num_partitions,
@@ -89,7 +87,6 @@ impl BlockMetadataNotifierImpl {
     fn build_rewards<'a>(
         rewards: &KeyedRewardsAndNumPartitions,
         reward_pubkeys: &'a [String],
-        commission_rate_in_basis_points: bool,
     ) -> Vec<Reward<'a>> {
         rewards
             .keyed_rewards
@@ -100,16 +97,8 @@ impl BlockMetadataNotifierImpl {
                 lamports: reward.lamports,
                 post_balance: reward.post_balance,
                 reward_type: Some(reward.reward_type),
-                commission: if commission_rate_in_basis_points {
-                    None
-                } else {
-                    reward.commission_bps.map(|bps| (bps / 100) as u8)
-                },
-                commission_bps: if commission_rate_in_basis_points {
-                    reward.commission_bps
-                } else {
-                    None
-                },
+                commission: None,
+                commission_bps: reward.commission_bps,
             })
             .collect()
     }
@@ -236,7 +225,6 @@ mod tests {
             Some(10),
             7,
             3,
-            false,
         );
 
         assert_eq!(*updates.lock().unwrap(), vec![(42, 9, 7, 3)]);
@@ -262,7 +250,6 @@ mod tests {
             None,
             0,
             0,
-            false,
         );
 
         // A failing plugin first, a recording plugin second: the error is
@@ -315,37 +302,9 @@ mod tests {
             None,
             7,
             3,
-            false,
-        );
-        notifier.notify_block_metadata(
-            42,
-            "ph",
-            43,
-            BankId::new(9),
-            "bh",
-            &keyed,
-            None,
-            None,
-            7,
-            3,
-            true,
         );
 
         let pk_s = pk.to_string();
-        let expected_pct = format!(
-            "{:?}",
-            RewardsAndNumPartitions {
-                rewards: &[Reward {
-                    pubkey: &pk_s,
-                    lamports: 5,
-                    post_balance: 100,
-                    reward_type: Some(RewardType::Staking),
-                    commission: Some(3),
-                    commission_bps: None,
-                }],
-                num_partitions: Some(2),
-            }
-        );
         let expected_bps = format!(
             "{:?}",
             RewardsAndNumPartitions {
@@ -360,15 +319,9 @@ mod tests {
                 num_partitions: Some(2),
             }
         );
-        assert_eq!(
-            *rewards_debug.lock().unwrap(),
-            vec![expected_pct.clone(), expected_bps.clone()]
-        );
-        assert_eq!(
-            *fail_rewards_debug.lock().unwrap(),
-            vec![expected_pct, expected_bps]
-        );
-        assert_eq!(updates.lock().unwrap().len(), 2);
-        assert_eq!(fail_updates.lock().unwrap().len(), 2);
+        assert_eq!(*rewards_debug.lock().unwrap(), vec![expected_bps.clone()]);
+        assert_eq!(*fail_rewards_debug.lock().unwrap(), vec![expected_bps]);
+        assert_eq!(updates.lock().unwrap().len(), 1);
+        assert_eq!(fail_updates.lock().unwrap().len(), 1);
     }
 }

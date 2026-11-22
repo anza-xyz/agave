@@ -17,8 +17,7 @@ use {
     },
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
-        consensus_message::{Block, BlockId, ConsensusMessage, VoteMessage},
-        migration::MigrationStatus,
+        consensus_message::{Block, ConsensusMessage, VoteMessage},
         stake::NonZeroStake,
         unverified_vote_message::UnverifiedCertificate,
         vote::Vote,
@@ -78,7 +77,6 @@ struct TestContext {
     sharable_banks: SharableBanks,
     cluster_info: Arc<ClusterInfo>,
     highest_parent_ready: Arc<RwLock<(Slot, Block)>>,
-    migration_status: Arc<MigrationStatus>,
     validator_keypairs: Vec<ValidatorVoteKeypairs>,
     ban_receiver: mpsc::Receiver<BanCommand>,
     packet_sender: Sender<Datagram>,
@@ -93,10 +91,10 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
-        Self::new_with_config(1024, MigrationStatus::post_migration_status())
+        Self::new_with_config(1024)
     }
 
-    fn new_with_config(pool_capacity: usize, migration_status: MigrationStatus) -> Self {
+    fn new_with_config(pool_capacity: usize) -> Self {
         let (channel_to_pool, pool_receiver) = bounded(pool_capacity);
         let num_validators = 10;
         let validator_keypairs = (0..num_validators)
@@ -135,9 +133,7 @@ impl TestContext {
             NUM_SLOTS_FOR_VERIFY,
             Block::new_unique(NUM_SLOTS_FOR_VERIFY.saturating_sub(1)),
         )));
-        let migration_status = Arc::new(migration_status);
         let context = SigVerifierContext {
-            migration_status: migration_status.clone(),
             ban_sender,
             sharable_banks: sharable_banks.clone(),
             highest_parent_ready: highest_parent_ready.clone(),
@@ -163,7 +159,6 @@ impl TestContext {
             sharable_banks,
             cluster_info,
             highest_parent_ready,
-            migration_status,
             ban_receiver,
             packet_sender,
             repair_receiver,
@@ -334,30 +329,86 @@ fn datagram_from_bytes(message: impl Into<Bytes>, peer_pubkey: Pubkey) -> Datagr
 }
 
 #[test]
-fn test_blockstore_certificate_requires_active_alpenglow() {
-    let ctx = TestContext::new_with_config(1024, MigrationStatus::default());
+fn test_genesis_votes_are_filtered() {
+    let ctx = TestContext::new();
+    let shred_version = ctx.cluster_info.my_shred_version();
+    let rank = 0;
+    let peer = ctx.validator_keypairs[rank].node_keypair.pubkey();
+    let block = Block::new_unique(1);
+    let normal_vote = Vote::new_notarization_vote(block);
+    // Cover the root slot and a slot that passes the normal vote range checks.
+    // A subsequent vote from the same validator must still be accepted.
+    let messages = [
+        Vote::new_genesis_vote(Block::new_unique(0)),
+        Vote::new_genesis_vote(block),
+        normal_vote,
+    ]
+    .map(|vote| {
+        (
+            ConsensusMessage::Vote(create_signed_vote_message(
+                &ctx.sharable_banks.root(),
+                &ctx.validator_keypairs,
+                shred_version,
+                vote,
+                rank,
+            )),
+            peer,
+        )
+    });
+
+    ctx.send_datagrams(messages_to_datagrams(&messages, shred_version));
+    let (votes, certs) = receive_messages(&ctx.pool_receiver, 1, 0);
+    assert_verified_votes(&votes, &[(normal_vote, rank)]);
+    assert!(certs.is_empty());
+}
+
+#[test]
+fn test_genesis_network_certificate_is_filtered() {
+    let ctx = TestContext::new();
     let shred_version = ctx.cluster_info.my_shred_version();
     let block = Block::new_unique(1);
-    let certificate = test_create_base2_unverified_certificate(
-        &ctx.bls_keypairs(),
-        shred_version,
-        CertificateType::FinalizeFast(block),
-        &[0, 1, 2, 3, 4, 5, 6, 7],
-    );
-    let slot = 2;
+    let normal_cert_type = CertificateType::FinalizeFast(block);
+    let messages = [CertificateType::Genesis(block), normal_cert_type].map(|cert_type| {
+        (
+            ConsensusMessage::Certificate(test_create_base2_certificate(
+                &ctx.bls_keypairs(),
+                shred_version,
+                cert_type,
+                &[0, 1, 2, 3, 4, 5, 6, 7],
+            )),
+            Pubkey::new_unique(),
+        )
+    });
 
-    ctx.send_certificate(slot, certificate.clone());
-    expect_no_receive(&ctx.pool_receiver);
+    ctx.send_datagrams(messages_to_datagrams(&messages, shred_version));
+    let (votes, certs) = receive_messages(&ctx.pool_receiver, 0, 1);
+    assert!(votes.is_empty());
+    assert_eq!(certs[0].cert_type, normal_cert_type);
+}
 
-    ctx.migration_status.enable_alpenglow_for_tests();
-    ctx.send_certificate(slot, certificate);
-    let SigVerifiedBatch::Certificates(certs) =
-        ctx.pool_receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap()
-    else {
-        panic!("expected a certificate batch");
-    };
-    assert_eq!(certs.len(), 1);
-    assert_eq!(certs[0].cert_type, CertificateType::FinalizeFast(block));
+#[test]
+fn test_genesis_blockstore_certificate_is_filtered() {
+    let ctx = TestContext::new();
+    let shred_version = ctx.cluster_info.my_shred_version();
+    let block = Block::new_unique(1);
+    let normal_cert_type = CertificateType::FinalizeFast(block);
+    // Both certificates have a current carrier slot and valid signatures/stake.
+    // The normal certificate confirms that the blockstore input was processed.
+    for cert_type in [CertificateType::Genesis(block), normal_cert_type] {
+        ctx.send_certificate(
+            2,
+            test_create_base2_unverified_certificate(
+                &ctx.bls_keypairs(),
+                shred_version,
+                cert_type,
+                &[0, 1, 2, 3, 4, 5, 6, 7],
+            ),
+        );
+    }
+
+    let (votes, certs) = receive_messages(&ctx.pool_receiver, 0, 1);
+    assert!(votes.is_empty());
+    assert_eq!(certs[0].cert_type, normal_cert_type);
 }
 
 #[test]
@@ -557,7 +608,7 @@ fn test_shred_version_mismatch() {
 #[test]
 fn test_blssigverifier_send_packets_channel_full() {
     agave_logger::setup();
-    let ctx = TestContext::new_with_config(1, MigrationStatus::post_migration_status());
+    let ctx = TestContext::new_with_config(1);
 
     let msg1_rank = 0;
     let msg2_rank = 2;
@@ -1556,118 +1607,6 @@ fn votes_are_bounded_by_root() {
     };
     assert_eq!(votes.len(), 1);
     assert_eq!(votes[0].vote().slot(), max_vote_slot);
-}
-
-#[test]
-fn genesis_votes_bypass_future_bound_during_migration() {
-    let ctx = TestContext::new_with_config(1024, MigrationStatus::default());
-    let highest_parent_ready_slot = 100;
-    *ctx.highest_parent_ready.write().unwrap() = (
-        highest_parent_ready_slot,
-        Block {
-            slot: highest_parent_ready_slot,
-            block_id: BlockId::new_unique(),
-        },
-    );
-    let max_vote_slot = highest_parent_ready_slot + 40;
-    let migration_slot = ctx.migration_status.record_feature_activation(200);
-    let genesis_slot = migration_slot.saturating_sub(1);
-    assert!(genesis_slot > max_vote_slot);
-
-    let genesis_block = Block {
-        slot: genesis_slot,
-        block_id: BlockId::new_unique(),
-    };
-    ctx.migration_status.set_genesis_block(genesis_block);
-    let genesis_vote_rank = 0;
-    let genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_genesis_vote(genesis_block),
-        genesis_vote_rank,
-    ));
-
-    // Normal votes remain bounded by ParentReady even when they target the exact block.
-    let normal_vote_rank = 1;
-    let normal_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_notarization_vote(genesis_block),
-        normal_vote_rank,
-    ));
-
-    // The migration slot itself cannot be the Genesis slot.
-    let different_slot_genesis_vote_rank = 2;
-    let different_slot_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_genesis_vote(Block {
-            slot: migration_slot,
-            block_id: genesis_block.block_id,
-        }),
-        different_slot_genesis_vote_rank,
-    ));
-
-    // The Genesis exception does not require the locally discovered block's hash either.
-    let different_hash_genesis_vote_rank = 3;
-    let different_hash_genesis_block = Block {
-        slot: genesis_slot,
-        block_id: BlockId::new_unique(),
-    };
-    let different_hash_genesis_vote = ConsensusMessage::Vote(create_signed_vote_message(
-        &ctx.sharable_banks.root(),
-        &ctx.validator_keypairs,
-        ctx.cluster_info.my_shred_version(),
-        Vote::new_genesis_vote(different_hash_genesis_block),
-        different_hash_genesis_vote_rank,
-    ));
-
-    let datagrams = messages_to_datagrams(
-        &[
-            (
-                genesis_vote,
-                ctx.validator_keypairs[genesis_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                normal_vote,
-                ctx.validator_keypairs[normal_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                different_slot_genesis_vote,
-                ctx.validator_keypairs[different_slot_genesis_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-            (
-                different_hash_genesis_vote,
-                ctx.validator_keypairs[different_hash_genesis_vote_rank]
-                    .node_keypair
-                    .pubkey(),
-            ),
-        ],
-        ctx.cluster_info.my_shred_version(),
-    );
-    ctx.send_datagrams(datagrams);
-
-    let (aggregates, _) = receive_messages(&ctx.pool_receiver, 2, 0);
-    assert_verified_votes(
-        &aggregates,
-        &[
-            (Vote::new_genesis_vote(genesis_block), genesis_vote_rank),
-            (
-                Vote::new_genesis_vote(different_hash_genesis_block),
-                different_hash_genesis_vote_rank,
-            ),
-        ],
-    );
-    expect_no_receive(&ctx.repair_receiver);
 }
 
 #[test]

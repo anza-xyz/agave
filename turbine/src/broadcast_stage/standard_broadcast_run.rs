@@ -7,10 +7,7 @@ use {
     },
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::{
-        consensus_message::{Block, BlockId},
-        migration::MigrationStatus,
-    },
+    agave_votor_messages::consensus_message::{Block, BlockId},
     solana_cost_model::shred_limit::{
         DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     },
@@ -24,7 +21,7 @@ use {
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
     solana_time_utils::AtomicInterval,
-    std::{borrow::Cow, collections::VecDeque, sync::RwLock},
+    std::{collections::VecDeque, sync::RwLock},
 };
 
 // Expect blacklist events to be extremely rare, so we can tightly bound the
@@ -59,7 +56,6 @@ pub struct StandardBroadcastRun {
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
     max_data_shreds_per_slot: u32,
     max_code_shreds_per_slot: u32,
@@ -74,7 +70,6 @@ enum BroadcastError {
 impl StandardBroadcastRun {
     pub(super) fn new(
         shred_version: u16,
-        migration_status: Arc<MigrationStatus>,
         votor_event_sender: VotorEventSender,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
     ) -> Self {
@@ -105,7 +100,6 @@ impl StandardBroadcastRun {
             num_batches: 0,
             cluster_nodes_cache,
             leader_schedule_cache,
-            migration_status,
             votor_event_sender,
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
             max_code_shreds_per_slot: DEFAULT_MAX_CODE_SHREDS_PER_SLOT,
@@ -251,9 +245,6 @@ impl StandardBroadcastRun {
             *next_index = (*next_index).max(shred.index() + 1);
         });
 
-        if self
-            .migration_status
-            .should_use_double_merkle_block_id(self.slot)
         {
             let fec_set_roots = shreds
                 .iter()
@@ -266,8 +257,6 @@ impl StandardBroadcastRun {
             if let Some(fec_set_root) = self.double_merkle_leaves.last() {
                 self.chained_merkle_root = *fec_set_root;
             }
-        } else if let Some(shred) = shreds.last() {
-            self.chained_merkle_root = shred.merkle_root().expect("no more legacy shreds");
         }
         if self.next_shred_index > self.max_data_shreds_per_slot {
             return Err(BroadcastError::TooManyShreds);
@@ -425,11 +414,7 @@ impl StandardBroadcastRun {
             .saturating_add(bank.ticks_per_slot())
             .saturating_sub(bank.max_tick_height());
 
-        let mut shreds = if maybe_send_header
-            && self
-                .migration_status
-                .should_allow_block_markers(bank.slot())
-        {
+        let mut shreds = if maybe_send_header {
             let header = BlockComponent::new_block_header(self.parent, self.parent_block_id);
             self.component_to_shreds(keypair, &header, reference_tick as u8, false, process_stats)
                 .unwrap()
@@ -464,12 +449,7 @@ impl StandardBroadcastRun {
             && shred.index() == 0
         {
             blockstore
-                .insert_cow_shreds(
-                    [Cow::Borrowed(shred)],
-                    true, // is_trusted
-                    pinnable_slice,
-                    write_batch,
-                )
+                .insert_trusted_shreds([shred.clone()], pinnable_slice, write_batch)
                 .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
@@ -505,10 +485,7 @@ impl StandardBroadcastRun {
             self.completed = true;
 
             // Populate the block id and send for voting
-            let block_id = if self
-                .migration_status
-                .should_use_double_merkle_block_id(bank.slot())
-            {
+            let block_id = {
                 // Block id is the double merkle root
                 let fec_set_count = u32::try_from(self.double_merkle_leaves.len()).unwrap();
                 // Add the final leaf (parent info)
@@ -523,17 +500,9 @@ impl StandardBroadcastRun {
                 )
                 .expect("Double merkle tree construction cannot fail");
                 *merkle_tree.root()
-            } else {
-                // The block id is the merkle root of the last FEC set which is now the chained merkle root
-                self.chained_merkle_root
             };
 
-            broadcast_utils::set_block_id_and_send(
-                &self.migration_status,
-                &self.votor_event_sender,
-                bank,
-                block_id,
-            )?;
+            broadcast_utils::set_block_id_and_send(&self.votor_event_sender, bank, block_id)?;
         }
 
         Ok(())
@@ -557,14 +526,9 @@ impl StandardBroadcastRun {
             .map(usize::from)
             .unwrap_or_default();
         let num_shreds = shreds.len();
-        let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
+        let shreds = shreds.iter().skip(offset).cloned();
         blockstore
-            .insert_cow_shreds(
-                shreds,
-                /*is_trusted:*/ true,
-                pinnable_slice,
-                write_batch,
-            )
+            .insert_trusted_shreds(shreds, pinnable_slice, write_batch)
             .expect("Failed to insert shreds in blockstore");
         let insert_shreds_elapsed = insert_shreds_start.elapsed();
         let new_insert_shreds_stats = InsertShredsStats {
@@ -708,7 +672,6 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
-        assert_matches::assert_matches,
         rand::Rng,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
@@ -731,8 +694,7 @@ mod test {
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
         solana_signer::Signer,
-        std::{ops::Deref, sync::Arc, time::Duration},
-        test_case::test_case,
+        std::{assert_matches, ops::Deref, sync::Arc, time::Duration},
     };
 
     #[allow(clippy::type_complexity)]
@@ -819,7 +781,6 @@ mod test {
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut run = StandardBroadcastRun::new(
             0,
-            Arc::new(MigrationStatus::post_migration_status()),
             votor_event_sender,
             test_leader_schedule_cache(&parent_bank),
         );
@@ -955,12 +916,8 @@ mod test {
         let mut pinnable_slice = blockstore.new_pinnable_slice();
         let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
 
         standard_broadcast_run
             .process_receive_results(
@@ -986,12 +943,8 @@ mod test {
         let keypair = Arc::new(Keypair::new());
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
-        let mut run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
+        let mut run =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
         assert!(run.completed);
 
         // Set up the slot to be interrupted
@@ -1022,9 +975,9 @@ mod test {
         assert!(shred.verify(&keypair.pubkey()));
     }
 
-    #[test_case(MigrationStatus::default(), 1 ; "pre_migration")]
-    #[test_case(MigrationStatus::post_migration_status(), 2 ; "alpenglow_enabled")]
-    fn test_slot_interrupt(migration_status: MigrationStatus, shred_multiplier: u64) {
+    #[test]
+    fn test_slot_interrupt() {
+        let shred_multiplier = 2;
         // Setup
         let num_shreds_per_slot = DATA_SHREDS_PER_FEC_BLOCK as u64;
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
@@ -1042,12 +995,8 @@ mod test {
 
         // Step 1: Make an incomplete transmission for slot 1
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(migration_status),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank0),
-        );
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank0));
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -1195,12 +1144,8 @@ mod test {
         let mut write_batch = blockstore.get_write_batch();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let mut last_tick_height = bank.tick_height();
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
         let mut process_ticks = |num_ticks| {
             let ticks = create_ticks(num_ticks, 0, genesis_config.hash());
             last_tick_height += ticks.len() as u64;
@@ -1270,12 +1215,8 @@ mod test {
         };
 
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
         standard_broadcast_run
             .test_process_receive_results(
                 &leader_keypair,
@@ -1316,12 +1257,8 @@ mod test {
             .unwrap();
 
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
-        let mut standard_broadcast_run = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank1),
-        );
+        let mut standard_broadcast_run =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank1));
         let (bsend, brecv) = bounded(1024);
         let (ssend, srecv) = bounded(1024);
         let mut pinnable_slice = blockstore.new_pinnable_slice();
@@ -1436,12 +1373,8 @@ mod test {
         let keypair = Keypair::new();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
-        let mut bs = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::default()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
+        let mut bs =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
         bs.slot = 1;
         bs.parent = 0;
         bs.max_data_shreds_per_slot = 1000;
@@ -1473,12 +1406,8 @@ mod test {
         let keypair = Keypair::new();
         let (votor_event_sender, _votor_event_receiver) = bounded(1024);
         let bank = Bank::new_for_tests(&create_genesis_config(10_000).genesis_config);
-        let mut bs = StandardBroadcastRun::new(
-            0,
-            Arc::new(MigrationStatus::post_migration_status()),
-            votor_event_sender,
-            test_leader_schedule_cache(&bank),
-        );
+        let mut bs =
+            StandardBroadcastRun::new(0, votor_event_sender, test_leader_schedule_cache(&bank));
         bs.slot = 12;
         bs.parent = 10;
         let original_parent_block_id = BlockId::new_unique();

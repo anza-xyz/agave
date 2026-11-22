@@ -53,8 +53,12 @@ impl WeightedU64Index {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, assert_matches::assert_matches, rand::SeedableRng as _, rand_chacha::ChaChaRng,
-        solana_sha256_hasher::Hasher, std::array, test_case::test_case,
+        super::*,
+        rand::SeedableRng as _,
+        rand_chacha::ChaChaRng,
+        solana_sha256_hasher::Hasher,
+        std::{array, assert_matches},
+        test_case::test_case,
     };
 
     const CHACHA_SEED: [u8; 32] = [16; 32];

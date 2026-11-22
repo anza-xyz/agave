@@ -12,6 +12,7 @@ use {
     serde_json::{Value, from_value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_instruction_error::InstructionError,
     solana_message::{
         MessageHeader,
@@ -564,6 +565,92 @@ pub struct UiRawMessage {
     pub address_table_lookups: Option<Vec<UiAddressTableLookup>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transaction_config: Option<UiTransactionConfig>,
+}
+
+impl From<&solana_message::VersionedMessage> for UiRawMessage {
+    fn from(versioned: &solana_message::VersionedMessage) -> Self {
+        use solana_message::VersionedMessage;
+        match versioned {
+            VersionedMessage::Legacy(message) => UiRawMessage::from(message),
+            VersionedMessage::V0(message) => UiRawMessage::from(message),
+            VersionedMessage::V1(message) => UiRawMessage::from(message),
+        }
+    }
+}
+
+impl From<&solana_message::v1::Message> for UiRawMessage {
+    fn from(message: &solana_message::v1::Message) -> Self {
+        Self {
+            header: message.header,
+            account_keys: message
+                .account_keys
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            recent_blockhash: message.lifetime_specifier.to_string(),
+            instructions: message
+                .instructions
+                .iter()
+                .map(|ix| {
+                    UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                })
+                .collect(),
+            address_table_lookups: None,
+            transaction_config: Some(UiTransactionConfig::from(&message.config)),
+        }
+    }
+}
+
+impl From<&solana_message::v0::Message> for UiRawMessage {
+    fn from(message: &solana_message::v0::Message) -> Self {
+        Self {
+            header: message.header,
+            account_keys: message
+                .account_keys
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            recent_blockhash: message.recent_blockhash.to_string(),
+            instructions: message
+                .instructions
+                .iter()
+                .map(|ix| {
+                    UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                })
+                .collect(),
+            address_table_lookups: Some(
+                message
+                    .address_table_lookups
+                    .iter()
+                    .map(Into::into)
+                    .collect(),
+            ),
+            transaction_config: None,
+        }
+    }
+}
+
+impl From<&solana_message::Message> for UiRawMessage {
+    fn from(message: &solana_message::Message) -> Self {
+        Self {
+            header: message.header,
+            account_keys: message
+                .account_keys
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            recent_blockhash: message.recent_blockhash.to_string(),
+            instructions: message
+                .instructions
+                .iter()
+                .map(|ix| {
+                    UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                })
+                .collect(),
+            address_table_lookups: None,
+            transaction_config: None,
+        }
+    }
 }
 
 /// A duplicate representation of a CompiledInstruction for pretty JSON serialization

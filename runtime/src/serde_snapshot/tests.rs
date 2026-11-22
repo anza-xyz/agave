@@ -11,12 +11,13 @@ mod serde_snapshot_tests {
             },
             runtime_config::RuntimeConfig,
             serde_snapshot::{
-                self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountsDb,
-                SnapshotAccountsDbFields, SnapshotStreams, deserialize_wincode_from,
-                reconstruct_accountsdb_from_fields, remap_append_vec_file, serialize_into,
+                self, AccountsDbFields, BANK_SNAPSHOT_CONFIG, ExtraFieldsToSerialize,
+                SerializableAccountsDb, SnapshotAccountsDbFields, SnapshotStreams,
+                deserialize_from, reconstruct_accountsdb_from_fields, remap_append_vec_file,
+                serialize_into,
             },
             snapshot_bank_utils,
-            snapshot_utils::{StorageAndNextAccountsFileId, create_tmp_accounts_dir_for_tests},
+            snapshot_utils::create_tmp_accounts_dir_for_tests,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
         agave_snapshots::snapshot_config::SnapshotConfig,
@@ -47,7 +48,7 @@ mod serde_snapshot_tests {
             io::{self, BufReader, BufWriter, Cursor, Read, Write},
             mem,
             ops::RangeFull,
-            path::{Path, PathBuf},
+            path::Path,
             sync::{Arc, OnceLock, atomic::Ordering},
         },
         tempfile::TempDir,
@@ -64,47 +65,35 @@ mod serde_snapshot_tests {
 
     fn context_accountsdb_from_stream<R>(
         stream: &mut BufReader<R>,
-        account_paths: &[PathBuf],
-        storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-        accounts_db_config: AccountsDbConfig,
+        accounts_db: AccountsDb,
     ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
         // read and deserialise the accounts database directly from the stream
-        let accounts_db_fields: AccountsDbFields = deserialize_wincode_from(&mut *stream)?;
+        let accounts_db_fields: AccountsDbFields =
+            deserialize_from(&mut *stream, BANK_SNAPSHOT_CONFIG)?;
         let snapshot_accounts_db_fields = SnapshotAccountsDbFields {
             full_snapshot_accounts_db_fields: accounts_db_fields,
             incremental_snapshot_accounts_db_fields: None,
         };
         let (accounts_db, _) = reconstruct_accountsdb_from_fields(
             snapshot_accounts_db_fields,
-            account_paths,
-            storage_and_next_append_vec_id,
+            accounts_db,
             None,
             false,
-            accounts_db_config,
-            None,
-            Arc::default(),
         )?;
         Ok(accounts_db)
     }
 
     fn accountsdb_from_stream<R>(
         stream: &mut BufReader<R>,
-        account_paths: &[PathBuf],
-        storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-        accounts_db_config: AccountsDbConfig,
+        accounts_db: AccountsDb,
     ) -> agave_snapshots::Result<AccountsDb>
     where
         R: Read,
     {
-        context_accountsdb_from_stream::<R>(
-            stream,
-            account_paths,
-            storage_and_next_append_vec_id,
-            accounts_db_config,
-        )
+        context_accountsdb_from_stream::<R>(stream, accounts_db)
     }
 
     fn accounts_db_fields_to_stream<W>(stream: &mut W, slot: Slot) -> wincode::WriteResult<()>
@@ -112,14 +101,20 @@ mod serde_snapshot_tests {
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        serialize_into(stream, &SerializableAccountsDb::new(slot, bank_hash_stats))
+        serialize_into(
+            stream,
+            &SerializableAccountsDb::new(slot, bank_hash_stats),
+            BANK_SNAPSHOT_CONFIG,
+        )
     }
 
-    /// Simulates the unpacking & storage reconstruction done during snapshot unpacking
+    /// Simulates the unpacking & storage reconstruction done during snapshot unpacking, attaching
+    /// copies of the storages of `accounts_db` in `output_dir` to `new_accounts_db`.
     fn copy_append_vecs(
         accounts_db: &AccountsDb,
         output_dir: impl AsRef<Path>,
-    ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
+        new_accounts_db: &mut AccountsDb,
+    ) -> Result<(), AccountsFileError> {
         let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
@@ -158,10 +153,8 @@ mod serde_snapshot_tests {
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
         }
 
-        Ok(StorageAndNextAccountsFileId {
-            storage,
-            next_append_vec_id: AtomicAccountsFileId::new(next_append_vec_id + 1),
-        })
+        new_accounts_db.initialize_storages(storage, next_append_vec_id + 1);
+        Ok(())
     }
 
     fn reconstruct_accounts_db_via_serialization(
@@ -177,15 +170,10 @@ mod serde_snapshot_tests {
         let copied_accounts = TempDir::new().unwrap();
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts, copied_accounts.path()).unwrap();
-        let mut accounts_db = accountsdb_from_stream(
-            &mut reader,
-            &[],
-            storage_and_next_append_vec_id,
-            accounts_db_config,
-        )
-        .unwrap();
+        let mut accounts_db =
+            AccountsDb::new_with_config(Vec::new(), accounts_db_config, None, Arc::default());
+        copy_append_vecs(accounts, copied_accounts.path(), &mut accounts_db).unwrap();
+        let mut accounts_db = accountsdb_from_stream(&mut reader, accounts_db).unwrap();
 
         // The append vecs will be used from `copied_accounts` directly by the new AccountsDb so keep
         // its TempDir alive
@@ -204,7 +192,7 @@ mod serde_snapshot_tests {
             let ancestors = Ancestors::from(vec![0]);
             let account = accounts.load(&ancestors, &pubkeys[idx]);
             let account1 = Some((
-                AccountSharedData::new((idx + 1) as u64, 0, AccountSharedData::default().owner()),
+                AccountSharedData::empty((idx + 1) as u64, AccountSharedData::default().owner()),
                 0,
             ));
             assert_eq!(account, account1);
@@ -226,7 +214,7 @@ mod serde_snapshot_tests {
         let ancestors = Ancestors::from(vec![slot]);
 
         for (i, pubkey) in pubkeys.iter().enumerate() {
-            let account = AccountSharedData::new(i as u64 + 1, 0, &Pubkey::default());
+            let account = AccountSharedData::empty(i as u64 + 1, &Pubkey::default());
             accounts.store_accounts(
                 (slot, [(pubkey, &account)].as_slice()),
                 BankId::new(0),
@@ -246,20 +234,24 @@ mod serde_snapshot_tests {
         let copied_accounts = TempDir::new().unwrap();
 
         // Simulate obtaining a copy of the AppendVecs from a tarball
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(&accounts.accounts_db, copied_accounts.path()).unwrap();
+        let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
+        let mut daccounts_db = AccountsDb::new_with_config(
+            daccounts_paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        copy_append_vecs(
+            &accounts.accounts_db,
+            copied_accounts.path(),
+            &mut daccounts_db,
+        )
+        .unwrap();
 
         let buf = writer.into_inner();
         let mut reader = BufReader::new(&buf[..]);
-        let (_accounts_dir, daccounts_paths) = get_temp_accounts_paths(2).unwrap();
         let daccounts = Accounts::new(Arc::new(
-            accountsdb_from_stream(
-                &mut reader,
-                &daccounts_paths,
-                storage_and_next_append_vec_id,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            )
-            .unwrap(),
+            accountsdb_from_stream(&mut reader, daccounts_db).unwrap(),
         ));
         check_accounts_local(&daccounts, &pubkeys, 100);
         let daccounts_hash = accounts
@@ -275,7 +267,7 @@ mod serde_snapshot_tests {
         let unrooted_bank_id = BankId::new(9);
         let db = AccountsDb::default_for_tests();
         let key = solana_pubkey::new_rand();
-        let account0 = AccountSharedData::new(1, 0, &key);
+        let account0 = AccountSharedData::empty(1, &key);
         db.store_for_tests((unrooted_slot, [(&key, &account0)].as_slice()));
 
         // Purge the slot
@@ -334,7 +326,7 @@ mod serde_snapshot_tests {
             accounts.modify_accounts(&pubkeys, latest_slot, 10, 3);
             // Overwrite account 30 from slot 0 with lamports=0 into slot 1.
             // Slot 1 should now have 10 + 1 = 11 accounts
-            let account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+            let account = AccountSharedData::empty(0, AccountSharedData::default().owner());
             accounts.store_for_tests((latest_slot, [(&pubkeys[30], &account)].as_slice()));
 
             // Create 10 new accounts in slot 1, should now have 11 + 10 = 21
@@ -353,7 +345,7 @@ mod serde_snapshot_tests {
             accounts.clean_accounts_for_tests();
             // Overwrite account 31 from slot 0 with lamports=0 into slot 2.
             // Slot 2 should now have 20 + 1 = 21 accounts
-            let account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+            let account = AccountSharedData::empty(0, AccountSharedData::default().owner());
             accounts.store_for_tests((latest_slot, [(&pubkeys[31], &account)].as_slice()));
 
             // Create 10 new accounts in slot 2. Slot 2 should now have
@@ -410,14 +402,13 @@ mod serde_snapshot_tests {
 
         let some_lamport = 223;
         let zero_lamport = 0;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(some_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(some_lamport, &owner);
         let pubkey = solana_pubkey::new_rand();
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
-        let account2 = AccountSharedData::new(some_lamport + 1, no_data, &owner);
+        let account2 = AccountSharedData::empty(some_lamport + 1, &owner);
         let pubkey2 = solana_pubkey::new_rand();
 
         let accounts = AccountsDb::default_for_tests();
@@ -458,19 +449,18 @@ mod serde_snapshot_tests {
         let some_lamport = 223;
         let zero_lamport = 0;
         let dummy_lamport = 999;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(some_lamport, no_data, &owner);
-        let account2 = AccountSharedData::new(some_lamport + 100_001, no_data, &owner);
-        let account3 = AccountSharedData::new(some_lamport + 100_002, no_data, &owner);
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(some_lamport, &owner);
+        let account2 = AccountSharedData::empty(some_lamport + 100_001, &owner);
+        let account3 = AccountSharedData::empty(some_lamport + 100_002, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
         let pubkey = solana_pubkey::new_rand();
         let purged_pubkey1 = solana_pubkey::new_rand();
         let purged_pubkey2 = solana_pubkey::new_rand();
 
-        let dummy_account = AccountSharedData::new(dummy_lamport, no_data, &owner);
+        let dummy_account = AccountSharedData::empty(dummy_lamport, &owner);
         let dummy_pubkey = Pubkey::default();
 
         let accounts = AccountsDb::default_for_tests();
@@ -561,14 +551,13 @@ mod serde_snapshot_tests {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(old_lamport, no_data, &owner);
-        let account2 = AccountSharedData::new(old_lamport + 100_001, no_data, &owner);
-        let account3 = AccountSharedData::new(old_lamport + 100_002, no_data, &owner);
-        let dummy_account = AccountSharedData::new(99_999_999, no_data, &owner);
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(old_lamport, &owner);
+        let account2 = AccountSharedData::empty(old_lamport + 100_001, &owner);
+        let account3 = AccountSharedData::empty(old_lamport + 100_002, &owner);
+        let dummy_account = AccountSharedData::empty(99_999_999, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
         let pubkey = solana_pubkey::new_rand();
         let dummy_pubkey = solana_pubkey::new_rand();
@@ -635,15 +624,14 @@ mod serde_snapshot_tests {
         agave_logger::setup();
         let old_lamport = 223;
         let zero_lamport = 0;
-        let no_data = 0;
         let dummy_lamport = 999_999;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(old_lamport, no_data, &owner);
-        let account2 = AccountSharedData::new(old_lamport + 100_001, no_data, &owner);
-        let account3 = AccountSharedData::new(old_lamport + 100_002, no_data, &owner);
-        let dummy_account = AccountSharedData::new(dummy_lamport, no_data, &owner);
-        let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(old_lamport, &owner);
+        let account2 = AccountSharedData::empty(old_lamport + 100_001, &owner);
+        let account3 = AccountSharedData::empty(old_lamport + 100_002, &owner);
+        let dummy_account = AccountSharedData::empty(dummy_lamport, &owner);
+        let zero_lamport_account = AccountSharedData::empty(zero_lamport, &owner);
 
         let pubkey1 = solana_pubkey::new_rand();
         let pubkey2 = solana_pubkey::new_rand();
@@ -740,10 +728,9 @@ mod serde_snapshot_tests {
             .collect();
 
         let some_lamport = 223;
-        let no_data = 0;
         let owner = *AccountSharedData::default().owner();
 
-        let account = AccountSharedData::new(some_lamport, no_data, &owner);
+        let account = AccountSharedData::empty(some_lamport, &owner);
 
         let mut current_slot = 0;
 
@@ -937,8 +924,13 @@ mod serde_snapshot_tests {
         let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
         // Create a directory to simulate AppendVecs unpackaged from a snapshot tar
         let copied_accounts = TempDir::new().unwrap();
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(accounts_db, copied_accounts.path()).unwrap();
+        let mut dbank_accounts_db = AccountsDb::new_with_config(
+            dbank_paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        copy_append_vecs(accounts_db, copied_accounts.path(), &mut dbank_accounts_db).unwrap();
 
         let cursor = Cursor::new(buf.as_slice());
         let mut reader = BufReader::new(cursor);
@@ -948,16 +940,12 @@ mod serde_snapshot_tests {
         };
         let (dbank, _) = serde_snapshot::bank_from_streams(
             &mut snapshot_streams,
-            &dbank_paths,
-            storage_and_next_append_vec_id,
+            dbank_accounts_db,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
         )
         .unwrap();
         assert_eq!(dbank.get_balance(&key1), 0);
@@ -1016,20 +1004,26 @@ mod serde_snapshot_tests {
         };
         let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
         let copied_accounts = TempDir::new().unwrap();
-        let storage_and_next_append_vec_id =
-            copy_append_vecs(&bank.rc.accounts.accounts_db, copied_accounts.path()).unwrap();
+        let mut dbank_accounts_db = AccountsDb::new_with_config(
+            dbank_paths,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            None,
+            Arc::default(),
+        );
+        copy_append_vecs(
+            &bank.rc.accounts.accounts_db,
+            copied_accounts.path(),
+            &mut dbank_accounts_db,
+        )
+        .unwrap();
         let (dbank, _) = crate::serde_snapshot::bank_from_streams(
             &mut snapshot_streams,
-            &dbank_paths,
-            storage_and_next_append_vec_id,
+            dbank_accounts_db,
             &genesis_config,
             &RuntimeConfig::default(),
             None,
             None,
             false,
-            ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            None,
-            Arc::default(),
         )
         .unwrap();
 

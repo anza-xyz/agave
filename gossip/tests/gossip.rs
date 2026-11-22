@@ -7,21 +7,15 @@ use {
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo, Protocol},
-        crds::Cursor,
-        epoch_specs::{EpochSpecs, TestEpochSpecs},
         gossip_service::GossipService,
         node::Node,
     },
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_net_utils::SocketAddrSpace,
     solana_perf::packet::PACKET_DATA_SIZE,
-    solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::sendmmsg::{SendPktsError, multi_target_send},
     solana_time_utils::timestamp,
-    solana_transaction::Transaction,
-    solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
         net::UdpSocket,
         sync::{
@@ -44,35 +38,6 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        test_node.sockets.gossip,
-        None,
-        None,
-        true, // should_check_duplicate_instance
-        None,
-        exit,
-    );
-    let _ = cluster_info.my_contact_info();
-    (
-        cluster_info,
-        gossip_service,
-        test_node.sockets.tvu.pop().unwrap(),
-    )
-}
-
-fn test_node_with_bank(
-    node_keypair: Arc<Keypair>,
-    exit: Arc<AtomicBool>,
-    epoch_specs: Box<dyn EpochSpecs>,
-) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
-    let mut test_node = Node::new_localhost_with_pubkey(&node_keypair.pubkey());
-    let cluster_info = Arc::new(ClusterInfo::new(
-        test_node.info.clone(),
-        node_keypair,
-        SocketAddrSpace::Unspecified,
-    ));
-    let gossip_service = GossipService::new(
-        &cluster_info,
-        Some(epoch_specs),
         test_node.sockets.gossip,
         None,
         None,
@@ -277,147 +242,4 @@ pub fn cluster_info_retransmit() {
     dr1.join().unwrap();
     dr2.join().unwrap();
     dr3.join().unwrap();
-}
-
-#[test]
-#[ignore]
-pub fn cluster_info_scale() {
-    use {
-        solana_measure::measure::Measure,
-        solana_perf::test_tx::test_tx,
-        solana_runtime::{
-            bank::Bank,
-            bank_forks::BankForks,
-            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
-        },
-    };
-    agave_logger::setup();
-    let exit = Arc::new(AtomicBool::new(false));
-    let num_nodes: usize = std::env::var("NUM_NODES")
-        .unwrap_or_else(|_| "10".to_string())
-        .parse()
-        .expect("could not parse NUM_NODES as a number");
-
-    let vote_keypairs: Vec<_> = (0..num_nodes)
-        .map(|_| ValidatorVoteKeypairs::new_rand())
-        .collect();
-    let genesis_config_info = create_genesis_config_with_vote_accounts(
-        10_000,
-        &vote_keypairs,
-        vec![100; vote_keypairs.len()],
-    );
-    let bank0 = Bank::new_for_tests(&genesis_config_info.genesis_config);
-    let bank_forks = BankForks::new_rw_arc(bank0);
-    let root_bank = bank_forks.read().unwrap().root_bank();
-    let slots_in_epoch = root_bank.get_slots_in_epoch(root_bank.epoch());
-    let epoch_specs: Box<dyn EpochSpecs> = Box::new(TestEpochSpecs {
-        slots_in_epoch,
-        staked_nodes: root_bank.current_epoch_staked_nodes(),
-        enforce_correct_proof_size: true,
-        root_slot: root_bank.slot(),
-    });
-
-    let nodes: Vec<_> = vote_keypairs
-        .into_iter()
-        .map(|keypairs| {
-            test_node_with_bank(
-                Arc::new(keypairs.node_keypair),
-                exit.clone(),
-                epoch_specs.clone_box(),
-            )
-        })
-        .collect();
-    let ci0 = nodes[0].0.my_contact_info();
-    for node in &nodes[1..] {
-        node.0.insert_info(ci0.clone());
-    }
-
-    let mut time = Measure::start("time");
-    let mut done;
-    let mut success = false;
-    for _ in 0..30 {
-        done = true;
-        for (i, node) in nodes.iter().enumerate() {
-            warn!("node {} peers: {}", i, node.0.gossip_peers().len());
-            if node.0.gossip_peers().len() != num_nodes - 1 {
-                done = false;
-                break;
-            }
-        }
-        if done {
-            success = true;
-            break;
-        }
-        sleep(Duration::from_secs(1));
-    }
-    time.stop();
-    warn!("found {num_nodes} nodes in {time} success: {success}");
-
-    for num_votes in 1..1000 {
-        let mut time = Measure::start("votes");
-        let tx = test_tx();
-        warn!("tx.message.account_keys: {:?}", tx.message.account_keys);
-        let vote = Vote::new(
-            vec![1, 3, num_votes + 5], // slots
-            Hash::default(),
-        );
-        let ix = vote_instruction::vote(
-            &Pubkey::new_unique(), // vote_pubkey
-            &Pubkey::new_unique(), // authorized_voter_pubkey
-            vote,
-        );
-        let tx = Transaction::new_with_payer(
-            &[ix], // instructions
-            None,  // payer
-        );
-        let tower = vec![num_votes + 5];
-        nodes[0].0.push_vote(&tower, tx.clone());
-        let mut success = false;
-        for _ in 0..(30 * 5) {
-            let mut not_done = 0;
-            let mut num_old = 0;
-            let mut num_push_total = 0;
-            let mut num_pushes = 0;
-            let mut num_pulls = 0;
-            for (node, _, _) in nodes.iter() {
-                //if node.0.get_votes(0).1.len() != (num_nodes * num_votes) {
-                let has_tx = node
-                    .get_votes(&mut Cursor::default())
-                    .iter()
-                    .filter(|v| v.message.account_keys == tx.message.account_keys)
-                    .count();
-                num_old += node.gossip.push.num_old.load(Ordering::Relaxed);
-                num_push_total += node.gossip.push.num_total.load(Ordering::Relaxed);
-                num_pushes += node.gossip.push.num_pushes.load(Ordering::Relaxed);
-                num_pulls += node.gossip.pull.num_pulls.load(Ordering::Relaxed);
-                if has_tx == 0 {
-                    not_done += 1;
-                }
-            }
-            warn!("not_done: {}/{}", not_done, nodes.len());
-            warn!("num_old: {num_old}");
-            warn!("num_push_total: {num_push_total}");
-            warn!("num_pushes: {num_pushes}");
-            warn!("num_pulls: {num_pulls}");
-            success = not_done < (nodes.len() / 20);
-            if success {
-                break;
-            }
-            sleep(Duration::from_millis(200));
-        }
-        time.stop();
-        warn!("propagated vote {num_votes} in {time} success: {success}");
-        sleep(Duration::from_millis(200));
-        for (node, _, _) in nodes.iter() {
-            node.gossip.push.num_old.store(0, Ordering::Relaxed);
-            node.gossip.push.num_total.store(0, Ordering::Relaxed);
-            node.gossip.push.num_pushes.store(0, Ordering::Relaxed);
-            node.gossip.pull.num_pulls.store(0, Ordering::Relaxed);
-        }
-    }
-
-    exit.store(true, Ordering::Relaxed);
-    for node in nodes {
-        node.1.join().unwrap();
-    }
 }

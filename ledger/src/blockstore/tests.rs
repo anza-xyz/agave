@@ -4,19 +4,18 @@ use {
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
-            ShredFlags, max_ticks_per_n_shreds,
+            ShredFlags,
+            filter::new_dummy_retransmit_sender,
+            max_ticks_per_n_shreds,
             merkle::{
                 finish_erasure_batch_for_tests, sign_with_duplicate_coding_index_for_tests,
                 sign_with_flipped_resigned_for_tests, sign_with_invalid_parity_for_tests,
             },
-            merkle_tree::{
-                SIZE_OF_MERKLE_PROOF_ENTRY, get_proof_size, hash_as_merkle_proof_entry,
-                verify_merkle_proof,
-            },
+            merkle_tree::{get_proof_size, hash_as_merkle_proof_entry, verify_merkle_proof},
         },
     },
+    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
     agave_votor_messages::consensus_message::BlockId,
-    assert_matches::assert_matches,
     rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
     solana_entry::entry::{
@@ -36,7 +35,6 @@ use {
     solana_transaction_error::TransactionError,
     solana_transaction_status::{InnerInstruction, InnerInstructions},
     std::{
-        borrow::Cow,
         cmp::Ordering,
         ops::{Deref, Range},
         time::Duration,
@@ -1959,7 +1957,7 @@ fn test_merkle_root_metas_coding() {
         ShredInsertionTracker::new(coding_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&coding_shred),
+            coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2018,7 +2016,7 @@ fn test_merkle_root_metas_coding() {
 
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Owned(new_coding_shred),
+            new_coding_shred,
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2085,7 +2083,7 @@ fn test_merkle_root_metas_coding() {
 
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&new_coding_shred),
+            new_coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2154,7 +2152,7 @@ fn test_merkle_root_metas_data() {
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_data_shred(
-            Cow::Borrowed(&data_shred),
+            data_shred.clone(),
             BlockLocation::Original,
             &mut shred_insertion_tracker,
             false,
@@ -2212,7 +2210,7 @@ fn test_merkle_root_metas_data() {
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
 
     let insert_result = blockstore.check_insert_data_shred(
-        Cow::Owned(new_data_shred),
+        new_data_shred,
         BlockLocation::Original,
         &mut shred_insertion_tracker,
         false,
@@ -2308,7 +2306,7 @@ fn test_merkle_root_metas_data() {
         ShredInsertionTracker::new(data_shreds.len(), &mut write_batch);
     blockstore
         .check_insert_data_shred(
-            Cow::Borrowed(&new_data_shred),
+            new_data_shred.clone(),
             BlockLocation::Original,
             &mut shred_insertion_tracker,
             false,
@@ -2384,7 +2382,7 @@ fn test_check_insert_coding_shred() {
     let mut shred_insertion_tracker = ShredInsertionTracker::new(1, &mut write_batch);
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&coding_shred),
+            coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2396,7 +2394,7 @@ fn test_check_insert_coding_shred() {
     // insert again fails on dupe
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Borrowed(&coding_shred),
+            coding_shred.clone(),
             &mut shred_insertion_tracker,
             false,
             ShredSource::Turbine,
@@ -2450,7 +2448,7 @@ fn test_existing_shred_index_with_different_signature(
     let is_trusted = false;
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&original_shred),
+            original_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -2459,7 +2457,7 @@ fn test_existing_shred_index_with_different_signature(
         )
         .unwrap();
     let insert_result = blockstore.check_insert_coding_shred(
-        Cow::Borrowed(&conflicting_shred),
+        conflicting_shred.clone(),
         &mut shred_insertion_tracker,
         is_trusted,
         ShredSource::Turbine,
@@ -2567,7 +2565,7 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
     let is_trusted = false;
     blockstore
         .check_insert_coding_shred(
-            Cow::Borrowed(&original_shred),
+            original_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -2577,7 +2575,7 @@ fn test_existing_coding_shred_index_with_different_position(relabeled_first: boo
         .unwrap();
     assert!(matches!(
         blockstore.check_insert_coding_shred(
-            Cow::Borrowed(&conflicting_shred),
+            conflicting_shred.clone(),
             &mut shred_insertion_tracker,
             is_trusted,
             ShredSource::Turbine,
@@ -4809,6 +4807,26 @@ fn test_get_confirmed_signatures_for_address2() {
         .unwrap();
     assert!(!sig_infos.found_before);
     assert!(sig_infos.infos.is_empty());
+
+    // An `until` cursor above the query's highest slot excludes all results.
+    let until = blockstore
+        .find_address_signatures_for_slot(address0, 9)
+        .unwrap()
+        .first()
+        .unwrap()
+        .1;
+    blockstore.set_roots([9].iter()).unwrap();
+    let sig_infos = blockstore
+        .get_confirmed_signatures_for_address2(
+            address0,
+            highest_super_majority_root,
+            None,
+            Some(until),
+            usize::MAX,
+        )
+        .unwrap();
+    assert!(sig_infos.found_until);
+    assert!(sig_infos.infos.is_empty());
 }
 
 #[test]
@@ -4956,10 +4974,10 @@ fn test_recovery() {
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
     let mut metrics = BlockstoreInsertionMetrics::default();
 
-    let (dummy_retransmit_sender, _) = bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let coding_shreds = coding_shreds.into_iter().map(|shred| {
         (
-            Cow::Owned(shred),
+            shred,
             /*is_repaired:*/ false,
             BlockLocation::Original,
             /*precomputed_merkle_root:*/ None,
@@ -5017,7 +5035,7 @@ fn test_skip_alt_recovery() {
     blockstore
         .do_insert_shreds(
             std::iter::once((
-                Cow::Owned(coding_shreds[0].clone()),
+                coding_shreds[0].clone(),
                 /*is_repaired:*/ false,
                 BlockLocation::Original,
                 /*precomputed_merkle_root:*/ None,
@@ -5032,7 +5050,7 @@ fn test_skip_alt_recovery() {
 
     let genesis_config = create_genesis_config(2).genesis_config;
     let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let (dummy_retransmit_sender, _) = bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let alternate_location = BlockLocation::Alternate {
         block_id: Hash::new_unique(),
     };
@@ -5041,7 +5059,7 @@ fn test_skip_alt_recovery() {
     blockstore
         .do_insert_shreds(
             std::iter::once((
-                Cow::Owned(data_shred),
+                data_shred,
                 /*is_repaired:*/ true,
                 alternate_location,
                 /*precomputed_merkle_root:*/ None,
@@ -5088,7 +5106,7 @@ impl RecoveryTestBlockstore {
     fn new(ledger_path: &Path) -> Self {
         let genesis_config = create_genesis_config(2).genesis_config;
         let root_bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let (dummy_retransmit_sender, _) = bounded(0);
+        let dummy_retransmit_sender = new_dummy_retransmit_sender();
         let shred_version = 0;
         Self {
             blockstore: Blockstore::open(ledger_path).unwrap(),
@@ -5109,14 +5127,9 @@ impl RecoveryTestBlockstore {
         let is_trusted = false;
         let mut metrics = BlockstoreInsertionMetrics::default();
         let precomputed_merkle_root = None; // gets computed on demand
-        let shreds = shreds.into_iter().map(|shred| {
-            (
-                Cow::Owned(shred),
-                is_repaired,
-                location,
-                precomputed_merkle_root,
-            )
-        });
+        let shreds = shreds
+            .into_iter()
+            .map(|shred| (shred, is_repaired, location, precomputed_merkle_root));
         self.blockstore
             .do_insert_shreds(
                 shreds,
@@ -5703,14 +5716,14 @@ fn test_recovery_discards_unexpected_data_complete_shreds() {
         )
         .map(|shred| {
             (
-                Cow::Owned(shred),
+                shred,
                 /*is_repaired:*/ false,
                 BlockLocation::Original,
                 /*precomputed_merkle_root:*/ None,
             )
         })
         .collect();
-    let (dummy_retransmit_sender, _) = bounded(0);
+    let dummy_retransmit_sender = new_dummy_retransmit_sender();
     let mut metrics = BlockstoreInsertionMetrics::default();
     blockstore
         .do_insert_shreds(
@@ -6900,14 +6913,9 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
     };
 
     // Insert shreds into blockstore at the specified location
-    let shreds = data_shreds.iter().map(|shred| {
-        (
-            Cow::Borrowed(shred),
-            use_alternate_location,
-            block_location,
-            None,
-        )
-    });
+    let shreds = data_shreds
+        .into_iter()
+        .map(|shred| (shred, use_alternate_location, block_location, None));
     let insert_results = blockstore
         .do_insert_shreds(
             shreds,
@@ -7002,14 +7010,10 @@ fn test_get_double_merkle_root(use_alternate_location: bool) {
         false, // not last in slot
     );
 
-    let shreds = partial_shreds.iter().take(3).map(|shred| {
-        (
-            Cow::Borrowed(shred),
-            use_alternate_location,
-            block_location,
-            None,
-        )
-    });
+    let shreds = partial_shreds
+        .into_iter()
+        .take(3)
+        .map(|shred| (shred, use_alternate_location, block_location, None));
     let insert_results = blockstore
         .do_insert_shreds(
             shreds,
@@ -7042,7 +7046,7 @@ fn insert_test_block_at_location(
     let is_repaired = location != BlockLocation::Original;
     let shreds = data_shreds
         .iter()
-        .map(|shred| (Cow::Borrowed(shred), is_repaired, location, None));
+        .map(|shred| (shred.clone(), is_repaired, location, None));
     let insert_results = blockstore
         .do_insert_shreds(
             shreds,
@@ -7193,7 +7197,7 @@ fn test_get_data_shreds_for_slot() {
         let is_repaired = location != BlockLocation::Original;
         let shreds = data_shreds
             .iter()
-            .map(|shred| (Cow::Borrowed(shred), is_repaired, location, None));
+            .map(|shred| (shred.clone(), is_repaired, location, None));
         let insert_results = blockstore
             .do_insert_shreds(
                 shreds,
@@ -7412,8 +7416,8 @@ fn test_block_header_followed_by_update_parent() {
         .get_parent_info(slot, BlockLocation::Original)
         .unwrap()
         .unwrap();
-    assert_eq!(parent_info.parent_slot, 3);
-    assert_eq!(parent_info.parent_block_id, parent_3_id.to_hash());
+    assert_eq!(parent_info.parent_block.slot, 3);
+    assert_eq!(parent_info.parent_block.block_id, parent_3_id);
     assert!(parent_info.has_update_parent());
 
     verify_next_slots(&blockstore, 5, &[]);
@@ -8422,7 +8426,7 @@ fn test_multiple_update_parents_out_of_order_marks_dead() {
         .get_parent_info(slot, BlockLocation::Original)
         .unwrap()
         .unwrap();
-    assert_eq!(parent_info.parent_slot, second_update_parent_slot);
+    assert_eq!(parent_info.parent_block.slot, second_update_parent_slot);
     assert_eq!(parent_info.replay_fec_set_index, 64);
     assert!(!blockstore.is_dead(slot));
 

@@ -9,15 +9,66 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 Release channels have their own copy of this changelog:
 
-* [edge - v4.5](#450-unreleased)
-* [beta - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
-* [stable - v4.3](https://github.com/anza-xyz/agave/blob/v4.3/CHANGELOG.md)
+* [edge - v5.0](#500-unreleased)
+* [beta - v4.5](https://github.com/anza-xyz/agave/blob/v4.5/CHANGELOG.md)
+* [stable - v4.4](https://github.com/anza-xyz/agave/blob/v4.4/CHANGELOG.md)
 
-## 4.5.0-Unreleased
+## 5.0.0-Unreleased
 
 ### RPC
 
 #### Breaking
+
+#### Changes
+
+### Validator
+
+#### Breaking
+
+* Multihoming support has been removed. `--bind-address` accepts a single IP address, and the `selectActiveInterface` admin RPC method has been removed.
+* The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
+  `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`
+* Removed deprecated arguments
+  * `--account-shrink-path`
+  * `--accounts-db-access-storages-method`
+  * `--accounts-db-cache-limit-mb`
+  * `--accounts-db-foreground-threads`
+  * `--enable-accounts-disk-index`
+  * `--no-skip-initial-accounts-db-clean`
+
+#### Changes
+
+* Changed the default account storage file format to SplitFile.
+
+### CLI
+
+#### Breaking
+
+#### Changes
+
+### solana-client
+
+#### Breaking
+
+* All mechanisms for sending transactions via UDP have been removed since Alpenglow nodes do not have any open UDP ports for transactions.
+* `solana-udp-client` crate has been removed.
+* `ConnectionCache::Udp`, `BlockingClientConnection::Udp`, `NonblockingClientConnection::Udp` variants and `ConnectionCache::protocol()`/`use_quic()` methods have been removed; `Protocol` is no longer re-exported from `solana_client::connection_cache`.
+
+### solana-tpu-client
+
+#### Breaking
+
+* UDP TPU support has been removed; leaders are always reached via their QUIC TPU address. `LeaderTpuService::new()` no longer takes a `protocol` argument.
+
+## 4.5.0
+
+### RPC
+
+#### Breaking
+
+* `getBlockTime` now requires `--enable-rpc-transaction-history` to serve results. Previously, RPC
+  nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
+  block.
 
 #### Changes
 
@@ -53,6 +104,8 @@ Release channels have their own copy of this changelog:
   `failed to deserialize transaction` (including some previously reported as
   `Transaction failed to sanitize accounts offsets correctly`), and malformed messages return
   `invalid transaction message` without further detail.
+* `jsonParsed` ProgramData accounts of programs without an upgrade authority no longer return the
+  removed authority's 32 bytes in front of the program data.
 
 ### Validator
 
@@ -71,6 +124,8 @@ Release channels have their own copy of this changelog:
   panicking.
 * Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
   the ledger, and an existing one can be deleted.
+* The TPU vote QUIC server has been removed; the node no longer advertises a `tpu_vote` QUIC
+  address in gossip. Votes are received over UDP `tpu_vote` and gossip.
 
 #### Deprecations
 
@@ -81,6 +136,7 @@ Release channels have their own copy of this changelog:
   Replace `--tpu-max-connections-per-peer N` with
   `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
 * `--require-tower` is deprecated and will be removed in a future release.
+* `--tpu-vote-transaction-receive-threads` is deprecated - it only applied to TowerBFT and is a no-op.
 
 ### CLI
 
@@ -101,6 +157,14 @@ Release channels have their own copy of this changelog:
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 * The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
   support parsing and signing txv1 transactions may no longer work with the CLI.
+* `withdraw-from-vote-account --sign-only` now requires
+  `--allow-vat-withdrawal`, because the vote account balance and VAT reserve cannot be
+  checked offline.
+* **`solana program deploy` no longer generates an ephemeral keypair signer as a
+  default fallback**. Users must explicitly call `--generate-ephemeral-program-id`
+  if this behavior is desired. This affects both `solana program deploy` and `solana
+  program deploy --buffer <BUFFER>`. This prevents users from creating keypairs they
+  can no longer recover unless they opt in.
 
 #### Changes
 
@@ -109,6 +173,10 @@ Release channels have their own copy of this changelog:
 * `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
   no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
 * `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `withdraw-from-vote-account` now preserves enough SOL for the next Validator Admission Ticket (VAT)
+  burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.
+  Pass `--allow-vat-withdrawal` to include the VAT reserve in the withdrawable balance; the flag is
+  required with `--sign-only`.
 
 ### Geyser
 
@@ -119,6 +187,14 @@ Release channels have their own copy of this changelog:
   Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
   can fill the shared channel and cause updates to be dropped for all subscribed plugins.
   Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
+## 4.4.2
+
+### RPC
+
+#### Breaking
+
+* The `/v0/circulating-supply` endpoint now requires `--full-rpc-api`.
 
 ## 4.4.0
 

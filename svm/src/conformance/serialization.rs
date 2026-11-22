@@ -36,12 +36,14 @@ pub fn push_and_serialize_parameters<'ix_data>(
         .push()
         .expect("failed to push instruction context");
 
+    let abi = invoke_context.abi();
     let instruction_context = invoke_context
         .transaction_context
         .get_current_instruction_context()
         .unwrap();
     serialize_parameters(
         &instruction_context,
+        abi,
         feature_set.virtual_address_space_adjustments,
         feature_set.account_data_direct_mapping,
         feature_set.direct_account_pointers_in_program_input,

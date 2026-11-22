@@ -355,6 +355,7 @@ pub enum CliCommand {
         destination_account_pubkey: Pubkey,
         withdraw_authority: SignerIndex,
         withdraw_amount: SpendAmount,
+        allow_vat_withdrawal: bool,
         sign_only: bool,
         dump_transaction_message: bool,
         blockhash_query: BlockhashQuery,
@@ -1558,6 +1559,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
             vote_account_pubkey,
             withdraw_authority,
             withdraw_amount,
+            allow_vat_withdrawal,
             destination_account_pubkey,
             sign_only,
             dump_transaction_message,
@@ -1574,6 +1576,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
                 vote_account_pubkey,
                 *withdraw_authority,
                 *withdraw_amount,
+                *allow_vat_withdrawal,
                 destination_account_pubkey,
                 *sign_only,
                 *dump_transaction_message,
@@ -1952,7 +1955,7 @@ mod tests {
         solana_rpc_client_nonce_utils::nonblocking::blockhash_query::Source,
         solana_sdk_ids::{stake, system_program},
         solana_transaction_error::TransactionError,
-        solana_transaction_status::TransactionConfirmationStatus,
+        solana_transaction_status_client_types::TransactionConfirmationStatus,
     };
 
     fn legacy_message(instructions: &[Instruction], payer: &Pubkey) -> VersionedMessage {

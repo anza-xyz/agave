@@ -25,8 +25,6 @@ use {
     solana_transaction_error::TransactionError, tokio::time::Duration,
 };
 
-pub const DEFAULT_VOTE_USE_QUIC: bool = false;
-
 /// The default connection count is set to 1 -- it should
 /// be sufficient for most use cases.
 pub const DEFAULT_TPU_CONNECTION_POOL_SIZE: usize = 1;
@@ -62,7 +60,7 @@ impl Default for TpuClientConfig {
     }
 }
 
-/// Client which sends transactions directly to the current leader's TPU port over UDP.
+/// Client which sends transactions directly to the current leader's TPU port over QUIC.
 /// The client uses RPC to determine the current leader and fetch node contact info
 pub struct TpuClient<
     P, // ConnectionPool

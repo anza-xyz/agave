@@ -2,7 +2,11 @@ use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{Arg, ArgMatches, value_t, value_t_or_exit, values_t, values_t_or_exit},
     log::*,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_account::ReadableAccount,
+    solana_account_decoder::{
+        UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
+        parse_account_data::AccountAdditionalDataV3,
+    },
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::AccountsFileProvider,
@@ -17,12 +21,14 @@ use {
         input_parsers::pubkeys_of,
         input_validators::{is_parsable, is_pow2},
     },
-    solana_cli_output::CliAccountNewConfig,
+    solana_cli_output::CliAccount,
     solana_clock::Slot,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
+    solana_pubkey::Pubkey,
+    solana_rpc_client_api::response::RpcKeyedAccount,
     solana_runtime::runtime_config::RuntimeConfig,
     std::{
         collections::HashSet,
@@ -122,8 +128,8 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
         Arg::with_name("accounts_db_account_storage_file_format")
             .long("accounts-db-account-storage-file-format")
             .takes_value(true)
-            .possible_values(&["append-vec", "split-experimental"])
-            .default_value("append-vec")
+            .possible_values(&["append-vec", "split"])
+            .default_value("split")
             .help("Selects the account storage file format")
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_ancient_append_vecs")
@@ -136,16 +142,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                  together.",
             )
             .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_access_storages_method")
-            .long("accounts-db-access-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["mmap", "file"])
-            .help(
-                "[DEPRECATED] Access account storages using this method. This flag is now a \
-                 no-op: storages are always accessed via file I/O. The flag is preserved for \
-                 backward compatibility and will be removed in a future release.",
-            ),
         Arg::with_name("accounts_db_ancient_storage_ideal_size")
             .long("accounts-db-ancient-storage-ideal-size")
             .value_name("BYTES")
@@ -339,19 +335,6 @@ pub fn get_accounts_db_config(
         ..AccountsIndexConfig::default()
     };
 
-    // The `--accounts-db-access-storages-method` flag is now a no-op. Storages are
-    // always accessed via file I/O. The flag is preserved for backward compatibility,
-    // but the value is ignored with a warning.
-    if arg_matches
-        .value_of("accounts_db_access_storages_method")
-        .is_some()
-    {
-        warn!(
-            "`--accounts-db-access-storages-method` is now a no-op; storages are always accessed \
-             via file I/O."
-        );
-    }
-
     let scan_filter_for_shrinking = arg_matches
         .value_of("accounts_db_scan_filter_for_shrinking")
         .map(|filter| match filter {
@@ -369,7 +352,7 @@ pub fn get_accounts_db_config(
         .value_of("accounts_db_account_storage_file_format")
         .map(|format| match format {
             "append-vec" => AccountsFileProvider::AppendVec,
-            "split-experimental" => AccountsFileProvider::Split,
+            "split" => AccountsFileProvider::Split,
             _ => {
                 // clap will enforce one of the above values is given
                 unreachable!("invalid value given to accounts_db_account_storage_file_format")
@@ -442,6 +425,50 @@ pub fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
         Some(values_t_or_exit!(matches, name, Slot))
     } else {
         None
+    }
+}
+
+pub(crate) struct CliAccountNewConfig {
+    pub data_encoding: UiAccountEncoding,
+    pub additional_data: Option<AccountAdditionalDataV3>,
+    pub data_slice_config: Option<UiDataSliceConfig>,
+    pub use_lamports_unit: bool,
+}
+
+impl Default for CliAccountNewConfig {
+    fn default() -> Self {
+        Self {
+            data_encoding: UiAccountEncoding::Base64,
+            additional_data: None,
+            data_slice_config: None,
+            use_lamports_unit: false,
+        }
+    }
+}
+
+pub fn cli_account_with_config<T: ReadableAccount>(
+    address: &Pubkey,
+    account: &T,
+    config: &CliAccountNewConfig,
+) -> CliAccount {
+    let CliAccountNewConfig {
+        data_encoding,
+        additional_data,
+        data_slice_config,
+        use_lamports_unit,
+    } = *config;
+    CliAccount {
+        keyed_account: RpcKeyedAccount {
+            pubkey: address.to_string(),
+            account: encode_ui_account(
+                address,
+                account,
+                data_encoding,
+                additional_data,
+                data_slice_config,
+            ),
+        },
+        use_lamports_unit,
     }
 }
 

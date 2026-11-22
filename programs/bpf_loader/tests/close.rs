@@ -23,9 +23,9 @@ fn test_bpf_loader_upgradeable_close() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let recipient_address = Pubkey::new_unique();
-    let recipient_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let recipient_account = AccountSharedData::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
     let buffer_account = AccountSharedData::new_data_with_space(
         1,
@@ -256,7 +256,7 @@ fn test_bpf_loader_upgradeable_close() {
             (sysvar::clock::id(), clock_account),
             (
                 system_program::id(),
-                AccountSharedData::new(0, 0, &system_program::id()),
+                AccountSharedData::empty(0, &system_program::id()),
             ),
             (authority_address, authority_account),
         ],

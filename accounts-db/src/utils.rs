@@ -1,13 +1,13 @@
 use {
     agave_fs::{dirs, metadata::DirectIoSupport},
     log::*,
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_measure::measure_time,
     std::{
         collections::HashSet,
         fs, io,
         path::{Path, PathBuf},
-        sync::{Arc, Mutex},
+        sync::Mutex,
         thread,
     },
 };
@@ -123,13 +123,13 @@ pub fn create_and_canonicalize_directory(directory: impl AsRef<Path>) -> io::Res
 /// Creates a new AccountSharedData structure for anything that implements ReadableAccount.
 /// This function implies data copies.
 pub fn create_account_shared_data(account: &impl ReadableAccount) -> AccountSharedData {
-    AccountSharedData::create_from_existing_shared_data(
-        account.lamports(),
-        Arc::new(account.data().to_vec()),
-        *account.owner(),
-        account.executable(),
-        account.rent_epoch(),
-    )
+    AccountSharedData::from(Account {
+        lamports: account.lamports(),
+        data: account.data().to_vec(),
+        owner: *account.owner(),
+        executable: account.executable(),
+        rent_epoch: account.rent_epoch(),
+    })
 }
 
 /// Validates that all `paths` reside on filesystems that support direct I/O (`O_DIRECT`).

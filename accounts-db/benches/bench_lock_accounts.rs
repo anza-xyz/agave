@@ -8,6 +8,7 @@ use {
     },
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::system_program,
     solana_transaction::{Transaction, sanitized::SanitizedTransaction},
     std::{hint::black_box, sync::Arc},
@@ -26,7 +27,10 @@ const LOCK_COUNTS: [usize; 2] = [2, 64];
 // total transactions per run
 const TOTAL_TRANSACTIONS: usize = 1024;
 
-fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<SanitizedTransaction> {
+fn create_test_transactions(
+    lock_count: usize,
+    read_conflicts: bool,
+) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
     // The system program accounts for one readonly lock.
     let instruction_account_count = lock_count
         .checked_sub(1)
@@ -62,7 +66,7 @@ fn create_test_transactions(lock_count: usize, read_conflicts: bool) -> Vec<Sani
         let instruction = Instruction::new_with_bytes(system_program::id(), &[], account_metas);
         let transaction = Transaction::new_with_payer(&[instruction], None);
 
-        let transaction = SanitizedTransaction::from_transaction_for_tests(transaction);
+        let transaction = RuntimeTransaction::from_transaction_for_tests(transaction);
         assert_eq!(transaction.message().account_keys().len(), lock_count);
         transactions.push(transaction);
     }

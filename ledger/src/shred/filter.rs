@@ -9,7 +9,8 @@ use {
     },
     crate::blockstore,
     agave_feature_set as feature_set,
-    crossbeam_channel::Sender,
+    agave_worker_pool::WorkerPool,
+    itertools::Itertools,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_perf::packet::BytesPacket,
@@ -537,7 +538,7 @@ fn check_last_data_shred_index(index: u32) -> bool {
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
     /// Sender to retransmit the recovered shreds
-    retransmit_sender: Sender<Vec<Payload>>,
+    retransmit_sender: RetransmitSender,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
     /// Scratch space for the parity check of erasure batches, reused across
@@ -545,9 +546,29 @@ pub struct ShredRecoveryContext {
     parity_buffer: Vec<u8>,
 }
 
+/// Maximum number of shreds sent to retransmit workers in one job.
+///
+/// Heavy-load measurements showed sigverify at ~5us/shred and retransmit at
+/// ~18us/shred. Splitting the typical 64-shred sigverify output into four
+/// retransmit jobs gives the worker pool enough parallelism to keep up.
+pub const RETRANSMIT_SHRED_BATCH_SIZE: usize = 16;
+
+pub type ShredBatch = Vec<Payload>;
+/// Shared retransmit pool. Its last owner drains queued jobs and joins the workers.
+pub type RetransmitSender = Arc<WorkerPool<ShredBatch>>;
+
+/// Creates a retransmit sender whose single worker discards submitted shreds.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn new_dummy_retransmit_sender() -> RetransmitSender {
+    use {agave_worker_pool::WorkerPoolConfig, std::num::NonZeroUsize};
+
+    let config = WorkerPoolConfig::new("solTestRetrans", NonZeroUsize::MIN);
+    Arc::new(WorkerPool::spawn(config, |_| |_| {}).unwrap())
+}
+
 impl ShredRecoveryContext {
     pub fn new(
-        retransmit_sender: Sender<Vec<Payload>>,
+        retransmit_sender: RetransmitSender,
         root_bank: Arc<Bank>,
         shred_version: u16,
     ) -> Self {
@@ -680,8 +701,11 @@ impl ShredRecoveryContext {
 
     /// Send recovered shreds for retransmit
     pub fn try_retransmit_shreds(&self, recovered_shreds: Vec<Payload>) {
-        if !recovered_shreds.is_empty() {
-            let _ = self.retransmit_sender.try_send(recovered_shreds);
+        for shreds in &recovered_shreds
+            .into_iter()
+            .chunks(RETRANSMIT_SHRED_BATCH_SIZE)
+        {
+            let _ = self.retransmit_sender.try_send(shreds.collect());
         }
     }
 
@@ -705,8 +729,10 @@ mod tests {
             genesis_utils::create_genesis_config,
             shred::{MAX_CODE_SHREDS_PER_SLOT, tests::*},
         },
-        assert_matches::assert_matches,
-        crossbeam_channel::bounded,
+        agave_shred_wire_format::constants::{
+            OFFSET_OF_DATA_SIZE, OFFSET_OF_FEC_SET_INDEX, OFFSET_OF_FLAGS, OFFSET_OF_INDEX,
+            OFFSET_OF_NUM_DATA_SHREDS, OFFSET_OF_VARIANT,
+        },
         itertools::Itertools,
         solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_keypair::Keypair,
@@ -718,6 +744,7 @@ mod tests {
         },
         solana_signer::Signer,
         std::{
+            assert_matches,
             io::{Cursor, Seek, SeekFrom, Write},
             sync::Arc,
             time::Duration,
@@ -820,23 +847,23 @@ mod tests {
         {
             let mut shred_filter_context =
                 ShredFilterContext::new(root_bank.clone(), shred_version);
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_VARIANT]);
+            let packet = to_packet(&payload[..OFFSET_OF_VARIANT]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 1);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 2);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + 1]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX + 1]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 3);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX + SIZE_OF_SHRED_INDEX - 1]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 4);
 
-            let packet = to_packet(&payload[..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2]);
+            let packet = to_packet(&payload[..OFFSET_OF_INDEX + SIZE_OF_SHRED_INDEX + 2]);
             assert!(shred_filter_context.should_discard_packet(&packet));
             assert_eq!(shred_filter_context.stats.index_overrun, 5);
         }
@@ -883,7 +910,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
@@ -919,7 +946,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
@@ -952,9 +979,10 @@ mod tests {
         // Feed recovery only coding shreds. Without the custom limit below, this
         // is enough parity to recover the missing data shreds.
         let max_code_shreds_per_slot = coding_shreds[0].index();
-        let (dummy_retransmit_sender, _) = bounded(0);
+        let dummy_retransmit_sender = new_dummy_retransmit_sender();
         let mut shred_recovery_context =
             ShredRecoveryContext::new(dummy_retransmit_sender, new_test_bank(0), shred_version);
+
         shred_recovery_context
             .shred_filter_ctx
             .set_shred_limits_for_tests(ShredLimits::new(
@@ -999,7 +1027,7 @@ mod tests {
                     .get_last_slot_in_epoch(root_epoch)
                 + 1
         );
-        let (stub_retransmit_sender, _) = bounded(0);
+        let stub_retransmit_sender = new_dummy_retransmit_sender();
 
         let mut rebuild_mixed_signatures = |slot: Slot| {
             let data_size = 1200 * 5;
@@ -1135,7 +1163,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&bad_index.to_le_bytes()).unwrap();
                 cursor
@@ -1161,7 +1189,7 @@ mod tests {
             {
                 let mut cursor = Cursor::new(&mut payload[..]);
                 cursor
-                    .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA as u64))
+                    .seek(SeekFrom::Start(OFFSET_OF_NUM_DATA_SHREDS as u64))
                     .unwrap();
                 cursor.write_all(&bad_num_data.to_le_bytes()).unwrap();
             }
@@ -1194,7 +1222,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut payload[..]);
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                 .unwrap();
             cursor.write_all(&bad_last_index.to_le_bytes()).unwrap();
             cursor
@@ -1559,7 +1587,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut payload[..]);
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                 .unwrap();
             cursor.write_all(&wrong_index.to_le_bytes()).unwrap();
             cursor
@@ -1567,7 +1595,7 @@ mod tests {
                 .unwrap();
             cursor.write_all(&fec_set_index.to_le_bytes()).unwrap();
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_FLAGS as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_FLAGS as u64))
                 .unwrap();
             cursor
                 .write_all(&[ShredFlags::DATA_COMPLETE_SHRED.bits()])
@@ -1582,7 +1610,7 @@ mod tests {
         {
             let mut cursor = Cursor::new(&mut payload[..]);
             cursor
-                .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
+                .seek(SeekFrom::Start(OFFSET_OF_INDEX as u64))
                 .unwrap();
             cursor.write_all(&correct_index.to_le_bytes()).unwrap();
         }

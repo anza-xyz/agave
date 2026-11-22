@@ -28,11 +28,7 @@ use {
     solana_gossip::gossip_service::discover_validators,
     solana_keypair::Keypair,
     solana_leader_schedule::{FixedSchedule, LeaderSchedule, SlotLeader},
-    solana_ledger::{
-        blockstore::Blockstore,
-        blockstore_options::{AccessType, BlockstoreOptions},
-        shred::filter::{TurbineMode, TurbineModeKind},
-    },
+    solana_ledger::shred::filter::{TurbineMode, TurbineModeKind},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
     solana_pubkey::Pubkey,
@@ -43,7 +39,7 @@ use {
         fs, iter,
         net::SocketAddr,
         num::{NonZeroU64, NonZeroUsize},
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{Arc, atomic::AtomicBool},
         thread::sleep,
         time::Duration,
@@ -58,8 +54,7 @@ pub const AG_DEBUG_LOG_FILTER: &str =
     "error,solana_core::replay_stage=info,solana_local_cluster=info,local_cluster=info,\
      solana_core::block_creation_loop=trace,agave_votor=trace,agave_votor::voting_service=info,\
      agave_votor::vote_history_storage=info,solana_core::validator=info,\
-     agave_votor::consensus_metrics=info,solana_core::consensus=info,\
-     solana_ledger::blockstore_processor=info";
+     agave_votor::consensus_metrics=info,solana_ledger::blockstore_processor=info";
 pub const DEFAULT_NODE_STAKE: u64 = 10 * LAMPORTS_PER_SOL;
 
 #[derive(Clone)]
@@ -84,31 +79,6 @@ impl From<&ValidatorKeys> for SlotLeader {
             vote_address: validator_keys.vote_keypair.pubkey(),
         }
     }
-}
-pub fn open_blockstore(ledger_path: &Path) -> Blockstore {
-    Blockstore::open_with_options(
-        ledger_path,
-        BlockstoreOptions {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
-            ..BlockstoreOptions::default()
-        },
-    )
-    // Fall back on ReadOnly if Primary fails; Primary will fail if
-    // a handle to Blockstore is being held somewhere else
-    .unwrap_or_else(|_| {
-        Blockstore::open_with_options(
-            ledger_path,
-            BlockstoreOptions {
-                access_type: AccessType::ReadOnly,
-                recovery_mode: None,
-                ..BlockstoreOptions::default()
-            },
-        )
-        .unwrap_or_else(|e| {
-            panic!("Failed to open ledger at {ledger_path:?}, err: {e}");
-        })
-    })
 }
 
 fn create_custom_leader_schedule(
@@ -176,7 +146,7 @@ pub fn run_cluster_partition<C>(
     on_before_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
     on_partition_resolved: impl FnOnce(&mut LocalCluster, &mut C),
     ticks_per_slot: Option<u64>,
-    no_wait_for_vote_to_start_leader: bool,
+    wait_for_supermajority_at_slot_zero: bool,
     additional_accounts: Vec<(Pubkey, AccountSharedData)>,
 ) {
     agave_logger::setup_with_default(AG_DEBUG_LOG_FILTER);
@@ -190,7 +160,7 @@ pub fn run_cluster_partition<C>(
     let mint_lamports = crate::local_cluster::DEFAULT_MINT_LAMPORTS
         + node_stakes.iter().sum::<u64>().saturating_mul(2);
     let turbine_mode = TurbineMode::new(TurbineModeKind::Enabled);
-    let wait_for_supermajority = if no_wait_for_vote_to_start_leader {
+    let wait_for_supermajority = if wait_for_supermajority_at_slot_zero {
         // This helps nodes get a little more in sync by waiting for
         // supermajority to observe slot 0. It still doesn't provide perfect
         // synchronization because there is quite a bit of work todo after the
@@ -205,7 +175,6 @@ pub fn run_cluster_partition<C>(
     };
     let mut validator_config = ValidatorConfig {
         wait_for_supermajority,
-        no_wait_for_vote_to_start_leader,
         turbine_mode: turbine_mode.clone(),
         ..ValidatorConfig::default_for_test()
     };
@@ -234,12 +203,7 @@ pub fn run_cluster_partition<C>(
         }
     };
 
-    // Always ensure at least one node is allowed to build blocks.
     let mut validator_configs = make_identical_validator_configs(&validator_config, num_nodes);
-    validator_configs
-        .first_mut()
-        .unwrap()
-        .no_wait_for_vote_to_start_leader = true;
     let slots_per_epoch = 2048;
     // Shared handle to the votor peer-socket override maps on each validator.
     // We populate it below to blackhole all peers (simulating a partition),

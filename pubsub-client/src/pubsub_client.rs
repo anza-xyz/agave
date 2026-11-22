@@ -36,11 +36,6 @@
 //!
 //! [`block_subscribe`]: https://docs.rs/solana-rpc/latest/solana_rpc/rpc_pubsub/trait.RpcSolPubSub.html#tymethod.block_subscribe
 //!
-//! The deprecated [`vote_subscribe`] method remains available for compatibility,
-//! but it does not receive vote notifications.
-//!
-//! [`vote_subscribe`]: PubsubClient::vote_subscribe
-//!
 //! # Examples
 //!
 //! This example subscribes to account events and then loops forever receiving
@@ -108,7 +103,7 @@ use {
         },
         response::{
             Response as RpcResponse, RpcBlockUpdate, RpcKeyedAccount, RpcLogsResponse,
-            RpcSignatureResult, RpcVote, SlotInfo, SlotUpdate,
+            RpcSignatureResult, SlotInfo, SlotUpdate,
         },
     },
     solana_signature::Signature,
@@ -295,20 +290,6 @@ pub type AccountSubscription = (
     PubsubAccountClientSubscription,
     Receiver<RpcResponse<UiAccount>>,
 );
-
-#[deprecated(
-    since = "4.5.0",
-    note = "TowerBFT vote notifications are no longer produced; this compatibility API will be \
-            removed in the next major release"
-)]
-pub type PubsubVoteClientSubscription = PubsubClientSubscription<RpcVote>;
-#[deprecated(
-    since = "4.5.0",
-    note = "TowerBFT vote notifications are no longer produced; this compatibility API will be \
-            removed in the next major release"
-)]
-#[allow(deprecated)]
-pub type VoteSubscription = (PubsubVoteClientSubscription, Receiver<RpcVote>);
 
 pub type PubsubRootClientSubscription = PubsubClientSubscription<Slot>;
 pub type RootSubscription = (PubsubRootClientSubscription, Receiver<Slot>);
@@ -544,58 +525,6 @@ impl PubsubClient {
         let result = PubsubClientSubscription {
             message_type: PhantomData,
             operation: "program",
-            socket,
-            subscription_id,
-            t_cleanup: Some(t_cleanup),
-            exit,
-        };
-
-        Ok((result, receiver))
-    }
-
-    /// Subscribe to deprecated TowerBFT vote events.
-    ///
-    /// This compatibility subscription remains open but does not receive
-    /// notifications.
-    ///
-    /// # RPC Reference
-    ///
-    /// This method corresponds directly to the deprecated [`voteSubscribe`]
-    /// RPC method.
-    ///
-    /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket/votesubscribe
-    #[deprecated(
-        since = "4.5.0",
-        note = "TowerBFT vote notifications are no longer produced; this compatibility API will \
-                be removed in the next major release"
-    )]
-    #[allow(deprecated)]
-    pub fn vote_subscribe<R: IntoClientRequest>(
-        request: R,
-    ) -> Result<VoteSubscription, PubsubClientError> {
-        let client_request = request.into_client_request().map_err(Box::new)?;
-        let socket = connect_with_retry(client_request)?;
-        let (sender, receiver) = unbounded();
-
-        let socket = Arc::new(RwLock::new(socket));
-        let socket_clone = socket.clone();
-        let exit = Arc::new(AtomicBool::new(false));
-        let exit_clone = exit.clone();
-        let body = json!({
-            "jsonrpc":"2.0",
-            "id":1,
-            "method":"voteSubscribe",
-        })
-        .to_string();
-        let subscription_id = PubsubVoteClientSubscription::send_subscribe(&socket_clone, body)?;
-
-        let t_cleanup = std::thread::spawn(move || {
-            Self::cleanup_with_sender(exit_clone, &socket_clone, sender)
-        });
-
-        let result = PubsubClientSubscription {
-            message_type: PhantomData,
-            operation: "vote",
             socket,
             subscription_id,
             t_cleanup: Some(t_cleanup),

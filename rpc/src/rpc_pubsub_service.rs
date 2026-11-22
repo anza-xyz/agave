@@ -40,12 +40,6 @@ pub const DEFAULT_WORKER_THREADS: usize = 1;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PubSubConfig {
     pub enable_block_subscription: bool,
-    /// Deprecated no-op retained for source and command-line compatibility.
-    #[deprecated(
-        since = "4.5.0",
-        note = "voteSubscribe is always accepted as an empty compatibility subscription"
-    )]
-    pub enable_vote_subscription: bool,
     pub max_active_subscriptions: usize,
     pub queue_capacity_items: usize,
     pub queue_capacity_bytes: usize,
@@ -54,11 +48,9 @@ pub struct PubSubConfig {
 }
 
 impl PubSubConfig {
-    #[allow(deprecated)]
     pub const fn default_for_tests() -> Self {
         Self {
             enable_block_subscription: false,
-            enable_vote_subscription: false,
             max_active_subscriptions: DEFAULT_MAX_ACTIVE_SUBSCRIPTIONS,
             queue_capacity_items: DEFAULT_TEST_QUEUE_CAPACITY_ITEMS,
             queue_capacity_bytes: DEFAULT_TEST_QUEUE_CAPACITY_BYTES,
@@ -192,7 +184,6 @@ struct BroadcastHandler {
     sent_stats: Arc<SentNotificationStats>,
 }
 
-#[allow(deprecated)]
 fn increment_sent_notification_stats(
     params: &SubscriptionParams,
     notification: &RpcNotification,
@@ -220,7 +211,6 @@ fn increment_sent_notification_stats(
         SubscriptionParams::Root => {
             stats.num_root.fetch_add(1, Ordering::Relaxed);
         }
-        SubscriptionParams::Vote => {}
         SubscriptionParams::Block(_) => {
             stats.num_block.fetch_add(1, Ordering::Relaxed);
         }

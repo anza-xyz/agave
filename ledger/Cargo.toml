@@ -37,7 +37,6 @@ agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
 agave-worker-pool = { workspace = true }
 anyhow = { workspace = true }
-assert_matches = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
@@ -97,7 +96,6 @@ solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
-solana-streamer = { workspace = true }
 solana-svm = { workspace = true, features = ["metrics"] }
 solana-svm-timings = { workspace = true }
 solana-svm-transaction = { workspace = true }

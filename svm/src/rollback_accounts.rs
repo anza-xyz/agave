@@ -1,6 +1,6 @@
 use {
     crate::nonce_info::NonceInfo,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
@@ -92,7 +92,12 @@ impl RollbackAccounts {
             // rent epoch value. In the future, a feature gate could be used to
             // alter this behavior such that rent epoch updates are handled the
             // same for both nonce and non-nonce failed transactions.
-            fee_payer_account.set_rent_epoch(fee_payer_loaded_rent_epoch);
+            if fee_payer_account.rent_epoch() != fee_payer_loaded_rent_epoch {
+                fee_payer_account = AccountSharedData::from(Account {
+                    rent_epoch: fee_payer_loaded_rent_epoch,
+                    ..Account::from(fee_payer_account)
+                });
+            }
             RollbackAccounts::FeePayerOnly {
                 fee_payer: (fee_payer_address, fee_payer_account),
             }
@@ -151,15 +156,13 @@ mod tests {
     #[test]
     fn test_new_fee_payer_only() {
         let fee_payer_address = Pubkey::new_unique();
-        let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(100, &Pubkey::default());
         let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
 
-        let rent_epoch_updated_fee_payer_account = {
-            let mut account = fee_payer_account.clone();
-            account.set_lamports(fee_payer_account.lamports());
-            account.set_rent_epoch(fee_payer_rent_epoch + 1);
-            account
-        };
+        let rent_epoch_updated_fee_payer_account = AccountSharedData::from(Account {
+            rent_epoch: 42,
+            ..Account::from(fee_payer_account.clone())
+        });
 
         let rollback_accounts = RollbackAccounts::new(
             None,
@@ -231,7 +234,7 @@ mod tests {
         .unwrap();
 
         let fee_payer_address = Pubkey::new_unique();
-        let fee_payer_account = AccountSharedData::new(44, 0, &Pubkey::default());
+        let fee_payer_account = AccountSharedData::empty(44, &Pubkey::default());
 
         let rent_epoch_updated_fee_payer_account = {
             let mut account = fee_payer_account.clone();

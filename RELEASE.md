@@ -59,6 +59,11 @@ There are three release channels that map to branches as follows:
 * beta - tracks the largest (and latest) `vX.Y` stabilization branch, more stable.
 * stable - tracks the second largest `vX.Y` stabilization branch, most stable.
 
+Edge serves the tip of `master`. Beta and stable serve the latest tag on their
+branch, not its tip. The "sync release channels" step at the end of every tag's
+`agave-secondary` build copies those tags' artifacts into the channels. If a
+channel is stale, retry that step on any tag build.
+
 ## Steps to Create a Branch
 
 ### Major release branch
@@ -173,7 +178,7 @@ Verify that all of the build artifacts are present (15 assets), then uncheck **"
 
 Build artifacts can take up to 60 minutes after creating the tag before
 appearing.  To check for progress:
-* The `agave-secondary` Buildkite pipeline handles creating the Linux and macOS release artifacts and updated crates.  Look for a job under the tag name of the release: https://buildkite.com/anza-xyz/agave-secondary.
+* The `agave-secondary` Buildkite pipeline handles creating the Linux and macOS release artifacts and updated crates.  Look for a job under the tag name of the release: https://buildkite.com/anza/agave-secondary.
 * The Windows release artifacts are produced by GitHub Actions.  Look for a job under the tag name of the release: https://github.com/anza-xyz/agave/actions.
 
 [Crates.io agave-validator](https://crates.io/crates/agave-validator) should have an updated agave-validator version.  This can take 2-3 hours, and sometimes fails in the `agave-secondary` job.

@@ -12,9 +12,10 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        program_cache_entry::ProgramCacheEntryType,
-        program_metrics::ProgramStatistics,
+        program_cache::{
+            entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironments,
+            metrics::ProgramStatistics, tx_batch::ProgramCacheForTxBatch,
+        },
     },
     solana_pubkey::Pubkey,
     solana_svm::{
@@ -187,7 +188,6 @@ fn svm_concurrent() {
     let read_account = Pubkey::new_unique();
     let mut account_data = AccountSharedData::default();
     account_data.set_data_from_slice(&AMOUNT.to_le_bytes());
-    account_data.set_rent_epoch(u64::MAX);
     account_data.set_lamports(1);
     mock_bank
         .account_shared_data

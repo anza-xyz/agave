@@ -25,7 +25,6 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
-        consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_epoch_schedule::EpochSchedule,
@@ -47,9 +46,7 @@ use {
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{
-        PortRange, SocketAddrSpace, find_available_ports_in_range, multihomed_sockets::BindIpAddrs,
-    },
+    solana_net_utils::{PortRange, SocketAddrSpace, find_available_ports_in_range},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
     },
@@ -139,7 +136,6 @@ impl TestValidatorNodeConfig {
 pub struct TestValidatorGenesis {
     fee_rate_governor: FeeRateGovernor,
     ledger_path: Option<PathBuf>,
-    tower_storage: Option<Arc<dyn TowerStorage>>,
     pub rent: Rent,
     rpc_config: JsonRpcConfig,
     pubsub_config: PubSubConfig,
@@ -172,7 +168,6 @@ impl Default for TestValidatorGenesis {
         Self {
             fee_rate_governor: FeeRateGovernor::default(),
             ledger_path: Option::<PathBuf>::default(),
-            tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
             rent: Rent::default(),
             rpc_config: JsonRpcConfig::default_for_test(),
             pubsub_config: PubSubConfig::default_for_tests(),
@@ -271,11 +266,6 @@ impl TestValidatorGenesis {
 
     pub fn ledger_path<P: Into<PathBuf>>(&mut self, ledger_path: P) -> &mut Self {
         self.ledger_path = Some(ledger_path.into());
-        self
-    }
-
-    pub fn tower_storage(&mut self, tower_storage: Arc<dyn TowerStorage>) -> &mut Self {
-        self.tower_storage = Some(tower_storage);
         self
     }
 
@@ -1083,7 +1073,7 @@ impl TestValidator {
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                bind_ip_addr,
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,
@@ -1152,7 +1142,7 @@ impl TestValidator {
             ..RuntimeConfig::default()
         };
 
-        let mut validator_config = ValidatorConfig {
+        let validator_config = ValidatorConfig {
             on_start_geyser_plugin_config_files: config.geyser_plugin_config_files.clone(),
             rpc_addrs: Some((
                 SocketAddr::new(
@@ -1183,16 +1173,12 @@ impl TestValidator {
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
             blockstore_cleanup_strategy: config.blockstore_cleanup_strategy,
-            no_wait_for_vote_to_start_leader: true,
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,
             runtime_config,
             enable_scheduler_bindings: config.enable_scheduler_bindings,
             ..ValidatorConfig::default_for_test()
         };
-        if let Some(ref tower_storage) = config.tower_storage {
-            validator_config.tower_storage = tower_storage.clone();
-        }
 
         let validator = Some(Validator::new(
             node,
@@ -1457,15 +1443,6 @@ mod test {
 
         let active_features = FEATURE_NAMES.keys().copied().collect::<Vec<_>>();
         assert_feature_accounts(&rpc_client, &active_features, &[]).await;
-        assert!(
-            test_validator
-                .bank_forks()
-                .read()
-                .unwrap()
-                .root_bank()
-                .get_alpenglow_genesis_certificate()
-                .is_some()
-        );
     }
 
     #[test]
@@ -1538,7 +1515,6 @@ mod test {
         [
             agave_feature_set::deprecate_rewards_sysvar::id(),
             agave_feature_set::disable_fees_sysvar::id(),
-            agave_feature_set::alpenglow::id(),
             agave_feature_set::bls_pubkey_management_in_vote_account::id(),
             agave_feature_set::vote_account_initialize_v2::id(),
         ]
@@ -1584,7 +1560,7 @@ mod test {
         let without_deactivate_flag = agave_feature_set::disable_fees_sysvar::id();
 
         let owner = Pubkey::new_unique();
-        let account = || AccountSharedData::new(100_000, 0, &owner);
+        let account = || AccountSharedData::empty(100_000, &owner);
 
         let (test_validator, _payer) = TestValidatorGenesis::default_for_tests()
             .deactivate_features(&[with_deactivate_flag]) // Just deactivate one feature.

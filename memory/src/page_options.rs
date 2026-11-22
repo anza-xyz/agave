@@ -19,9 +19,10 @@ pub fn page_size() -> usize {
 ///
 /// Huge pages cut page faults and TLB misses in large buffers and tables. The kernel grants
 /// transparent huge pages when THP is enabled in `always` or `madvise` mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HugePages {
     /// Allocates regular pages through [`Global`](allocator_api2::alloc::Global).
+    #[default]
     Off,
     /// Backs the allocation with transparent huge pages, aligning the edges selected by
     /// [`HugePageAlign`] to huge page boundaries.

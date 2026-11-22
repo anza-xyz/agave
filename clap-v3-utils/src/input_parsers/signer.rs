@@ -560,11 +560,10 @@ mod tests {
     use {
         super::*,
         crate::input_parsers::{keypair_of, pubkey_of, pubkeys_of},
-        assert_matches::assert_matches,
         clap::{Arg, ArgAction, Command},
         solana_keypair::write_keypair_file,
         solana_remote_wallet::locator::Manufacturer,
-        std::fs,
+        std::{assert_matches, fs},
         tempfile::{NamedTempFile, TempDir},
     };
 

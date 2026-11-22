@@ -310,7 +310,13 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
             let account_locks = account_keys
                 .iter()
                 .enumerate()
-                .map(|(index, key)| (key, transaction.is_writable(index)));
+                .map(|(index, key)| (key, transaction.is_writable(index)))
+                .chain(
+                    transaction
+                        .implicit_read_locks()
+                        .iter()
+                        .map(|key| (key, false)),
+                );
             self.account_locks.unlock_accounts(account_locks, thread_id);
         }
     }
@@ -376,7 +382,13 @@ mod tests {
         let account_locks = account_keys
             .iter()
             .enumerate()
-            .map(|(index, key)| (key, transaction.is_writable(index)));
+            .map(|(index, key)| (key, transaction.is_writable(index)))
+            .chain(
+                transaction
+                    .implicit_read_locks()
+                    .iter()
+                    .map(|key| (key, false)),
+            );
 
         common
             .account_locks

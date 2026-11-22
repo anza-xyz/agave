@@ -1,24 +1,21 @@
 //! Program helpers: builtins, keyed accounts, and program cache.
 
-#[cfg(feature = "metrics")]
-use solana_program_runtime::program_metrics::LoadProgramMetrics;
 use {
     crate::program_loader::load_program_with_pubkey,
     solana_account::{Account, AccountSharedData},
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironment},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::{
+            entry::ProgramCacheEntry, env::ProgramRuntimeEnvironment,
+            tx_batch::ProgramCacheForTxBatch,
+        },
         solana_sbpf::program::BuiltinFunctionDefinition,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
     solana_svm_callback::AccountLoadCallback,
-    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_timings::ExecuteTimings,
-    solana_syscalls::create_program_runtime_environment,
     std::{collections::HashSet, sync::Arc},
 };
 
@@ -116,36 +113,6 @@ pub fn new_program_cache_with_builtins(slot: u64) -> ProgramCacheForTxBatch {
     }
 
     cache
-}
-
-/// Add a program loaded from ELF bytes to the cache.
-pub fn add_program_to_program_cache(
-    cache: &mut ProgramCacheForTxBatch,
-    program_id: &Pubkey,
-    loader_key: &Pubkey,
-    elf: &[u8],
-    feature_set: &SVMFeatureSet,
-) {
-    let compute_budget = ComputeBudget::new_with_defaults(feature_set.raise_cpi_nesting_limit_to_8);
-    let program_runtime_environment = create_program_runtime_environment(
-        feature_set,
-        &compute_budget.to_budget(),
-        false, /* reject_deployment_of_broken_elfs */
-        false, /* debugging_features */
-    )
-    .unwrap();
-
-    let entry = ProgramCacheEntry::load(
-        loader_key,
-        program_runtime_environment,
-        0, // deployment_slot
-        elf,
-        #[cfg(feature = "metrics")]
-        &mut LoadProgramMetrics::default(),
-    )
-    .unwrap();
-
-    cache.replenish(*program_id, Arc::new(entry));
 }
 
 /// Populate a `ProgramCacheForTxBatch` via `load_program_with_pubkey` from any program accounts.

@@ -31,7 +31,7 @@ use {
 };
 #[cfg(any(feature = "dev-context-only-utils", feature = "stable-abi"))]
 use {
-    solana_account::state_traits::StateMutWincode as _,
+    solana_account::{Account, state_traits::StateMutWincode as _},
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_clock::Clock,
     solana_keypair::Keypair,
@@ -154,13 +154,15 @@ impl VoteAccount {
             &Pubkey::from(rng.random::<[u8; 32]>()),
             &clock,
         );
-        let account = AccountSharedData::new_data(
+        let mut account = Account::new_data(
             rng.random(), // lamports
             &VoteStateVersions::new_v4(vote_state),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
-        VoteAccount::try_from(account).unwrap()
+        // Pin the sample, so frozen ABI digests don't follow solana-account's default.
+        account.rent_epoch = 0;
+        VoteAccount::try_from(AccountSharedData::from(account)).unwrap()
     }
 }
 

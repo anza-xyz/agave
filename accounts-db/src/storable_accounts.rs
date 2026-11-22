@@ -580,12 +580,9 @@ mod tests {
                     let mut raw4 = Vec::new();
                     for entry in 0..entries {
                         let pk = Pubkey::from([entry; 32]);
-                        let account = AccountSharedData::create_from_existing_shared_data(
+                        let account = AccountSharedData::empty(
                             (entry as u64) * starting_slot,
-                            Arc::new(Vec::default()),
-                            Pubkey::default(),
-                            false,
-                            0,
+                            &Pubkey::default(),
                         );
 
                         raw.push((pk, account.clone(), starting_slot % max_slots));
@@ -690,13 +687,7 @@ mod tests {
             let mut raw2 = Vec::new();
             for entry in 0..entries {
                 let pk = Pubkey::from([entry; 32]);
-                let account = AccountSharedData::create_from_existing_shared_data(
-                    entry as u64,
-                    Arc::new(Vec::default()),
-                    Pubkey::default(),
-                    false,
-                    0,
-                );
+                let account = AccountSharedData::empty(entry as u64, &Pubkey::default());
                 raw.push((pk, account.clone()));
             }
 

@@ -27,7 +27,6 @@ pub struct SVMFeatureSet {
     pub formalize_loaded_transaction_data_size: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
-    pub delay_commission_updates: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
     pub increase_cpi_account_info_limit: bool,
     pub poseidon_enforce_padding: bool,
@@ -36,13 +35,10 @@ pub struct SVMFeatureSet {
     pub create_account_allow_prefund: bool,
     pub bls_pubkey_management_in_vote_account: bool,
     pub enable_alt_bn128_g2_syscalls: bool,
-    pub commission_rate_in_basis_points: bool,
-    pub custom_commission_collector: bool,
     pub block_revenue_sharing: bool,
     pub vote_account_initialize_v2: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub enable_sha512_syscall: bool,
-    pub relax_post_exec_min_balance_check: bool,
     pub relax_fee_payer_constraint: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
     pub early_instruction_trace_overflow_detection: bool,
@@ -53,6 +49,7 @@ pub struct SVMFeatureSet {
     pub loader_v3_remove_extend_program: bool,
     pub invoke_signed_v2: bool,
     pub alt_bn128_pairing_map: bool,
+    pub loaderv3_programdata_size_floor: bool,
 }
 
 impl SVMFeatureSet {
@@ -84,7 +81,6 @@ impl SVMFeatureSet {
             formalize_loaded_transaction_data_size: true,
             disable_zk_elgamal_proof_program: true,
             reenable_zk_elgamal_proof_program: true,
-            delay_commission_updates: true,
             raise_cpi_nesting_limit_to_8: true,
             increase_cpi_account_info_limit: true,
             poseidon_enforce_padding: true,
@@ -93,13 +89,10 @@ impl SVMFeatureSet {
             create_account_allow_prefund: true,
             bls_pubkey_management_in_vote_account: true,
             enable_alt_bn128_g2_syscalls: true,
-            commission_rate_in_basis_points: true,
-            custom_commission_collector: true,
             block_revenue_sharing: true,
             vote_account_initialize_v2: true,
             direct_account_pointers_in_program_input: true,
             enable_sha512_syscall: true,
-            relax_post_exec_min_balance_check: true,
             relax_fee_payer_constraint: true,
             loader_v3_set_program_data_to_elf_length: true,
             early_instruction_trace_overflow_detection: true,
@@ -110,6 +103,7 @@ impl SVMFeatureSet {
             loader_v3_remove_extend_program: true,
             invoke_signed_v2: true,
             alt_bn128_pairing_map: true,
+            loaderv3_programdata_size_floor: true,
         }
     }
 }

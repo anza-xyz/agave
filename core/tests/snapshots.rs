@@ -197,7 +197,7 @@ where
             if bank.block_id().is_none() {
                 bank.set_block_id(Some(BlockId::default()));
             }
-            bank_forks.read().unwrap().prune_program_cache(bank.slot());
+            bank_forks.read().unwrap().root_program_cache(bank.slot());
             // set_root should send a snapshot request
             bank_forks
                 .write()
@@ -302,7 +302,7 @@ fn test_slots_to_snapshot() {
             bank_forks
                 .read()
                 .unwrap()
-                .prune_program_cache(current_bank.slot());
+                .root_program_cache(current_bank.slot());
             bank_forks.write().unwrap().set_root(
                 current_bank.slot(),
                 Some(&snapshot_controller),
@@ -444,7 +444,7 @@ fn test_bank_forks_incremental_snapshot() {
         // kick in
         if slot % SET_ROOT_INTERVAL == 0 {
             // set_root sends a snapshot request
-            bank_forks.read().unwrap().prune_program_cache(bank.slot());
+            bank_forks.read().unwrap().root_program_cache(bank.slot());
             bank_forks
                 .write()
                 .unwrap()

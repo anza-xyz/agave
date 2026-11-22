@@ -5,8 +5,10 @@ use {
         bank::BankFieldsToDeserialize,
         serde_snapshot::{
             self, AccountsDbFields, ExtraFieldsToSerialize, LegacyObsoleteAccountsMap,
-            LegacyStoragesList, SerdeObsoleteAccountsMap, SnapshotAccountsDbFields,
+            LegacyStoragesList, OBSOLETE_ACCOUNTS_CONFIG, STARTUP_HINTS_CONFIG,
+            STORAGES_LIST_CONFIG, SerdeObsoleteAccountsMap, SnapshotAccountsDbFields,
             SnapshotBankFields, SnapshotStreams, StartupHints, StorageListItem, StoragesList,
+            deserialize_from, serialize_into,
         },
         snapshot_package::BankSnapshotPackage,
         snapshot_utils::snapshot_storage_rebuilder::{
@@ -41,7 +43,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsFileId, AtomicAccountsFileId},
+        accounts_db::{AccountsDb, AccountsFileId, AtomicAccountsFileId},
         utils::{ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
@@ -75,7 +77,10 @@ pub const MAX_OBSOLETE_ACCOUNTS_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 12; // 12 
 pub const MAX_STORAGES_LIST_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MiB
 /// The file holds a handful of scalars; this conservative bound limits the impact of bad state.
 pub const MAX_STARTUP_HINTS_FILE_SIZE: u64 = 4096;
-pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
+/// Limit the size of the bank snapshot and status cache files.
+/// A mainnet snapshot at slot 452539277 has a 15 MB status cache and a 173 MB bank file, mostly
+/// legacy stakes, without which (from v5.0) it takes 14 MB.
+pub const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
 /// Buffer size for reading auxiliary per-snapshot files (obsolete accounts, storages list).
 /// Sized to allow several concurrent reads at the default io-uring reader read size (1MiB).
@@ -245,13 +250,6 @@ pub struct UnarchivedSnapshotsGuard {
 pub struct UnpackedSnapshotsDirAndVersion {
     pub unpacked_snapshots_dir: PathBuf,
     pub snapshot_version: SnapshotVersion,
-}
-
-/// Helper type for passing around account storage map and next append vec id
-/// for reconstructing accounts from a snapshot
-pub(crate) struct StorageAndNextAccountsFileId {
-    pub storage: AccountStorageMap,
-    pub next_append_vec_id: AtomicAccountsFileId,
 }
 
 /// Purges incomplete bank snapshots
@@ -716,7 +714,12 @@ fn serialize_obsolete_accounts(
         maximum_obsolete_accounts_file_size,
     );
 
-    serde_snapshot::serialize_into(&mut file_stream, obsolete_accounts_map).map_err(|err| {
+    serialize_into(
+        &mut file_stream,
+        obsolete_accounts_map,
+        OBSOLETE_ACCOUNTS_CONFIG,
+    )
+    .map_err(|err| {
         IoError::other(format!(
             "unable to serialize obsolete accounts to file '{}': {err}",
             obsolete_accounts_path.display(),
@@ -752,10 +755,10 @@ fn deserialize_obsolete_accounts(
     }
 
     let obsolete_accounts = if fastboot_version.major >= 4 {
-        serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?
+        deserialize_from(obsolete_accounts_reader, OBSOLETE_ACCOUNTS_CONFIG)?
     } else {
         let legacy: LegacyObsoleteAccountsMap =
-            serde_snapshot::deserialize_wincode_from(obsolete_accounts_reader)?;
+            deserialize_from(obsolete_accounts_reader, OBSOLETE_ACCOUNTS_CONFIG)?;
         SerdeObsoleteAccountsMap::try_from(legacy)?
     };
     Ok(obsolete_accounts)
@@ -782,7 +785,7 @@ fn serialize_storages_list_to_snapshot(
         large_file_buf_writer(&storages_list_path, io_setup)?,
         MAX_STORAGES_LIST_FILE_SIZE,
     );
-    serde_snapshot::serialize_into(&mut file_stream, &storages_list).map_err(|err| {
+    serialize_into(&mut file_stream, &storages_list, STORAGES_LIST_CONFIG).map_err(|err| {
         IoError::other(format!(
             "unable to serialize storages list to file '{}': {err}",
             storages_list_path.display(),
@@ -814,10 +817,10 @@ fn deserialize_storages_list(
     }
 
     let storages_list = if fastboot_version.major >= 5 {
-        serde_snapshot::deserialize_wincode_from(storages_list_reader)?
+        deserialize_from(storages_list_reader, STORAGES_LIST_CONFIG)?
     } else {
         let legacy: LegacyStoragesList =
-            serde_snapshot::deserialize_wincode_from(storages_list_reader)?;
+            deserialize_from(storages_list_reader, STORAGES_LIST_CONFIG)?;
         StoragesList::from(legacy)
     };
     Ok(storages_list)
@@ -835,7 +838,7 @@ pub fn write_startup_hints_to_snapshot(
         large_file_buf_writer(&startup_hints_path, io_setup)?,
         MAX_STARTUP_HINTS_FILE_SIZE,
     );
-    serde_snapshot::serialize_into(&mut file_stream, startup_hints).map_err(|err| {
+    serialize_into(&mut file_stream, startup_hints, STARTUP_HINTS_CONFIG).map_err(|err| {
         IoError::other(format!(
             "unable to serialize startup hints to file '{}': {err}",
             startup_hints_path.display(),
@@ -1438,13 +1441,14 @@ fn prune_stale_storages(
 
 /// Performs the common tasks when deserializing a snapshot
 ///
-/// Handles reading the snapshot file and version file,
-/// then returning those fields plus the rebuilt storages.
+/// Handles reading the snapshot file and version file, then returning those fields plus the
+/// accounts db from `new_accounts_db` with the rebuilt storages.  `new_accounts_db` runs while
+/// another thread opens the storage files.
 pub(crate) fn rebuild_storages_from_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
-    next_append_vec_id: Arc<AtomicAccountsFileId>,
-) -> Result<(AccountStorageMap, BankFieldsToDeserialize, AccountsDbFields)> {
+    new_accounts_db: impl FnOnce() -> AccountsDb,
+) -> Result<(AccountsDb, BankFieldsToDeserialize, AccountsDbFields)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
     // it is a programmer error if `snapshot_info` is incompatible
     debug_assert!(is_bank_snapshot_loadable(snapshot_info.fastboot_version.as_ref()).unwrap());
@@ -1494,6 +1498,8 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
         account_paths,
     );
 
+    let mut accounts_db = new_accounts_db();
+    let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
         |SnapshotFieldsBundle {
              bank_fields,
@@ -1503,13 +1509,17 @@ pub(crate) fn rebuild_storages_from_snapshot_dir(
          }| {
             let storage = SnapshotStorageRebuilder::rebuild_storages_from_local_state(
                 append_vec_files.into_iter().chain(file_receiver),
-                next_append_vec_id,
+                next_append_vec_id.clone(),
                 obsolete_accounts
                     .map(|accounts| accounts.into_hashmap())
                     .unwrap_or_default(),
                 storages_map,
             )?;
-            Ok((storage, bank_fields, accounts_db_fields))
+            let next_append_vec_id = Arc::try_unwrap(next_append_vec_id)
+                .expect("rebuilder should have dropped its next id handle")
+                .into_inner();
+            accounts_db.initialize_storages(storage, next_append_vec_id);
+            Ok((accounts_db, bank_fields, accounts_db_fields))
         },
     );
 
@@ -1827,7 +1837,7 @@ pub fn create_tmp_accounts_dir_for_tests() -> (TempDir, PathBuf) {
 mod tests {
     use {
         super::*,
-        crate::serde_snapshot::{StorageListItem, deserialize_wincode_from, serialize_into},
+        crate::serde_snapshot::BANK_SNAPSHOT_CONFIG,
         agave_snapshots::{
             paths::{
                 full_snapshot_archives_iter, get_highest_full_snapshot_archive_slot,
@@ -1838,10 +1848,9 @@ mod tests {
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             },
         },
-        assert_matches::assert_matches,
         solana_accounts_db::accounts_file::AccountsFileProvider,
         solana_hash::Hash,
-        std::{convert::TryFrom, mem::size_of, slice},
+        std::{assert_matches, convert::TryFrom, mem::size_of, slice},
         tempfile::NamedTempFile,
         test_case::test_case,
     };
@@ -1855,7 +1864,7 @@ mod tests {
             expected_consumed_size,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &2323_u32)?;
+                serialize_into(stream, &2323_u32, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         )
@@ -1872,7 +1881,7 @@ mod tests {
             expected_consumed_size - 1,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &2323_u32)?;
+                serialize_into(stream, &2323_u32, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         );
@@ -1890,7 +1899,7 @@ mod tests {
             expected_consumed_size,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &expected_data)?;
+                serialize_into(stream, &expected_data, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         )
@@ -1905,8 +1914,9 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size,
             |stream| {
-                Ok(deserialize_wincode_from::<_, u32>(
+                Ok(deserialize_from::<u32, _>(
                     &mut *stream.full_snapshot_stream,
+                    BANK_SNAPSHOT_CONFIG,
                 )?)
             },
         )
@@ -1925,7 +1935,7 @@ mod tests {
             expected_consumed_size,
             &IoSetupState::default(),
             |stream| {
-                serialize_into(stream, &expected_data)?;
+                serialize_into(stream, &expected_data, BANK_SNAPSHOT_CONFIG)?;
                 Ok(())
             },
         )
@@ -1940,8 +1950,9 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size - 1,
             |stream| {
-                Ok(deserialize_wincode_from::<_, u32>(
+                Ok(deserialize_from::<u32, _>(
                     &mut *stream.full_snapshot_stream,
+                    BANK_SNAPSHOT_CONFIG,
                 )?)
             },
         );
@@ -1961,7 +1972,11 @@ mod tests {
             |stream| {
                 // Write two u32s (in one call, since the wincode writer finalizes on finish) so
                 // the file has trailing bytes left over after a single-u32 deserialize.
-                serialize_into(&mut *stream, &(expected_data, expected_data))?;
+                serialize_into(
+                    &mut *stream,
+                    &(expected_data, expected_data),
+                    BANK_SNAPSHOT_CONFIG,
+                )?;
                 Ok(())
             },
         )
@@ -1976,8 +1991,9 @@ mod tests {
             &snapshot_root_paths,
             expected_consumed_size * 2,
             |stream| {
-                Ok(deserialize_wincode_from::<_, u32>(
+                Ok(deserialize_from::<u32, _>(
                     &mut *stream.full_snapshot_stream,
+                    BANK_SNAPSHOT_CONFIG,
                 )?)
             },
         );

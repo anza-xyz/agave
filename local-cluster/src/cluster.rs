@@ -3,7 +3,6 @@ use {
     solana_core::validator::{Validator, ValidatorConfig},
     solana_gossip::{contact_info::ContactInfo, node::Node},
     solana_keypair::Keypair,
-    solana_ledger::shred::Shred,
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -72,6 +71,4 @@ pub trait Cluster {
         config: ValidatorConfig,
         socket_addr_space: SocketAddrSpace,
     );
-    fn set_entry_point(&mut self, entry_point_info: ContactInfo);
-    fn send_shreds_to_validator(&self, dup_shreds: Vec<&Shred>, validator_key: &Pubkey);
 }

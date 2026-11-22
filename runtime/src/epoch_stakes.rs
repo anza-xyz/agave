@@ -508,7 +508,7 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::{
-            serde_snapshot::deserialize_wincode_from, stake_account::StakeAccount, stakes::Stakes,
+            serde_snapshot::BANK_SNAPSHOT_CONFIG, stake_account::StakeAccount, stakes::Stakes,
         },
         solana_account::AccountSharedData,
         solana_bls_signatures::keypair::Keypair as BLSKeypair,
@@ -993,8 +993,9 @@ pub(crate) mod tests {
         }
 
         let deserialized_epoch_stakes: VersionedEpochStakes =
-            deserialize_wincode_from::<_, DeserializableVersionedEpochStakes>(
-                std::io::Cursor::new(&serialized_bytes),
+            wincode::config::deserialize::<DeserializableVersionedEpochStakes, _>(
+                &serialized_bytes,
+                BANK_SNAPSHOT_CONFIG,
             )
             .unwrap()
             .into();

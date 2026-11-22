@@ -14,8 +14,11 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
-        loaded_programs::{BlockRelation, ForkGraph, ProgramRuntimeEnvironment},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::{
+            entry::ProgramCacheEntry,
+            env::ProgramRuntimeEnvironment,
+            fork_graph::{BlockRelation, ForkGraph},
+        },
         solana_sbpf::{
             program::{BuiltinFunctionDefinition, BuiltinProgram, SBPFVersion},
             vm::Config,
@@ -23,6 +26,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_sbpf::ebpf,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget},
     solana_svm::transaction_processor::TransactionBatchProcessor,
     solana_svm_callback::{
@@ -312,10 +316,8 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
-        enable_address_translation: true,
         enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
-        enable_instruction_meter: true,
         enable_symbol_and_section_labels: false,
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
@@ -323,6 +325,8 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
         aligned_memory_mapping: false,
+        aligned_region_size: ebpf::MM_REGION_SIZE as usize,
+        reject_unregistered_static_syscalls: false,
     };
 
     // These functions are system calls the compile contract calls during execution, so they

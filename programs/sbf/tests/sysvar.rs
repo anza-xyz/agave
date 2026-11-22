@@ -2,9 +2,7 @@
 
 use {
     agave_feature_set::disable_fees_sysvar,
-    solana_account::{
-        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
-    },
+    solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
     solana_instruction::{AccountMeta, Instruction},
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -35,14 +33,13 @@ fn set_stake_history_sysvar_for_tests(bank: &Bank, stake_history: &StakeHistory)
     let lamports = old_stake_history_account
         .lamports()
         .max(bank.get_minimum_balance_for_rent_exemption(stake_history_account_size));
-    let mut stake_history_account = AccountSharedData::new_data_with_space(
+    let stake_history_account = AccountSharedData::new_data_with_space(
         lamports,
         stake_history,
         stake_history_account_size,
         &sysvar::id(),
     )
     .unwrap();
-    stake_history_account.set_rent_epoch(old_stake_history_account.rent_epoch());
     bank.store_account(&stake_history::id(), &stake_history_account);
     bank.get_transaction_processor().reset_sysvar_cache();
     bank.get_transaction_processor()
@@ -98,13 +95,13 @@ fn test_sysvar_syscalls() {
     let dummy_account_key = Pubkey::new_unique();
     bank.store_account(
         &dummy_account_key,
-        &solana_account::AccountSharedData::new(1, 32, &program_id),
+        &solana_account::AccountSharedData::new_with_data(1, vec![0; 32], &program_id),
     );
     bank.freeze();
     let blockhash = bank.last_blockhash();
 
     for ix_discriminator in 0..4 {
-        let instruction = Instruction::new_with_bincode(
+        let instruction = Instruction::new_with_wincode(
             program_id,
             &[ix_discriminator],
             vec![
@@ -131,7 +128,7 @@ fn test_sysvar_syscalls() {
 
     // Storing the result of get_sysvar() in the input region is not allowed
     // because of the 16 byte alignment requirement of the EpochRewards sysvar.
-    let instruction = Instruction::new_with_bincode(
+    let instruction = Instruction::new_with_wincode(
         program_id,
         &[4],
         vec![

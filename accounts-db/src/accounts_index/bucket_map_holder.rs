@@ -42,7 +42,7 @@ pub const DEFAULT_NUM_ENTRIES_OVERHEAD: usize = 5_000;
 /// We want this number to be small, similar to `NUM_ENTRIES_OVERHEAD`, to keep utilization high.
 /// It also must be large enough to ensure once an eviction is triggered that scanning + flushing +
 /// evicting completes before the high watermark is crossed again.
-/// We also want to avoid/ammortize scanning the bins for flush/evict, so a larger number helps
+/// We also want to avoid/amortize scanning the bins for flush/evict, so a larger number helps
 /// with that goal.
 ///
 /// This value is used to compute the low watermark.
@@ -69,8 +69,8 @@ pub struct BucketMapHolder<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
 
     pub stats: Stats,
 
-    /// This controlls how often 'age' is incremented.
-    /// Additionally controlls how often the in-mem index runs its flush/evict loop.
+    /// This controls how often 'age' is incremented.
+    /// Additionally controls how often the in-mem index runs its flush/evict loop.
     age_ms: u64,
     age_timer: AtomicInterval,
 

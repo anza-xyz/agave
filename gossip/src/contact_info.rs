@@ -9,15 +9,16 @@ use {
         define_tlv_enum,
         tlv::{self, TlvDecodeError, TlvRecord},
     },
-    assert_matches::{assert_matches, debug_assert_matches},
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_short_vec as short_vec,
     static_assertions::const_assert_eq,
     std::{
+        assert_matches,
         cmp::Ordering,
         collections::HashSet,
+        debug_assert_matches,
         mem::MaybeUninit,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::{SystemTime, UNIX_EPOCH},
@@ -44,7 +45,7 @@ const SOCKET_TAG_TPU_FORWARDS: u8 = 6; // not in use
 const SOCKET_TAG_TPU_FORWARDS_QUIC: u8 = 7;
 const SOCKET_TAG_TPU_QUIC: u8 = 8;
 const SOCKET_TAG_TPU_VOTE: u8 = 9;
-const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
+const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12; // not advertised by agave
 const SOCKET_TAG_TVU: u8 = 10;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const SOCKET_TAG_ALPENGLOW: u8 = 13;

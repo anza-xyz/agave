@@ -557,6 +557,7 @@ fn create_changed_accounts_bank_hash_details(
     let slot_details = SlotDetails {
         slot,
         bank_hash: bank.hash().to_string(),
+        block_id: bank.block_id().map(|id| id.to_string()),
         bank_hash_components: Some(BankHashComponents {
             parent_bank_hash: bank.parent_hash().to_string(),
             signature_count: bank.signature_count(),

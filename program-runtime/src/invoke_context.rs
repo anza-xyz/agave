@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::program_cache_entry::ProgramCacheEntry,
+    crate::program_cache::entry::ProgramCacheEntry,
     qualifier_attr::qualifiers,
     solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_epoch_schedule::EpochSchedule,
@@ -12,12 +12,14 @@ use {
 };
 use {
     crate::{
+        abi::ABI,
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
-        loaded_programs::{
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
-        },
         memory_context::{MemoryContext, MemoryContexts},
-        program_cache_entry::ProgramCacheEntryType,
+        program_cache::{
+            entry::ProgramCacheEntryType,
+            env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+            tx_batch::ProgramCacheForTxBatch,
+        },
         stable_log,
         sysvar_cache::SysvarCache,
     },
@@ -159,7 +161,6 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    alpenglow_migration_succeeded: bool,
     epoch_stake_callback: &'a dyn InvokeContextCallback,
     feature_set: &'a SVMFeatureSet,
     program_runtime_environments: &'a ProgramRuntimeEnvironments,
@@ -169,7 +170,6 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        alpenglow_migration_succeeded: bool,
         epoch_stake_callback: &'a dyn InvokeContextCallback,
         feature_set: &'a SVMFeatureSet,
         program_runtime_environments: &'a ProgramRuntimeEnvironments,
@@ -178,7 +178,6 @@ impl<'a> EnvironmentConfig<'a> {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
-            alpenglow_migration_succeeded,
             epoch_stake_callback,
             feature_set,
             program_runtime_environments,
@@ -187,7 +186,7 @@ impl<'a> EnvironmentConfig<'a> {
     }
 
     /// Get cached sysvars
-    pub fn sysvar_cache(&self) -> &SysvarCache {
+    pub fn sysvar_cache(&self) -> &'a SysvarCache {
         self.sysvar_cache
     }
 }
@@ -749,11 +748,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.log_collector.clone()
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_alpenglow_migration_succeeded_for_tests(&mut self, succeeded: bool) {
-        self.environment_config.alpenglow_migration_succeeded = succeeded;
-    }
-
     /// Get this invocation's compute budget
     pub fn get_compute_budget(&self) -> &SVMTransactionExecutionBudget {
         &self.compute_budget
@@ -773,16 +767,6 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
         self.environment_config
             .program_runtime_environments
             .get_env_for_deployment()
-    }
-
-    pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
-        self.environment_config
-            .feature_set
-            .deprecate_legacy_vote_ixs
-    }
-
-    pub fn is_alpenglow_migration_succeeded(&self) -> bool {
-        self.environment_config.alpenglow_migration_succeeded
     }
 
     /// Get cached epoch total stake.
@@ -805,8 +789,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
             .is_precompile(pubkey)
     }
 
-    // Should alignment be enforced during user pointer translation
-    pub fn get_check_aligned(&self) -> bool {
+    /// Get the current instruction's [`ABI`].
+    pub fn abi(&self) -> ABI {
         self.transaction_context
             .get_current_instruction_context()
             .and_then(|instruction_context| {
@@ -814,8 +798,8 @@ impl<'a, 'ix_data> InvokeContext<'a, 'ix_data> {
                 debug_assert!(owner_id.is_ok());
                 owner_id
             })
-            .map(|owner_key| owner_key != bpf_loader_deprecated::id())
-            .unwrap_or(true)
+            .map(|owner_id| ABI::resolve(&owner_id))
+            .unwrap_or(ABI::V1)
     }
 
     /// Insert a VM register trace
@@ -877,7 +861,9 @@ macro_rules! with_mock_invoke_context_with_feature_set {
                 },
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
                 invoke_context::{EnvironmentConfig, InvokeContext},
-                loaded_programs::{ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
+                program_cache::{
+                    env::ProgramRuntimeEnvironments, tx_batch::ProgramCacheForTxBatch,
+                },
                 sysvar_cache::SysvarCache,
             },
         };
@@ -909,7 +895,6 @@ macro_rules! with_mock_invoke_context_with_feature_set {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockInvokeContextCallback {},
             $feature_set,
             &program_runtime_environments,
@@ -1013,7 +998,7 @@ where
                 .map(|(_, a)| AccountSharedData::from(a.clone()))
                 .unwrap_or_else(|| {
                     if key == program_id {
-                        let mut account = AccountSharedData::new(0, 0, loader_key);
+                        let mut account = AccountSharedData::empty(0, loader_key);
                         account.set_executable(true);
                         account
                     } else {
@@ -1661,7 +1646,7 @@ mod tests {
         let user_account_data_len = 123usize;
         let user_account =
             AccountSharedData::new_with_data(100, vec![0; user_account_data_len], &program_key);
-        let dummy_account = AccountSharedData::new(10, 0, &program_key);
+        let dummy_account = AccountSharedData::empty(10, &program_key);
         let mut program_account =
             AccountSharedData::new_with_data(500, vec![0; 500], &native_loader::id());
         program_account.set_executable(true);
@@ -1934,7 +1919,7 @@ mod tests {
         inner_instruction: Instruction,
         signer_seeds: &[&[&[u8]]],
     ) -> Result<(), InstructionError> {
-        let target_account = AccountSharedData::new(100, 0, &TEST_CALLEE_PROGRAM_ID);
+        let target_account = AccountSharedData::empty(100, &TEST_CALLEE_PROGRAM_ID);
         let mock_extra_account =
             AccountSharedData::new_with_data(0, vec![0; 1], &system_program::id());
         let mut caller_program_account =
@@ -2253,7 +2238,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2305,7 +2289,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2343,7 +2326,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2469,7 +2451,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2500,7 +2481,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2536,7 +2516,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2622,20 +2601,20 @@ mod tests {
             Err(InstructionError::Custom(0xbabb1e))
         });
 
-        let mut secp256k1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut secp256k1_account = AccountSharedData::empty(1, &native_loader::id());
         secp256k1_account.set_executable(true);
-        let mut ed25519_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut ed25519_account = AccountSharedData::empty(1, &native_loader::id());
         ed25519_account.set_executable(true);
-        let mut secp256r1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut secp256r1_account = AccountSharedData::empty(1, &native_loader::id());
         secp256r1_account.set_executable(true);
-        let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
+        let mut mock_program_account = AccountSharedData::empty(1, &native_loader::id());
         mock_program_account.set_executable(true);
 
         let fee_payer = Pubkey::new_unique();
         let accounts_map: HashMap<Address, AccountSharedData> = HashMap::from([
             (
                 fee_payer,
-                AccountSharedData::new(1, 0, &system_program::id()),
+                AccountSharedData::empty(1, &system_program::id()),
             ),
             (secp256k1_program::id(), secp256k1_account),
             (ed25519_program::id(), ed25519_account),
@@ -2693,7 +2672,6 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            false,
             &MockCallback {},
             &feature_set,
             &program_runtime_environments,
@@ -2715,5 +2693,43 @@ mod tests {
             transaction_context.number_of_called_instructions_in_trace(),
             4
         );
+    }
+
+    #[test]
+    fn test_abi_follows_instruction_stack() {
+        let transaction_accounts = vec![
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::empty(0, &bpf_loader_deprecated::id()),
+            ),
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::empty(0, &bpf_loader_upgradeable::id()),
+            ),
+        ];
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+
+        // No instruction.
+        assert_eq!(invoke_context.abi(), ABI::V1);
+
+        // ABIv0 program.
+        invoke_context
+            .transaction_context
+            .configure_top_level_instruction_for_tests(0, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V0);
+
+        // It invokes an ABIv1 program.
+        invoke_context
+            .transaction_context
+            .configure_next_cpi_for_tests(1, vec![], vec![])
+            .unwrap();
+        invoke_context.push().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V1);
+
+        // The callee returns.
+        invoke_context.pop().unwrap();
+        assert_eq!(invoke_context.abi(), ABI::V0);
     }
 }

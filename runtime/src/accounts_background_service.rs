@@ -761,7 +761,7 @@ mod test {
         let account_key = Pubkey::new_unique();
         bank0.store_account(
             &account_key,
-            &AccountSharedData::new(264, 0, &Pubkey::default()),
+            &AccountSharedData::empty(264, &Pubkey::default()),
         );
         assert!(bank0.get_account(&account_key).is_some());
         pruned_banks_sender.send((0, BankId::new(0))).unwrap();

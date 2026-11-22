@@ -103,10 +103,9 @@ pub fn get_pre_exec_account_rent_state(
     account_lamports: u64,
     account_size: usize,
     min_balance: u64,
-    disallow_rent_paying: bool,
 ) -> RentState {
     match get_account_rent_state(account_lamports, account_size, min_balance) {
-        RentState::RentPaying { .. } if disallow_rent_paying => RentState::RentExempt,
+        RentState::RentPaying { .. } => RentState::RentExempt,
         rent_state => rent_state,
     }
 }
@@ -122,12 +121,7 @@ pub fn get_post_exec_account_rent_state(
     min_balance: u64,
     pre_rent_state: &RentState,
     pre_exec_balance: u64,
-    relax_rent_exempt_criteria: bool,
 ) -> RentState {
-    if !relax_rent_exempt_criteria {
-        return get_account_rent_state(account_lamports, account_size, min_balance);
-    };
-
     match (account_lamports, &pre_rent_state) {
         (0, _) => RentState::Uninitialized,
         (post_balance, _) if post_balance >= min_balance => RentState::RentExempt,
@@ -150,23 +144,15 @@ pub fn check_static_account_rent_state_transition(
     data_size: usize,
     rent: &Rent,
     account_index: IndexOfAccount,
-    relax_post_exec_min_balance_check: bool,
 ) -> TransactionResult<()> {
     let rent_min_balance = rent.minimum_balance(data_size);
-    let pre_state = get_pre_exec_account_rent_state(
-        pre_exec_balance,
-        data_size,
-        rent_min_balance,
-        // post SIMD-392 activation, RentPaying accounts are no longer possible
-        relax_post_exec_min_balance_check,
-    );
+    let pre_state = get_pre_exec_account_rent_state(pre_exec_balance, data_size, rent_min_balance);
     let post_state = get_post_exec_account_rent_state(
         post_exec_balance,
         data_size,
         rent_min_balance,
         &pre_state,
         pre_exec_balance,
-        relax_post_exec_min_balance_check,
     );
 
     if !transition_allowed(&pre_state, &post_state) {

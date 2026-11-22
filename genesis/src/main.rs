@@ -271,7 +271,7 @@ fn add_validator_accounts(
 
         genesis_config.add_account(
             *identity_pubkey,
-            AccountSharedData::new(lamports, 0, &system_program::id()),
+            AccountSharedData::empty(lamports, &system_program::id()),
         );
 
         let bls_pubkey_compressed_bytes = bls_pubkeys_iter

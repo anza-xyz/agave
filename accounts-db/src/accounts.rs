@@ -21,10 +21,9 @@ use {
     solana_clock::Slot,
     solana_message::v0::LoadedAddresses,
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_slot_hashes::SlotHashes,
-    solana_svm_transaction::{
-        message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
-    },
+    solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
     solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_context::transaction_accounts::KeyedAccountSharedData,
     solana_transaction_error::TransactionResult as Result,
@@ -40,11 +39,11 @@ use {
 
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
-struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
+struct TransactionAccountLocksIterator<'a, T: TransactionWithMeta> {
     transaction: &'a T,
 }
 
-impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
+impl<'a, T: TransactionWithMeta> TransactionAccountLocksIterator<'a, T> {
     pub(crate) fn new(transaction: &'a T) -> Self {
         Self { transaction }
     }
@@ -57,6 +56,12 @@ impl<'a, T: SVMMessage> TransactionAccountLocksIterator<'a, T> {
             .iter()
             .enumerate()
             .map(|(index, key)| (key, self.transaction.is_writable(index)))
+            .chain(
+                self.transaction
+                    .implicit_read_locks()
+                    .iter()
+                    .map(|key| (key, false)),
+            )
     }
 }
 
@@ -454,7 +459,7 @@ impl Accounts {
     #[must_use]
     pub fn lock_accounts<'a>(
         &self,
-        txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
+        txs: impl Iterator<Item = &'a (impl TransactionWithMeta + 'a)>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limits: TransactionAccountLockLimits,
     ) -> Vec<Result<()>> {
@@ -477,7 +482,7 @@ impl Accounts {
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
-    pub fn unlock_accounts<'a, Tx: SVMMessage + 'a>(
+    pub fn unlock_accounts<'a, Tx: TransactionWithMeta + 'a>(
         &self,
         txs_and_results: impl Iterator<Item = (&'a Tx, &'a Result<()>)> + Clone,
     ) {
@@ -540,19 +545,19 @@ mod tests {
     use {
         super::*,
         crate::account_locks::DEFAULT_TX_ACCOUNT_LOCKS,
-        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{AccountSharedData, WritableAccount},
         solana_address_lookup_table_interface::state::LookupTableMeta,
         solana_hash::Hash,
         solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{
-            LegacyMessage, Message, MessageHeader, SanitizedMessage,
-            compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup,
+            Message, MessageHeader, compiled_instruction::CompiledInstruction,
+            v0::MessageAddressTableLookup,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::native_loader,
-        solana_signature::Signature,
         solana_signer::{Signer, signers::Signers},
+        solana_svm_transaction::svm_message::SVMMessage,
         solana_transaction::Transaction,
         solana_transaction_error::TransactionError,
         std::{
@@ -573,29 +578,25 @@ mod tests {
         from_keypairs: &T,
         message: Message,
         recent_blockhash: Hash,
-    ) -> SanitizedTransaction {
-        SanitizedTransaction::from_transaction_for_tests(Transaction::new(
+    ) -> RuntimeTransaction<SanitizedTransaction> {
+        RuntimeTransaction::from_transaction_for_tests(Transaction::new(
             from_keypairs,
             message,
             recent_blockhash,
         ))
     }
 
-    fn sanitized_tx_from_metas(accounts: Vec<AccountMeta>) -> SanitizedTransaction {
+    fn sanitized_tx_from_metas(
+        accounts: Vec<AccountMeta>,
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let instruction = Instruction {
             accounts,
             program_id: Pubkey::default(),
             data: vec![],
         };
 
-        let message = Message::new(&[instruction], None);
-
-        let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
-            message,
-            &ReservedAccountKeys::empty_key_set(),
-        ));
-
-        SanitizedTransaction::new_for_tests(sanitized_message, vec![Signature::new_unique()], false)
+        let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
+        RuntimeTransaction::from_transaction_for_tests(Transaction::new_unsigned(message))
     }
 
     #[test]
@@ -657,7 +658,7 @@ mod tests {
 
         let invalid_table_key = Pubkey::new_unique();
         let invalid_table_account =
-            AccountSharedData::new(1, 0, &address_lookup_table::program::id());
+            AccountSharedData::empty(1, &address_lookup_table::program::id());
         accounts.store_for_tests(0, &invalid_table_key, &invalid_table_account);
         accounts.add_root_and_flush_write_cache(0);
 
@@ -690,12 +691,10 @@ mod tests {
                 meta: LookupTableMeta::default(),
                 addresses: Cow::Owned(table_addresses.clone()),
             };
-            AccountSharedData::create_from_existing_shared_data(
+            AccountSharedData::new_with_data(
                 1,
-                Arc::new(table_state.serialize_for_tests().unwrap()),
-                address_lookup_table::program::id(),
-                false,
-                0,
+                table_state.serialize_for_tests().unwrap(),
+                &address_lookup_table::program::id(),
             )
         };
         accounts.store_for_tests(0, &table_key, &table_account);
@@ -730,13 +729,13 @@ mod tests {
 
         // Load accounts owned by various programs into AccountsDb
         let pubkey0 = solana_pubkey::new_rand();
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
+        let account0 = AccountSharedData::empty(1, &Pubkey::from([2; 32]));
         accounts.store_for_tests(0, &pubkey0, &account0);
         let pubkey1 = solana_pubkey::new_rand();
-        let account1 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
+        let account1 = AccountSharedData::empty(1, &Pubkey::from([2; 32]));
         accounts.store_for_tests(0, &pubkey1, &account1);
         let pubkey2 = solana_pubkey::new_rand();
-        let account2 = AccountSharedData::new(1, 0, &Pubkey::from([3; 32]));
+        let account2 = AccountSharedData::empty(1, &Pubkey::from([3; 32]));
         accounts.store_for_tests(0, &pubkey2, &account2);
         accounts.add_root_and_flush_write_cache(0);
 
@@ -767,6 +766,102 @@ mod tests {
         let results =
             accounts.lock_accounts([tx].iter(), [Ok(())].into_iter(), TEST_ACCOUNT_LOCK_LIMITS);
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
+    }
+
+    #[test_case::test_case(None; "implicit_read_only")]
+    #[test_case::test_case(Some(false); "overlap_with_explicit_read")]
+    #[test_case::test_case(Some(true); "overlap_with_explicit_write")]
+    fn test_lock_accounts_implicit_programdata(explicit_writable_programdata: Option<bool>) {
+        let accounts = Accounts::new(Arc::new(AccountsDb::default_for_tests()));
+        let program = Pubkey::new_unique();
+        let programdata = solana_loader_v3_interface::get_program_data_address(&program);
+        let metas = match explicit_writable_programdata {
+            None => vec![AccountMeta::new_readonly(program, false)],
+            Some(false) => vec![
+                AccountMeta::new_readonly(program, false),
+                AccountMeta::new_readonly(programdata, false),
+            ],
+            Some(true) => vec![
+                AccountMeta::new_readonly(program, false),
+                AccountMeta::new(programdata, false),
+            ],
+        };
+        let transaction = sanitized_tx_from_metas(metas);
+        let reader = sanitized_tx_from_metas(vec![AccountMeta::new_readonly(programdata, false)]);
+        let writer = sanitized_tx_from_metas(vec![AccountMeta::new(programdata, false)]);
+        // Only explicit accounts count toward the limit, despite the additional implicit locks.
+        let first_result = accounts.lock_accounts(
+            iter::once(&transaction),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: transaction.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(first_result, vec![Ok(())]);
+        let reader_result = accounts.lock_accounts(
+            iter::once(&reader),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: reader.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(
+            reader_result,
+            vec![if explicit_writable_programdata == Some(true) {
+                Err(TransactionError::AccountInUse)
+            } else {
+                Ok(())
+            }]
+        );
+        let writer_result = accounts.lock_accounts(
+            iter::once(&writer),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: writer.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(writer_result, vec![Err(TransactionError::AccountInUse)]);
+        // Failed acquisitions must not release another transaction's locks.
+        accounts.unlock_accounts(iter::once(&writer).zip(&writer_result));
+        assert_eq!(
+            accounts.lock_accounts(
+                iter::once(&writer),
+                iter::once(Ok(())),
+                TransactionAccountLockLimits {
+                    legacy: writer.account_keys().len(),
+                    ..TEST_ACCOUNT_LOCK_LIMITS
+                }
+            ),
+            vec![Err(TransactionError::AccountInUse)]
+        );
+        accounts.unlock_accounts(iter::once(&transaction).zip(&first_result));
+        if explicit_writable_programdata != Some(true) {
+            assert_eq!(
+                accounts.lock_accounts(
+                    iter::once(&writer),
+                    iter::once(Ok(())),
+                    TransactionAccountLockLimits {
+                        legacy: writer.account_keys().len(),
+                        ..TEST_ACCOUNT_LOCK_LIMITS
+                    }
+                ),
+                vec![Err(TransactionError::AccountInUse)]
+            );
+        }
+        accounts.unlock_accounts(iter::once(&reader).zip(&reader_result));
+        let writer_result = accounts.lock_accounts(
+            iter::once(&writer),
+            iter::once(Ok(())),
+            TransactionAccountLockLimits {
+                legacy: writer.account_keys().len(),
+                ..TEST_ACCOUNT_LOCK_LIMITS
+            },
+        );
+        assert_eq!(writer_result, vec![Ok(())]);
+        accounts.unlock_accounts(iter::once(&writer).zip(&writer_result));
     }
 
     #[test]
@@ -835,10 +930,10 @@ mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
-        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
+        let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -951,9 +1046,9 @@ mod tests {
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1033,10 +1128,10 @@ mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
-        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
+        let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1105,10 +1200,10 @@ mod tests {
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
 
-        let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
-        let account1 = AccountSharedData::new(2, 0, &Pubkey::default());
-        let account2 = AccountSharedData::new(3, 0, &Pubkey::default());
-        let account3 = AccountSharedData::new(4, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(1, &Pubkey::default());
+        let account1 = AccountSharedData::empty(2, &Pubkey::default());
+        let account2 = AccountSharedData::empty(3, &Pubkey::default());
+        let account3 = AccountSharedData::empty(4, &Pubkey::default());
 
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
@@ -1191,7 +1286,7 @@ mod tests {
     #[test]
     fn test_accounts_locks_intrabatch_conflicts() {
         let pubkey = Pubkey::new_unique();
-        let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
+        let account_data = AccountSharedData::empty(1, &Pubkey::default());
         let accounts_db = Arc::new(AccountsDb::default_for_tests());
         accounts_db.store_for_tests((
             0,
@@ -1268,10 +1363,10 @@ mod tests {
         let accounts_db = AccountsDb::default_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut old_pubkey = Pubkey::default();
-        let zero_account = AccountSharedData::new(0, 0, &Pubkey::default());
+        let zero_account = AccountSharedData::empty(0, &Pubkey::default());
         for i in 0..2_000 {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(i + 1, 0, &Pubkey::default());
+            let account = AccountSharedData::empty(i + 1, &Pubkey::default());
             accounts.store_for_tests(i, &pubkey, &account);
             accounts.store_for_tests(i, &old_pubkey, &zero_account);
             old_pubkey = pubkey;
@@ -1302,11 +1397,11 @@ mod tests {
         let pubkey2 = keys.pop().unwrap();
         let pubkey1 = keys.pop().unwrap();
         let pubkey0 = keys.pop().unwrap();
-        let account0 = AccountSharedData::new(42, 0, &Pubkey::default());
+        let account0 = AccountSharedData::empty(42, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey0, &account0);
-        let account1 = AccountSharedData::new(42, 0, &Pubkey::default());
+        let account1 = AccountSharedData::empty(42, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey1, &account1);
-        let account2 = AccountSharedData::new(41, 0, &Pubkey::default());
+        let account2 = AccountSharedData::empty(41, &Pubkey::default());
         accounts.store_for_tests(0, &pubkey2, &account2);
 
         let ancestors = Ancestors::from(vec![0]);
@@ -1479,9 +1574,9 @@ mod tests {
     fn test_calc_scan_result_size() {
         for len in 0..3 {
             assert_eq!(
-                Accounts::calc_scan_result_size(&AccountSharedData::new(
+                Accounts::calc_scan_result_size(&AccountSharedData::new_with_data(
                     0,
-                    len,
+                    vec![0; len],
                     &Pubkey::default()
                 )),
                 zero_len_account_size() + len
@@ -1503,12 +1598,12 @@ mod tests {
         for (account, byte_limit_for_scan, result) in [
             (AccountSharedData::default(), zero_len_account_size(), false),
             (
-                AccountSharedData::new(0, 1, &Pubkey::default()),
+                AccountSharedData::new_with_data(0, vec![0; 1], &Pubkey::default()),
                 zero_len_account_size(),
                 true,
             ),
             (
-                AccountSharedData::new(0, 2, &Pubkey::default()),
+                AccountSharedData::new_with_data(0, vec![0; 2], &Pubkey::default()),
                 zero_len_account_size() + 3,
                 false,
             ),

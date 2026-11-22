@@ -9,7 +9,6 @@ use {
     agave_feature_set::FeatureSet,
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     agave_votor_messages::migration::MigrationStatus,
-    crossbeam_channel::bounded,
     prost::Message,
     protosol::protos::{BlockParseResult, FecSetParseResult, ShredParseContext, ShredParseEffects},
     solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
@@ -23,10 +22,10 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
-        blockstore_processor::verify_ticks,
+        blockstore_processor::{set_alpenglow_ticks, verify_ticks},
         shred::{
             CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
-            filter::{ShredFilterContext, ShredRecoveryContext},
+            filter::{ShredFilterContext, ShredRecoveryContext, new_dummy_retransmit_sender},
             wire,
         },
     },
@@ -41,7 +40,6 @@ use {
     solana_svm::conformance::fd_hash::fd_hash_or_zero,
     solana_transaction::sanitized::MessageHash,
     std::{
-        borrow::Cow,
         cell::{Cell, RefCell},
         collections::{BTreeMap, HashMap},
         ffi::c_int,
@@ -121,7 +119,8 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
     // FD: resolver + sched config (shred_version, advance_slot_old(root_slot)).
     let feature_set = FeatureSet::default();
     let bank = build_root_bank(root_slot, feature_set);
-    let migration = MigrationStatus::default();
+    let migration = MigrationStatus::post_migration_status();
+    set_alpenglow_ticks(&bank, &migration);
 
     // Step 1: parse each shred; record whether it's a chained Merkle shred.
     // FD: fd_shred_parse + fd_shred_is_chained. should_discard_shred only gates accumulation.
@@ -163,14 +162,19 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             open_ledger()
         }
     };
-    let (retransmit_sender, _retransmit_rx) = bounded(0);
+    let retransmit_sender = new_dummy_retransmit_sender();
     let mut recovery = ShredRecoveryContext::new(retransmit_sender, bank.clone(), shred_version);
     let mut metrics = BlockstoreInsertionMetrics::default();
     // Blockstore stores duplicate proofs at insert time.
     let handle_duplicate = |_| {};
+
+    let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
+    slots.sort_unstable();
+    slots.dedup();
+
     let shreds_iter = parsed
-        .iter()
-        .map(|shred| (Cow::Borrowed(shred), /*is_repaired:*/ false));
+        .into_iter()
+        .map(|shred| (shred, /*is_repaired:*/ false));
     let _ = blockstore.insert_shreds_handle_duplicate(
         shreds_iter,
         false, // is_trusted: keep dedup + integrity checks
@@ -178,10 +182,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
         &handle_duplicate,
         &mut metrics,
     );
-
-    let mut slots: Vec<Slot> = parsed.iter().map(Shred::slot).collect();
-    slots.sort_unstable();
-    slots.dedup();
 
     // Replay only reaches a slot whose parent chain is connected to the root
     // through full slots; the other slots are held unverified.  FEC sets are
@@ -231,7 +231,6 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
                 Ok(view) => RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                     view,
                     MessageHash::Compute,
-                    None,
                 )
                 .is_err(),
                 Err(_) => true,

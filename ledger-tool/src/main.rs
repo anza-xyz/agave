@@ -36,7 +36,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, OutputFormat, display::build_balance_message},
+    solana_cli_output::{OutputFormat, display::build_balance_message},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_core::{
@@ -91,7 +91,6 @@ use {
         vote_state::{self, BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
     },
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         ffi::OsStr,
         fs::File,
@@ -476,7 +475,6 @@ fn compute_slot_cost(
                 RuntimeTransaction::try_create(
                     transaction,
                     MessageHash::Compute,
-                    None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
                 )
@@ -764,14 +762,13 @@ fn record_transactions(
                         })
                         .collect();
 
-                    let is_simple_vote_tx = tx.is_simple_vote_transaction();
                     let commit_details = commit_result.ok().map(|committed_tx| committed_tx.into());
 
                     TransactionDetails {
                         signature: tx.signature().to_string(),
                         accounts,
                         instructions,
-                        is_simple_vote_tx,
+                        is_simple_vote_tx: false,
                         commit_details,
                         index,
                     }
@@ -1057,7 +1054,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
     if let Some(faucet_pubkey) = faucet_pubkey {
         bank.store_account(
             &faucet_pubkey,
-            &AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            &AccountSharedData::empty(faucet_lamports, &system_program::id()),
         );
     }
 
@@ -1135,7 +1132,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
 
             bank.store_account(
                 identity_pubkey,
-                &AccountSharedData::new(bootstrap_validator_lamports, 0, &system_program::id()),
+                &AccountSharedData::empty(bootstrap_validator_lamports, &system_program::id()),
             );
 
             let vote_account = vote_state::create_v4_account_with_authorized(
@@ -1231,12 +1228,7 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
             let mut write_batch = backup_blockstore.get_write_batch();
             let _ = backup_blockstore
-                .insert_cow_shreds(
-                    shreds.into_iter().map(Cow::Owned),
-                    true,
-                    &mut pinnable_slice,
-                    &mut write_batch,
-                )
+                .insert_trusted_shreds(shreds, &mut pinnable_slice, &mut write_batch)
                 .expect("Blockstore operation must succeed");
 
             // Purge modifies state so use rw_blockstore
@@ -1274,12 +1266,11 @@ fn create_snapshot(ledger_path: PathBuf, arg_matches: &ArgMatches<'_>) {
             )
             .into_iter()
             .filter(Shred::is_data)
-            .map(Cow::Owned)
             .collect();
         let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
         let mut write_batch = rw_blockstore.get_write_batch();
         rw_blockstore
-            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
+            .insert_trusted_shreds(shreds, &mut pinnable_slice, &mut write_batch)
             .expect("Blockstore operation must succeed");
     }
 
@@ -2316,7 +2307,7 @@ fn main() {
                             .accounts
                             .into_iter()
                             .map(|(pubkey, account)| {
-                                CliAccount::new_with_config(
+                                cli_account_with_config(
                                     &pubkey,
                                     &AccountSharedData::from(account),
                                     &output_config,
@@ -2798,10 +2789,6 @@ fn main() {
                                     stake,
                                 ) => {
                                     detail.current_effective_stake = *stake;
-                                }
-                                InflationPointCalculationEvent::Commission(commission) => {
-                                    // Convert percentage to basis points.
-                                    detail.commission_bps = *commission as u16 * 100;
                                 }
                                 InflationPointCalculationEvent::CommissionBps(commission_bps) => {
                                     detail.commission_bps = *commission_bps;

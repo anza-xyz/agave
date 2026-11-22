@@ -20,8 +20,8 @@ fn get_sysvar<T: SysvarId + Clone>(
     // host memory will segfault due to unaligned accesses. However, this has
     // no consensus impact because this loader was deprecated before the get_sysvar
     // syscall was activated.
-    let check_aligned = invoke_context.get_check_aligned();
-    if !check_aligned {
+    let abi = invoke_context.abi();
+    if abi == ABI::V0 {
         return Err(SyscallError::UnalignedPointer.into());
     }
 
@@ -29,10 +29,9 @@ fn get_sysvar<T: SysvarId + Clone>(
         return Err(SyscallError::InvalidPointer.into());
     }
 
-    let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
     translate_mut!(
-        memory_mapping,
-        check_aligned,
+        invoke_context,
+        abi,
         let var: (&mut std::mem::MaybeUninit<T>) = map(var_addr)?;
     );
 
@@ -216,8 +215,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
         // host memory will segfault due to unaligned accesses. However, this has
         // no consensus impact because this loader was deprecated before the get_sysvar
         // syscall was activated.
-        let check_aligned = invoke_context.get_check_aligned();
-        if !check_aligned {
+        let abi = invoke_context.abi();
+        if abi == ABI::V0 {
             return Err(SyscallError::UnalignedPointer.into());
         }
 
@@ -225,19 +224,19 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
             return Err(SyscallError::InvalidPointer.into());
         }
 
-        let memory_mapping = invoke_context.memory_contexts.memory_mapping_mut()?;
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
         {
             // Just a check that this maps correctly for error compatibility with old code.
             translate_mut!(
-                memory_mapping,
-                check_aligned,
+                invoke_context,
+                abi,
                 let _var: (&mut [MaybeUninit<u8>]) = map(var_addr, length)?;
             );
         }
 
         // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
-        let sysvar_id = translate_type::<Pubkey>(memory_mapping, sysvar_id_addr, check_aligned)?;
+        let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
+        let sysvar_id = translate_type::<Pubkey>(memory_mapping, sysvar_id_addr, abi)?;
 
         // Abort: "`offset + length` is not in `[0, 2^64)`."
         let offset_length = offset
@@ -258,8 +257,8 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallGetSysvar {
         // "`1` if `offset + length` is greater than the length of the sysvar data."
         if let Some(sysvar_slice) = sysvar_buf.get(offset as usize..offset_length as usize) {
             translate_mut!(
-                memory_mapping,
-                check_aligned,
+                invoke_context,
+                abi,
                 let var: (&mut [MaybeUninit<u8>]) = map(var_addr, length)?;
             );
             var.write_copy_of_slice(sysvar_slice);

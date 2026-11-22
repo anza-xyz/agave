@@ -76,7 +76,7 @@ pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, LoadXdpProgramError
         .expect("agave_xdp is an XDP program");
     p.load().map_err(LoadXdpProgramError::LoadProgram)?;
 
-    p.attach_to_if_index(dev.if_index(), XdpMode::Driver)
+    p.attach(dev.if_index(), XdpMode::Driver)
         .map_err(|source| LoadXdpProgramError::AttachProgram {
             interface: dev.name().to_string(),
             source,

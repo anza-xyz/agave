@@ -829,7 +829,11 @@ mod tests {
             let slot = starting_slot + i as Slot;
             let storage = db.create_store(slot, file_size);
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new(1, account_data_size as usize, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(
+                1,
+                vec![0; account_data_size as usize],
+                &Pubkey::default(),
+            );
             append_single_account_with_default_hash(&storage, &pubkey, &account, alive, None);
             db.storage.insert(Arc::new(storage));
         }
@@ -947,7 +951,8 @@ mod tests {
             .unwrap();
         storage
             .accounts
-            .get_account_shared_data(account.index_info.offset())
+            .get_account_shared_data_if(account.index_info.offset(), |_, _, _| true)
+            .unwrap()
             .unwrap()
     }
 
@@ -1134,7 +1139,11 @@ mod tests {
                             .unwrap()
                             .index_info
                             .offset();
-                        storage.accounts.get_account_shared_data(offset).unwrap()
+                        storage
+                            .accounts
+                            .get_account_shared_data_if(offset, |_, _, _| true)
+                            .unwrap()
+                            .unwrap()
                     })
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
@@ -1245,7 +1254,13 @@ mod tests {
 
                 let account_template = storages
                     .first()
-                    .and_then(|storage| storage.accounts.get_account_shared_data(0).ok())
+                    .and_then(|storage| {
+                        storage
+                            .accounts
+                            .get_account_shared_data_if(0, |_, _, _| true)
+                            .ok()
+                            .flatten()
+                    })
                     .unwrap_or_default();
                 // add some accounts to each storage so we can make partial progress
                 let mut data_size = 450;

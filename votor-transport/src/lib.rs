@@ -55,16 +55,20 @@ pub(crate) const CONN_EVENT_CHANNEL_CAP: usize =
 /// break the limits set by BLS sigverifier. However, network jitter may
 /// add some bursts in the delivery, so this window is the maximum amount
 /// of time we allow the packets to be piling up at max rate before we start
-/// dropping at ingress. 1 second is enough to absorb likely network
-/// jitter and should be safe with current BLS sigverifier implementation.
+/// dropping at ingress. Dropped datagrams do not count against this budget,
+/// so delivery resumes within this window once the burst ends. 1 second is
+/// enough to absorb likely network jitter and should be safe with current BLS
+/// sigverifier implementation.
 pub const PEER_RATE_LIMIT_BURST_WINDOW: Duration = Duration::from_secs(1);
 /// A peer that sustains above max allowed rate long enough to drain this much
 /// budget is obviously not following votor's self-pacing, so we close the
-/// connection, since datagrams have no flow control.
-/// Chosen as 10 * [`PEER_RATE_LIMIT_BURST_WINDOW`] as a balance between
+/// connection, since datagrams have no flow control. Only datagrams dropped
+/// by the shaper count against this budget, and it refills at the max allowed
+/// rate, so a peer gets kicked only when sending above twice that rate.
+/// Chosen as 60 * [`PEER_RATE_LIMIT_BURST_WINDOW`] as a balance between
 /// probability of dropping legit peer and allowing broken peers to keep
 /// sending unbounded amount of traffic.
-pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(10);
+pub const PEER_RATE_LIMIT_DOS_WINDOW: Duration = Duration::from_secs(60);
 
 /// Sustained rate at which we start inbound TLS handshakes (handshakes/second),
 /// consulted before `Endpoint::accept()` so it bounds when we begin handshake

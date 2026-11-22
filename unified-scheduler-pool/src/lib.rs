@@ -22,7 +22,6 @@ use {
     agave_wake_channel::{
         Sender as WakeSender, SharedEventReceiver as WakeReceiver, TryRecvError, WakeEvent,
     },
-    assert_matches::assert_matches,
     crossbeam_channel::{self, RecvError, RecvTimeoutError, SendError, Sender},
     crossbeam_queue::SegQueue,
     crossbeam_utils::CachePadded,
@@ -44,7 +43,6 @@ use {
             TransactionBatchWithIndexes, TransactionStatusSender, check_block_cost_limits,
             execute_batch,
         },
-        vote_sender_types::{ReplayVoteSendType, ReplayVoteSender},
     },
     solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_svm_timings::ExecuteTimings,
@@ -54,6 +52,7 @@ use {
     },
     static_assertions::const_assert_eq,
     std::{
+        assert_matches,
         fmt::Debug,
         marker::PhantomData,
         mem,
@@ -88,6 +87,7 @@ enum CheckPoint<'a> {
     IdleSchedulerCleaned(usize),
     IdlingSchedulerTrashed,
     ReturningSchedulerTrashed,
+    TrashedSchedulerCleaning,
     TrashedSchedulerCleaned(usize),
     TimeoutListenerTriggered(usize),
     DiscardRequested,
@@ -142,7 +142,6 @@ pub struct HandlerContext {
     thread_count: usize,
     log_messages_bytes_limit: Option<usize>,
     transaction_status_sender: Option<TransactionStatusSender>,
-    replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
 }
 
@@ -165,7 +164,6 @@ impl HandlerContext {
 struct CommonHandlerContext {
     log_messages_bytes_limit: Option<usize>,
     transaction_status_sender: Option<TransactionStatusSender>,
-    replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
 }
 
@@ -174,7 +172,6 @@ impl CommonHandlerContext {
         let Self {
             log_messages_bytes_limit,
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
         } = self;
 
@@ -182,7 +179,6 @@ impl CommonHandlerContext {
             thread_count,
             log_messages_bytes_limit,
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
         }
     }
@@ -221,7 +217,6 @@ where
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         handler_thread_arenas: Option<Arc<ArenaGroup>>,
     ) -> Arc<Self> {
@@ -229,7 +224,6 @@ where
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
             handler_thread_arenas,
             DEFAULT_POOL_CLEANER_INTERVAL,
@@ -244,14 +238,12 @@ where
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Arc<Self> {
         Self::new(
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
             None,
         )
@@ -262,7 +254,6 @@ where
         block_verification_handler_count: CountOrDefault,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         handler_thread_arenas: Option<Arc<ArenaGroup>>,
         pool_cleaner_interval: Duration,
@@ -368,6 +359,7 @@ where
                     idle_inner_count
                 };
 
+                sleepless_testing::at(CheckPoint::TrashedSchedulerCleaning);
                 let trashed_inner_count = {
                     let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
                     else {
@@ -430,7 +422,6 @@ where
             common_handler_context: CommonHandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
-                replay_vote_sender,
                 prioritization_fee_cache,
             },
             block_verification_handler_count,
@@ -657,11 +648,6 @@ impl TaskHandler for DefaultTaskHandler {
             &batch_with_indexes,
             bank,
             handler_context.transaction_status_sender.as_ref(),
-            handler_context.replay_vote_sender.as_ref(),
-            ReplayVoteSendType::Executed {
-                replay_bank_id: bank.bank_id(),
-                replay_slot: bank.slot(),
-            },
             timings,
             handler_context.log_messages_bytes_limit,
             handler_context.prioritization_fee_cache.as_deref(),
@@ -2202,7 +2188,6 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         agave_jemalloc::jemalloc::{Decay, Jemalloc},
-        assert_matches::assert_matches,
         solana_clock::Slot,
         solana_cost_model::cost_tracker::CostTrackerLimits,
         solana_hash::Hash,
@@ -2223,6 +2208,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
         std::{
+            assert_matches,
             num::Saturating,
             sync::{Arc, RwLock},
             thread::JoinHandle,
@@ -2239,7 +2225,6 @@ mod tests {
             block_verification_handler_count: CountOrDefault,
             log_messages_bytes_limit: Option<usize>,
             transaction_status_sender: Option<TransactionStatusSender>,
-            replay_vote_sender: Option<ReplayVoteSender>,
             prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
             pool_cleaner_interval: Duration,
             max_pooling_duration: Duration,
@@ -2250,7 +2235,6 @@ mod tests {
                 block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
-                replay_vote_sender,
                 prioritization_fee_cache,
                 None,
                 pool_cleaner_interval,
@@ -2266,14 +2250,12 @@ mod tests {
             block_verification_handler_count: CountOrDefault,
             log_messages_bytes_limit: Option<usize>,
             transaction_status_sender: Option<TransactionStatusSender>,
-            replay_vote_sender: Option<ReplayVoteSender>,
             prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         ) -> InstalledSchedulerPoolArc {
             Self::new(
                 block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
-                replay_vote_sender,
                 prioritization_fee_cache,
                 None,
             )
@@ -2301,7 +2283,7 @@ mod tests {
     fn test_scheduler_pool_new() {
         agave_logger::setup();
 
-        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
 
         // this indirectly proves that there should be circular link because there's only one Arc
         // at this moment now
@@ -2453,7 +2435,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             Some(Arc::new(arenas)),
         );
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
@@ -2484,7 +2465,7 @@ mod tests {
     fn test_scheduler_spawn() {
         agave_logger::setup();
 
-        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
         let bank = Arc::new(Bank::default_for_tests());
         let context = SchedulingContext::new(bank);
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -2539,7 +2520,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             SHORTENED_POOL_CLEANER_INTERVAL,
             TEST_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -2589,14 +2569,13 @@ mod tests {
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeTrashedSchedulerCleaned,
-            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaning,
             &CheckPoint::TrashedSchedulerCleaned(1),
             &TestCheckPoint::AfterTrashedSchedulerCleaned,
         ]);
 
         const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 1;
         let pool_raw = DefaultSchedulerPool::do_new_for_verification(
-            None,
             None,
             None,
             None,
@@ -2678,7 +2657,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             SHORTENED_POOL_CLEANER_INTERVAL,
             SHORTENED_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -2721,7 +2699,6 @@ mod tests {
 
         let pool_raw =
             SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new_for_verification(
-                None,
                 None,
                 None,
                 None,
@@ -2808,7 +2785,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             SHORTENED_POOL_CLEANER_INTERVAL,
             DEFAULT_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -2850,7 +2826,6 @@ mod tests {
         ]);
 
         let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new_for_verification(
-            None,
             None,
             None,
             None,
@@ -2951,7 +2926,7 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let pool =
             SchedulerPool::<PooledScheduler<CommitCancelledHandler>, _>::new_for_verification(
-                None, None, None, None, None,
+                None, None, None, None,
             );
         let scheduler = pool.do_take_scheduler(SchedulingContext::new(bank.clone()));
         let cancelled_transaction = ReplayTransaction::from(system_transaction::transfer(
@@ -3009,7 +2984,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new_for_verification(
-            None, None, None, None, None,
+            None, None, None, None,
         );
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
@@ -3044,7 +3019,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "does not match `Some((Ok(_), _))")]
+    #[should_panic(expected = " right: Some((Ok(_), _))")]
     fn test_scheduler_drop_abort_unhandled() {
         do_test_scheduler_drop_abort(AbortCase::Unhandled);
     }
@@ -3096,7 +3071,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new_for_verification(
-            None, None, None, None, None,
+            None, None, None, None,
         );
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
@@ -3130,7 +3105,7 @@ mod tests {
     fn test_scheduler_pool_filo() {
         agave_logger::setup();
 
-        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None);
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::new(bank);
 
@@ -3157,7 +3132,7 @@ mod tests {
     fn test_scheduler_pool_context_drop_unless_reinitialized() {
         agave_logger::setup();
 
-        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None);
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::new(bank);
         let mut scheduler = pool.do_take_scheduler(context.clone());
@@ -3174,7 +3149,7 @@ mod tests {
     fn test_scheduler_pool_context_replace() {
         agave_logger::setup();
 
-        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_for_verification(None, None, None, None);
         let old_bank = &Arc::new(Bank::default_for_tests());
         let new_bank = &Arc::new(Bank::default_for_tests());
         assert!(!Arc::ptr_eq(old_bank, new_bank));
@@ -3198,7 +3173,7 @@ mod tests {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
-        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
         bank_forks.install_scheduler_pool(pool);
     }
 
@@ -3206,7 +3181,7 @@ mod tests {
     fn test_scheduler_install_into_bank() {
         agave_logger::setup();
 
-        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
@@ -3265,7 +3240,7 @@ mod tests {
         ));
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
         let context = SchedulingContext::new(bank.clone());
 
         assert_eq!(bank.transaction_count(), 0);
@@ -3288,7 +3263,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, None);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None);
 
         (0..bank_count)
             .map(|_| {
@@ -3380,7 +3355,7 @@ mod tests {
             &CheckPoint::SchedulerThreadAborted,
             &TestCheckPoint::AfterSchedulerThreadAborted,
             &TestCheckPoint::BeforeTrashedSchedulerCleaned,
-            &CheckPoint::TrashedSchedulerCleaned(0),
+            &CheckPoint::TrashedSchedulerCleaning,
             &CheckPoint::TrashedSchedulerCleaned(1),
             &TestCheckPoint::AfterTrashedSchedulerCleaned,
         ]);
@@ -3394,7 +3369,6 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let pool_raw = DefaultSchedulerPool::do_new_for_verification(
-            None,
             None,
             None,
             None,
@@ -3530,7 +3504,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         );
         let context = SchedulingContext::new(bank.clone());
 
@@ -3602,7 +3575,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let pool = SchedulerPool::<PooledScheduler<CountingFaultyHandler>, _>::new_for_verification(
-            None, None, None, None, None,
+            None, None, None, None,
         );
         let context = SchedulingContext::new(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
@@ -3702,9 +3675,8 @@ mod tests {
 
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
-            None, None, None, None, None, None,
-        );
+        let pool =
+            SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(None, None, None, None, None);
 
         // This variable tracks the cumulative count of transactions since genesis, which is
         // incremented as test is progressed.
@@ -3790,7 +3762,6 @@ mod tests {
 
         let pool = SchedulerPool::<PooledScheduler<TaskAndContextChecker>, _>::new_for_verification(
             Some(4), // spawn 4 threads
-            None,
             None,
             None,
             None,
@@ -4006,7 +3977,6 @@ mod tests {
 
         let pool =
             SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn_for_verification(
-                None,
                 None,
                 None,
                 None,

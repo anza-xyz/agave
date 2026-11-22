@@ -145,10 +145,9 @@ pub fn compute_hashes_per_tick(duration: Duration, hashes_sample_size: u64) -> u
 mod tests {
     use {
         crate::poh::{Poh, PohEntry},
-        assert_matches::assert_matches,
         solana_hash::Hash,
         solana_sha256_hasher::{hash, hashv},
-        std::time::Duration,
+        std::{assert_matches, time::Duration},
     };
 
     fn verify(initial_hash: Hash, entries: &[(PohEntry, Option<Hash>)]) -> bool {

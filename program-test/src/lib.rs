@@ -37,7 +37,7 @@ use {
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionRegisterer,
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::entry::ProgramCacheEntry,
         serialization::{SerializationResult, serialize_parameters},
         stable_log,
         sysvar_cache::SysvarCache,
@@ -120,6 +120,7 @@ pub fn invoke_builtin_function(
 ) -> Result<u64, Box<dyn std::error::Error>> {
     set_invoke_context(invoke_context);
 
+    let abi = invoke_context.abi();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_account_indices = 0..instruction_context.get_number_of_instruction_accounts();
@@ -148,6 +149,7 @@ pub fn invoke_builtin_function(
         ..
     } = serialize_parameters(
         &instruction_context,
+        abi,
         false, // There is no VM so virtual_address_space_adjustments can not be implemented here
         false, // There is no VM so account_data_direct_mapping can not be implemented here
         direct_account_pointers_in_program_input,
@@ -1180,9 +1182,8 @@ impl ProgramTest {
             .await
             .unwrap_or_else(|err| panic!("Failed to start banks client: {err}"));
 
-        // Run a simulated PohService to provide the client with new blockhashes.  New blockhashes
-        // are required when sending multiple otherwise identical transactions in series from a
-        // test
+        // Periodically provide the client with new blockhashes. New blockhashes are required when
+        // sending multiple otherwise identical transactions in series from a test.
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(target_slot_duration).await;
@@ -1289,9 +1290,8 @@ impl ProgramTestContext {
         last_blockhash: Hash,
         genesis_config_info: GenesisConfigInfo,
     ) -> Self {
-        // Run a simulated PohService to provide the client with new blockhashes.  New blockhashes
-        // are required when sending multiple otherwise identical transactions in series from a
-        // test
+        // Periodically provide the client with new blockhashes. New blockhashes are required when
+        // sending multiple otherwise identical transactions in series from a test.
         let running_bank_forks = bank_forks.clone();
         let target_tick_duration = genesis_config_info
             .genesis_config

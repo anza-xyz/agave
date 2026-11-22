@@ -3,6 +3,7 @@ use {
         repair_handler::RepairHandler, repair_response::repair_response_packet_from_bytes,
         standard_repair_handler::StandardRepairHandler,
     },
+    agave_shred_wire_format::constants::Nonce,
     log::info,
     solana_clock::Slot,
     solana_entry::entry::Entry,
@@ -11,7 +12,7 @@ use {
     solana_ledger::{
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{Nonce, ProcessShredsStats, Shred, Shredder},
+        shred::{ProcessShredsStats, Shred, Shredder},
     },
     solana_perf::packet::{BytesPacket, PacketBatch},
     solana_signer::Signer,

@@ -25,6 +25,8 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2022-0093
   # URL:       https://rustsec.org/advisories/RUSTSEC-2022-0093
   # Solution:  Upgrade to >=2
+  # Note:      dev-dependency of agave-precompiles only; the ed25519 precompile
+  #            test compares against the exact dalek version it used to call.
   --ignore RUSTSEC-2022-0093
 
   # Crate:     idna
@@ -45,6 +47,7 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2024-0344
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0344
   # Solution:  Upgrade to >=4.1.3
+  # Note:      pulled in by the ed25519-dalek 1.0.1 dev-dependency above.
   --ignore RUSTSEC-2024-0344
 
   # Crate:     crypto-bigint
@@ -58,6 +61,17 @@ default_cargo_audit_extra_args=(
   # solana-secp256k1-recover, which verify and recover over public data.
   # The fix needs those SDK crates to move to elliptic-curve 0.14.
   --ignore RUSTSEC-2026-0387
+
+  # Crate:     url
+  # Version:   1.7.2
+  # Title:     Stack overflow in `Url::origin()` on nested `blob:` URLs
+  # Date:      2026-11-22
+  # ID:        RUSTSEC-2026-0592
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0592
+  # Solution:  Upgrade to >=2.5.9
+  # Agave Ok:  2.5.x is bumped. 1.7.2 only comes in via jsonrpc-client-transports and has no
+  # fixed release. Agave never calls `Url::origin` or `url::quirks::origin` (clippy disallows them).
+  --ignore RUSTSEC-2026-0592
 )
 
 xtask_cargo_audit_extra_args=(

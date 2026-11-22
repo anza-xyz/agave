@@ -3,13 +3,15 @@
 
 use {
     agave_transaction_view::transaction_config_view::TransactionConfigView,
-    ahash::HashSetExt as _,
+    ahash::AHashSet,
     solana_compute_budget::compute_budget_limits::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
     solana_message::{AccountKeys, v1},
+    solana_pubkey::Pubkey,
     solana_svm_transaction::svm_transaction::SVMStaticTransaction,
     solana_transaction::versioned::TransactionVersion,
     solana_transaction_context::{MAX_ACCOUNTS_PER_INSTRUCTION, MAX_INSTRUCTION_TRACE_LENGTH},
     solana_transaction_error::{TransactionError, TransactionResult},
+    std::cell::RefCell,
 };
 
 /// Maximum serialized transaction size for legacy and v0 transactions, in bytes.
@@ -18,12 +20,34 @@ const MAX_V1_SIGNATURES: usize = 12;
 const MAX_V1_ACCOUNTS: usize = 96;
 
 pub(crate) fn validate_unique_account_keys(account_keys: AccountKeys) -> TransactionResult<()> {
-    let mut seen = ahash::HashSet::with_capacity(account_keys.len());
-    if account_keys.iter().any(|key| !seen.insert(key)) {
+    if has_duplicates(&account_keys) {
         Err(TransactionError::AccountLoadedTwice)
     } else {
         Ok(())
     }
+}
+
+fn has_duplicates(account_keys: &AccountKeys) -> bool {
+    // comparing every pair is faster than hashing for small sets
+    const QUADRATIC_MAX_LEN: usize = 32;
+    let len = account_keys.len();
+    if len < QUADRATIC_MAX_LEN {
+        account_keys
+            .iter()
+            .enumerate()
+            .any(|(idx, key)| (idx + 1..len).any(|jdx| key == &account_keys[jdx]))
+    } else {
+        SEEN_KEYS.with_borrow_mut(|seen| {
+            seen.clear();
+            seen.reserve(len);
+            account_keys.iter().any(|key| !seen.insert(*key))
+        })
+    }
+}
+
+thread_local! {
+    // reused across calls to skip allocating a set per transaction
+    static SEEN_KEYS: RefCell<AHashSet<Pubkey>> = RefCell::default();
 }
 
 pub(crate) fn validate_transaction_limits(
@@ -153,7 +177,6 @@ mod tests {
         let result = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
             transaction,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             result.err(),
@@ -183,7 +206,6 @@ mod tests {
                 let static_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                     tx,
                     MessageHash::Compute,
-                    None,
                 )
                 .unwrap();
                 let address_loader = if matches!(version, TransactionVersion::V0) {
@@ -206,7 +228,6 @@ mod tests {
             let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
-                None,
             )
             .unwrap();
             let loaded_addresses =
@@ -240,12 +261,9 @@ mod tests {
             readonly: vec![duplicate_key],
         };
         let bytes = wincode::serialize(&tx).unwrap();
-        let sdk_tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
-            tx,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
+        let sdk_tx =
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(tx, MessageHash::Compute)
+                .unwrap();
         assert_eq!(
             RuntimeTransaction::<SanitizedTransaction>::try_from(
                 sdk_tx,
@@ -257,12 +275,9 @@ mod tests {
         );
 
         let view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
-        let static_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-            None,
-        )
-        .unwrap();
+        let static_tx =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
+                .unwrap();
         assert_eq!(
             RuntimeTransaction::<ResolvedTransactionView<_>>::try_new(
                 static_tx,
@@ -380,17 +395,13 @@ mod tests {
         let borrowed = RuntimeTransaction::<&SanitizedTransactionView<_>>::try_new(
             &view,
             MessageHash::Compute,
-            None,
         );
         assert_eq!(
             borrowed.err(),
             (!valid).then_some(TransactionError::SanitizeFailure)
         );
-        let owned = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-            view,
-            MessageHash::Compute,
-            None,
-        );
+        let owned =
+            RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute);
         assert_eq!(
             owned.err(),
             (!valid).then_some(TransactionError::SanitizeFailure)
@@ -406,6 +417,32 @@ mod tests {
             };
             message.config.heap_size = Some(heap);
             assert_view_constructors(&wincode::serialize(&tx).unwrap(), false);
+        }
+    }
+
+    fn split_has_duplicates(keys: &[Pubkey]) -> bool {
+        let (static_keys, loaded) = keys.split_at(keys.len() / 2);
+        let (writable, readonly) = loaded.split_at(loaded.len() / 2);
+        let loaded = LoadedAddresses {
+            writable: writable.to_vec(),
+            readonly: readonly.to_vec(),
+        };
+        has_duplicates(&AccountKeys::new(static_keys, Some(&loaded)))
+    }
+
+    #[test]
+    fn test_has_duplicates() {
+        for len in [2, 31, 32, 64, 256] {
+            let keys: Vec<_> = (0..len).map(|_| Pubkey::new_unique()).collect();
+            assert!(!split_has_duplicates(&keys), "len {len}");
+
+            for (src, dst) in [(0, len - 1), (len - 1, 0), (len / 2, len / 2 - 1)] {
+                let mut keys = keys.clone();
+                keys[dst] = keys[src];
+                assert!(split_has_duplicates(&keys), "len {len} {src}->{dst}");
+            }
+            // entries left by an early return on a duplicate must not affect the next call
+            assert!(!split_has_duplicates(&keys), "len {len} after duplicates");
         }
     }
 }

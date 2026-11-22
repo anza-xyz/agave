@@ -19,7 +19,6 @@ use {
             BankingControlMsg, BankingStage,
             transaction_scheduler::scheduler_controller::SchedulerConfig,
         },
-        consensus::tower_storage::TowerStorage,
         repair::repair_service,
         validator::{
             BlockProductionMethod, SchedulerPacing, TransactionStructure, ValidatorStartProgress,
@@ -38,7 +37,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
@@ -59,7 +58,6 @@ pub struct AdminRpcRequestMetadata {
     pub validator_exit: Arc<RwLock<Exit>>,
     pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
-    pub tower_storage: Arc<dyn TowerStorage>,
     pub vote_history_storage: Arc<dyn VoteHistoryStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub post_init: Arc<RwLock<Option<AdminRpcRequestMetadataPostInit>>>,
@@ -101,6 +99,7 @@ pub struct AdminRpcContactInfo {
     pub tpu: SocketAddr,
     pub tpu_quic: Option<SocketAddr>,
     pub tpu_forwards: SocketAddr,
+    /// Retained for compatibility with the legacy admin RPC contact-info schema.
     pub tpu_vote: SocketAddr,
     pub rpc: SocketAddr,
     pub rpc_pubsub: SocketAddr,
@@ -266,9 +265,6 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "validatorAdmissionTicketStatus")]
     fn vat_status(&self, meta: Self::Metadata) -> Result<AdminRpcValidatorAdmissionTicketStatus>;
-
-    #[rpc(meta, name = "selectActiveInterface")]
-    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -697,24 +693,6 @@ impl AdminRpc for AdminRpcImpl {
                 current_epoch_vote_accounts: epoch_vote_accounts.len(),
                 next_epoch_vat_failure_reason,
             })
-        })
-    }
-
-    fn select_active_interface(&self, meta: Self::Metadata, interface: IpAddr) -> Result<()> {
-        debug!("select_active_interface received: {interface}");
-        meta.with_post_init(|post_init| {
-            let node = post_init.node.as_ref().ok_or_else(|| {
-                jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
-            })?;
-
-            node.switch_active_interface(interface, &post_init.cluster_info)
-                .map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!(
-                        "Switching failed due to error {e}"
-                    ))
-                })?;
-            info!("Switched primary interface to {interface}");
-            Ok(())
         })
     }
 
@@ -1201,7 +1179,6 @@ mod tests {
         super::*,
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor::event::VotorEventSender,
-        assert_matches::assert_matches,
         crossbeam_channel::bounded,
         serde_json::Value,
         solana_accounts_db::{
@@ -1210,7 +1187,6 @@ mod tests {
         },
         solana_core::{
             admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-            consensus::tower_storage::NullTowerStorage,
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -1229,7 +1205,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
-        std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
+        std::{assert_matches, collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
         tokio::sync::mpsc,
     };
 
@@ -1293,7 +1269,6 @@ mod tests {
                 validator_exit,
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
-                tower_storage: Arc::new(NullTowerStorage {}),
                 vote_history_storage: Arc::new(
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
@@ -1308,7 +1283,6 @@ mod tests {
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
-                    node: None,
                     banking_control_sender: mpsc::channel(1).0,
                     snapshot_controller,
                     blockstore,
@@ -1507,7 +1481,6 @@ mod tests {
                 validator_exit: validator_config.validator_exit.clone(),
                 validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-                tower_storage: Arc::new(NullTowerStorage {}),
                 vote_history_storage: Arc::new(
                     agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
                 ),
@@ -1548,7 +1521,6 @@ mod tests {
                 HashSet::from_iter(vec![
                     KeyUpdaterType::Tpu,
                     KeyUpdaterType::TpuForwards,
-                    KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
                     KeyUpdaterType::RpcService,
                     KeyUpdaterType::Votor,
@@ -1595,7 +1567,6 @@ mod tests {
             validator_exit,
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-            tower_storage: Arc::new(NullTowerStorage {}),
             vote_history_storage: Arc::new(
                 agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
             ),
@@ -1691,7 +1662,6 @@ mod tests {
             validator_exit,
             validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs,
-            tower_storage: Arc::new(NullTowerStorage {}),
             vote_history_storage: Arc::new(
                 agave_votor::vote_history_storage::NullVoteHistoryStorage::default(),
             ),

@@ -400,7 +400,6 @@ mod tests {
         completed_data_set_starting_shred_index: u32,
         completed_data_set_ending_shred_index_exclusive: u32,
         signature: Signature,
-        is_vote: bool,
         transaction: VersionedTransaction,
         loaded_addresses: Option<LoadedAddresses>,
     }
@@ -426,8 +425,8 @@ mod tests {
             transaction: ReplicaDeshredTransactionInfoVersions,
             slot: Slot,
         ) -> PluginResult<()> {
-            let ReplicaDeshredTransactionInfoVersions::V0_0_2(transaction) = transaction else {
-                panic!("expected V0_0_2 deshred transaction info");
+            let ReplicaDeshredTransactionInfoVersions::V0_0_3(transaction) = transaction else {
+                panic!("expected the payload without the vote flag");
             };
             self.notifications
                 .lock()
@@ -439,7 +438,6 @@ mod tests {
                     completed_data_set_ending_shred_index_exclusive: transaction
                         .completed_data_set_ending_shred_index_exclusive,
                     signature: *transaction.signature,
-                    is_vote: transaction.is_vote,
                     transaction: transaction.transaction.clone(),
                     loaded_addresses: transaction.loaded_addresses.cloned(),
                 });
@@ -737,7 +735,6 @@ mod tests {
             23,
             31,
             &transaction.signatures[0],
-            true,
             &transaction,
             Some(&loaded_addresses),
         );
@@ -764,7 +761,6 @@ mod tests {
             enabled_notifications[0].signature,
             transaction.signatures[0]
         );
-        assert!(enabled_notifications[0].is_vote);
         assert_eq!(enabled_notifications[0].transaction, transaction);
         assert_eq!(
             enabled_notifications[0].loaded_addresses,
@@ -779,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "expected V0_0_2 deshred transaction info")]
+    #[should_panic(expected = "expected the payload without the vote flag")]
     fn test_deshred_test_plugin_panics_on_legacy_deshred_info_version() {
         let plugin = DeshredTestPlugin {
             name: DUMMY_NAME,

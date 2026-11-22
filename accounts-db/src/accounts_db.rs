@@ -32,7 +32,7 @@ use {
     crate::{
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
-            AccountStorage, AccountStoragesOrderer, NextItem, ShrinkInProgress,
+            AccountStorage, AccountStorageMap, AccountStoragesOrderer, NextItem, ShrinkInProgress,
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         },
         account_storage_entry::AccountStorageEntry,
@@ -49,7 +49,7 @@ use {
         accounts_index::{
             AccountSecondaryIndexes, AccountsIndex, IndexKey, ReclaimsSlotList,
             ReclaimsWithNewestSlot, ScanFilter, Startup, UpsertReclaim,
-            in_mem_accounts_index::StartupStats,
+            account_map_entry::LockedSlotListItem, in_mem_accounts_index::StartupStats,
         },
         accounts_scan::{ScanConfig, ScanError, ScanGuard, ScanResult, ScanTracker},
         accounts_update_notifier_interface::{AccountForGeyser, AccountsUpdateNotifier},
@@ -69,6 +69,7 @@ use {
         buffered_reader::{FileBufRead as _, RequiredLenBufFileRead},
         io_setup::IoSetupState,
     },
+    agave_memory::{HugePageAlign, HugePages},
     ahash::{HashMapExt as _, HashSetExt as _},
     bv::BitVec,
     dashmap::DashMap,
@@ -82,7 +83,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_lattice_hash::{
         batch,
-        lt_hash::{LtHash, SingleLtHashUpdater},
+        lt_hash::{self, BufferingHasher, LtHash, SingleLtHashUpdater},
     },
     solana_measure::{measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
@@ -528,121 +529,50 @@ pub enum PopulateReadCache {
 }
 
 #[derive(Debug)]
-pub enum LoadedAccountAccessor {
+pub struct LoadedAccountAccessor {
     // StoredAccountInfo can't be held directly here due to its lifetime dependency on
     // AccountStorageEntry
-    Stored(Option<(Arc<AccountStorageEntry>, Offset)>),
+    storage_entry: Arc<AccountStorageEntry>,
+    offset: Offset,
 }
 
 impl LoadedAccountAccessor {
-    fn check_and_get_loaded_account_shared_data(
+    fn get_account_shared_data_if(
         &mut self,
         load_filter: Option<impl Fn(u64, &Pubkey, usize) -> bool>,
     ) -> Option<AccountSharedData> {
-        // all of these following .expect() and .unwrap() are like serious logic errors,
-        // ideal for representing this as rust type system....
-
-        match self {
-            LoadedAccountAccessor::Stored(Some((maybe_storage_entry, offset))) => {
-                // If we do find the storage entry, we can guarantee that the storage entry is
-                // safe to read from because we grabbed a reference to the storage entry while it
-                // was still in the storage map. This means even if the storage entry is removed
-                // from the storage map after we grabbed the storage entry, the recycler should not
-                // reset the storage entry until we drop the reference to the storage entry.
-
-                // If there's a load filter, read only the account metadata first.
-                // This way we don't read the whole account (including its data)
-                // from disk, only to discard it later.
-                let should_load_account = load_filter.is_none_or(|load_filter| {
-                    maybe_storage_entry
-                        .accounts
-                        .get_stored_account_without_data_callback(*offset, |account| {
-                            load_filter(account.lamports, account.owner, account.data_len)
-                        })
-                        .expect(
-                            "If a storage entry was found in the storage map, it must not have \
-                             been reset yet",
-                        )
-                });
-
-                should_load_account.then(|| {
-                    maybe_storage_entry
-                        .accounts
-                        .get_account_shared_data(*offset)
-                        .expect(
-                            "If a storage entry was found in the storage map, it must not have \
-                             been reset yet",
-                        )
-                })
-            }
-
-            // It is safe ("""safe""") to skip consulting `load_filter` here because this
-            // branch immediately and invariably panics.
-            LoadedAccountAccessor::Stored(None) => {
-                let account = self
-                    .check_and_get_loaded_account(|loaded_account| loaded_account.take_account());
-                unreachable!("{account:?}");
-            }
-        }
-    }
-
-    fn check_and_get_loaded_account<T>(
-        &mut self,
-        callback: impl for<'local> FnMut(LoadedAccount<'local>) -> T,
-    ) -> T {
-        // all of these following .expect() and .unwrap() are like serious logic errors,
-        // ideal for representing this as rust type system....
-
-        match self {
-            LoadedAccountAccessor::Stored(None) => {
-                panic!(
-                    "Should have already been taken care of when creating this \
-                     LoadedAccountAccessor"
-                );
-            }
-            LoadedAccountAccessor::Stored(Some(_maybe_storage_entry)) => {
-                // If we do find the storage entry, we can guarantee that the storage entry is
-                // safe to read from because we grabbed a reference to the storage entry while it
-                // was still in the storage map. This means even if the storage entry is removed
-                // from the storage map after we grabbed the storage entry, the recycler should not
-                // reset the storage entry until we drop the reference to the storage entry.
-                self.get_loaded_account(callback).expect(
-                    "If a storage entry was found in the storage map, it must not have been reset \
-                     yet",
-                )
-            }
-        }
+        // The storage was taken from the storage map under the index entry's lock, and holding it
+        // keeps it readable even after it is removed from the map.
+        self.storage_entry
+            .accounts
+            .get_account_shared_data_if(self.offset, |lamports, owner, data_len| {
+                load_filter
+                    .as_ref()
+                    .is_none_or(|load_filter| load_filter(lamports, owner, data_len))
+            })
+            .expect("a held storage is readable")
     }
 
     fn get_loaded_account<T>(
         &mut self,
         mut callback: impl for<'local> FnMut(LoadedAccount<'local>) -> T,
-    ) -> Option<T> {
-        match self {
-            LoadedAccountAccessor::Stored(maybe_storage_entry) => {
-                // storage entry may not be present if slot was cleaned up in
-                // between reading the accounts index and calling this function to
-                // get account meta from the storage entry here
-                maybe_storage_entry
-                    .as_ref()
-                    .and_then(|(storage_entry, offset)| {
-                        storage_entry
-                            .accounts
-                            .get_stored_account_callback(*offset, |account| {
-                                callback(LoadedAccount::Stored(account))
-                            })
-                            .inspect_err(|err| {
-                                trace!(
-                                    "get_loaded_account() failed! storage slot: {}, id: {}, \
-                                     offset: {offset}, err: {err}",
-                                    storage_entry.slot(),
-                                    storage_entry.id(),
-                                );
-                            })
-                            .ok()
-                    })
-            }
-        }
+    ) -> T {
+        // The storage was taken from the storage map under the index entry's lock, and holding it
+        // keeps it readable even after it is removed from the map.
+        self.storage_entry
+            .accounts
+            .get_stored_account_callback(self.offset, |account| {
+                callback(LoadedAccount::Stored(account))
+            })
+            .inspect_err(|err| {
+                trace!(
+                    "get_loaded_account() failed! storage slot: {}, id: {}, offset: {}, err: {err}",
+                    self.storage_entry.slot(),
+                    self.storage_entry.id(),
+                    self.offset,
+                );
+            })
+            .expect("a held storage is readable")
     }
 }
 
@@ -995,13 +925,35 @@ impl AccountsDb {
         new
     }
 
+    /// Takes the storages restored from a snapshot, with `next_id` above all their ids.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` already holds storages, `storage` is empty, or `next_id` exceeds the
+    /// supported range.
+    pub fn initialize_storages(&mut self, storage: AccountStorageMap, next_id: AccountsFileId) {
+        assert!(
+            !storage.is_empty(),
+            "At least one storage entry must exist from deserializing stream"
+        );
+        let max_id = next_id - 1;
+        assert!(
+            max_id <= AccountsFileId::MAX / 2,
+            "Storage id {max_id} larger than allowed max"
+        );
+        self.storage.initialize(storage);
+        self.next_id.store(next_id, Ordering::Release);
+    }
+
     pub fn bank_hash_details_dir(&self) -> &Path {
         &self.bank_hash_details_dir
     }
 
-    /// Returns true if there is an accounts update notifier.
+    /// Returns true if the notifier needs runtime account updates.
     pub fn has_accounts_update_notifier(&self) -> bool {
-        self.accounts_update_notifier.is_some()
+        self.accounts_update_notifier
+            .as_ref()
+            .is_some_and(|notifier| notifier.account_notifications_enabled())
     }
 
     fn next_id(&self) -> AccountsFileId {
@@ -2483,7 +2435,8 @@ impl AccountsDb {
         self.accounts_index.scan_accounts(
             ancestors,
             max_root,
-            |pubkey, (account_info, slot)| {
+            |pubkey, slot_list_item| {
+                let slot = slot_list_item.slot();
                 if let Some((cached_account, cache_slot)) = cached_versions.remove(pubkey)
                     && cache_slot >= slot
                 {
@@ -2491,13 +2444,12 @@ impl AccountsDb {
                     return;
                 }
 
-                let mut account_accessor =
-                    self.get_account_accessor(slot, &account_info.storage_location());
+                let mut account_accessor = self.get_account_accessor(slot_list_item);
 
                 let account_slot = account_accessor.get_loaded_account(|loaded_account| {
                     (pubkey, loaded_account.take_account(), slot)
                 });
-                scan_func(account_slot)
+                scan_func(Some(account_slot))
             },
             || config.is_aborted() || scan_guard.is_bank_removed(),
         );
@@ -2734,21 +2686,19 @@ impl AccountsDb {
 
         // Get the storage under the index entry's lock: storages are removed only after the index
         // stops referring to them, so it is present
-        let (slot, mut account_accessor) = self.accounts_index.get_with_and_then(
-            pubkey,
-            ancestors,
-            true,
-            |(slot, account_info)| {
-                let storage_location = account_info.storage_location();
-                (slot, self.get_account_accessor(slot, &storage_location))
-            },
-        )?;
+        let (slot, mut account_accessor) =
+            self.accounts_index
+                .get_with_and_then(pubkey, ancestors, true, |slot_list_item| {
+                    (
+                        slot_list_item.slot(),
+                        self.get_account_accessor(slot_list_item),
+                    )
+                })?;
         self.load_account_stats
             .num_loaded_from_index_storage
             .fetch_add(1, Ordering::Relaxed);
 
-        let maybe_account =
-            account_accessor.check_and_get_loaded_account_shared_data(load_filter.as_ref());
+        let maybe_account = account_accessor.get_account_shared_data_if(load_filter.as_ref());
 
         // Skip zero lamport accounts; a cached one would still be returned after clean removes it
         if let Some(ref account) = maybe_account
@@ -2792,16 +2742,20 @@ impl AccountsDb {
     #[cfg_attr(test, qualifiers(pub(crate)))]
     fn get_account_accessor(
         &self,
-        slot: Slot,
-        storage_location: &StorageLocation,
+        slot_list_item: LockedSlotListItem<'_, AccountInfo>,
     ) -> LoadedAccountAccessor {
-        match storage_location {
+        match slot_list_item.info().storage_location() {
             StorageLocation::AccountsFile(store_id, offset) => {
-                let maybe_storage_entry = self
+                // `slot_list_item` borrows the index entry's lock, and storages are removed only after
+                // the index stops referring to them, so the storage is present
+                let storage_entry = self
                     .storage
-                    .get_account_storage_entry(slot, *store_id)
-                    .map(|account_storage_entry| (account_storage_entry, *offset));
-                LoadedAccountAccessor::Stored(maybe_storage_entry)
+                    .get_account_storage_entry(slot_list_item.slot(), store_id)
+                    .expect("the storage of a locked index entry is present");
+                LoadedAccountAccessor {
+                    storage_entry,
+                    offset,
+                }
             }
         }
     }
@@ -3085,12 +3039,25 @@ impl AccountsDb {
 
     /// Calculates the `AccountLtHash` of `account`
     pub fn lt_hash_account(account: &impl ReadableAccount, pubkey: &Pubkey) -> AccountLtHash {
+        lt_hash::with_thread_hasher(|hasher| {
+            Self::lt_hash_account_with_hasher(account, pubkey, hasher)
+        })
+    }
+
+    /// Calculates the `AccountLtHash` of `account` like `lt_hash_account()`, with `hasher`
+    /// held by the caller instead of the thread.
+    pub fn lt_hash_account_with_hasher(
+        account: &impl ReadableAccount,
+        pubkey: &Pubkey,
+        hasher: &mut BufferingHasher,
+    ) -> AccountLtHash {
         if account.lamports() == 0 {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::write_account_hash_input(account, pubkey, blake3::Hasher::new());
-        AccountLtHash(LtHash::with(&hasher))
+        hasher.reset();
+        Self::write_account_hash_input(account, pubkey, &mut *hasher);
+        AccountLtHash(hasher.finish())
     }
 
     /// Group-adds `account`'s lattice hash into `accumulator`, folded in once the
@@ -3605,18 +3572,12 @@ impl AccountsDb {
                     for pubkey in accounts_index_bin.keys() {
                         let account_lt_hash = self
                             .accounts_index
-                            .get_with_and_then(&pubkey, ancestors, false, |(slot, account_info)| {
-                                (!account_info.is_zero_lamport()).then(|| {
-                                    self.get_account_accessor(
-                                        slot,
-                                        &account_info.storage_location(),
-                                    )
-                                    .get_loaded_account(|loaded_account| {
-                                        Self::lt_hash_account(&loaded_account, &pubkey)
-                                    })
-                                    // SAFETY: The index said this pubkey exists, so
-                                    // there must be an account to load.
-                                    .unwrap()
+                            .get_with_and_then(&pubkey, ancestors, false, |slot_list_item| {
+                                (!slot_list_item.info().is_zero_lamport()).then(|| {
+                                    self.get_account_accessor(slot_list_item)
+                                        .get_loaded_account(|loaded_account| {
+                                            Self::lt_hash_account(&loaded_account, &pubkey)
+                                        })
                                 })
                             })
                             .flatten();
@@ -3636,18 +3597,14 @@ impl AccountsDb {
             let mut cache_lt_hash = LtHash::identity();
             for pubkey in self.accounts_cache.cached_pubkeys().iter() {
                 // mix out whatever older version the index walk produced (if any)
-                self.accounts_index.get_with_and_then(
-                    pubkey,
-                    ancestors,
-                    false,
-                    |(slot, account_info)| {
-                        self.get_account_accessor(slot, &account_info.storage_location())
+                self.accounts_index
+                    .get_with_and_then(pubkey, ancestors, false, |slot_list_item| {
+                        self.get_account_accessor(slot_list_item)
                             .get_loaded_account(|loaded_account| {
                                 cache_lt_hash
                                     .mix_out(&Self::lt_hash_account(&loaded_account, pubkey).0);
                             });
-                    },
-                );
+                    });
                 // mix in the cache version
                 if let Some((account, _slot)) = self.load(
                     ancestors,
@@ -3676,13 +3633,10 @@ impl AccountsDb {
     pub fn calculate_capitalization_at_startup_from_index(&self, ancestors: &Ancestors) -> u64 {
         let stored_lamports = |pubkey: &Pubkey| {
             self.accounts_index
-                .get_with_and_then(pubkey, ancestors, false, |(slot, account_info)| {
-                    (!account_info.is_zero_lamport()).then(|| {
-                        self.get_account_accessor(slot, &account_info.storage_location())
+                .get_with_and_then(pubkey, ancestors, false, |slot_list_item| {
+                    (!slot_list_item.info().is_zero_lamport()).then(|| {
+                        self.get_account_accessor(slot_list_item)
                             .get_loaded_account(|loaded_account| loaded_account.lamports())
-                            // SAFETY: The index said this pubkey exists, so
-                            // there must be an account to load.
-                            .unwrap()
                     })
                 })
                 .flatten()
@@ -4262,8 +4216,8 @@ impl AccountsDb {
             Some(cached_account.account.lamports() == 0)
         } else {
             self.accounts_index
-                .get_with_and_then(pubkey, ancestors, true, |(_, account)| {
-                    account.is_zero_lamport()
+                .get_with_and_then(pubkey, ancestors, true, |slot_list_item| {
+                    slot_list_item.info().is_zero_lamport()
                 })
         }
     }
@@ -4529,7 +4483,9 @@ impl AccountsDb {
     ) {
         // Skipping the page cache reduces kernel memory reclaim during heavy index allocations.
         let use_direct_io = self.use_direct_io;
-        let io_setup = IoSetupState::default().with_direct_io(use_direct_io);
+        let io_setup = IoSetupState::default()
+            .with_direct_io(use_direct_io)
+            .with_huge_pages(HugePages::Transparent(HugePageAlign::Start));
         let mut buf_reader =
             storage_file_buf_reader(ACCOUNT_STORAGE_MAX_BUFFER_SIZE, false, &io_setup)
                 .expect("create storage reader");
@@ -4792,7 +4748,7 @@ impl AccountsDb {
                             );
                             last_update = now;
                         }
-                        thread::sleep(Duration::from_millis(500))
+                        thread::park_timeout(Duration::from_millis(500));
                     }
                 })
                 .expect("spawn thread");
@@ -4806,6 +4762,7 @@ impl AccountsDb {
             // Make sure to join the logger thread *after* the main threads.
             // This way, if a main thread errors, we won't spin indefinitely
             // waiting for the logger thread to finish (it never will).
+            logger_thread_handle.thread().unpark();
             logger_thread_handle.join().expect("join thread");
         });
         index_time.stop();
@@ -5128,19 +5085,14 @@ impl AccountsDb {
                     // Then sum up the remaining data len, which are the duplicates.
                     // All of the slots need to go in the 'uncleaned_slots' list. For clean to work properly,
                     // the slot where duplicate accounts are found in the index need to be in 'uncleaned_slots' list, too.
-                    let max = slot_list.iter().map(|(slot, _)| slot).max().unwrap();
-                    slot_list.iter().for_each(|(slot, account_info)| {
-                        if slot == max {
+                    let max = slot_list.iter().map(|(slot, _)| *slot).max().unwrap();
+                    slot_list.locked_items().for_each(|slot_list_item| {
+                        if slot_list_item.slot() == max {
                             // the info in 'max' is the most recent, current info for this pubkey
                             return;
                         }
-                        let maybe_storage_entry = self
-                            .storage
-                            .get_account_storage_entry(*slot, account_info.store_id());
-                        let mut accessor = LoadedAccountAccessor::Stored(
-                            maybe_storage_entry.map(|entry| (entry, account_info.offset())),
-                        );
-                        accessor.check_and_get_loaded_account(|loaded_account| {
+                        let mut accessor = self.get_account_accessor(slot_list_item);
+                        accessor.get_loaded_account(|loaded_account| {
                             let data_len = loaded_account.data_len();
                             let lamports = loaded_account.lamports();
                             if lamports > 0 {
@@ -5354,7 +5306,7 @@ impl AccountsDb {
             let idx = rng().random_range(0..num);
             let account = self.do_load_for_tests(&ancestors, &pubkeys[idx]);
             let account1 = Some((
-                AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default()),
+                AccountSharedData::empty((idx + count) as u64, &Pubkey::default()),
                 slot,
             ));
             assert_eq!(account, account1);
@@ -5368,7 +5320,7 @@ impl AccountsDb {
         let slot = accounts.target_slot();
         let ancestors = Ancestors::from(vec![slot]);
 
-        let placeholder = AccountSharedData::new(1, 0, &Pubkey::default());
+        let placeholder = AccountSharedData::empty(1, &Pubkey::default());
 
         // Build a list of zero-lamport accounts not present in the index
         let mut pre_populate_zero_lamport = Vec::new();
@@ -5377,7 +5329,9 @@ impl AccountsDb {
                 let key = *accounts.pubkey(i);
                 if self
                     .accounts_index
-                    .get_with_and_then(&key, &ancestors, true, |(_, info)| info.is_zero_lamport())
+                    .get_with_and_then(&key, &ancestors, true, |slot_list_item| {
+                        slot_list_item.info().is_zero_lamport()
+                    })
                     .is_none_or(|is_zero| is_zero)
                 {
                     pre_populate_zero_lamport.push((key, placeholder.clone()));
@@ -5400,7 +5354,7 @@ impl AccountsDb {
     #[allow(clippy::needless_range_loop)]
     pub fn modify_accounts(&self, pubkeys: &[Pubkey], slot: Slot, num: usize, count: usize) {
         for idx in 0..num {
-            let account = AccountSharedData::new((idx + count) as u64, 0, &Pubkey::default());
+            let account = AccountSharedData::empty((idx + count) as u64, &Pubkey::default());
             self.store_for_tests((slot, [(&pubkeys[idx], &account)].as_slice()));
         }
     }
@@ -5422,15 +5376,22 @@ impl AccountsDb {
         let ancestors = Ancestors::from(vec![slot]);
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
-            let account = AccountSharedData::new((t + 1) as u64, space, &Pubkey::default());
+            let account = AccountSharedData::new_with_data(
+                (t + 1) as u64,
+                vec![0; space],
+                &Pubkey::default(),
+            );
             pubkeys.push(pubkey);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());
             self.store_for_tests((slot, [(&pubkey, &account)].as_slice()));
         }
         for t in 0..num_vote {
             let pubkey = solana_pubkey::new_rand();
-            let account =
-                AccountSharedData::new((num + t + 1) as u64, space, &solana_vote_program::id());
+            let account = AccountSharedData::new_with_data(
+                (num + t + 1) as u64,
+                vec![0; space],
+                &solana_vote_program::id(),
+            );
             pubkeys.push(pubkey);
             let ancestors = Ancestors::from(vec![slot]);
             assert!(self.do_load_for_tests(&ancestors, &pubkey).is_none());

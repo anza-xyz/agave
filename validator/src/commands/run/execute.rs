@@ -32,7 +32,6 @@ use {
     solana_clock::Slot,
     solana_core::{
         banking_stage::transaction_scheduler::scheduler_controller::SchedulerConfig,
-        consensus::tower_storage,
         repair::repair_handler::RepairHandlerType,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
@@ -54,12 +53,10 @@ use {
         shred::filter::TurbineMode,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
-    solana_net_utils::multihomed_sockets::BindIpAddrs,
-    solana_poh::poh_service,
     solana_pubkey::Pubkey,
+    solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
-    solana_turbine::broadcast_stage::BroadcastStageType,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -114,7 +111,6 @@ pub fn execute(
         tpu_sigverify_threads: _,
         tpu_transaction_forward_receive_threads: _,
         tpu_transaction_receive_threads: _,
-        tpu_vote_transaction_receive_threads: _,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
@@ -150,14 +146,11 @@ pub fn execute(
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
 
-    let bind_addresses = {
-        let parsed = matches
-            .values_of("bind_address")
-            .expect("bind_address should always be present due to default")
-            .map(solana_net_utils::parse_host)
-            .collect::<Result<Vec<_>, _>>()?;
-        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
-    };
+    let bind_ip_addr = solana_net_utils::parse_host(
+        matches
+            .value_of("bind_address")
+            .expect("bind_address should always be present due to default"),
+    )?;
 
     let entrypoint_addrs = run_args.entrypoints;
     for addr in &entrypoint_addrs {
@@ -170,23 +163,14 @@ pub fn execute(
     // the link is down this query fails against every entrypoint.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.active()));
-
-    #[cfg(target_os = "linux")]
-    let poh_pinned_cpu_core = value_of(matches, "poh_pinned_cpu_core")
-        .or_else(|| value_of(matches, "experimental_poh_pinned_cpu_core"))
-        .or(poh_service::DEFAULT_PINNED_CPU_CORE);
-
-    #[cfg(not(target_os = "linux"))]
-    let poh_pinned_cpu_core = None;
-
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_ip_addr));
     // XDP is not needed for init — it only initializes the ledger and exits.
     // Also, init drops all Linux capabilities in main() so XDP setup would fail.
     #[cfg(target_os = "linux")]
     let xdp_transmit_config: Option<XdpConfig> = if operation == Operation::Initialize {
         None
     } else {
-        args::xdp_config::new_config(matches, &bind_addresses, poh_pinned_cpu_core)?
+        args::xdp_config::new_config(matches)?
     };
 
     let dynamic_port_range =
@@ -203,8 +187,8 @@ pub fn execute(
 
     let advertised_ip = if let Some(cli_ip) = advertised_ip {
         cli_ip
-    } else if !bind_addresses.active().is_unspecified() && !bind_addresses.active().is_loopback() {
-        bind_addresses.active()
+    } else if !bind_ip_addr.is_unspecified() && !bind_ip_addr.is_loopback() {
+        bind_ip_addr
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
         order.shuffle(&mut rng());
@@ -216,24 +200,21 @@ pub fn execute(
                 info!(
                     "Contacting {entrypoint_addr} to determine the validator's public IP address"
                 );
-                solana_net_utils::get_public_ip_addr_with_binding(
-                    entrypoint_addr,
-                    bind_addresses.active(),
-                )
-                .map_or_else(
-                    |err| {
-                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                        None
-                    },
-                    Some,
-                )
+                solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_ip_addr)
+                    .map_or_else(
+                        |err| {
+                            warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                            None
+                        },
+                        Some,
+                    )
             })
             .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_addresses.active(), (0, 1))
+        solana_net_utils::find_available_port_in_range(bind_ip_addr, (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
 
@@ -261,12 +242,6 @@ pub fn execute(
         })
         .transpose()?;
 
-    if bind_addresses.len() > 1 && public_tvu_addr.is_some() {
-        Err(String::from(
-            "--public-tvu-address can not be used in a multihoming context",
-        ))?;
-    }
-
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
     let num_votor_quic_endpoints = value_t_or_exit!(matches, "num_votor_endpoints", NonZeroUsize);
     if num_votor_quic_endpoints.get() > MAX_ENDPOINTS {
@@ -279,7 +254,7 @@ pub fn execute(
         advertised_ip,
         gossip_port,
         port_range: dynamic_port_range,
-        bind_ip_addrs: bind_addresses.clone(),
+        bind_ip_addr,
         public_tpu_addr,
         public_tpu_forwards_addr,
         public_tvu_addr,
@@ -307,7 +282,7 @@ pub fn execute(
         };
         capabilities::restrict(config.primordial_caps, needs_sys_nice, xdp_mode, || {
             xdp_transmit_config.map(|xdp_config| {
-                xdp::build_xdp_transmit_setup(xdp_config, &node.bind_ip_addrs, exit.clone())
+                xdp::build_xdp_transmit_setup(xdp_config, bind_ip_addr, exit.clone())
             })
         })?
         .transpose()?
@@ -394,32 +369,13 @@ pub fn execute(
             .collect(),
     ));
 
-    if bind_addresses.len() > 1 {
-        for (flag, msg) in [
-            (
-                "advertised_ip",
-                "--advertised-ip cannot be used in a multihoming context. In multihoming, the \
-                 validator will advertise the first --bind-address as this node's public IP \
-                 address.",
-            ),
-            (
-                "public_tpu_addr",
-                "--public-tpu-address can not be used in a multihoming context",
-            ),
-        ] {
-            if matches.is_present(flag) {
-                Err(String::from(msg))?;
-            }
-        }
-    }
-
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
     } else if private_rpc {
         solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
-        bind_addresses.active()
+        bind_ip_addr
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
@@ -428,12 +384,6 @@ pub fn execute(
     let use_direct_io = !matches.is_present("no_accounts_db_snapshots_direct_io");
     let accounts_db_config =
         args::accounts_db_config::new_config(matches, &ledger_path, &num_threads, use_direct_io)?;
-
-    let tower_path = value_t!(matches, "tower", PathBuf)
-        .ok()
-        .unwrap_or_else(|| ledger_path.clone());
-    let tower_storage: Arc<dyn tower_storage::TowerStorage> =
-        Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
     let vote_history_storage: Arc<dyn vote_history_storage::VoteHistoryStorage> = Arc::new(
         vote_history_storage::FileVoteHistoryStorage::new(ledger_path.clone()),
@@ -489,9 +439,7 @@ pub fn execute(
 
     let mut validator_config = ValidatorConfig {
         log_config,
-        require_tower: false,
         require_vote_history: !matches.is_present("do_not_require_vote_history"),
-        tower_storage,
         vote_history_storage,
         max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         expected_genesis_hash: matches
@@ -540,7 +488,6 @@ pub fn execute(
         contact_debug_interval,
         contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         send_transaction_service_config: run_args.send_transaction_service_config,
-        no_poh_speed_test: matches.is_present("no_poh_speed_test"),
         no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
         xdp_network_config_report,
@@ -549,14 +496,10 @@ pub fn execute(
         // The validator needs to open many files, check that the process has
         // permission to do so in order to fail quickly and give a direct error
         enforce_ulimit_nofile: true,
-        poh_pinned_cpu_core,
-        poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
-            .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
         account_paths,
         accounts_db_config,
         snapshot_config,
-        no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         wait_to_vote_slot: value_t!(matches, "wait_to_vote_slot", Slot).ok(),
         staked_nodes_overrides: staked_nodes_overrides.clone(),
         use_snapshot_archives_at_startup,
@@ -569,7 +512,6 @@ pub fn execute(
         delay_leader_block_for_pending_fork: !matches
             .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
-        broadcast_stage_type: BroadcastStageType::Standard,
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",
@@ -593,10 +535,16 @@ pub fn execute(
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
         enable_scheduler_bindings: matches.is_present("enable_scheduler_bindings"),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
-        validator_exit_backpressure: [(
-            SnapshotPackagerService::NAME.to_string(),
-            Arc::new(AtomicBool::new(false)),
-        )]
+        validator_exit_backpressure: [
+            (
+                SnapshotPackagerService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            ),
+            (
+                TransactionStatusService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            ),
+        ]
         .into(),
         snapshot_packager_niceness_adj: value_t_or_exit!(
             matches,
@@ -665,7 +613,6 @@ pub fn execute(
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),
-            tower_storage: validator_config.tower_storage.clone(),
             vote_history_storage: validator_config.vote_history_storage.clone(),
             staked_nodes_overrides,
             rpc_to_plugin_manager_sender,

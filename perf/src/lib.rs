@@ -10,9 +10,6 @@ pub mod thread;
 #[macro_use]
 extern crate log;
 
-#[cfg(test)]
-extern crate assert_matches;
-
 fn is_rosetta_emulated() -> bool {
     #[cfg(target_os = "macos")]
     {

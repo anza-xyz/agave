@@ -60,7 +60,7 @@ source ci/common/shared-functions.sh
 echo "Executing $testName"
 case $testName in
 test-stable)
-  _ ci/intercept.sh cargo test --jobs "$JOBS" --all --tests --exclude solana-local-cluster ${V:+--verbose} -- --nocapture
+  _ cargo test --jobs "$JOBS" --all --tests --exclude solana-local-cluster ${V:+--verbose}
   ;;
 test-stable-sbf)
   # Clear the C dependency files, if dependency moves these files are not regenerated
@@ -68,7 +68,7 @@ test-stable-sbf)
   test -d target/release/sbf && find target/release/sbf -name '*.d' -delete
 
   # rustfilt required for dumping SBF assembly listings
-  "$cargo" install rustfilt
+  "$cargo" install rustfilt@0.2.2 --locked
 
   # solana-keygen required when building C programs
   _ "$cargo" build --manifest-path=keygen/Cargo.toml

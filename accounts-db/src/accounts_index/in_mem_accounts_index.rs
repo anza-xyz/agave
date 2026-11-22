@@ -1467,7 +1467,7 @@ impl ReservoirState {
 /// `InMemAccountsIndex`.  When this structure is dropped (falls out of scope), the flag will be
 /// cleared (set to false).
 ///
-/// After successfully locking (calling `FlushGuard::lock()`), pass a reference to the `FlashGuard`
+/// After successfully locking (calling `FlushGuard::lock()`), pass a reference to the `FlushGuard`
 /// instance to any function/code that requires the `flushing_active` flag has been set (to true).
 #[derive(Debug)]
 struct FlushGuard<'a> {
@@ -1507,9 +1507,8 @@ mod tests {
             INDEX_LIMIT_THRESHOLD_FOR_TESTING, IndexLimit, IndexLimitThreshold,
             bucket_map_holder::ThresholdEntriesPerBin,
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
-        std::{collections::HashMap, iter},
+        std::{assert_matches, collections::HashMap, iter},
         test_case::test_case,
     };
 

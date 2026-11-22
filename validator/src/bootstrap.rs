@@ -81,14 +81,10 @@ fn verify_reachable_ports(
             .unwrap_or_default()
     };
 
-    let mut udp_sockets = vec![&node.sockets.repair];
-    udp_sockets.extend(node.sockets.gossip.iter());
+    let mut udp_sockets = vec![&node.sockets.repair, &node.sockets.gossip];
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
-    }
-    if verify_address(&node.info.tpu_vote(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tpu_vote.iter());
     }
     if verify_address(&node.info.tvu(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tvu.iter());
@@ -140,7 +136,7 @@ fn start_gossip_node(
     known_validators: Option<HashSet<Pubkey>>,
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_sockets: Arc<[UdpSocket]>,
+    gossip_socket: UdpSocket,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
@@ -165,7 +161,7 @@ fn start_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_sockets,
+        gossip_socket,
         None,
         gossip_validators,
         should_check_duplicate_instance,
@@ -605,7 +601,7 @@ pub fn rpc_bootstrap(
                     .info
                     .gossip()
                     .expect("Operator must spin up node with valid gossip address"),
-                node.sockets.gossip.clone(),
+                node.sockets.gossip.try_clone().unwrap(),
                 validator_config
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),

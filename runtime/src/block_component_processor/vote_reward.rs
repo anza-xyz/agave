@@ -3,10 +3,9 @@ use {
     agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_svm::rent_calculator::RENT_EXEMPT_RENT_EPOCH,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{
         BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
@@ -20,7 +19,6 @@ use {
 };
 
 pub(crate) mod epoch_inflation_account_state;
-mod migration_test;
 
 /// Different types of errors that can happen when calculating and paying voting reward.
 ///
@@ -115,9 +113,8 @@ impl VoteState {
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
         match self.handler.serialize_padded(self.space) {
             Ok(data) => {
-                let mut updated_account =
+                let updated_account =
                     AccountSharedData::new_with_data(self.lamports, data, &self.owner);
-                updated_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
                 Some((self.vote_pubkey, updated_account))
             }
             Err(e) => {
@@ -174,7 +171,6 @@ struct RewardState<'a> {
     total_stake: u64,
     /// inflation state at the current bank's epoch.
     epoch_inflation_state: EpochInflationState,
-    migration_epoch: Epoch,
 }
 
 impl<'a> RewardState<'a> {
@@ -206,11 +202,6 @@ impl<'a> RewardState<'a> {
                 .get_epoch_state(current_epoch)
                 .ok_or(RewardStateError::MissingEpochInflationState { bank_slot })?
         };
-        let migration_epoch =
-            get_migration_epoch(bank).ok_or(RewardStateError::GenesisCertNotFound {
-                reward_slot,
-                bank_slot,
-            })?;
         let reward_slot_timestamp_ns =
             calc_slot_timestamp(bank, reward_slot, block_producer_time_nanos);
         Ok(Self {
@@ -223,7 +214,6 @@ impl<'a> RewardState<'a> {
             accounts,
             total_stake,
             epoch_inflation_state,
-            migration_epoch,
         })
     }
 
@@ -269,7 +259,6 @@ impl<'a> RewardState<'a> {
             if let Some(reward) = NonZero::new(reward) {
                 increment_credits(
                     vote_state.handler.epoch_credits_mut(),
-                    self.migration_epoch,
                     self.current_epoch,
                     reward,
                 );
@@ -286,7 +275,6 @@ impl<'a> RewardState<'a> {
         debug_assert_eq!(vote_state.vote_pubkey, self.leader_vote_pubkey);
         increment_credits(
             vote_state.handler.epoch_credits_mut(),
-            self.migration_epoch,
             self.current_epoch,
             leader_reward,
         );
@@ -512,31 +500,11 @@ fn calc_slot_timestamp(bank: &Bank, slot: Slot, block_producer_time_nanos: i64) 
     )
 }
 
-fn get_migration_epoch(bank: &Bank) -> Option<Epoch> {
-    let migration_slot = bank.get_alpenglow_migration_slot()?;
-    let migration_epoch = bank.epoch_schedule.get_epoch(migration_slot);
-    Some(migration_epoch)
-}
-
-fn ensure_marker(epoch_credits: &mut Vec<(Epoch, u64, u64)>) {
-    for elem in epoch_credits.iter().rev() {
-        if elem == &AG_MIGRATION_EPOCH_CREDIT {
-            return;
-        }
-    }
-    epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
-}
-
 fn increment_credits(
     epoch_credits: &mut Vec<(Epoch, u64, u64)>,
-    migration_epoch: Epoch,
     epoch: Epoch,
     new_credits: NonZero<u64>,
 ) {
-    if epoch == migration_epoch {
-        ensure_marker(epoch_credits);
-    }
-
     let Some(entry) = epoch_credits.last_mut() else {
         // no entries, insert a new entry and we are done.
         epoch_credits.push((epoch, new_credits.get(), 0));
@@ -587,7 +555,6 @@ fn increment_credits(
     );
     epoch_credits.push(entry);
 
-    // maybe included a marker and a new entry above.  So might have multiple entries to remove here.
     while epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
         epoch_credits.remove(0);
     }
@@ -710,12 +677,48 @@ mod tests {
         let mut handle = VoteStateHandler::default_v4();
         let epoch = 1234;
         let credits = 543432;
-        handle.increment_credits(epoch, credits);
+        increment_credits(
+            handle.epoch_credits_mut(),
+            epoch,
+            NonZero::new(credits).unwrap(),
+        );
         let (got_epoch, got_final_credits, got_initial_credits) =
             *handle.epoch_credits().last().unwrap();
         assert_eq!(got_epoch, epoch);
         assert_eq!(got_final_credits, credits);
         assert_eq!(got_initial_credits, 0);
+    }
+
+    #[test]
+    fn increment_credits_preserves_migration_marker() {
+        for tower_history_len in [0, 1, MAX_EPOCH_CREDITS_HISTORY - 1] {
+            let mut epoch_credits = (0..tower_history_len as u64)
+                .map(|epoch| (epoch, (epoch + 1) * 10, epoch * 10))
+                .collect::<Vec<_>>();
+            let initial_credits = epoch_credits.last().map_or(0, |entry| entry.1);
+            epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
+            let mut expected = epoch_credits.clone();
+            let epoch = MAX_EPOCH_CREDITS_HISTORY as u64;
+
+            increment_credits(&mut epoch_credits, epoch, NonZero::new(7).unwrap());
+            expected.push((epoch, initial_credits + 7, initial_credits));
+            if expected.len() > MAX_EPOCH_CREDITS_HISTORY {
+                expected.remove(0);
+            }
+            assert_eq!(epoch_credits, expected);
+
+            increment_credits(&mut epoch_credits, epoch, NonZero::new(3).unwrap());
+            expected.last_mut().unwrap().1 += 3;
+            assert_eq!(epoch_credits, expected);
+
+            increment_credits(&mut epoch_credits, epoch + 1, NonZero::new(5).unwrap());
+            expected.push((epoch + 1, initial_credits + 15, initial_credits + 10));
+            if expected.len() > MAX_EPOCH_CREDITS_HISTORY {
+                expected.remove(0);
+            }
+            assert_eq!(epoch_credits, expected);
+            assert!(epoch_credits.contains(&AG_MIGRATION_EPOCH_CREDIT));
+        }
     }
 
     fn calc_reward_for_test(

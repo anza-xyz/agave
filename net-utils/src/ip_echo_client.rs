@@ -7,7 +7,7 @@ use {
     itertools::Itertools,
     log::*,
     std::{
-        collections::{BTreeMap, HashMap, HashSet},
+        collections::{BTreeMap, HashSet},
         io::ErrorKind,
         net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
         sync::{Arc, RwLock},
@@ -238,8 +238,8 @@ pub(crate) async fn verify_all_reachable_tcp(
     ok
 }
 
-/// Checks if all of the provided UDP ports on all of the provided IPs are
-/// reachable by the machine at `ip_echo_server_addr`.
+/// Checks if all of the provided UDP ports are reachable by the machine at
+/// `ip_echo_server_addr`. All sockets must be bound to the same IP address.
 /// This function will test a few ports at a time, retrying if necessary.
 /// Each attempt waits up to `timeout` for UDP responses. Failed echo requests
 /// are retried no sooner than `timeout` after the request started.
@@ -256,109 +256,111 @@ pub(crate) async fn verify_all_reachable_udp(
         warn!("No ports provided for verify_all_reachable_udp to check");
         return true;
     }
-    let mut ip_to_ports: HashMap<IpAddr, BTreeMap<u16, Vec<&UdpSocket>>> = HashMap::new();
-    for &socket in sockets.iter() {
+    let bind_ip = sockets[0].local_addr().expect("Socket must be bound").ip();
+    // SO_REUSEPORT sockets share a port; a reply to any one of them proves reachability.
+    let mut ports_to_socks_map: BTreeMap<u16, Vec<&UdpSocket>> = BTreeMap::new();
+    for &socket in sockets {
         let local_addr = socket.local_addr().expect("Socket must be bound");
-        ip_to_ports
-            .entry(local_addr.ip())
-            .or_default()
+        assert_eq!(
+            local_addr.ip(),
+            bind_ip,
+            "All sockets should be bound to the same IP"
+        );
+        ports_to_socks_map
             .entry(local_addr.port())
             .or_default()
             .push(socket);
     }
-    for (bind_ip, ports_to_socks_map) in ip_to_ports {
-        let ports: Vec<u16> = ports_to_socks_map.keys().copied().collect();
+    let ports: Vec<u16> = ports_to_socks_map.keys().copied().collect();
 
-        info!("Checking that udp ports {ports:?} are reachable from bind IP {bind_ip:?}");
+    info!("Checking that udp ports {ports:?} are reachable from bind IP {bind_ip:?}");
 
-        'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
-            let ports_to_check = chunk_to_check.to_vec();
+    'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
+        let ports_to_check = chunk_to_check.to_vec();
 
-            for attempt in 1..=retry_count {
-                if attempt > 1 {
-                    error!("There are some udp ports with no response!! Retrying...");
+        for attempt in 1..=retry_count {
+            if attempt > 1 {
+                error!("There are some udp ports with no response!! Retrying...");
+            }
+            // clone off the sockets that use ports within our chunk
+            let sockets_to_check: Vec<UdpSocket> = ports_to_check
+                .iter()
+                .flat_map(|port| ports_to_socks_map.get(port).unwrap())
+                .map(|&s| s.try_clone().expect("Unable to clone UDP socket"))
+                .collect();
+
+            let request_start = Instant::now();
+            if let Err(err) = ip_echo_server_request_with_binding(
+                ip_echo_server_addr,
+                IpEchoServerMessage::new(&[], &ports_to_check),
+                bind_ip,
+            )
+            .await
+            {
+                warn!("ip_echo_server request failed: {err}");
+                // Pace retries so the network can recover after XDP setup.
+                if attempt < retry_count {
+                    tokio::time::sleep(timeout.saturating_sub(request_start.elapsed())).await;
                 }
-                // clone off the sockets that use ports within our chunk
-                let sockets_to_check: Vec<UdpSocket> = ports_to_check
-                    .iter()
-                    .flat_map(|port| ports_to_socks_map.get(port).unwrap())
-                    .map(|&s| s.try_clone().expect("Unable to clone UDP socket"))
-                    .collect();
-
-                let request_start = Instant::now();
-                if let Err(err) = ip_echo_server_request_with_binding(
-                    ip_echo_server_addr,
-                    IpEchoServerMessage::new(&[], &ports_to_check),
-                    bind_ip,
-                )
-                .await
-                {
-                    warn!("ip_echo_server request failed: {err}");
-                    // Pace retries so the network can recover after XDP setup.
-                    if attempt < retry_count {
-                        tokio::time::sleep(timeout.saturating_sub(request_start.elapsed())).await;
-                    }
-                    continue;
-                }
-
-                let reachable_ports = Arc::new(RwLock::new(HashSet::new()));
-                // Spawn threads for each socket to check
-                let mut checkers = JoinSet::new();
-                for socket in sockets_to_check {
-                    let port = socket.local_addr().expect("Socket should be bound").port();
-                    let reachable_ports = reachable_ports.clone();
-
-                    checkers.spawn_blocking(move || {
-                        let start = Instant::now();
-
-                        let original_read_timeout = socket.read_timeout().unwrap();
-                        socket
-                            .set_read_timeout(Some(Duration::from_millis(250)))
-                            .unwrap();
-
-                        loop {
-                            if reachable_ports.read().unwrap().contains(&port)
-                                || Instant::now().duration_since(start) >= timeout
-                            {
-                                break;
-                            }
-
-                            let recv_result = socket.recv(&mut [0; 1]);
-                            debug!("Waited for incoming datagram on udp/{port}: {recv_result:?}");
-
-                            if recv_result.is_ok() {
-                                reachable_ports.write().unwrap().insert(port);
-                                break;
-                            }
-                        }
-
-                        socket.set_read_timeout(original_read_timeout).unwrap();
-                    });
-                }
-                loop {
-                    let next = checkers.join_next().await;
-                    let Some(r) = next else {
-                        break;
-                    };
-                    r.expect("Threads should exit cleanly");
-                }
-                // Might have lost a UDP packet, check that all ports were reached
-                let reachable_ports = Arc::into_inner(reachable_ports)
-                    .expect("Single owner expected")
-                    .into_inner()
-                    .expect("No threads should hold the lock");
-                info!(
-                    "checked udp ports: {ports_to_check:?}, reachable udp ports: \
-                     {reachable_ports:?}"
-                );
-                if reachable_ports.len() == ports_to_check.len() {
-                    continue 'outer; // starts checking next chunk of ports, if any
-                }
+                continue;
             }
 
-            error!("Maximum retry count reached. Some ports for IP {bind_ip} unreachable.");
-            return false;
+            let reachable_ports = Arc::new(RwLock::new(HashSet::new()));
+            // Spawn threads for each socket to check
+            let mut checkers = JoinSet::new();
+            for socket in sockets_to_check {
+                let port = socket.local_addr().expect("Socket should be bound").port();
+                let reachable_ports = reachable_ports.clone();
+
+                checkers.spawn_blocking(move || {
+                    let start = Instant::now();
+
+                    let original_read_timeout = socket.read_timeout().unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_millis(250)))
+                        .unwrap();
+
+                    loop {
+                        if reachable_ports.read().unwrap().contains(&port)
+                            || Instant::now().duration_since(start) >= timeout
+                        {
+                            break;
+                        }
+
+                        let recv_result = socket.recv(&mut [0; 1]);
+                        debug!("Waited for incoming datagram on udp/{port}: {recv_result:?}");
+
+                        if recv_result.is_ok() {
+                            reachable_ports.write().unwrap().insert(port);
+                            break;
+                        }
+                    }
+
+                    socket.set_read_timeout(original_read_timeout).unwrap();
+                });
+            }
+            loop {
+                let next = checkers.join_next().await;
+                let Some(r) = next else {
+                    break;
+                };
+                r.expect("Threads should exit cleanly");
+            }
+            // Might have lost a UDP packet, check that all ports were reached
+            let reachable_ports = Arc::into_inner(reachable_ports)
+                .expect("Single owner expected")
+                .into_inner()
+                .expect("No threads should hold the lock");
+            info!(
+                "checked udp ports: {ports_to_check:?}, reachable udp ports: {reachable_ports:?}"
+            );
+            if reachable_ports.len() == ports_to_check.len() {
+                continue 'outer; // starts checking next chunk of ports, if any
+            }
         }
+
+        error!("Maximum retry count reached. Some ports for IP {bind_ip} unreachable.");
+        return false;
     }
     true
 }

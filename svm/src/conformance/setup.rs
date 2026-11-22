@@ -19,7 +19,7 @@ use {
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, mock_compile_message},
-        loaded_programs::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
+        program_cache::env::{ProgramRuntimeEnvironment, ProgramRuntimeEnvironments},
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
@@ -72,7 +72,6 @@ pub fn prepare_invoke_context_fields<'a, C: InvokeContextCallback>(
     let environment_config = EnvironmentConfig::new(
         blockhash,
         blockhash_lamports_per_signature,
-        false,
         callback,
         &instr_context.feature_set,
         program_runtime_environments,
@@ -109,7 +108,6 @@ pub(crate) fn prepare_transaction_invoke_context_fields<'a, 'b, C: InvokeContext
     let environment_config = EnvironmentConfig::new(
         nonce_fields.blockhash,
         nonce_fields.blockhash_lamports_per_signature,
-        false,
         callback,
         feature_set,
         program_runtime_environments,
@@ -232,7 +230,6 @@ pub(crate) fn recent_blockhash(sysvar_cache: &SysvarCache) -> (Hash, u64) {
 
 /// Build a sysvar cache populated from any sysvar accounts present in the
 /// input account set.
-#[cfg(any(feature = "conformance", test))]
 pub fn sysvar_cache_from_accounts(accounts: &[(Pubkey, Account)]) -> SysvarCache {
     let mut cache = SysvarCache::default();
     cache.fill_missing_entries(|pubkey, set_sysvar| {

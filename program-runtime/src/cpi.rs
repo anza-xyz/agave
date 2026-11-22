@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        abi::ABI,
         invoke_context::InvokeContext,
         memory::{translate_slice, translate_type, translate_type_mut_for_cpi, translate_vm_slice},
         memory_context::SerializedAccountMetadata,
@@ -11,7 +12,6 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
-    solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_pubkey::{MAX_SEEDS, Pubkey, PubkeyError},
     solana_sbpf::{ebpf, memory_region::MemoryMapping},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
@@ -287,13 +287,9 @@ pub struct CallerAccount<'a> {
 
 impl<'a> CallerAccount<'a> {
     /// Returns the length of the addres space reserved depending on the ABI version
-    pub fn address_space_reserved_for_account(&self, is_caller_loader_deprecated: bool) -> usize {
-        if is_caller_loader_deprecated {
-            self.original_data_len
-        } else {
-            self.original_data_len
-                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-        }
+    pub fn address_space_reserved_for_account(&self, abi: ABI) -> usize {
+        self.original_data_len
+            .saturating_add(abi.account_realloc_padding())
     }
 
     /// # Safety
@@ -307,7 +303,7 @@ impl<'a> CallerAccount<'a> {
     ///   `[vm_addr, vm_addr + len)` range is valid for the account.
     pub unsafe fn get_serialized_data(
         memory_mapping: &solana_sbpf::memory_region::MemoryMapping,
-        check_aligned: bool,
+        abi: ABI,
         vm_addr: u64,
         original_data_len: usize,
         len: usize,
@@ -316,12 +312,8 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<&'a mut [u8], Error> {
         use crate::memory::translate_slice_mut_for_cpi;
 
-        let is_caller_loader_deprecated = !check_aligned;
-        let address_space_reserved_for_account = if is_caller_loader_deprecated {
-            original_data_len
-        } else {
-            original_data_len.saturating_add(MAX_PERMITTED_DATA_INCREASE)
-        };
+        let address_space_reserved_for_account =
+            original_data_len.saturating_add(abi.account_realloc_padding());
         if len > address_space_reserved_for_account {
             return Err(InstructionError::InvalidRealloc.into());
         }
@@ -335,7 +327,7 @@ impl<'a> CallerAccount<'a> {
                     memory_mapping,
                     solana_sbpf::ebpf::MM_INPUT_START,
                     1,
-                    false, // Don't care since it is byte aligned
+                    ABI::V0, // Don't care since it is byte aligned
                 )?;
                 Ok(std::slice::from_raw_parts_mut(
                     serialization_ptr
@@ -351,7 +343,7 @@ impl<'a> CallerAccount<'a> {
                     memory_mapping,
                     vm_addr,
                     len as u64,
-                    false, // Don't care since it is byte aligned
+                    ABI::V0, // Don't care since it is byte aligned
                 )
             }
         }
@@ -361,7 +353,7 @@ impl<'a> CallerAccount<'a> {
     pub fn from_account_info(
         invoke_context: &InvokeContext,
         memory_mapping: &MemoryMapping,
-        check_aligned: bool,
+        abi: ABI,
         _vm_addr: u64,
         account_info: &stable::AccountInfo,
         account_metadata: &crate::memory_context::SerializedAccountMetadata,
@@ -391,8 +383,7 @@ impl<'a> CallerAccount<'a> {
         // in vm space so they need to be translated.
         let lamports = {
             // Double dereference lamports out
-            let ptr =
-                translate_type::<u64>(memory_mapping, account_info.lamports_addr(), check_aligned)?;
+            let ptr = translate_type::<u64>(memory_mapping, account_info.lamports_addr(), abi)?;
             if account_info.lamports_addr() >= solana_sbpf::ebpf::MM_INPUT_START {
                 return Err(Box::new(CpiError::InvalidPointer));
             }
@@ -404,14 +395,11 @@ impl<'a> CallerAccount<'a> {
                 "lamports",
             )?;
 
-            translate_type_mut_for_cpi::<u64>(memory_mapping, *ptr, check_aligned)?
+            translate_type_mut_for_cpi::<u64>(memory_mapping, *ptr, abi)?
         };
 
-        let owner = translate_type_mut_for_cpi::<Pubkey>(
-            memory_mapping,
-            account_info.owner_addr(),
-            check_aligned,
-        )?;
+        let owner =
+            translate_type_mut_for_cpi::<Pubkey>(memory_mapping, account_info.owner_addr(), abi)?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
             if account_info.data_addr() >= solana_sbpf::ebpf::MM_INPUT_START {
@@ -421,11 +409,8 @@ impl<'a> CallerAccount<'a> {
             // Double dereference data pointer out
             // NOTE: we must obtain an owned copy to VmSlice<u8> right away in order to make
             // the mutable reference to the length sound.
-            let data_slice = *translate_type::<VmSlice<u8>>(
-                memory_mapping,
-                account_info.data_addr(),
-                check_aligned,
-            )?;
+            let data_slice =
+                *translate_type::<VmSlice<u8>>(memory_mapping, account_info.data_addr(), abi)?;
             check_account_info_pointer(
                 invoke_context,
                 data_slice.ptr(),
@@ -442,12 +427,12 @@ impl<'a> CallerAccount<'a> {
             let ref_to_len_in_vm = translate_type_mut_for_cpi::<u64>(
                 memory_mapping,
                 account_info.data_len_addr(),
-                false,
+                ABI::V0,
             )?;
             let serialized_data = unsafe {
                 CallerAccount::get_serialized_data(
                     memory_mapping,
-                    check_aligned,
+                    abi,
                     data_slice.ptr(),
                     account_metadata.original_data_len,
                     *ref_to_len_in_vm as usize,
@@ -472,7 +457,7 @@ impl<'a> CallerAccount<'a> {
     fn from_sol_account_info(
         invoke_context: &InvokeContext,
         memory_mapping: &MemoryMapping,
-        check_aligned: bool,
+        abi: ABI,
         vm_addr: u64,
         account_info: &SolAccountInfo,
         account_metadata: &crate::memory_context::SerializedAccountMetadata,
@@ -515,16 +500,10 @@ impl<'a> CallerAccount<'a> {
 
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
-        let lamports = translate_type_mut_for_cpi::<u64>(
-            memory_mapping,
-            account_info.lamports_addr,
-            check_aligned,
-        )?;
-        let owner = translate_type_mut_for_cpi::<Pubkey>(
-            memory_mapping,
-            account_info.owner_addr,
-            check_aligned,
-        )?;
+        let lamports =
+            translate_type_mut_for_cpi::<u64>(memory_mapping, account_info.lamports_addr, abi)?;
+        let owner =
+            translate_type_mut_for_cpi::<Pubkey>(memory_mapping, account_info.owner_addr, abi)?;
 
         // we already have the host addr we want: &mut account_info.data_len.
         // The account info might be read only in the vm though, so we translate
@@ -540,11 +519,11 @@ impl<'a> CallerAccount<'a> {
             return Err(Box::new(CpiError::InvalidPointer));
         }
         let ref_to_len_in_vm =
-            translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, false)?;
+            translate_type_mut_for_cpi::<u64>(memory_mapping, vm_len_addr, ABI::V0)?;
         let serialized_data = unsafe {
             CallerAccount::get_serialized_data(
                 memory_mapping,
-                check_aligned,
+                abi,
                 account_info.data_addr,
                 account_metadata.original_data_len,
                 *ref_to_len_in_vm as usize,
@@ -567,7 +546,7 @@ impl<'a> CallerAccount<'a> {
     fn from_account_meta_v2(
         invoke_context: &InvokeContext,
         memory_mapping: &MemoryMapping,
-        check_aligned: bool,
+        abi: ABI,
         _vm_addr: u64,
         account_meta: &SolAccountMetaV2,
         account_metadata: &crate::memory_context::SerializedAccountMetadata,
@@ -596,18 +575,15 @@ impl<'a> CallerAccount<'a> {
             "account",
         )?;
 
-        let runtime_account = translate_type_mut_for_cpi::<RuntimeAccount>(
-            memory_mapping,
-            account.vm_addr,
-            check_aligned,
-        )?;
+        let runtime_account =
+            translate_type_mut_for_cpi::<RuntimeAccount>(memory_mapping, account.vm_addr, abi)?;
         let lamports = &mut runtime_account.lamports;
         let owner = &mut runtime_account.owner;
 
         let serialized_data = unsafe {
             CallerAccount::get_serialized_data(
                 memory_mapping,
-                check_aligned,
+                abi,
                 account.vm_data_addr,
                 account_metadata.original_data_len,
                 runtime_account.data_len as usize,
@@ -644,21 +620,16 @@ pub fn translate_instruction_rust(
     addr: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Instruction, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-    let ix = translate_type::<StableInstruction>(memory_mapping, addr, check_aligned)?;
+    let ix = translate_type::<StableInstruction>(memory_mapping, addr, abi)?;
     let account_metas = translate_slice::<mem::MaybeUninit<AccountMeta>>(
         memory_mapping,
         ix.accounts.as_vaddr(),
         ix.accounts.len(),
-        check_aligned,
+        abi,
     )?;
-    let data = translate_slice::<u8>(
-        memory_mapping,
-        ix.data.as_vaddr(),
-        ix.data.len(),
-        check_aligned,
-    )?;
+    let data = translate_slice::<u8>(memory_mapping, ix.data.as_vaddr(), ix.data.len(), abi)?;
 
     check_instruction_size(account_metas.len(), data.len())?;
 
@@ -708,7 +679,7 @@ pub fn translate_accounts_rust<'a>(
     account_infos_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     translate_account_infos(
         account_infos_addr,
@@ -716,7 +687,7 @@ pub fn translate_accounts_rust<'a>(
         |account_info: &stable::AccountInfo| Ok(account_info.key_addr()),
         invoke_context,
         memory_mapping,
-        check_aligned,
+        abi,
         |account_infos, account_info_keys| {
             translate_accounts_common(
                 &account_info_keys,
@@ -724,7 +695,7 @@ pub fn translate_accounts_rust<'a>(
                 account_infos_addr,
                 invoke_context,
                 memory_mapping,
-                check_aligned,
+                abi,
                 CallerAccount::from_account_info,
             )
         },
@@ -737,14 +708,14 @@ pub fn translate_signers(
     signers_seeds_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<Pubkey>, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     if signers_seeds_len > 0 {
         let signers_seeds = translate_slice::<VmSlice<VmSlice<u8>>>(
             memory_mapping,
             signers_seeds_addr,
             signers_seeds_len,
-            check_aligned,
+            abi,
         )?;
         if signers_seeds.len() > MAX_SIGNERS {
             return Err(Box::new(CpiError::TooManySigners));
@@ -756,7 +727,7 @@ pub fn translate_signers(
                     memory_mapping,
                     signer_seeds.ptr(),
                     signer_seeds.len(),
-                    check_aligned,
+                    abi,
                 )?;
                 if untranslated_seeds.len() > MAX_SEEDS {
                     return Err(Box::new(InstructionError::MaxSeedLengthExceeded) as Error);
@@ -764,7 +735,7 @@ pub fn translate_signers(
                 let seeds_bytes = untranslated_seeds
                     .iter()
                     .map(|untranslated_seed| {
-                        translate_vm_slice(untranslated_seed, memory_mapping, check_aligned)
+                        translate_vm_slice(untranslated_seed, memory_mapping, abi)
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Pubkey::create_program_address(&seeds_bytes, program_id)
@@ -783,21 +754,21 @@ fn translate_instruction_common<T>(
     translate_account_metas: impl FnOnce(
         &[mem::MaybeUninit<T>],
         &MemoryMapping,
-        bool,
+        ABI,
     ) -> Result<Vec<AccountMeta>, Error>,
 ) -> Result<Instruction, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
-    let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, check_aligned)?;
+    let ix_c = translate_type::<SolInstruction>(memory_mapping, addr, abi)?;
 
-    let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, check_aligned)?;
+    let program_id = translate_type::<Pubkey>(memory_mapping, ix_c.program_id_addr, abi)?;
     let account_metas = translate_slice::<mem::MaybeUninit<T>>(
         memory_mapping,
         ix_c.accounts_addr,
         ix_c.accounts_len,
-        check_aligned,
+        abi,
     )?;
-    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, check_aligned)?;
+    let data = translate_slice::<u8>(memory_mapping, ix_c.data_addr, ix_c.data_len, abi)?;
 
     check_instruction_size(ix_c.accounts_len as usize, data.len())?;
 
@@ -817,7 +788,7 @@ fn translate_instruction_common<T>(
         instruction_data_translation_cost.saturating_add(account_meta_translation_cost),
     )?;
 
-    let accounts = translate_account_metas(account_metas, memory_mapping, check_aligned)?;
+    let accounts = translate_account_metas(account_metas, memory_mapping, abi)?;
 
     Ok(Instruction {
         accounts,
@@ -833,7 +804,7 @@ pub fn translate_instruction_c(
     translate_instruction_common::<SolAccountMeta>(
         addr,
         invoke_context,
-        |account_metas, memory_mapping, check_aligned| {
+        |account_metas, memory_mapping, abi| {
             let mut accounts = Vec::with_capacity(account_metas.len());
             for account_meta in account_metas {
                 // Before using `account_meta` directly, verify that `is_signer` and `is_writable`
@@ -849,11 +820,8 @@ pub fn translate_instruction_c(
                     // contain valid data.
                     account_meta.assume_init_ref()
                 };
-                let pubkey = translate_type::<Pubkey>(
-                    memory_mapping,
-                    account_meta.pubkey_addr,
-                    check_aligned,
-                )?;
+                let pubkey =
+                    translate_type::<Pubkey>(memory_mapping, account_meta.pubkey_addr, abi)?;
                 accounts.push(AccountMeta {
                     pubkey: *pubkey,
                     is_signer: account_meta.is_signer,
@@ -870,7 +838,7 @@ pub fn translate_accounts_c<'a>(
     account_infos_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     translate_account_infos(
         account_infos_addr,
@@ -878,7 +846,7 @@ pub fn translate_accounts_c<'a>(
         |account_info: &SolAccountInfo| Ok(account_info.key_addr),
         invoke_context,
         memory_mapping,
-        check_aligned,
+        abi,
         |account_infos, account_info_keys| {
             translate_accounts_common(
                 &account_info_keys,
@@ -886,7 +854,7 @@ pub fn translate_accounts_c<'a>(
                 account_infos_addr,
                 invoke_context,
                 memory_mapping,
-                check_aligned,
+                abi,
                 CallerAccount::from_sol_account_info,
             )
         },
@@ -898,7 +866,7 @@ pub fn translate_accounts_v2<'a>(
     account_metas_len: u64,
     invoke_context: &InvokeContext,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
     let memory_mapping = invoke_context.memory_contexts.memory_mapping()?;
     let accounts_metadata = &invoke_context
         .memory_contexts
@@ -917,7 +885,7 @@ pub fn translate_accounts_v2<'a>(
         },
         invoke_context,
         memory_mapping,
-        check_aligned,
+        abi,
         |account_metas, account_meta_keys| {
             translate_accounts_common(
                 &account_meta_keys,
@@ -925,7 +893,7 @@ pub fn translate_accounts_v2<'a>(
                 account_metas_addr,
                 invoke_context,
                 memory_mapping,
-                check_aligned,
+                abi,
                 CallerAccount::from_account_meta_v2,
             )
         },
@@ -939,7 +907,8 @@ pub fn translate_instruction_v2(
     translate_instruction_common::<SolAccountMetaV2>(
         addr,
         invoke_context,
-        |account_metas, _memory_mapping, _check_aligned| {
+        // ABI is unused here because this syscall is only availabe to ABIv1 programs.
+        |account_metas, _memory_mapping, _abi| {
             let instruction_context = invoke_context
                 .transaction_context
                 .get_current_instruction_context()?;
@@ -997,7 +966,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         .get_feature_set()
         .virtual_address_space_adjustments;
     let account_data_direct_mapping = invoke_context.get_feature_set().account_data_direct_mapping;
-    let check_aligned = invoke_context.get_check_aligned();
+    let abi = invoke_context.abi();
 
     let instruction = S::translate_instruction(instruction_addr, invoke_context)?;
     let instruction_context = invoke_context
@@ -1029,7 +998,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
             .try_borrow_instruction_account(translated_account.index_in_caller)?;
         let update_caller = update_callee_account(
             memory_mapping,
-            check_aligned,
+            abi,
             &translated_account.caller_account,
             callee_account,
             virtual_address_space_adjustments,
@@ -1057,7 +1026,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
         if translated_account.update_caller_account_info {
             update_caller_account(
                 invoke_context,
-                check_aligned,
+                abi,
                 &mut translated_account.caller_account,
                 &mut callee_account,
                 virtual_address_space_adjustments,
@@ -1079,7 +1048,7 @@ pub fn cpi_common<S: SyscallInvokeSigned>(
                     // call of this function.
                     update_caller_account_region(
                         memory_mapping,
-                        check_aligned,
+                        abi,
                         &translated_account.caller_account,
                         &mut callee_account,
                         account_data_direct_mapping,
@@ -1106,7 +1075,7 @@ fn translate_account_infos<T, R>(
     key_addr: impl Fn(&T) -> Result<u64, Error>,
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping,
-    check_aligned: bool,
+    abi: ABI,
     cb: impl FnOnce(&[T], Vec<&Pubkey>) -> R,
 ) -> Result<R, Error> {
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
@@ -1119,12 +1088,8 @@ fn translate_account_infos<T, R>(
         return Err(CpiError::InvalidPointer.into());
     }
 
-    let account_infos = translate_slice::<T>(
-        memory_mapping,
-        account_infos_addr,
-        account_infos_len,
-        check_aligned,
-    )?;
+    let account_infos =
+        translate_slice::<T>(memory_mapping, account_infos_addr, account_infos_len, abi)?;
     check_account_infos(account_infos.len())?;
 
     let account_infos_bytes = account_infos.len().saturating_mul(ACCOUNT_INFO_BYTE_SIZE);
@@ -1142,7 +1107,7 @@ fn translate_account_infos<T, R>(
         account_info_keys.push(translate_type::<Pubkey>(
             memory_mapping,
             key_addr(account_info)?,
-            check_aligned,
+            abi,
         )?);
     }
     Ok(cb(account_infos, account_info_keys))
@@ -1155,14 +1120,14 @@ fn translate_accounts_common<'a, T, F>(
     account_infos_addr: u64,
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping,
-    check_aligned: bool,
+    abi: ABI,
     do_translate: F,
 ) -> Result<Vec<TranslatedAccount<'a>>, Error>
 where
     F: Fn(
         &InvokeContext,
         &MemoryMapping,
-        bool,
+        ABI,
         u64,
         &T,
         &SerializedAccountMetadata,
@@ -1230,7 +1195,7 @@ where
                 do_translate(
                     invoke_context,
                     memory_mapping,
-                    check_aligned,
+                    abi,
                     account_infos_addr.saturating_add(
                         caller_account_index.saturating_mul(mem::size_of::<T>()) as u64,
                     ),
@@ -1275,7 +1240,7 @@ where
 // is only set for virtual_address_space_adjustments when the pointer may have changed.
 fn update_callee_account(
     memory_mapping: &MemoryMapping,
-    check_aligned: bool,
+    abi: ABI,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedInstructionAccount<'_, '_>,
     virtual_address_space_adjustments: bool,
@@ -1297,7 +1262,7 @@ fn update_callee_account(
                 let serialized_data = unsafe {
                     CallerAccount::get_serialized_data(
                         memory_mapping,
-                        check_aligned,
+                        abi,
                         caller_account.vm_data_addr,
                         caller_account.original_data_len,
                         prev_len,
@@ -1344,14 +1309,12 @@ fn update_callee_account(
 /// [`MemoryMapping`].
 unsafe fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
-    check_aligned: bool,
+    abi: ABI,
     caller_account: &CallerAccount,
     callee_account: &mut BorrowedInstructionAccount<'_, '_>,
     account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
-    let is_caller_loader_deprecated = !check_aligned;
-    let address_space_reserved_for_account =
-        caller_account.address_space_reserved_for_account(is_caller_loader_deprecated);
+    let address_space_reserved_for_account = caller_account.address_space_reserved_for_account(abi);
 
     if address_space_reserved_for_account > 0 {
         // We can trust vm_data_addr to point to the correct region because we
@@ -1391,7 +1354,7 @@ unsafe fn update_caller_account_region(
 // changes.
 fn update_caller_account(
     invoke_context: &InvokeContext,
-    check_aligned: bool,
+    abi: ABI,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedInstructionAccount<'_, '_>,
     virtual_address_space_adjustments: bool,
@@ -1402,9 +1365,7 @@ fn update_caller_account(
 
     let prev_len = *caller_account.ref_to_len_in_vm as usize;
     let post_len = callee_account.get_data().len();
-    let is_caller_loader_deprecated = !check_aligned;
-    let address_space_reserved_for_account =
-        caller_account.address_space_reserved_for_account(is_caller_loader_deprecated);
+    let address_space_reserved_for_account = caller_account.address_space_reserved_for_account(abi);
 
     if post_len > address_space_reserved_for_account {
         let max_increase =
@@ -1434,7 +1395,7 @@ fn update_caller_account(
             unsafe {
                 caller_account.serialized_data = CallerAccount::get_serialized_data(
                     memory_mapping,
-                    check_aligned,
+                    abi,
                     caller_account.vm_data_addr,
                     caller_account.original_data_len,
                     post_len,
@@ -1452,7 +1413,7 @@ fn update_caller_account(
             caller_account
                 .vm_data_addr
                 .saturating_sub(std::mem::size_of::<u64>() as u64),
-            check_aligned,
+            abi,
         )?;
         *serialized_len_ptr = post_len as u64;
     }
@@ -1487,6 +1448,7 @@ mod tests {
         },
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_account_info::AccountInfo,
+        solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
         solana_sbpf::{
             ebpf::{MM_INPUT_START, MM_STACK_START},
             memory_region::MemoryRegion,
@@ -1506,7 +1468,7 @@ mod tests {
             rc::Rc,
             slice,
         },
-        test_case::case,
+        test_case::{case, test_case},
     };
 
     macro_rules! mock_invoke_context {
@@ -2282,7 +2244,7 @@ mod tests {
                 CallerAccount::from_account_meta_v2(
                     &invoke_context,
                     memory_mapping,
-                    invoke_context.get_check_aligned(),
+                    invoke_context.abi(),
                     vm_addr,
                     account_meta,
                     metadata,
@@ -2296,7 +2258,7 @@ mod tests {
             CallerAccount::from_account_meta_v2(
                 &invoke_context,
                 memory_mapping,
-                invoke_context.get_check_aligned(),
+                invoke_context.abi(),
                 account_metas_addr,
                 &account_metas[0],
                 &other_account_metadata,
@@ -2349,16 +2311,15 @@ mod tests {
             .unwrap();
 
         let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         let account_meta =
-            translate_type::<SolAccountMetaV2>(memory_mapping, account_metas_addr, check_aligned)
-                .unwrap();
+            translate_type::<SolAccountMetaV2>(memory_mapping, account_metas_addr, abi).unwrap();
 
         assert_matches!(
             CallerAccount::from_account_meta_v2(
                 &invoke_context,
                 memory_mapping,
-                check_aligned,
+                abi,
                 account_metas_addr,
                 account_meta,
                 &account_metadata,
@@ -2390,7 +2351,7 @@ mod tests {
         let serialized_data = unsafe {
             CallerAccount::get_serialized_data(
                 &memory_mapping,
-                true, // check_aligned
+                ABI::V1,
                 MM_INPUT_START,
                 account.data().len(),
                 account
@@ -2436,17 +2397,17 @@ mod tests {
             unsafe { MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap() };
 
         let account_info =
-            translate_type::<stable::AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
+            translate_type::<stable::AccountInfo>(&memory_mapping, vm_addr, ABI::V0).unwrap();
 
         invoke_context
             .memory_contexts
             .mock_set_mapping_abi_v1(memory_mapping);
-        let check_aligned = invoke_context.get_check_aligned();
+        let abi = invoke_context.abi();
         let memory_mapping = invoke_context.memory_contexts.memory_mapping().unwrap();
         let caller_account = CallerAccount::from_account_info(
             &invoke_context,
             memory_mapping,
-            check_aligned,
+            abi,
             vm_addr,
             account_info,
             &account_metadata,
@@ -2514,7 +2475,7 @@ mod tests {
 
         update_caller_account(
             &invoke_context,
-            true, // check_aligned
+            ABI::V1,
             &mut caller_account,
             &mut callee_account,
             virtual_address_space_adjustments,
@@ -2587,7 +2548,7 @@ mod tests {
 
             update_caller_account(
                 &invoke_context,
-                true, // check_aligned
+                ABI::V1,
                 &mut caller_account,
                 &mut callee_account,
                 false, // virtual_address_space_adjustments
@@ -2612,7 +2573,7 @@ mod tests {
             .unwrap();
         update_caller_account(
             &invoke_context,
-            true, // check_aligned
+            ABI::V1,
             &mut caller_account,
             &mut callee_account,
             false, // virtual_address_space_adjustments
@@ -2629,7 +2590,7 @@ mod tests {
         assert_matches!(
             update_caller_account(
                 &invoke_context,
-                true, // check_aligned
+                ABI::V1,
                 &mut caller_account,
                 &mut callee_account,
                 false, // virtual_address_space_adjustments
@@ -2645,7 +2606,7 @@ mod tests {
             .unwrap();
         update_caller_account(
             &invoke_context,
-            true, // check_aligned
+            ABI::V1,
             &mut caller_account,
             &mut callee_account,
             false, // virtual_address_space_adjustments
@@ -2698,7 +2659,7 @@ mod tests {
 
         update_callee_account(
             &memory_mapping,
-            true, // check_aligned
+            ABI::V1,
             &caller_account,
             callee_account,
             virtual_address_space_adjustments,
@@ -2752,7 +2713,7 @@ mod tests {
         caller_account.serialized_data[0] = b'b';
         update_callee_account(
             &memory_mapping,
-            true, // check_aligned
+            ABI::V1,
             &caller_account,
             callee_account,
             false, // virtual_address_space_adjustments,
@@ -2769,7 +2730,7 @@ mod tests {
         assert_eq!(
             update_callee_account(
                 &memory_mapping,
-                true, // check_aligned
+                ABI::V1,
                 &caller_account,
                 callee_account,
                 virtual_address_space_adjustments,
@@ -2787,7 +2748,7 @@ mod tests {
         assert_eq!(
             update_callee_account(
                 &memory_mapping,
-                true, // check_aligned
+                ABI::V1,
                 &caller_account,
                 callee_account,
                 virtual_address_space_adjustments,
@@ -2806,7 +2767,7 @@ mod tests {
         borrow_instruction_account!(callee_account, invoke_context, 0);
         update_callee_account(
             &memory_mapping,
-            true, // check_aligned
+            ABI::V1,
             &caller_account,
             callee_account,
             virtual_address_space_adjustments,
@@ -2859,7 +2820,7 @@ mod tests {
         assert_matches!(
             update_callee_account(
                 &memory_mapping,
-                true, // check_aligned
+                ABI::V1,
                 &caller_account,
                 callee_account,
                 false, // virtual_address_space_adjustments,
@@ -2876,7 +2837,7 @@ mod tests {
         assert_matches!(
             update_callee_account(
                 &memory_mapping,
-                true, // check_aligned
+                ABI::V1,
                 &caller_account,
                 callee_account,
                 virtual_address_space_adjustments,
@@ -2893,13 +2854,123 @@ mod tests {
         assert_matches!(
             update_callee_account(
                 &memory_mapping,
-                true, // check_aligned
+                ABI::V1,
                 &caller_account,
                 callee_account,
                 virtual_address_space_adjustments,
                 account_data_direct_mapping,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
+        );
+    }
+
+    #[test_case(ABI::V0, 0; "abi_v0")]
+    #[test_case(ABI::V1, MAX_PERMITTED_DATA_INCREASE; "abi_v1")]
+    fn test_get_serialized_data_realloc_limit(abi: ABI, realloc_padding: usize) {
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping =
+            unsafe { MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap() };
+        let original_data_len = 3;
+        let serialized_data = |len| unsafe {
+            CallerAccount::get_serialized_data(
+                &memory_mapping,
+                abi,
+                MM_INPUT_START,
+                original_data_len,
+                len,
+                true, // virtual_address_space_adjustments
+                true, // account_data_direct_mapping
+            )
+        };
+
+        let limit = original_data_len + realloc_padding;
+        assert!(serialized_data(limit).is_ok());
+        assert_matches!(
+            serialized_data(limit + 1),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
+        );
+    }
+
+    // With direct mapping, only `address_space_reserved_for_account` enforces the limit.
+    #[test_case(ABI::V0, 0, false; "abi_v0")]
+    #[test_case(ABI::V0, 0, true; "abi_v0_direct_mapping")]
+    #[test_case(ABI::V1, MAX_PERMITTED_DATA_INCREASE, false; "abi_v1")]
+    #[test_case(ABI::V1, MAX_PERMITTED_DATA_INCREASE, true; "abi_v1_direct_mapping")]
+    fn test_update_caller_account_realloc_limit(
+        abi: ABI,
+        realloc_padding: usize,
+        direct_mapping: bool,
+    ) {
+        let transaction_accounts =
+            transaction_with_one_writable_instruction_account(b"foobar".to_vec());
+        let account = transaction_accounts[1].1.clone();
+        let limit = account.data().len() + realloc_padding;
+
+        mock_invoke_context!(
+            invoke_context,
+            transaction_context,
+            b"instruction data",
+            transaction_accounts,
+            0,
+            &[1]
+        );
+
+        let mut mock_caller_account = MockCallerAccount::new(
+            account.lamports(),
+            *account.owner(),
+            account.data(),
+            direct_mapping,
+        );
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                mock_caller_account.regions.clone(),
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+
+        let mut caller_account = mock_caller_account.caller_account();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(0)
+            .unwrap();
+
+        callee_account.set_data_length(limit).unwrap();
+        update_caller_account(
+            &invoke_context,
+            abi,
+            &mut caller_account,
+            &mut callee_account,
+            direct_mapping, // virtual_address_space_adjustments
+            direct_mapping, // account_data_direct_mapping
+        )
+        .unwrap();
+
+        callee_account.set_data_length(limit + 1).unwrap();
+        assert_matches!(
+            update_caller_account(
+                &invoke_context,
+                abi,
+                &mut caller_account,
+                &mut callee_account,
+                direct_mapping, // virtual_address_space_adjustments
+                direct_mapping, // account_data_direct_mapping
+            ),
+            Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
         );
     }
 }

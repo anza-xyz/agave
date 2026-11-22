@@ -45,7 +45,10 @@ mod tests {
     use {
         crate::result::{Error, Result},
         crossbeam_channel::{RecvError, RecvTimeoutError, bounded},
-        std::{io, io::Write, panic},
+        std::{
+            assert_matches,
+            io::{self, Write},
+        },
     };
 
     fn send_error() -> Result<()> {

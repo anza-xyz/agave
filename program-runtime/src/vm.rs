@@ -4,16 +4,17 @@
 use qualifier_attr::qualifiers;
 use {
     crate::{
+        abi::ABI,
         execution_budget::MAX_INSTRUCTION_STACK_DEPTH_SIMD_0268,
         invoke_context::{BpfAllocator, InvokeContext},
         mem_pool::VmMemoryPool,
         memory_context::{MemoryContext, SerializedAccountMetadata},
-        program_cache_entry::ProgramCacheEntry,
+        program_cache::entry::ProgramCacheEntry,
         serialization::{self, SerializationResult},
         stable_log,
     },
     solana_instruction_error::InstructionError,
-    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
+    solana_program_entrypoint::SUCCESS,
     solana_sbpf::{
         ebpf::{self, MM_HEAP_START, MM_RODATA_START, MM_STACK_START},
         elf::Executable,
@@ -21,7 +22,6 @@ use {
         memory_region::{AccessType, MemoryMapping, MemoryRegion},
         vm::{ContextObject, EbpfVm, ExecutionMode},
     },
-    solana_sdk_ids::bpf_loader_deprecated,
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
     solana_transaction_context::IndexOfAccount,
@@ -196,11 +196,10 @@ pub fn execute<'a, 'b: 'a>(
         >(executable)
     };
     let log_collector = invoke_context.get_log_collector();
+    let abi = invoke_context.abi();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let program_id = *instruction_context.get_program_key()?;
-    let is_loader_deprecated =
-        instruction_context.get_program_owner()? == bpf_loader_deprecated::id();
     let virtual_address_space_adjustments = invoke_context
         .get_feature_set()
         .virtual_address_space_adjustments;
@@ -221,6 +220,7 @@ pub fn execute<'a, 'b: 'a>(
         account_pointers_offset,
     } = serialization::serialize_parameters(
         &instruction_context,
+        abi,
         virtual_address_space_adjustments,
         account_data_direct_mapping,
         direct_account_pointers_in_program_input,
@@ -238,11 +238,7 @@ pub fn execute<'a, 'b: 'a>(
             let vm_end = m
                 .vm_data_addr
                 .saturating_add(m.original_data_len as u64)
-                .saturating_add(if !is_loader_deprecated {
-                    MAX_PERMITTED_DATA_INCREASE as u64
-                } else {
-                    0
-                });
+                .saturating_add(abi.account_realloc_padding() as u64);
             m.vm_data_addr..vm_end
         })
         .collect::<Vec<_>>();
@@ -324,7 +320,7 @@ pub fn execute<'a, 'b: 'a>(
         vm.registers[2] = instruction_data_offset as u64;
 
         // SIMD-0683: Pass ABIv1 input metadata via registers r3–r5.
-        if !is_loader_deprecated && pass_input_metadata_in_vm_r3_r5 {
+        if abi == ABI::V1 && pass_input_metadata_in_vm_r3_r5 {
             vm.registers[3] = instruction_data_len as u64;
             vm.registers[4] = if let Some(account_pointers_offset) = account_pointers_offset {
                 account_pointers_offset as u64
@@ -487,6 +483,7 @@ pub fn execute<'a, 'b: 'a>(
 
     fn deserialize_parameters(
         invoke_context: &mut InvokeContext,
+        abi: ABI,
         parameter_bytes: &[u8],
         virtual_address_space_adjustments: bool,
         account_data_direct_mapping: bool,
@@ -495,6 +492,7 @@ pub fn execute<'a, 'b: 'a>(
             &invoke_context
                 .transaction_context
                 .get_current_instruction_context()?,
+            abi,
             virtual_address_space_adjustments,
             account_data_direct_mapping,
             parameter_bytes,
@@ -509,6 +507,7 @@ pub fn execute<'a, 'b: 'a>(
     let execute_or_deserialize_result = execution_result.and_then(|_| {
         deserialize_parameters(
             invoke_context,
+            abi,
             parameter_bytes.as_slice(),
             virtual_address_space_adjustments,
             account_data_direct_mapping,
