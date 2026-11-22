@@ -92,7 +92,7 @@ pub struct ClusterNodes<T> {
 // on the entire cache.
 type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
 
-// A cache entry: when it was built and the nodes built for the local identity.
+/// A cache entry: when it was built and the nodes built for the local identity.
 type CacheEntry<T> = Arc<OnceLock<(Instant, Arc<ClusterNodes<T>>)>>;
 
 pub struct ClusterNodesCache<T> {
@@ -815,8 +815,8 @@ mod tests {
         }
     }
 
-    // A cached entry must not outlive a change of the local identity: the
-    // retransmit tree position and the broadcast root peer both derive from it.
+    /// A cached entry must not outlive a change of the local identity: the
+    /// retransmit tree position and the broadcast root peer both derive from it.
     fn check_cluster_nodes_cache_identity_change<T: 'static>() {
         let mut rng = rand::rng();
         let (_nodes, _stakes, cluster_info) = make_test_cluster(&mut rng, 10, None);
@@ -827,18 +827,31 @@ mod tests {
 
         let old_id = cluster_info.id();
         let first = get();
-        assert_eq!(first.pubkey, old_id);
-        // Control: unchanged identity reuses the cached entry.
-        assert!(Arc::ptr_eq(&first, &get()));
+        assert_eq!(
+            first.pubkey, old_id,
+            "entry must be built for the current identity"
+        );
+        assert!(
+            Arc::ptr_eq(&first, &get()),
+            "control: unchanged identity must reuse the cached entry"
+        );
 
         let new_keypair = Arc::new(Keypair::new());
         let new_id = new_keypair.pubkey();
         cluster_info.set_keypair(new_keypair);
         let rebuilt = get();
-        assert_eq!(rebuilt.pubkey, new_id);
-        assert!(!Arc::ptr_eq(&first, &rebuilt));
-        // The rebuilt entry is cached again.
-        assert!(Arc::ptr_eq(&rebuilt, &get()));
+        assert_eq!(
+            rebuilt.pubkey, new_id,
+            "entry must be rebuilt for the new identity after set_keypair"
+        );
+        assert!(
+            !Arc::ptr_eq(&first, &rebuilt),
+            "the stale entry must not be reused after an identity change"
+        );
+        assert!(
+            Arc::ptr_eq(&rebuilt, &get()),
+            "the rebuilt entry must be cached again"
+        );
     }
 
     #[test]
