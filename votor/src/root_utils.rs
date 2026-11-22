@@ -272,3 +272,409 @@ pub fn set_bank_forks_root<CB>(
     let r_bank_forks = bank_forks.read().unwrap();
     callback(&r_bank_forks);
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crossbeam_channel::unbounded,
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
+        solana_keypair::Keypair,
+        solana_loader_v3_interface::state::UpgradeableLoaderState,
+        solana_program_binaries::bpf_loader_upgradeable_program_accounts,
+        solana_rent::Rent,
+        solana_runtime::{
+            bank::{Bank, SlotLeader, test_utils::goto_end_of_slot},
+            genesis_utils::{GenesisConfigInfo, create_genesis_config},
+            loader_utils::create_invoke_instruction,
+            program_cache_utils::{EntryType, ExpectedEntry, assert_cache_contents, current_env},
+        },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_signer::Signer,
+        solana_svm::{
+            transaction_error_metrics::TransactionErrorMetrics,
+            transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
+        },
+        solana_svm_timings::ExecuteTimings,
+        solana_transaction::Transaction,
+        solana_transaction_error::TransactionError,
+        test_case::test_case,
+    };
+
+    const RETURN_OK: &[u8] =
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
+    const RETURN_ERR: &[u8] =
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_err.so");
+
+    fn store_program_with_bank_slot(bank: &Bank, program_id: &Pubkey, elf: &[u8]) {
+        let [(_, program), (programdata_address, mut programdata)] =
+            bpf_loader_upgradeable_program_accounts(
+                program_id,
+                elf,
+                &Pubkey::default(),
+                &Rent::default(),
+            );
+        // `bpf_loader_upgradeable_program_accounts` deploys at slot 0.
+        programdata
+            .set_state(&UpgradeableLoaderState::ProgramData {
+                slot: bank.slot(),
+                upgrade_authority_address: Some(Pubkey::default()),
+            })
+            .unwrap();
+        bank.store_account(program_id, &AccountSharedData::from(program));
+        bank.store_account(&programdata_address, &AccountSharedData::from(programdata));
+    }
+
+    fn invoke_transaction(bank: &Bank, payer: &Keypair, program_id: &Pubkey) -> Transaction {
+        Transaction::new_signed_with_payer(
+            &[create_invoke_instruction(payer.pubkey(), *program_id, &())],
+            Some(&payer.pubkey()),
+            &[payer],
+            bank.last_blockhash(),
+        )
+    }
+
+    fn load_and_execute(bank: &Bank, transaction: Transaction) -> Result<(), TransactionError> {
+        let batch = bank.prepare_batch_for_tests(vec![transaction]);
+        let mut output = bank.load_and_execute_transactions(
+            &batch,
+            bank.max_processing_age(),
+            &mut ExecuteTimings::default(),
+            &mut TransactionErrorMetrics::default(),
+            TransactionProcessingConfig {
+                limit_to_load_programs: true,
+                recording_config: ExecutionRecordingConfig::new_single_setting(false),
+                ..TransactionProcessingConfig::default()
+            },
+        );
+        assert_eq!(output.processing_results.len(), 1);
+        output
+            .processing_results
+            .pop()
+            .unwrap()
+            .and_then(|processed| processed.status())
+    }
+
+    #[test_case(false; "execute")]
+    #[test_case(true; "simulate")]
+    fn test_set_bank_forks_root_allows_execution_on_gap_bank(simulate: bool) {
+        // Fork graph created for the test
+        //
+        //     0 - 1 - 2 - 3 - 4 - 5
+        //         ^^^^^^^^^   ^   ^
+        //         |           |   tip
+        //         |           new root
+        //         non-orphans, to be rooted
+        //         deployment in (1), loaded in (2), upgraded in (3)
+        //
+        // Since these non-orphan banks are never quiesced, they can actually
+        // execute transactions. They just can't commit, since they're frozen.
+        //
+        // This is fine for program cache purposes. Since:
+        // - These invocations load entries into the global cache, even without
+        //   committing, but only for their own fork
+        // - The state they load is about to be rooted
+        //
+        // A gap bank can even reload a deployment that the root has since
+        // pruned. The tip never uses it, since it sees the upgrade.
+        //
+        const DEPLOYMENT_SLOT: Slot = 1;
+        const LOAD_SLOT: Slot = 2;
+        const UPGRADE_SLOT: Slot = 3;
+        const NEW_ROOT: Slot = 4;
+        const TIP_SLOT: Slot = 5;
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair: payer,
+            ..
+        } = create_genesis_config(1_000_000_000_000);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let env = current_env(&bank);
+        goto_end_of_slot(bank.clone());
+
+        // Program is deployed in a not-yet-rooted gap slot.
+        let program = Pubkey::new_unique();
+        let deployment_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            DEPLOYMENT_SLOT,
+        );
+        store_program_with_bank_slot(&deployment_bank, &program, RETURN_OK);
+        let gap_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            deployment_bank,
+            SlotLeader::default(),
+            LOAD_SLOT,
+        );
+
+        // And upgraded in the last gap slot.
+        let upgrade_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            gap_bank.clone(),
+            SlotLeader::default(),
+            UPGRADE_SLOT,
+        );
+        store_program_with_bank_slot(&upgrade_bank, &program, RETURN_ERR);
+        let root_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            upgrade_bank,
+            SlotLeader::default(),
+            NEW_ROOT,
+        );
+        let tip = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            root_bank,
+            SlotLeader::default(),
+            TIP_SLOT,
+        );
+        // Simulation requires a frozen bank.
+        if simulate {
+            tip.freeze();
+        }
+
+        let transaction = invoke_transaction(&gap_bank, &payer, &program);
+        let process = |bank: &Bank| {
+            if simulate {
+                let transaction =
+                    RuntimeTransaction::from_transaction_for_tests(transaction.clone());
+                bank.simulate_transaction(&transaction, false).result
+            } else {
+                load_and_execute(bank, transaction.clone())
+            }
+        };
+        // Before rooting, each bank runs the version on its own fork.
+        assert_eq!(
+            process(&gap_bank),
+            Ok(()),
+            "the gap bank should execute before rooting",
+        );
+        let upgraded_result = process(&tip);
+        assert!(
+            matches!(
+                upgraded_result,
+                Err(TransactionError::InstructionError(0, _))
+            ),
+            "the tip should run the upgrade, got {upgraded_result:?}",
+        );
+        assert_cache_contents(
+            &tip,
+            &program,
+            &[
+                ExpectedEntry {
+                    entry_type: EntryType::Loaded,
+                    deployment_slot: DEPLOYMENT_SLOT,
+                    environment: &env,
+                },
+                ExpectedEntry {
+                    entry_type: EntryType::Loaded,
+                    deployment_slot: UPGRADE_SLOT,
+                    environment: &env,
+                },
+            ],
+        );
+
+        // Do rooting.
+        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+        set_bank_forks_root(
+            &Pubkey::new_unique(),
+            NEW_ROOT,
+            &bank_forks,
+            /* snapshot_controller */ None,
+            /* highest_super_majority_root */ None,
+            &drop_bank_sender,
+            |_| {},
+        );
+
+        // The gap banks left the fork tree.
+        assert_eq!(bank_forks.read().unwrap().root(), NEW_ROOT);
+        for slot in [DEPLOYMENT_SLOT, LOAD_SLOT, UPGRADE_SLOT] {
+            assert!(bank_forks.read().unwrap().get(slot).is_none());
+        }
+
+        // Rooting pruned the superseded deployment.
+        assert_cache_contents(
+            &tip,
+            &program,
+            &[ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: UPGRADE_SLOT,
+                environment: &env,
+            }],
+        );
+
+        // But a holder of the gap bank can still invoke, reloading it.
+        assert!(gap_bank.try_enter_transaction_execution().is_some());
+        assert_eq!(
+            process(&gap_bank),
+            Ok(()),
+            "the gap bank should still execute after rooting",
+        );
+        assert_cache_contents(
+            &tip,
+            &program,
+            &[
+                ExpectedEntry {
+                    entry_type: EntryType::Loaded,
+                    deployment_slot: DEPLOYMENT_SLOT,
+                    environment: &env,
+                },
+                ExpectedEntry {
+                    entry_type: EntryType::Loaded,
+                    deployment_slot: UPGRADE_SLOT,
+                    environment: &env,
+                },
+            ],
+        );
+
+        // The tip is unaffected by the reloaded entry.
+        assert_eq!(
+            process(&tip),
+            upgraded_result,
+            "the tip should still run the upgrade",
+        );
+    }
+
+    #[test]
+    fn test_set_bank_forks_root_quiesces_and_prunes_orphan() {
+        // Fork graph created for the test
+        //
+        //     0 - 1 - 2 - 3
+        //          \
+        //           4 - 5
+        //           ^^^^^
+        //           orphans, quiesced and pruned
+        //           deployment in (4), loaded in (5)
+        //
+        // Assert that:
+        // - Quiesced orphan banks cannot execute
+        // - The orphans' deployment is pruned from the cache
+        //
+        const FORK_SLOT: Slot = 1;
+        const ROOTED_LOAD_SLOT: Slot = 2;
+        const NEW_ROOT: Slot = 3;
+        const ORPHAN_SLOT: Slot = 4;
+        const ORPHAN_LOAD_SLOT: Slot = 5;
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair: payer,
+            ..
+        } = create_genesis_config(1_000_000_000_000);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let env = current_env(&bank);
+        goto_end_of_slot(bank.clone());
+
+        // Initial deployment at the shared parent.
+        let fork_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            FORK_SLOT,
+        );
+        let fork_program = Pubkey::new_unique();
+        store_program_with_bank_slot(&fork_bank, &fork_program, RETURN_OK);
+
+        // Load it on the chain that gets rooted.
+        let rooted_load_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            fork_bank.clone(),
+            SlotLeader::default(),
+            ROOTED_LOAD_SLOT,
+        );
+        assert_eq!(
+            rooted_load_bank.process_transaction(&invoke_transaction(
+                &rooted_load_bank,
+                &payer,
+                &fork_program
+            )),
+            Ok(())
+        );
+        Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            rooted_load_bank,
+            SlotLeader::default(),
+            NEW_ROOT,
+        );
+
+        // Branch off the fork bank to create the orphans, deploying in the
+        // first and loading in the second.
+        let orphan = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            fork_bank,
+            SlotLeader::default(),
+            ORPHAN_SLOT,
+        );
+        let orphan_program = Pubkey::new_unique();
+        store_program_with_bank_slot(&orphan, &orphan_program, RETURN_OK);
+        let orphan_load_bank = Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            orphan.clone(),
+            SlotLeader::default(),
+            ORPHAN_LOAD_SLOT,
+        );
+        assert_eq!(
+            orphan_load_bank.process_transaction(&invoke_transaction(
+                &orphan_load_bank,
+                &payer,
+                &orphan_program
+            )),
+            Ok(())
+        );
+        for (program, deployment_slot) in [(fork_program, FORK_SLOT), (orphan_program, ORPHAN_SLOT)]
+        {
+            assert_cache_contents(
+                &orphan_load_bank,
+                &program,
+                &[ExpectedEntry {
+                    entry_type: EntryType::Loaded,
+                    deployment_slot,
+                    environment: &env,
+                }],
+            );
+        }
+
+        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+        set_bank_forks_root(
+            &Pubkey::new_unique(),
+            NEW_ROOT,
+            &bank_forks,
+            /* snapshot_controller */ None,
+            /* highest_super_majority_root */ None,
+            &drop_bank_sender,
+            |_| {},
+        );
+
+        assert_eq!(bank_forks.read().unwrap().root(), NEW_ROOT);
+        for slot in [ORPHAN_SLOT, ORPHAN_LOAD_SLOT] {
+            assert!(bank_forks.read().unwrap().get(slot).is_none());
+        }
+
+        // The orphans' deployment went with them.
+        assert_cache_contents(&orphan, &orphan_program, &[]);
+        // The fork bank's deployment is now rooted. It survives.
+        assert_cache_contents(
+            &bank_forks.read().unwrap().root_bank(),
+            &fork_program,
+            &[ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: FORK_SLOT,
+                environment: &env,
+            }],
+        );
+
+        // And unlike the rooted chain's banks, the orphans' gates are closed for good.
+        for bank in [&orphan, &orphan_load_bank] {
+            assert!(
+                bank.try_enter_transaction_execution().is_none(),
+                "the orphan should have been quiesced",
+            );
+            assert_eq!(
+                load_and_execute(bank, invoke_transaction(bank, &payer, &fork_program)),
+                Err(TransactionError::CommitCancelled),
+                "the orphan should be turned away after rooting",
+            );
+        }
+    }
+}

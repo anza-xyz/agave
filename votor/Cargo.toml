@@ -77,9 +77,17 @@ wincode = { workspace = true, features = ["alloc"] }
 agave-votor = { path = ".", features = ["dev-context-only-utils"] }
 agave-votor-transport = { path = "../votor-transport", features = ["agave-unstable-api", "dev-context-only-utils"] }
 rand = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
+solana-loader-v3-interface = { workspace = true }
 solana-net-utils = { path = "../net-utils", features = ["agave-unstable-api"] }
 solana-perf = { path = "../perf", features = ["agave-unstable-api"] }
+solana-program-binaries = { path = "../program-binaries", features = ["agave-unstable-api"] }
+solana-rent = { workspace = true }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
+solana-svm-timings = { path = "../svm-timings", features = ["agave-unstable-api"] }
+solana-transaction-error = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 tokio-util = { workspace = true }
