@@ -2,8 +2,14 @@
 
 #[cfg(feature = "conformance")]
 use {
-    crate::conformance::{account_state::account_from_proto, feature_set::feature_set_from_proto},
-    protosol::protos::InstrContext as ProtoInstrContext,
+    crate::conformance::{
+        account_state::{account_from_proto, account_to_proto},
+        feature_set::{feature_set_from_proto, feature_set_to_proto},
+    },
+    protosol::protos::{
+        AcctState as ProtoAccount, InstrAcct as ProtoInstrAcct, InstrContext as ProtoInstrContext,
+        acct_state::DataRepr,
+    },
     solana_instruction::AccountMeta,
 };
 use {
@@ -95,6 +101,45 @@ impl From<ProtoInstrContext> for InstrContext {
             accounts,
             instruction,
             cu_avail,
+        }
+    }
+}
+
+#[cfg(feature = "conformance")]
+impl From<&InstrContext> for ProtoInstrContext {
+    fn from(value: &InstrContext) -> Self {
+        let InstrContext {
+            feature_set,
+            accounts,
+            instruction,
+            cu_avail,
+        } = value;
+
+        Self {
+            program_id: instruction.program_id.to_bytes().to_vec(),
+            accounts: accounts
+                .iter()
+                .map(|(pubkey, account)| ProtoAccount {
+                    data_repr: Some(DataRepr::Data(account.data.clone())),
+                    ..account_to_proto(pubkey, account)
+                })
+                .collect(),
+            instr_accounts: instruction
+                .accounts
+                .iter()
+                .map(|meta| ProtoInstrAcct {
+                    index: accounts
+                        .iter()
+                        .position(|(pubkey, _)| *pubkey == meta.pubkey)
+                        .expect("instruction account not found in accounts")
+                        as u32,
+                    is_writable: meta.is_writable,
+                    is_signer: meta.is_signer,
+                })
+                .collect(),
+            data: instruction.data.clone(),
+            cu_avail: *cu_avail,
+            features: Some(feature_set_to_proto(feature_set)),
         }
     }
 }

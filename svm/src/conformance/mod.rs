@@ -11,6 +11,8 @@ pub mod err;
 pub mod fd_hash;
 #[cfg(feature = "conformance")]
 pub mod feature_set;
+#[cfg(feature = "conformance")]
+mod fixture;
 pub mod instr;
 pub mod nonce_fields;
 pub mod programs;
