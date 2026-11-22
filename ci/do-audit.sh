@@ -82,6 +82,16 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=1.1.33
   # Agave Ok:  optional rocksdb zlib dep, not built; the bug is in the gzFile API rocksdb never calls.
   --ignore RUSTSEC-2026-0544
+
+  # Crate:     url
+  # Version:   2.5.8 (1.7.2 via jsonrpc-client-transports)
+  # Title:     Stack overflow in `Url::origin()` on nested `blob:` URLs
+  # Date:      2026-11-22
+  # ID:        RUSTSEC-2026-0592
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0592
+  # Solution:  Upgrade to >=2.5.9
+  # Agave Ok:  Agave never calls `Url::origin` or `url::quirks::origin` (clippy disallows them).
+  --ignore RUSTSEC-2026-0592
 )
 
 xtask_cargo_audit_extra_args=(
@@ -104,6 +114,17 @@ xtask_cargo_audit_extra_args=(
   # Agave Ok:  only in xtask's lockfile as an optional dep of Reqwest's HTTP/3 feature, which
   # xtask does not enable, so upstream Quinn and quinn-udp are never built.
   --ignore RUSTSEC-2026-0538
+
+  # Crate:     url
+  # Version:   2.5.8
+  # Title:     Stack overflow in `Url::origin()` on nested `blob:` URLs
+  # Date:      2026-11-22
+  # ID:        RUSTSEC-2026-0592
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0592
+  # Solution:  Upgrade to >=2.5.9
+  # Agave Ok:  only octocrab and reqwest use url in xtask, and neither calls `Url::origin`
+  # or `url::quirks::origin`. xtask doesn't call them either.
+  --ignore RUSTSEC-2026-0592
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"
