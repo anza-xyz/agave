@@ -85,6 +85,7 @@ pub struct FeatureSnapshot {
     pub replace_ata_with_p_ata: bool,
     pub increase_tx_v1_account_lock_limit: bool,
     pub invoke_signed_v2: bool,
+    pub alt_bn128_pairing_map: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -193,6 +194,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             replace_ata_with_p_ata: is_active(&replace_ata_with_p_ata::ID),
             increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
             invoke_signed_v2: is_active(&invoke_signed_v2::ID),
+            alt_bn128_pairing_map: is_active(&alt_bn128_pairing_map::ID),
         }
     }
 }
@@ -356,6 +358,7 @@ impl FeatureSet {
             loader_v3_allow_prefunded_programdata: snapshot.loader_v3_allow_prefunded_programdata,
             loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
             invoke_signed_v2: snapshot.invoke_signed_v2,
+            alt_bn128_pairing_map: snapshot.alt_bn128_pairing_map,
         }
     }
 }
@@ -1612,6 +1615,10 @@ pub mod invoke_signed_v2 {
     solana_pubkey::declare_id!("inv2LMjJ1j8e5DB36ETnszFcmtYfRZGgk6oJzYr9zK8");
 }
 
+pub mod alt_bn128_pairing_map {
+    solana_pubkey::declare_id!("2WudV9cH9XgUFtxEzCo1eRY15uJNxcwyGhj9EHYJF1QN");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2753,6 +2760,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             invoke_signed_v2::id(),
             "SIMD-0670: ABIv1 invoke signed v2 syscall",
+        ),
+        (
+            alt_bn128_pairing_map::id(),
+            "SIMD-0650: BN254 pairing with target group output",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

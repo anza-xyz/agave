@@ -52,6 +52,7 @@ pub struct SVMFeatureSet {
     pub loader_v3_allow_prefunded_programdata: bool,
     pub loader_v3_remove_extend_program: bool,
     pub invoke_signed_v2: bool,
+    pub alt_bn128_pairing_map: bool,
 }
 
 impl SVMFeatureSet {
@@ -108,6 +109,7 @@ impl SVMFeatureSet {
             loader_v3_allow_prefunded_programdata: true,
             loader_v3_remove_extend_program: true,
             invoke_signed_v2: true,
+            alt_bn128_pairing_map: true,
         }
     }
 }

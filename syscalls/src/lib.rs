@@ -2331,11 +2331,14 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
             ALT_BN128_G1_ADD_BE, ALT_BN128_G1_ADD_LE, ALT_BN128_G1_MUL_BE, ALT_BN128_G1_MUL_LE,
             ALT_BN128_G1_POINT_SIZE, ALT_BN128_G2_ADD_BE, ALT_BN128_G2_ADD_LE, ALT_BN128_G2_MUL_BE,
             ALT_BN128_G2_MUL_LE, ALT_BN128_G2_POINT_SIZE, ALT_BN128_PAIRING_BE,
-            ALT_BN128_PAIRING_ELEMENT_SIZE, ALT_BN128_PAIRING_LE, ALT_BN128_PAIRING_OUTPUT_SIZE,
-            Endianness, VersionedG1Addition, VersionedG1Multiplication, VersionedG2Addition,
-            VersionedG2Multiplication, VersionedPairing, alt_bn128_versioned_g1_addition,
-            alt_bn128_versioned_g1_multiplication, alt_bn128_versioned_g2_addition,
-            alt_bn128_versioned_g2_multiplication, alt_bn128_versioned_pairing,
+            ALT_BN128_PAIRING_ELEMENT_SIZE, ALT_BN128_PAIRING_LE, ALT_BN128_PAIRING_MAP_BE,
+            ALT_BN128_PAIRING_MAP_ELEMENT_SIZE, ALT_BN128_PAIRING_MAP_LE,
+            ALT_BN128_PAIRING_MAP_OUTPUT_SIZE, ALT_BN128_PAIRING_OUTPUT_SIZE, Endianness,
+            VersionedG1Addition, VersionedG1Multiplication, VersionedG2Addition,
+            VersionedG2Multiplication, VersionedPairing, VersionedPairingMap,
+            alt_bn128_versioned_g1_addition, alt_bn128_versioned_g1_multiplication,
+            alt_bn128_versioned_g2_addition, alt_bn128_versioned_g2_multiplication,
+            alt_bn128_versioned_pairing, alt_bn128_versioned_pairing_map,
         };
 
         // SIMD-0284: Block LE ops if the feature is not active.
@@ -2358,6 +2361,16 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
                     | ALT_BN128_G2_ADD_LE
                     | ALT_BN128_G2_MUL_BE
                     | ALT_BN128_G2_MUL_LE
+            )
+        {
+            return Err(SyscallError::InvalidAttribute.into());
+        }
+
+        // SIMD-0650: Block the pairing map op if the feature is not active.
+        if !invoke_context.get_feature_set().alt_bn128_pairing_map
+            && matches!(
+                group_op,
+                ALT_BN128_PAIRING_MAP_BE | ALT_BN128_PAIRING_MAP_LE
             )
         {
             return Err(SyscallError::InvalidAttribute.into());
@@ -2396,6 +2409,24 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
                     .saturating_add(input_size)
                     .saturating_add(ALT_BN128_PAIRING_OUTPUT_SIZE as u64);
                 (cost, ALT_BN128_PAIRING_OUTPUT_SIZE)
+            }
+            ALT_BN128_PAIRING_MAP_BE | ALT_BN128_PAIRING_MAP_LE => {
+                // Same cost model as the pairing op, with the larger output
+                // accounted for in the memory access cost.
+                let ele_len = input_size
+                    .checked_div(ALT_BN128_PAIRING_MAP_ELEMENT_SIZE as u64)
+                    .expect("div by non-zero constant");
+                let cost = execution_cost
+                    .alt_bn128_pairing_one_pair_cost_first
+                    .saturating_add(
+                        execution_cost
+                            .alt_bn128_pairing_one_pair_cost_other
+                            .saturating_mul(ele_len.saturating_sub(1)),
+                    )
+                    .saturating_add(execution_cost.sha256_base_cost)
+                    .saturating_add(input_size)
+                    .saturating_add(ALT_BN128_PAIRING_MAP_OUTPUT_SIZE as u64);
+                (cost, ALT_BN128_PAIRING_MAP_OUTPUT_SIZE)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -2454,6 +2485,12 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAltBn128 {
             }
             ALT_BN128_PAIRING_LE => {
                 alt_bn128_versioned_pairing(VersionedPairing::V1, input, Endianness::LE)
+            }
+            ALT_BN128_PAIRING_MAP_BE => {
+                alt_bn128_versioned_pairing_map(VersionedPairingMap::V0, input, Endianness::BE)
+            }
+            ALT_BN128_PAIRING_MAP_LE => {
+                alt_bn128_versioned_pairing_map(VersionedPairingMap::V0, input, Endianness::LE)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -9111,6 +9148,275 @@ mod tests {
         assert_access_violation!(result, rw_va - 1, solana_hash_512::HASH_BYTES as u64);
         let result =
             SyscallHash::<Sha512Hasher>::rust(&mut invoke_context, ro_va, ro_len, rw_va, 0, 0);
+        assert_matches!(
+            result,
+            Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
+        );
+    }
+
+    #[test]
+    fn test_syscall_alt_bn128_pairing_map() {
+        use {
+            solana_bn254::prelude::{
+                ALT_BN128_PAIRING_MAP_BE, ALT_BN128_PAIRING_MAP_ELEMENT_SIZE,
+                ALT_BN128_PAIRING_MAP_LE, ALT_BN128_PAIRING_MAP_OUTPUT_SIZE,
+                alt_bn128_pairing_map_be, alt_bn128_pairing_map_le,
+            },
+            solana_sbpf::vm::ContextObject,
+        };
+
+        const PAIR: usize = ALT_BN128_PAIRING_MAP_ELEMENT_SIZE;
+        const OUTPUT: usize = ALT_BN128_PAIRING_MAP_OUTPUT_SIZE;
+
+        fn decode_hex(hex: &str) -> Vec<u8> {
+            (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect()
+        }
+
+        // The G1 generator `P = (1, 2)`, its negation `-P = (1, q - 2)` and the
+        // G2 generator `Q` in the big-endian (EIP-197) encoding.
+        let g1 = decode_hex(
+            "0000000000000000000000000000000000000000000000000000000000000001\
+             0000000000000000000000000000000000000000000000000000000000000002",
+        );
+        let g1_neg = decode_hex(
+            "0000000000000000000000000000000000000000000000000000000000000001\
+             30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd45",
+        );
+        let g2 = decode_hex(
+            "198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2\
+             1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed\
+             090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b\
+             12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
+        );
+
+        // `[(P, Q), (-P, Q)]`: the first pair alone maps to a non-trivial
+        // element, both pairs together map to the identity.
+        let input_be = [&g1[..], &g2[..], &g1_neg[..], &g2[..]].concat();
+        // The little-endian encoding reverses each G1 coordinate (32 bytes)
+        // and each G2 coordinate (64 bytes).
+        let mut input_le = input_be.clone();
+        for pair in [0, PAIR] {
+            for (offset, len) in [(0, 32), (32, 32), (64, 64), (128, 64)] {
+                input_le[pair + offset..pair + offset + len].reverse();
+            }
+        }
+        assert_eq!(input_be.len(), 2 * PAIR);
+        assert_eq!(input_le.len(), 2 * PAIR);
+
+        let mut identity_le = [0u8; OUTPUT];
+        identity_le[0] = 1;
+        let mut identity_be = [0u8; OUTPUT];
+        identity_be[OUTPUT - 1] = 1;
+
+        let single_be = alt_bn128_pairing_map_be(&input_be[..PAIR]).unwrap();
+        let single_le = alt_bn128_pairing_map_le(&input_le[..PAIR]).unwrap();
+        assert_ne!(single_le, identity_le);
+        assert!(single_be.iter().eq(single_le.iter().rev()));
+
+        let input_be_va = 0x100000000;
+        let input_le_va = 0x200000000;
+        let result_va = 0x300000000;
+        const UNTOUCHED: [u8; OUTPUT] = [0xab; OUTPUT];
+        let mut result_buffer = UNTOUCHED;
+
+        let config = Config::default();
+
+        // The opcode is rejected before the feature is activated.
+        {
+            let feature_set = SVMFeatureSet {
+                alt_bn128_little_endian: true,
+                enable_alt_bn128_g2_syscalls: true,
+                ..Default::default()
+            };
+            let feature_set = &feature_set;
+            prepare_mock_with_feature_set!(
+                invoke_context,
+                program_id,
+                bpf_loader::id(),
+                feature_set
+            );
+            let memory_mapping = unsafe {
+                MemoryMapping::new(
+                    vec![
+                        MemoryRegion::new(input_be.as_slice() as *const [u8], input_be_va),
+                        MemoryRegion::new(input_le.as_slice() as *const [u8], input_le_va),
+                        MemoryRegion::new(&raw mut result_buffer, result_va),
+                    ],
+                    &config,
+                    SBPFVersion::V3,
+                )
+                .unwrap()
+            };
+            invoke_context
+                .memory_contexts
+                .mock_set_mapping_abi_v1(memory_mapping);
+            invoke_context.mock_set_remaining(1_000_000);
+
+            for (group_op, input_va) in [
+                (ALT_BN128_PAIRING_MAP_BE, input_be_va),
+                (ALT_BN128_PAIRING_MAP_LE, input_le_va),
+            ] {
+                let result = SyscallAltBn128::rust(
+                    &mut invoke_context,
+                    group_op,
+                    input_va,
+                    PAIR as u64,
+                    result_va,
+                    0,
+                );
+                assert_matches!(
+                    result,
+                    Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidAttribute
+                );
+            }
+        }
+        assert_eq!(result_buffer, UNTOUCHED);
+
+        let feature_set = SVMFeatureSet {
+            alt_bn128_little_endian: true,
+            alt_bn128_pairing_map: true,
+            ..Default::default()
+        };
+        let feature_set = &feature_set;
+        prepare_mock_with_feature_set!(invoke_context, program_id, bpf_loader::id(), feature_set);
+        let memory_mapping = unsafe {
+            MemoryMapping::new(
+                vec![
+                    MemoryRegion::new(input_be.as_slice() as *const [u8], input_be_va),
+                    MemoryRegion::new(input_le.as_slice() as *const [u8], input_le_va),
+                    MemoryRegion::new(&raw mut result_buffer, result_va),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap()
+        };
+        invoke_context
+            .memory_contexts
+            .mock_set_mapping_abi_v1(memory_mapping);
+
+        // Same cost model as the pairing op, plus the larger output.
+        let execution_cost = *invoke_context.get_execution_cost();
+        let expected_cost = |num_pairs: u64| {
+            execution_cost.alt_bn128_pairing_one_pair_cost_first
+                + execution_cost.alt_bn128_pairing_one_pair_cost_other * num_pairs.saturating_sub(1)
+                + execution_cost.sha256_base_cost
+                + num_pairs * PAIR as u64
+                + OUTPUT as u64
+        };
+
+        let mut call = |group_op: u64, input_va: u64, num_pairs: u64, input_size: u64| {
+            invoke_context.mock_set_remaining(expected_cost(num_pairs));
+            let result = SyscallAltBn128::rust(
+                &mut invoke_context,
+                group_op,
+                input_va,
+                input_size,
+                result_va,
+                0,
+            );
+            // the whole budget is consumed, whether or not the input is valid
+            assert_eq!(invoke_context.get_remaining(), 0);
+            result
+        };
+
+        // one pair
+        result_buffer = UNTOUCHED;
+        assert_eq!(
+            0,
+            call(ALT_BN128_PAIRING_MAP_BE, input_be_va, 1, PAIR as u64).unwrap()
+        );
+        assert_eq!(result_buffer[..], single_be[..]);
+        assert_eq!(
+            0,
+            call(ALT_BN128_PAIRING_MAP_LE, input_le_va, 1, PAIR as u64).unwrap()
+        );
+        assert_eq!(result_buffer[..], single_le[..]);
+
+        // two pairs whose product is the identity
+        assert_eq!(
+            0,
+            call(ALT_BN128_PAIRING_MAP_BE, input_be_va, 2, 2 * PAIR as u64).unwrap()
+        );
+        assert_eq!(result_buffer, identity_be);
+        assert_eq!(
+            0,
+            call(ALT_BN128_PAIRING_MAP_LE, input_le_va, 2, 2 * PAIR as u64).unwrap()
+        );
+        assert_eq!(result_buffer, identity_le);
+
+        // an empty input maps to the identity
+        result_buffer = UNTOUCHED;
+        assert_eq!(
+            0,
+            call(ALT_BN128_PAIRING_MAP_BE, input_be_va, 0, 0).unwrap()
+        );
+        assert_eq!(result_buffer, identity_be);
+        result_buffer = UNTOUCHED;
+        assert_eq!(
+            0,
+            call(ALT_BN128_PAIRING_MAP_LE, input_le_va, 0, 0).unwrap()
+        );
+        assert_eq!(result_buffer, identity_le);
+
+        // invalid inputs return an error and leave the output untouched
+        result_buffer = UNTOUCHED;
+        for (group_op, input_va, valid_input_va) in [
+            (ALT_BN128_PAIRING_MAP_BE, input_be_va, input_le_va),
+            (ALT_BN128_PAIRING_MAP_LE, input_le_va, input_be_va),
+        ] {
+            // the input size is not a multiple of the pair size
+            invoke_context.mock_set_remaining(1_000_000);
+            let result = SyscallAltBn128::rust(
+                &mut invoke_context,
+                group_op,
+                input_va,
+                PAIR as u64 + 1,
+                result_va,
+                0,
+            );
+            assert_eq!(1, result.unwrap());
+            assert_eq!(result_buffer, UNTOUCHED);
+
+            // the G2 point of the other endianness does not decode
+            invoke_context.mock_set_remaining(1_000_000);
+            let result = SyscallAltBn128::rust(
+                &mut invoke_context,
+                group_op,
+                valid_input_va,
+                PAIR as u64,
+                result_va,
+                0,
+            );
+            assert_eq!(1, result.unwrap());
+            assert_eq!(result_buffer, UNTOUCHED);
+        }
+
+        // the output buffer must be able to hold the target group element
+        invoke_context.mock_set_remaining(1_000_000);
+        let result = SyscallAltBn128::rust(
+            &mut invoke_context,
+            ALT_BN128_PAIRING_MAP_BE,
+            input_be_va,
+            PAIR as u64,
+            result_va + 1,
+            0,
+        );
+        assert_access_violation!(result, result_va + 1, OUTPUT as u64);
+
+        // out of compute units
+        invoke_context.mock_set_remaining(expected_cost(1) - 1);
+        let result = SyscallAltBn128::rust(
+            &mut invoke_context,
+            ALT_BN128_PAIRING_MAP_BE,
+            input_be_va,
+            PAIR as u64,
+            result_va,
+            0,
+        );
         assert_matches!(
             result,
             Result::Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ComputationalBudgetExceeded
