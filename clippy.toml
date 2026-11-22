@@ -7,6 +7,8 @@ disallowed-methods = [
     { path = "std::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_with_config, bind_to, etc instead for proper socket configuration." },
     { path = "tokio::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_to_async or bind_to_with_config_non_blocking instead for proper socket configuration." },
     { path = "lazy_static::initialize", reason = "Deprecated. Use std::{cell::{LazyCell, OnceCell}, sync::{LazyLock, OnceLock}} as appropriate." },
+    { path = "url::Url::origin", reason = "Stack overflow on nested blob: URLs (RUSTSEC-2026-0592)." },
+    { path = "url::quirks::origin", reason = "Stack overflow on nested blob: URLs (RUSTSEC-2026-0592)." },
 ]
 
 disallowed-macros = [
