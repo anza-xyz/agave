@@ -39,7 +39,6 @@ new_without_default = "allow"
 [workspace.dependencies]
 agave-feature-set = { path = "../feature-set", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-logger = { path = "../logger", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
-agave-precompiles = { path = "../precompiles", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-snapshots = { path = "../snapshots", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 agave-transaction-view = "10.0.0"
