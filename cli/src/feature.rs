@@ -886,12 +886,11 @@ async fn get_feature_status(
     rpc_client: &RpcClient,
     feature_id: &Pubkey,
 ) -> Result<Option<CliFeatureStatus>, Box<dyn std::error::Error>> {
-    // A missing feature account means the feature is not enabled.
-    Ok(rpc_client
-        .get_account_with_commitment(feature_id, rpc_client.commitment())
-        .await?
-        .value
-        .and_then(status_from_account))
+    rpc_client
+        .get_account(feature_id)
+        .await
+        .map(status_from_account)
+        .map_err(|e| e.into())
 }
 
 pub async fn get_feature_is_active(
