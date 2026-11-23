@@ -1432,6 +1432,7 @@ pub async fn process_largest_accounts(
     config: &CliConfig<'_>,
     filter: Option<RpcLargestAccountsFilter>,
 ) -> ProcessResult {
+    #[allow(deprecated)]
     let accounts = rpc_client
         .get_largest_accounts_with_config(RpcLargestAccountsConfig {
             commitment: Some(config.commitment),
@@ -1449,6 +1450,7 @@ pub async fn process_supply(
     config: &CliConfig<'_>,
     print_accounts: bool,
 ) -> ProcessResult {
+    #[allow(deprecated)]
     let supply_response = rpc_client.supply().await?;
     let mut supply: CliSupply = supply_response.value.into();
     supply.print_accounts = print_accounts;
@@ -1459,6 +1461,7 @@ pub async fn process_total_supply(
     rpc_client: &RpcClient,
     _config: &CliConfig<'_>,
 ) -> ProcessResult {
+    #[allow(deprecated)]
     let supply = rpc_client.supply().await?.value;
     Ok(format!(
         "{} SOL",
@@ -1714,6 +1717,7 @@ pub async fn process_show_stakes(
         filters.push(withdrawer_filter);
     }
 
+    #[allow(deprecated)]
     let all_stake_accounts = rpc_client
         .get_program_ui_accounts_with_config(&stake::program::id(), program_accounts_config)
         .await?;

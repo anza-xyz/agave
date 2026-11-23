@@ -320,6 +320,7 @@ pub async fn process_publish_validator_info(
     }
 
     // Check for existing validator-info account
+    #[allow(deprecated)]
     let all_config = rpc_client
         .get_program_accounts(&solana_config_interface::id())
         .await?;
@@ -469,6 +470,7 @@ pub async fn process_get_validator_info(
             rpc_client.get_account(&validator_info_pubkey).await?,
         )]
     } else {
+        #[allow(deprecated)]
         let all_config = rpc_client
             .get_program_accounts(&solana_config_interface::id())
             .await?;

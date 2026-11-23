@@ -1521,25 +1521,23 @@ fn setup_transfer_scan_threads(
                 if exit.load(Ordering::Relaxed) {
                     return;
                 }
-                if let Some(total_scan_balance) = rpc_client
-                    .get_program_ui_accounts_with_config(
-                        &system_program::id(),
-                        scan_commitment_config.clone(),
-                    )
-                    .ok()
-                    .map(|result| {
-                        result
-                            .into_iter()
-                            .map(|(key, account)| {
-                                if tracked_pubkeys.contains(&key) {
-                                    account.lamports
-                                } else {
-                                    0
-                                }
-                            })
-                            .sum::<u64>()
-                    })
-                {
+                #[allow(deprecated)]
+                let result = rpc_client.get_program_ui_accounts_with_config(
+                    &system_program::id(),
+                    scan_commitment_config.clone(),
+                );
+                if let Some(total_scan_balance) = result.ok().map(|result| {
+                    result
+                        .into_iter()
+                        .map(|(key, account)| {
+                            if tracked_pubkeys.contains(&key) {
+                                account.lamports
+                            } else {
+                                0
+                            }
+                        })
+                        .sum::<u64>()
+                }) {
                     assert_eq!(total_scan_balance, expected_total_balance);
                 }
             }
