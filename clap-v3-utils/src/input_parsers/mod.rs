@@ -179,7 +179,7 @@ impl Amount {
     pub fn to_raw_amount(&self, decimals: u8) -> Self {
         match self {
             Amount::Decimal(amount) => {
-                Amount::Raw((amount * 10_usize.pow(decimals as u32) as f64) as u64)
+                Amount::Raw((amount * 10_usize.pow(decimals as u32) as f64).round() as u64)
             }
             Amount::Raw(amount) => Amount::Raw(*amount),
             Amount::All => Amount::All,
@@ -548,6 +548,10 @@ mod tests {
             ("50", 50_000_000_000),
             ("1.5", 1_500_000_000),
             ("0.03", 30_000_000),
+            // not exactly representable as f64; truncation would lose a lamport
+            ("8.50228288", 8_502_282_880),
+            ("0.000000015", 15),
+            ("0.00000003", 30),
         ];
 
         for (arg, expected_lamport) in test_cases {
@@ -561,6 +565,23 @@ mod tests {
                     .unwrap()
                     .sol_to_lamport(),
                 Amount::Raw(expected_lamport),
+            );
+        }
+    }
+
+    #[test]
+    fn test_to_raw_amount() {
+        let test_cases = vec![
+            (0.29, 2, 29),
+            (1.15, 2, 115),
+            (0.000003, 6, 3),
+            (11223344.0, 0, 11223344),
+        ];
+
+        for (amount, decimals, expected_raw_amount) in test_cases {
+            assert_eq!(
+                Amount::Decimal(amount).to_raw_amount(decimals),
+                Amount::Raw(expected_raw_amount),
             );
         }
     }
