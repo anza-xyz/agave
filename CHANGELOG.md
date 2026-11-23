@@ -21,6 +21,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Add `HttpSender::with_max_rate_limit_retries` to configure or disable HTTP 429 retries.
+
 ### Validator
 
 #### Breaking
