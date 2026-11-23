@@ -610,10 +610,10 @@ mod tests {
         let library_name = libloading::library_filename("agave_geyser_plugin_host_test_plugin");
         let library = std::env::current_exe()
             .unwrap()
-            .parent()
-            .unwrap()
-            .join(&library_name);
-        assert!(library.is_file(), "missing test plugin: {library:?}");
+            .ancestors()
+            .map(|dir| dir.join(&library_name))
+            .find(|path| path.is_file())
+            .expect("missing test plugin");
 
         for relative in [false, true] {
             let dir = tempfile::tempdir().unwrap();
