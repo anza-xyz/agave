@@ -400,6 +400,11 @@ pub struct UiTransactionStatusMeta {
         skip_serializing_if = "OptionSerializer::should_skip"
     )]
     pub cost_units: OptionSerializer<u64>,
+    #[serde(
+        default = "OptionSerializer::skip",
+        skip_serializing_if = "OptionSerializer::should_skip"
+    )]
+    pub loaded_accounts_data_size: OptionSerializer<u32>,
 }
 
 impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
@@ -430,6 +435,7 @@ impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
             ),
             compute_units_consumed: OptionSerializer::or_skip(meta.compute_units_consumed),
             cost_units: OptionSerializer::or_skip(meta.cost_units),
+            loaded_accounts_data_size: OptionSerializer::or_skip(meta.loaded_accounts_data_size),
         }
     }
 }
@@ -768,6 +774,7 @@ pub struct TransactionStatusMeta {
     pub return_data: Option<TransactionReturnData>,
     pub compute_units_consumed: Option<u64>,
     pub cost_units: Option<u64>,
+    pub loaded_accounts_data_size: Option<u32>,
 }
 
 impl Default for TransactionStatusMeta {
@@ -786,6 +793,7 @@ impl Default for TransactionStatusMeta {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         }
     }
 }
