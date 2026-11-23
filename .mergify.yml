@@ -112,6 +112,28 @@ pull_request_rules:
           If this PR represents a change to a native program implementation (not
           tests), please include a reviewer from the Firedancer team. And please
           keep refactors to a minimum.
+  - name: Warning for community changes to CI
+    conditions:
+      - author≠@anza
+      - author≠mergify[bot]
+      - author≠dependabot[bot]
+      - author≠github-actions[bot]
+      - author≠agave-version-bumper[bot]
+      - or:
+        - files~=^\.github/
+        - files~=^\.buildkite/
+        - files~=^ci/
+        - files~=^scripts/
+        - files~=(^|/)build\.rs$
+        - files~=(^|/)\.cargo/config(\.toml)?$
+        - files~=(^|/)rust-toolchain(\.toml)?$
+        - files=.mergify.yml
+    actions:
+      comment:
+        message: |
+          :mag: This PR changes CI configuration, scripts, or related code.
+
+          Please review it carefully before applying the `CI` label.
 
 commands_restrictions:
   # Only users with write access to the repository may run Mergify commands.
