@@ -77,7 +77,7 @@ libc = { workspace = true }
 nix = { workspace = true, features = ["user"] }
 
 [dev-dependencies]
-agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../logger", features = ["agave-unstable-api", "auto-color"] }
 agave-random = { path = "../random", features = ["agave-unstable-api"] }
 bencher = { workspace = true }
 rand_chacha = { workspace = true }

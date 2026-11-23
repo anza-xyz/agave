@@ -50,7 +50,7 @@ solana-vote-interface = { workspace = true, features = ["wincode"] }
 wincode = { workspace = true }
 
 [dev-dependencies]
-agave-logger = { path = "../../logger", features = ["agave-unstable-api"] }
+agave-logger = { path = "../../logger", features = ["agave-unstable-api", "auto-color"] }
 arbitrary = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
