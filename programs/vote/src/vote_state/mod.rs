@@ -56,7 +56,6 @@ pub fn authorize<S: std::hash::BuildHasher, F>(
     vote_authorize: VoteAuthorize,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
-    is_vote_authorize_with_bls_enabled: bool,
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
@@ -66,7 +65,7 @@ where
 
     match vote_authorize {
         VoteAuthorize::Voter => {
-            if is_vote_authorize_with_bls_enabled && vote_state.has_bls_pubkey() {
+            if vote_state.has_bls_pubkey() {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let authorized_withdrawer_signer =
@@ -96,9 +95,6 @@ where
             vote_state.set_authorized_withdrawer(*authorized);
         }
         VoteAuthorize::VoterWithBLS(args) => {
-            if !is_vote_authorize_with_bls_enabled {
-                return Err(InstructionError::InvalidInstructionData);
-            }
             let authorized_withdrawer_signer =
                 verify_authorized_signer(vote_state.authorized_withdrawer(), signers).is_ok();
 
@@ -1328,7 +1324,6 @@ mod tests {
                 }),
                 &signers,
                 &clock,
-                true,
                 || Ok(()),
             )
             .is_ok()
@@ -1364,7 +1359,6 @@ mod tests {
                 }),
                 &signers,
                 &clock,
-                true,
                 || Ok(()),
             ),
             Err(InstructionError::InvalidArgument),
@@ -1392,7 +1386,6 @@ mod tests {
                 }),
                 &signers,
                 &clock,
-                true,
                 || Ok(()),
             ),
             Ok(())
@@ -3254,7 +3247,6 @@ mod tests {
             }),
             &signers,
             &Clock::default(),
-            true,
             || Ok(()),
         )
         .unwrap();
@@ -3277,7 +3269,6 @@ mod tests {
             }),
             &signers,
             &clock,
-            true,
             || Ok(()),
         )
         .unwrap();
@@ -3320,7 +3311,6 @@ mod tests {
                 }),
                 &signers,
                 &clock,
-                true,
                 || Ok(()),
             ),
             Err(InstructionError::InvalidArgument)
@@ -3338,7 +3328,6 @@ mod tests {
                 }),
                 &signers,
                 &clock,
-                true,
                 || Ok(()),
             ),
             Err(InstructionError::InvalidArgument)
@@ -3358,7 +3347,6 @@ mod tests {
                 }),
                 &signers,
                 &clock,
-                true,
                 || Ok(()),
             ),
             Err(InstructionError::InvalidArgument)
@@ -3401,7 +3389,6 @@ mod tests {
             VoteAuthorize::Voter,
             &signers,
             &clock,
-            false,
             || Ok(()),
         )
         .unwrap();
@@ -3459,7 +3446,6 @@ mod tests {
             VoteAuthorize::Voter,
             &signers,
             &Clock::default(),
-            false,
             || Ok(()),
         )
         .unwrap();
