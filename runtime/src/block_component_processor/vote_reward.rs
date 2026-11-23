@@ -7,12 +7,10 @@ use {
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
-    solana_vote_interface::state::{
-        BlockTimestamp, LandedVote, Lockout, MAX_EPOCH_CREDITS_HISTORY,
-    },
+    solana_vote_interface::state::{BlockTimestamp, MAX_EPOCH_CREDITS_HISTORY},
     solana_vote_program::vote_state::handler::VoteStateHandler,
     std::{
-        collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
+        collections::{HashMap, HashSet, hash_map::Entry},
         num::NonZero,
     },
     thiserror::Error,
@@ -132,10 +130,7 @@ impl VoteState {
         let latest_voted_slot = slot
             .max(self.handler.last_voted_slot().unwrap_or(0))
             .max(self.handler.root_slot().unwrap_or(0));
-        self.handler.set_votes(VecDeque::from([LandedVote {
-            lockout: Lockout::new(latest_voted_slot),
-            latency: 0,
-        }]));
+        self.handler.set_latest_vote(latest_voted_slot);
 
         let timestamp = slot_timestamp_ns / 1_000_000_000;
         if timestamp > self.handler.last_timestamp().timestamp {

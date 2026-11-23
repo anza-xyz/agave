@@ -268,9 +268,14 @@ impl VoteStateHandler {
         }
     }
 
-    pub fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
+    pub fn set_latest_vote(&mut self, slot: Slot) {
         match &mut self.target_state {
-            TargetVoteState::V4(v4) => v4.votes = votes,
+            TargetVoteState::V4(v4) => {
+                v4.votes = VecDeque::from([LandedVote {
+                    lockout: Lockout::new(slot),
+                    latency: 0,
+                }])
+            }
         }
     }
 

@@ -790,16 +790,9 @@ mod tests {
             Ok(())
         );
 
-        // Simulate an account with an existing tower.
+        // Simulate an account.
         vote_state.set_root_slot(Some(103));
-        vote_state.set_votes(
-            (104..136)
-                .map(|slot| LandedVote {
-                    latency: 0,
-                    lockout: Lockout::new(slot),
-                })
-                .collect(),
-        );
+        vote_state.set_latest_vote(136);
 
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
         // required lamports for rent exempt minimum at that size
