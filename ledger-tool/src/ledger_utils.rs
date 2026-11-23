@@ -321,7 +321,6 @@ pub fn load_and_process_ledger(
                     enable_extended_tx_metadata_storage: arg_matches
                         .is_present("enable_extended_tx_metadata_storage"),
                     dependency_tracker: None,
-                    transaction_history_notification_sender: None,
                 },
                 exit.clone(),
                 None,
