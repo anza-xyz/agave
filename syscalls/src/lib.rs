@@ -740,7 +740,7 @@ impl BuiltinFunctionDefinition<InvokeContext<'_, '_>> for SyscallAllocFree {
         _: u64,
         _: u64,
     ) -> Result<u64, Error> {
-        if invoke_context.get_feature_set().disable_sol_alloc_free_again {
+        if invoke_context.get_feature_set().disable_sol_alloc_free {
             // SIMD-0706: discourage remaining users of this syscall.
             // Remove this comment when cleaning up the gate.
             let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
@@ -3412,7 +3412,7 @@ mod tests {
     #[test_case(true, 100; "feature active")]
     fn test_syscall_sol_alloc_free_cu_charge(feature_active: bool, expected_charge: u64) {
         let feature_set = &SVMFeatureSet {
-            disable_sol_alloc_free_again: feature_active,
+            disable_sol_alloc_free: feature_active,
             ..SVMFeatureSet::default()
         };
         let program_id = Pubkey::new_unique();

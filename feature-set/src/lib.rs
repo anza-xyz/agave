@@ -82,7 +82,7 @@ pub struct FeatureSnapshot {
     pub increase_tx_v1_account_lock_limit: bool,
     pub invoke_signed_v2: bool,
     pub loaderv3_programdata_size_floor: bool,
-    pub disable_sol_alloc_free_again: bool,
+    pub disable_sol_alloc_free: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -188,9 +188,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
             invoke_signed_v2: is_active(&invoke_signed_v2::ID),
             loaderv3_programdata_size_floor: is_active(&loaderv3_programdata_size_floor::ID),
-            disable_sol_alloc_free_again: is_active(
-                &disable_sol_alloc_free_again::ID,
-            ),
+            disable_sol_alloc_free: is_active(&disable_sol_alloc_free::ID),
         }
     }
 }
@@ -351,7 +349,7 @@ impl FeatureSet {
             loader_v3_remove_extend_program: snapshot.loader_v3_remove_extend_program,
             invoke_signed_v2: snapshot.invoke_signed_v2,
             loaderv3_programdata_size_floor: snapshot.loaderv3_programdata_size_floor,
-            disable_sol_alloc_free_again: snapshot.disable_sol_alloc_free_again,
+            disable_sol_alloc_free: snapshot.disable_sol_alloc_free,
         }
     }
 
@@ -423,7 +421,7 @@ impl FeatureSet {
             loader_v3_remove_extend_program,
             invoke_signed_v2,
             loaderv3_programdata_size_floor,
-            disable_sol_alloc_free_again,
+            disable_sol_alloc_free,
         }
     }
 }
@@ -1684,8 +1682,8 @@ pub mod loaderv3_programdata_size_floor {
     solana_pubkey::declare_id!("8whkDenELnfwYLirBc4Wb4H2Z1z5K7tiykpdxJS7cWg1");
 }
 
-pub mod disable_sol_alloc_free_again {
-    solana_pubkey::declare_id!("TodoFeatureKeyForSimdSix1111111111111111111");
+pub mod disable_sol_alloc_free {
+    solana_pubkey::declare_id!("H5hLYYo9dfybeLVAyD9zBAf7CdWSqi1MFR9gYba1tWFZ");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -2835,8 +2833,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
             "Apply a minimum loaded data size to loader-v3 ProgramData accounts",
         ),
         (
-            disable_sol_alloc_free_again::id(),
-            "SIMD-0706: Disable the sol_alloc_free_ syscall again",
+            disable_sol_alloc_free::id(),
+            "SIMD-0706: Reject unknown syscalls and `sol_alloc_free_`",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/

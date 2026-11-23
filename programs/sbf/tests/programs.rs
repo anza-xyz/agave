@@ -528,7 +528,7 @@ fn test_sol_alloc_free_no_longer_deployable_with_upgradeable_loader() {
 fn test_sol_alloc_free_deployable_without_simd_0706() {
     agave_logger::setup();
     let effects = deploy_deprecated_loader_program(SVMFeatureSet {
-        disable_sol_alloc_free_again: false,
+        disable_sol_alloc_free: false,
         ..SVMFeatureSet::all_enabled()
     });
     assert_eq!(effects.result, None);
