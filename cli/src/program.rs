@@ -2641,7 +2641,7 @@ fn build_write_messages(
     };
     let chunk_size = calculate_max_chunk_size(create_msg(&vec![(0, &[][..]); writes_per_message]))
         .checked_div(writes_per_message)
-        .unwrap_or_default();
+        .unwrap();
 
     let writes = program_data
         .chunks(chunk_size)
