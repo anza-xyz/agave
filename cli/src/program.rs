@@ -2655,14 +2655,15 @@ fn build_write_messages(
     writes.chunks(writes_per_message).map(create_msg).collect()
 }
 
-async fn is_unbound_loader_v3_instruction_data_active(
-    rpc_client: &RpcClient,
-) -> Result<bool, Box<dyn std::error::Error>> {
+/// Falls back to bounded writes if the feature account can't be fetched, which is
+/// valid whether or not the feature is active.
+async fn is_unbound_loader_v3_instruction_data_active(rpc_client: &RpcClient) -> bool {
     get_feature_is_active(
         rpc_client,
         &agave_feature_set::unbound_loader_v3_instruction_data::id(),
     )
     .await
+    .unwrap_or(false)
 }
 
 pub fn calculate_max_chunk_size(baseline_msg: VersionedMessage) -> usize {
@@ -2733,7 +2734,7 @@ async fn do_process_program_deploy(
     };
 
     let write_messages = build_write_messages(
-        is_unbound_loader_v3_instruction_data_active(&rpc_client).await?,
+        is_unbound_loader_v3_instruction_data_active(&rpc_client).await,
         program_data,
         &buffer_program_data,
         buffer_pubkey,
@@ -2860,7 +2861,7 @@ async fn do_process_write_buffer(
     };
 
     let write_messages = build_write_messages(
-        is_unbound_loader_v3_instruction_data_active(&rpc_client).await?,
+        is_unbound_loader_v3_instruction_data_active(&rpc_client).await,
         program_data,
         &buffer_program_data,
         buffer_pubkey,
@@ -2977,7 +2978,7 @@ async fn do_process_program_upgrade(
             };
 
             let write_messages = build_write_messages(
-                is_unbound_loader_v3_instruction_data_active(&rpc_client).await?,
+                is_unbound_loader_v3_instruction_data_active(&rpc_client).await,
                 program_data,
                 &buffer_program_data,
                 &buffer_signer.pubkey(),
