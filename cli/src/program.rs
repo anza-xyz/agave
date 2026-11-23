@@ -2648,7 +2648,7 @@ fn build_write_messages(
         .zip(0usize..)
         .filter_map(|(chunk, i)| {
             let offset = i.saturating_mul(chunk_size);
-            (chunk != &buffer_program_data[offset..offset.saturating_add(chunk.len())])
+            (buffer_program_data.get(offset..offset.saturating_add(chunk.len())) != Some(chunk))
                 .then_some((offset as u32, chunk))
         })
         .collect::<Vec<_>>();
