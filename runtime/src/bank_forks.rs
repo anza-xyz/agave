@@ -771,7 +771,6 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::test_utils::update_vote_account_timestamp,
             block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
@@ -793,7 +792,6 @@ mod tests {
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{Account, AccountSharedData},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
-        solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
@@ -804,7 +802,6 @@ mod tests {
         solana_signer::Signer,
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
-        solana_vote_program::vote_state::BlockTimestamp,
         std::{assert_matches, fmt::Debug, thread, time::Duration},
     };
 
@@ -1263,9 +1260,7 @@ mod tests {
         agave_logger::setup();
         let leader_keypair = Keypair::new();
         let GenesisConfigInfo {
-            mut genesis_config,
-            voting_keypair,
-            ..
+            mut genesis_config, ..
         } = create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1_000);
         let slots_in_epoch = 32;
         genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
@@ -1277,14 +1272,8 @@ mod tests {
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
 
-        let additional_timestamp_secs = 2;
-
         let num_slots = slots_in_epoch + 1; // Advance past first epoch boundary
         for slot in 1..num_slots {
-            // Just after the epoch boundary, timestamp a vote that will shift
-            // Clock::unix_timestamp from Bank::unix_timestamp_from_genesis()
-            let update_timestamp_case = slot == slots_in_epoch;
-
             let child1 = Bank::new_from_parent(
                 bank_forks0.read().unwrap()[slot - 1].clone(),
                 SlotLeader::default(),
@@ -1296,18 +1285,11 @@ mod tests {
                 slot,
             );
 
-            if update_timestamp_case {
-                for child in &[&child1, &child2] {
-                    let recent_timestamp: UnixTimestamp = child.unix_timestamp_from_genesis();
-                    update_vote_account_timestamp(
-                        BlockTimestamp {
-                            slot: child.slot(),
-                            timestamp: recent_timestamp + additional_timestamp_secs,
-                        },
-                        child,
-                        &voting_keypair.pubkey(),
-                    );
-                }
+            // Advance both clocks via footers, including across the epoch boundary.
+            let timestamp = genesis_config.creation_time + slot as i64 * 2;
+            for child in [&child1, &child2] {
+                child.update_clock_from_footer(timestamp * 1_000_000_000);
+                assert_eq!(child.clock().unix_timestamp, timestamp);
             }
 
             // Set root in bank_forks0 to truncate the ancestor history
