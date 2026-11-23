@@ -2025,9 +2025,7 @@ impl RpcClient {
     /// let supply = rpc_client.supply()?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn supply(&self) -> RpcResult<RpcSupply> {
-        #[allow(deprecated)]
         self.invoke((self.rpc_client.as_ref()).supply())
     }
 
@@ -2052,12 +2050,10 @@ impl RpcClient {
     /// )?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn supply_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<RpcSupply> {
-        #[allow(deprecated)]
         self.invoke((self.rpc_client.as_ref()).supply_with_commitment(commitment_config))
     }
 
@@ -2091,12 +2087,10 @@ impl RpcClient {
     /// )?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn get_largest_accounts_with_config(
         &self,
         config: RpcLargestAccountsConfig,
     ) -> RpcResult<Vec<RpcAccountBalance>> {
-        #[allow(deprecated)]
         self.invoke((self.rpc_client.as_ref()).get_largest_accounts_with_config(config))
     }
 
@@ -3581,9 +3575,7 @@ impl RpcClient {
     /// let accounts = rpc_client.get_program_accounts(&alice.pubkey())?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn get_program_accounts(&self, pubkey: &Pubkey) -> ClientResult<Vec<(Pubkey, Account)>> {
-        #[allow(deprecated)]
         self.invoke((self.rpc_client.as_ref()).get_program_accounts(pubkey))
     }
 
@@ -3641,13 +3633,11 @@ impl RpcClient {
     /// )?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn get_program_ui_accounts_with_config(
         &self,
         pubkey: &Pubkey,
         config: RpcProgramAccountsConfig,
     ) -> ClientResult<Vec<(Pubkey, UiAccount)>> {
-        #[allow(deprecated)]
         self.invoke((self.rpc_client.as_ref()).get_program_ui_accounts_with_config(pubkey, config))
     }
 
@@ -3974,13 +3964,11 @@ impl RpcClient {
     /// assert!(accounts.is_empty());
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn get_token_accounts_by_delegate(
         &self,
         delegate: &Pubkey,
         token_account_filter: TokenAccountsFilter,
     ) -> ClientResult<Vec<RpcKeyedAccount>> {
-        #[allow(deprecated)]
         self.invoke(
             (self.rpc_client.as_ref())
                 .get_token_accounts_by_delegate(delegate, token_account_filter),
@@ -3997,14 +3985,12 @@ impl RpcClient {
     /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
-    #[deprecated(since = "4.5.0")]
     pub fn get_token_accounts_by_delegate_with_commitment(
         &self,
         delegate: &Pubkey,
         token_account_filter: TokenAccountsFilter,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<Vec<RpcKeyedAccount>> {
-        #[allow(deprecated)]
         self.invoke(
             (self.rpc_client.as_ref()).get_token_accounts_by_delegate_with_commitment(
                 delegate,
@@ -4038,13 +4024,11 @@ impl RpcClient {
     /// assert!(accounts.is_empty());
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn get_token_accounts_by_owner(
         &self,
         owner: &Pubkey,
         token_account_filter: TokenAccountsFilter,
     ) -> ClientResult<Vec<RpcKeyedAccount>> {
-        #[allow(deprecated)]
         self.invoke(
             (self.rpc_client.as_ref()).get_token_accounts_by_owner(owner, token_account_filter),
         )
@@ -4060,14 +4044,12 @@ impl RpcClient {
     /// This method corresponds directly to the [`getTokenAccountsByOwner`] RPC method.
     ///
     /// [`getTokenAccountsByOwner`]: https://solana.com/docs/rpc/http/gettokenaccountsbyowner
-    #[deprecated(since = "4.5.0")]
     pub fn get_token_accounts_by_owner_with_commitment(
         &self,
         owner: &Pubkey,
         token_account_filter: TokenAccountsFilter,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<Vec<RpcKeyedAccount>> {
-        #[allow(deprecated)]
         self.invoke(
             (self.rpc_client.as_ref()).get_token_accounts_by_owner_with_commitment(
                 owner,
@@ -4097,12 +4079,10 @@ impl RpcClient {
     /// assert!(accounts.is_empty());
     /// # Ok::<(), solana_rpc_client_api::client_error::Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub fn get_token_largest_accounts(
         &self,
         mint: &Pubkey,
     ) -> ClientResult<Vec<RpcTokenAccountBalance>> {
-        #[allow(deprecated)]
         self.invoke((self.rpc_client.as_ref()).get_token_largest_accounts(mint))
     }
 
@@ -4115,13 +4095,11 @@ impl RpcClient {
     /// This method corresponds directly to the [`getTokenLargestAccounts`] RPC method.
     ///
     /// [`getTokenLargestAccounts`]: https://solana.com/docs/rpc/http/gettokenlargestaccounts
-    #[deprecated(since = "4.5.0")]
     pub fn get_token_largest_accounts_with_commitment(
         &self,
         mint: &Pubkey,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<Vec<RpcTokenAccountBalance>> {
-        #[allow(deprecated)]
         self.invoke(
             (self.rpc_client.as_ref())
                 .get_token_largest_accounts_with_commitment(mint, commitment_config),
@@ -4903,7 +4881,6 @@ mod tests {
         let expected_result = vec![(pubkey, keyed_account.account.clone())];
         // Test: without context
         {
-            #[allow(deprecated)]
             let mocks: Mocks = [(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::NoContext(vec![keyed_account.clone()]))
@@ -4912,7 +4889,6 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let result = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -4934,7 +4910,6 @@ mod tests {
 
         // Test: with context
         {
-            #[allow(deprecated)]
             let mocks: Mocks = [(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::Context(Response {
@@ -4949,7 +4924,6 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let result = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -4979,7 +4953,6 @@ mod tests {
                 (pubkey, keyed_account.account.clone()),
             ];
 
-            #[allow(deprecated)]
             let mut mocks: MocksMap = [
                 (
                     RpcRequest::GetProgramAccounts,
@@ -5007,7 +4980,6 @@ mod tests {
             .into_iter()
             .collect();
 
-            #[allow(deprecated)]
             mocks.insert(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::Context(Response {
@@ -5024,7 +4996,6 @@ mod tests {
                 .unwrap(),
             );
 
-            #[allow(deprecated)]
             mocks.insert(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::Context(Response {
@@ -5038,7 +5009,6 @@ mod tests {
             );
 
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let mut result1 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5058,7 +5028,6 @@ mod tests {
 
             assert_eq!(result1.len(), 1);
 
-            #[allow(deprecated)]
             let result2 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5078,7 +5047,6 @@ mod tests {
 
             assert_eq!(result2.len(), 1);
 
-            #[allow(deprecated)]
             let result_3 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5098,7 +5066,6 @@ mod tests {
 
             assert_eq!(result_3.len(), 3);
 
-            #[allow(deprecated)]
             let result_4 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5143,7 +5110,6 @@ mod tests {
         let expected_result = vec![(pubkey, account.clone())];
         // Test: without context
         {
-            #[allow(deprecated)]
             let mocks: Mocks = [(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::NoContext(vec![keyed_account.clone()]))
@@ -5152,7 +5118,6 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let result = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5174,7 +5139,6 @@ mod tests {
 
         // Test: with context
         {
-            #[allow(deprecated)]
             let mocks: Mocks = [(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::Context(Response {
@@ -5189,7 +5153,6 @@ mod tests {
             .into_iter()
             .collect();
             let rpc_client = RpcClient::new_mock_with_mocks("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let result = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5219,7 +5182,6 @@ mod tests {
                 (pubkey, account.clone()),
             ];
 
-            #[allow(deprecated)]
             let mut mocks: MocksMap = [
                 (
                     RpcRequest::GetProgramAccounts,
@@ -5247,7 +5209,6 @@ mod tests {
             .into_iter()
             .collect();
 
-            #[allow(deprecated)]
             mocks.insert(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::Context(Response {
@@ -5264,7 +5225,6 @@ mod tests {
                 .unwrap(),
             );
 
-            #[allow(deprecated)]
             mocks.insert(
                 RpcRequest::GetProgramAccounts,
                 serde_json::to_value(OptionalContext::Context(Response {
@@ -5278,7 +5238,6 @@ mod tests {
             );
 
             let rpc_client = RpcClient::new_mock_with_mocks_map("mock_client".to_string(), mocks);
-            #[allow(deprecated)]
             let mut result1 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5298,7 +5257,6 @@ mod tests {
 
             assert_eq!(result1.len(), 1);
 
-            #[allow(deprecated)]
             let result2 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5318,7 +5276,6 @@ mod tests {
 
             assert_eq!(result2.len(), 1);
 
-            #[allow(deprecated)]
             let result_3 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,
@@ -5338,7 +5295,6 @@ mod tests {
 
             assert_eq!(result_3.len(), 3);
 
-            #[allow(deprecated)]
             let result_4 = rpc_client
                 .get_program_ui_accounts_with_config(
                     &program_id,

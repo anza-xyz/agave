@@ -2308,9 +2308,7 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub async fn supply(&self) -> RpcResult<RpcSupply> {
-        #[allow(deprecated)]
         self.supply_with_commitment(self.commitment()).await
     }
 
@@ -2338,12 +2336,10 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub async fn supply_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<RpcSupply> {
-        #[allow(deprecated)]
         self.send(RpcRequest::GetSupply, json!([commitment_config]))
             .await
     }
@@ -2382,7 +2378,6 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub async fn get_largest_accounts_with_config(
         &self,
         config: RpcLargestAccountsConfig,
@@ -2392,7 +2387,6 @@ impl RpcClient {
             commitment: Some(commitment),
             ..config
         };
-        #[allow(deprecated)]
         self.send(RpcRequest::GetLargestAccounts, json!([config]))
             .await
     }
@@ -4207,12 +4201,10 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub async fn get_program_accounts(
         &self,
         pubkey: &Pubkey,
     ) -> ClientResult<Vec<(Pubkey, Account)>> {
-        #[allow(deprecated)]
         self.get_program_ui_accounts_with_config(
             pubkey,
             RpcProgramAccountsConfig {
@@ -4298,7 +4290,6 @@ impl RpcClient {
     /// # })?;
     /// # Ok::<(), Error>(())
     /// ```
-    #[deprecated(since = "4.5.0")]
     pub async fn get_program_ui_accounts_with_config(
         &self,
         pubkey: &Pubkey,
@@ -4310,7 +4301,6 @@ impl RpcClient {
             .unwrap_or_else(|| self.commitment());
         config.account_config.commitment = Some(commitment);
 
-        #[allow(deprecated)]
         let accounts = self
             .send::<OptionalContext<Vec<RpcKeyedAccount>>>(
                 RpcRequest::GetProgramAccounts,
@@ -4318,7 +4308,6 @@ impl RpcClient {
             )
             .await?
             .parse_value();
-        #[allow(deprecated)]
         pubkey_ui_account_client_result_from_keyed_accounts(
             accounts,
             RpcRequest::GetProgramAccounts,
@@ -4577,13 +4566,11 @@ impl RpcClient {
     /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
-    #[deprecated(since = "4.5.0")]
     pub async fn get_token_accounts_by_delegate(
         &self,
         delegate: &Pubkey,
         token_account_filter: TokenAccountsFilter,
     ) -> ClientResult<Vec<RpcKeyedAccount>> {
-        #[allow(deprecated)]
         Ok(self
             .get_token_accounts_by_delegate_with_commitment(
                 delegate,
@@ -4603,7 +4590,6 @@ impl RpcClient {
     /// This method is built on the [`getTokenAccountsByDelegate`] RPC method.
     ///
     /// [`getTokenAccountsByDelegate`]: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate
-    #[deprecated(since = "4.5.0")]
     pub async fn get_token_accounts_by_delegate_with_commitment(
         &self,
         delegate: &Pubkey,
@@ -4624,7 +4610,6 @@ impl RpcClient {
             min_context_slot: None,
         };
 
-        #[allow(deprecated)]
         self.send(
             RpcRequest::GetTokenAccountsByDelegate,
             json!([delegate.to_string(), token_account_filter, config]),
@@ -4639,13 +4624,11 @@ impl RpcClient {
     /// This method corresponds directly to the [`getTokenAccountsByOwner`] RPC method.
     ///
     /// [`getTokenAccountsByOwner`]: https://solana.com/docs/rpc/http/gettokenaccountsbyowner
-    #[deprecated(since = "4.5.0")]
     pub async fn get_token_accounts_by_owner(
         &self,
         owner: &Pubkey,
         token_account_filter: TokenAccountsFilter,
     ) -> ClientResult<Vec<RpcKeyedAccount>> {
-        #[allow(deprecated)]
         Ok(self
             .get_token_accounts_by_owner_with_commitment(
                 owner,
@@ -4665,7 +4648,6 @@ impl RpcClient {
     /// This method corresponds directly to the [`getTokenAccountsByOwner`] RPC method.
     ///
     /// [`getTokenAccountsByOwner`]: https://solana.com/docs/rpc/http/gettokenaccountsbyowner
-    #[deprecated(since = "4.5.0")]
     pub async fn get_token_accounts_by_owner_with_commitment(
         &self,
         owner: &Pubkey,
@@ -4686,7 +4668,6 @@ impl RpcClient {
             min_context_slot: None,
         };
 
-        #[allow(deprecated)]
         self.send(
             RpcRequest::GetTokenAccountsByOwner,
             json!([owner.to_string(), token_account_filter, config]),
@@ -4701,12 +4682,10 @@ impl RpcClient {
     /// This method corresponds directly to the [`getTokenLargestAccounts`] RPC method.
     ///
     /// [`getTokenLargestAccounts`]: https://solana.com/docs/rpc/http/gettokenlargestaccounts
-    #[deprecated(since = "4.5.0")]
     pub async fn get_token_largest_accounts(
         &self,
         mint: &Pubkey,
     ) -> ClientResult<Vec<RpcTokenAccountBalance>> {
-        #[allow(deprecated)]
         Ok(self
             .get_token_largest_accounts_with_commitment(mint, self.commitment())
             .await?
@@ -4722,13 +4701,11 @@ impl RpcClient {
     /// This method corresponds directly to the [`getTokenLargestAccounts`] RPC method.
     ///
     /// [`getTokenLargestAccounts`]: https://solana.com/docs/rpc/http/gettokenlargestaccounts
-    #[deprecated(since = "4.5.0")]
     pub async fn get_token_largest_accounts_with_commitment(
         &self,
         mint: &Pubkey,
         commitment_config: CommitmentConfig,
     ) -> RpcResult<Vec<RpcTokenAccountBalance>> {
-        #[allow(deprecated)]
         self.send(
             RpcRequest::GetTokenLargestAccounts,
             json!([mint.to_string(), commitment_config]),
@@ -5326,7 +5303,6 @@ mod tests {
             account,
         };
 
-        #[allow(deprecated)]
         let get_account_request = RpcRequest::GetTokenAccountsByDelegate;
         let get_account_response = serde_json::to_value(Response {
             context: RpcResponseContext {
@@ -5340,7 +5316,6 @@ mod tests {
         let mut mocks = crate::mock_sender::Mocks::default();
         mocks.insert(get_account_request, get_account_response);
         let client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
-        #[allow(deprecated)]
         let resp = client
             .get_token_accounts_by_delegate_with_commitment(
                 &delegate,

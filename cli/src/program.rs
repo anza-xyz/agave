@@ -2090,7 +2090,6 @@ async fn get_accounts_with_filter(
     filters: Vec<RpcFilterType>,
     length: usize,
 ) -> Result<Vec<(Pubkey, UiAccount)>, Box<dyn std::error::Error>> {
-    #[allow(deprecated)]
     let results = rpc_client
         .get_program_ui_accounts_with_config(
             &bpf_loader_upgradeable::id(),

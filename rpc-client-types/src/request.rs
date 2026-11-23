@@ -10,9 +10,7 @@ use {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum RpcRequest {
-    Custom {
-        method: &'static str,
-    },
+    Custom { method: &'static str },
     DeregisterNode,
     GetAccountInfo,
     GetBalance,
@@ -34,7 +32,6 @@ pub enum RpcRequest {
     GetInflationGovernor,
     GetInflationRate,
     GetInflationReward,
-    #[deprecated(since = "4.5.0")]
     GetLargestAccounts,
     GetLatestBlockhash,
     GetLeaderSchedule,
@@ -42,7 +39,6 @@ pub enum RpcRequest {
     GetMaxShredInsertSlot,
     GetMinimumBalanceForRentExemption,
     GetMultipleAccounts,
-    #[deprecated(since = "4.5.0")]
     GetProgramAccounts,
     GetRecentPerformanceSamples,
     GetRecentPrioritizationFees,
@@ -59,14 +55,10 @@ pub enum RpcRequest {
     GetSlotsPerSegment,
     GetStakeMinimumDelegation,
     GetStoragePubkeysForSlot,
-    #[deprecated(since = "4.5.0")]
     GetSupply,
     GetTokenAccountBalance,
-    #[deprecated(since = "4.5.0")]
     GetTokenAccountsByDelegate,
-    #[deprecated(since = "4.5.0")]
     GetTokenAccountsByOwner,
-    #[deprecated(since = "4.5.0")]
     GetTokenLargestAccounts,
     GetTokenSupply,
     GetTransaction,
@@ -288,7 +280,6 @@ mod tests {
         let request = test_request.build_request_json(1, Value::Null);
         assert_eq!(request["method"], "sendTransaction");
 
-        #[allow(deprecated)]
         let test_request = RpcRequest::GetTokenLargestAccounts;
         let request = test_request.build_request_json(1, Value::Null);
         assert_eq!(request["method"], "getTokenLargestAccounts");
@@ -312,7 +303,6 @@ mod tests {
         assert_eq!(request["params"], json!([addr, commitment_config]));
 
         // Test request with CommitmentConfig and params
-        #[allow(deprecated)]
         let test_request = RpcRequest::GetTokenAccountsByOwner;
         let mint = solana_pubkey::new_rand();
         let token_account_filter = RpcTokenAccountsFilter::Mint(mint.to_string());
