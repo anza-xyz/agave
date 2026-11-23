@@ -20,6 +20,7 @@ agave-unstable-api = []
 dev-context-only-utils = [
     "agave-bls-sigverify/dev-context-only-utils",
     "agave-votor-messages/dev-context-only-utils",
+    "solana-ledger/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
 ]
 stable-abi = [
