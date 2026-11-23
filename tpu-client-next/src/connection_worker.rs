@@ -100,8 +100,9 @@ impl ConnectionWorker {
         max_reconnect_attempts: usize,
         send_transaction_stats: Arc<SendTransactionStats>,
         handshake_timeout: Duration,
+        cancel: CancellationToken,
     ) -> (Self, CancellationToken) {
-        let cancel = CancellationToken::new();
+        let cancel = cancel.child_token();
         let this = Self {
             endpoint,
             peer,

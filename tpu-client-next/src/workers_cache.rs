@@ -14,9 +14,12 @@ use {
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
-        task::{JoinHandle, JoinSet},
+        task::JoinHandle,
     },
-    tokio_util::sync::CancellationToken,
+    tokio_util::{
+        sync::{CancellationToken, DropGuard},
+        task::TaskTracker,
+    },
 };
 
 /// [`WorkerInfo`] holds information about a worker responsible for sending
@@ -24,7 +27,7 @@ use {
 pub struct WorkerInfo {
     sender: mpsc::Sender<WireTransaction>,
     handle: JoinHandle<()>,
-    cancel: CancellationToken,
+    cancel: DropGuard,
 }
 
 impl WorkerInfo {
@@ -36,7 +39,7 @@ impl WorkerInfo {
         Self {
             sender,
             handle,
-            cancel,
+            cancel: cancel.drop_guard(),
         }
     }
 
@@ -62,7 +65,7 @@ impl WorkerInfo {
     /// Closes the worker by dropping the sender and awaiting the worker's
     /// statistics.
     async fn shutdown(self) -> Result<(), WorkersCacheError> {
-        self.cancel.cancel();
+        self.cancel.token().cancel();
         drop(self.sender);
         self.handle
             .await
@@ -73,22 +76,25 @@ impl WorkerInfo {
     /// Returns `true` if the worker is still active and able to send
     /// transactions.
     fn is_active(&self) -> bool {
-        !(self.cancel.is_cancelled() || self.sender.is_closed())
+        !(self.cancel.token().is_cancelled() || self.sender.is_closed())
     }
 }
 
 /// Spawns a worker to handle communication with a given peer.
 pub fn spawn_worker(
+    tracker: &TaskTracker,
     endpoint: &Endpoint,
     peer: &SocketAddr,
     worker_channel_size: usize,
     max_reconnect_attempts: usize,
     handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
+    cancel: CancellationToken,
 ) -> WorkerInfo {
     let (transaction_sender, transaction_receiver) = mpsc::channel(worker_channel_size);
     let endpoint = endpoint.clone();
     let peer = *peer;
+    let cancel = cancel.child_token();
 
     let (mut worker, cancel) = ConnectionWorker::new(
         endpoint,
@@ -97,8 +103,9 @@ pub fn spawn_worker(
         max_reconnect_attempts,
         stats,
         handshake_timeout,
+        cancel,
     );
-    let handle = tokio::spawn(async move {
+    let handle = tracker.spawn(async move {
         worker.run().await;
     });
 
@@ -113,6 +120,7 @@ pub struct WorkersCache {
     /// Indicates that the `WorkersCache` is being shut down, interrupting any
     /// outstanding `send_transaction_to_address()` invocations.
     cancel: CancellationToken,
+    tracker: TaskTracker,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -139,6 +147,7 @@ impl WorkersCache {
         Self {
             workers: LruCache::new(capacity),
             cancel,
+            tracker: TaskTracker::new(),
         }
     }
 
@@ -153,6 +162,7 @@ impl WorkersCache {
             return Some(ShutdownWorker {
                 leader,
                 worker: popped_worker,
+                tracker: self.tracker.clone(),
             });
         }
         None
@@ -163,6 +173,7 @@ impl WorkersCache {
             return Some(ShutdownWorker {
                 leader,
                 worker: popped_worker,
+                tracker: self.tracker.clone(),
             });
         }
         None
@@ -180,6 +191,9 @@ impl WorkersCache {
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
+        if self.cancel.is_cancelled() {
+            return None;
+        }
         if let Some(worker) = self.workers.get(&peer) {
             // if worker is active, we will reuse it. Otherwise, we will spawn
             // the new one and the existing will be popped out.
@@ -190,12 +204,14 @@ impl WorkersCache {
         trace!("No active worker for peer {peer}, respawning.");
 
         let worker = spawn_worker(
+            &self.tracker,
             endpoint,
             &peer,
             worker_channel_size,
             max_reconnect_attempts,
             handshake_timeout,
             stats,
+            self.cancel.clone(),
         );
 
         self.push(peer, worker)
@@ -222,7 +238,9 @@ impl WorkersCache {
         transaction: WireTransaction,
     ) -> Result<(), WorkersCacheError> {
         let Self {
-            workers, cancel, ..
+            workers,
+            cancel,
+            tracker,
         } = self;
         if cancel.is_cancelled() {
             return Err(WorkersCacheError::ShutdownError);
@@ -241,6 +259,7 @@ impl WorkersCache {
                 shutdown_worker(ShutdownWorker {
                     leader: *peer,
                     worker: current_worker,
+                    tracker: tracker.clone(),
                 })
             }
         }
@@ -259,7 +278,9 @@ impl WorkersCache {
         transaction: WireTransaction,
     ) -> Result<(), WorkersCacheError> {
         let Self {
-            workers, cancel, ..
+            workers,
+            cancel,
+            tracker,
         } = self;
 
         let body = async move {
@@ -272,6 +293,7 @@ impl WorkersCache {
                     shutdown_worker(ShutdownWorker {
                         leader: *peer,
                         worker: current_worker,
+                        tracker: tracker.clone(),
                     })
                 }
             }
@@ -292,6 +314,7 @@ impl WorkersCache {
             shutdown_worker(ShutdownWorker {
                 leader: peer,
                 worker: current_worker,
+                tracker: self.tracker.clone(),
             });
         }
     }
@@ -304,20 +327,10 @@ impl WorkersCache {
     pub async fn shutdown(&mut self) {
         // Interrupt any outstanding `send_transaction_to_address()` calls.
         self.cancel.cancel();
+        self.flush();
 
-        let mut tasks = JoinSet::new();
-        while let Some((peer, current_worker)) = self.workers.pop_lru() {
-            let shutdown_worker = ShutdownWorker {
-                leader: peer,
-                worker: current_worker,
-            };
-            tasks.spawn(shutdown_worker.shutdown());
-        }
-        while let Some(res) = tasks.join_next().await {
-            if let Err(err) = res {
-                debug!("A shutdown task failed: {err}");
-            }
-        }
+        self.tracker.close();
+        self.tracker.wait().await;
     }
 }
 
@@ -327,6 +340,7 @@ impl WorkersCache {
 pub struct ShutdownWorker {
     leader: SocketAddr,
     worker: WorkerInfo,
+    tracker: TaskTracker,
 }
 
 impl ShutdownWorker {
@@ -340,7 +354,8 @@ impl ShutdownWorker {
 }
 
 pub fn shutdown_worker(worker: ShutdownWorker) {
-    tokio::spawn(async move {
+    let tracker = worker.tracker.clone();
+    tracker.spawn(async move {
         let leader = worker.leader();
         let res = worker.shutdown().await;
         if let Err(err) = res {
@@ -358,7 +373,9 @@ mod tests {
             connection_workers_scheduler::BindTarget,
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
-            workers_cache::{WorkersCache, WorkersCacheError, spawn_worker},
+            workers_cache::{
+                WorkerInfo, WorkersCache, WorkersCacheError, shutdown_worker, spawn_worker,
+            },
         },
         quinn::Endpoint,
         solana_net_utils::sockets::{bind_to_localhost_unique, unique_port_range_for_tests},
@@ -366,11 +383,18 @@ mod tests {
         std::{
             net::{Ipv4Addr, SocketAddr},
             num::NonZeroUsize,
-            sync::Arc,
+            pin::pin,
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
             time::Duration,
         },
-        tokio::time::{Instant, sleep, timeout},
-        tokio_util::sync::CancellationToken,
+        tokio::{
+            sync::{Notify, mpsc},
+            time::{Instant, sleep, timeout},
+        },
+        tokio_util::{sync::CancellationToken, task::TaskTracker},
     };
 
     // Specify the pessimistic time to finish generation and result checks.
@@ -393,12 +417,14 @@ mod tests {
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
         let worker_info = spawn_worker(
+            &TaskTracker::new(),
             &endpoint,
             &peer,
             worker_channel_size,
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
+            CancellationToken::new(),
         );
 
         timeout(TEST_MAX_TIME, worker_info.handle)
@@ -425,12 +451,14 @@ mod tests {
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
         let worker_info = spawn_worker(
+            &TaskTracker::new(),
             &endpoint,
             &peer,
             worker_channel_size,
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
+            CancellationToken::new(),
         );
 
         timeout(TEST_MAX_TIME, worker_info.shutdown())
@@ -455,12 +483,14 @@ mod tests {
         let max_reconnect_attempts = 0;
         let stats = Arc::new(SendTransactionStats::default());
         let worker = spawn_worker(
+            &cache.tracker,
             &endpoint,
             &peer,
             worker_channel_size,
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
+            cancel.clone(),
         );
         assert!(cache.push(peer, worker).is_none());
 
@@ -496,5 +526,78 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    // Verifies that `WorkersCache::shutdown()` waits for workers that were
+    // evicted from the cache and whose shutdown is still in progress.
+    #[tokio::test]
+    async fn test_shutdown_waits_for_evicted_workers() {
+        let endpoint = create_test_endpoint();
+
+        let cancel = CancellationToken::new();
+        let mut cache = WorkersCache::new(NonZeroUsize::new(1).unwrap(), cancel.clone());
+
+        let port_range = unique_port_range_for_tests(2);
+        let peer1: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
+        let peer2: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start + 1);
+
+        let (tx1, _rx1) = mpsc::channel(1);
+        let worker1_cancel = cancel.child_token();
+        let worker1_cancelled = Arc::new(Notify::new());
+        let worker1_release = Arc::new(Notify::new());
+        let evicted_worker_finished = Arc::new(AtomicBool::new(false));
+
+        let worker1_cancel_clone = worker1_cancel.clone();
+        let worker1_cancelled_clone = worker1_cancelled.clone();
+        let worker1_release_clone = worker1_release.clone();
+        let evicted_worker_finished_clone = evicted_worker_finished.clone();
+        let handle1 = cache.tracker.spawn(async move {
+            worker1_cancel_clone.cancelled().await;
+            worker1_cancelled_clone.notify_one();
+            worker1_release_clone.notified().await;
+            evicted_worker_finished_clone.store(true, Ordering::SeqCst);
+        });
+        let worker1 = WorkerInfo::new(tx1, handle1, worker1_cancel);
+        assert!(cache.push(peer1, worker1).is_none());
+
+        let worker_channel_size = 1;
+        let max_reconnect_attempts = 0;
+        let stats = Arc::new(SendTransactionStats::default());
+        let evicted = cache
+            .ensure_worker(
+                peer2,
+                &endpoint,
+                worker_channel_size,
+                max_reconnect_attempts,
+                DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
+                stats,
+            )
+            .expect("first worker should be evicted");
+        shutdown_worker(evicted);
+
+        timeout(TEST_MAX_TIME, worker1_cancelled.notified())
+            .await
+            .unwrap_or_else(|_| panic!("Evicted worker was not cancelled in {TEST_MAX_TIME:?}."));
+
+        {
+            let mut shutdown_fut = pin!(cache.shutdown());
+            assert!(
+                timeout(Duration::from_millis(50), &mut shutdown_fut)
+                    .await
+                    .is_err(),
+                "shutdown should wait for evicted worker to finish"
+            );
+            assert!(!evicted_worker_finished.load(Ordering::SeqCst));
+
+            worker1_release.notify_one();
+
+            timeout(TEST_MAX_TIME, shutdown_fut)
+                .await
+                .unwrap_or_else(|_| panic!("Should stop in less than {TEST_MAX_TIME:?}."));
+        }
+
+        assert!(evicted_worker_finished.load(Ordering::SeqCst));
+        assert!(cache.tracker.is_empty());
+        assert!(cache.tracker.is_closed());
     }
 }
