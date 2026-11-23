@@ -50,7 +50,9 @@ use {
     solana_runtime::{
         bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
         bank_forks::BankForks,
-        bank_forks_controller::{BankForksCommand, BankForksCommandReceiver, SetRootCommand},
+        bank_forks_controller::{
+            BankForksCommand, BankForksCommandReceiver, PendingReplayCancels, SetRootCommand,
+        },
         block_component_processor::BlockComponentProcessorError,
         installed_scheduler_pool::BankWithScheduler,
         leader_schedule_utils::first_of_consecutive_leader_slots,
@@ -675,8 +677,8 @@ impl ReplayStage {
 
                     let timer = Duration::from_millis(100);
                     let bank_forks_command_receiver = bank_forks_controller_receiver.receiver();
-                    let set_root_signal_receiver =
-                        bank_forks_controller_receiver.set_root_signal_receiver();
+                    let pending_signal_receiver =
+                        bank_forks_controller_receiver.pending_signal_receiver();
                     select! {
                         recv(ledger_signal_receiver) -> result => match result {
                             Err(_) => break,
@@ -693,9 +695,9 @@ impl ReplayStage {
                                 );
                             }
                         },
-                        recv(set_root_signal_receiver) -> result => match result {
+                        recv(pending_signal_receiver) -> result => match result {
                             Err(_) => break,
-                            Ok(()) => trace!("bank forks set-root signal"),
+                            Ok(()) => trace!("bank forks pending request signal"),
                         },
                         recv(scheduler_session_completion_receiver) -> result => {
                             result.expect("sender is kept alive by the replay loop");
@@ -1186,6 +1188,12 @@ impl ReplayStage {
             return None;
         };
 
+        // Finality proved this slot was skipped. The bank is kept until root pruning: removing it
+        // now would wait for its in-flight execution.
+        if bank.is_replay_cancel_requested() {
+            return None;
+        }
+
         let parent_slot = bank.parent_slot();
         let Some(stats) = progress.get(&parent_slot) else {
             info!("Abandoning replay of unrooted slot {bank_slot}");
@@ -1407,6 +1415,87 @@ impl ReplayStage {
         verify_result
     }
 
+    /// Cancels replay of the slots that finality proved were skipped, as requested by votor.
+    ///
+    /// Runs between replay iterations, on the thread that replays and freezes banks, so a bank is
+    /// either frozen or will never be frozen. A cancelled bank stays in bank forks until root
+    /// pruning, so that cancelling never waits for its in-flight execution.
+    fn process_replay_cancels(
+        replay_cancels: PendingReplayCancels,
+        bank_forks: &RwLock<BankForks>,
+        progress: &mut ProgressMap,
+    ) {
+        if replay_cancels.is_empty() {
+            return;
+        }
+        let bank_forks = bank_forks.read().unwrap();
+        let root = bank_forks.root();
+        for (slot, requested_at) in replay_cancels.range(root + 1..) {
+            let slot = *slot;
+            let bank = bank_forks.get(slot);
+            // Our own leader banks are never replayed, so there is nothing to cancel.
+            if bank
+                .as_ref()
+                .is_some_and(|bank| !bank.should_replay_from_blockstore())
+            {
+                continue;
+            }
+            // Even if the slot has no bank, or its bank is frozen or cleared later, replay must
+            // not create a bank for the slot again.
+            if !progress.cancel_replay(slot) {
+                continue;
+            }
+            let Some(bank) = bank.filter(|bank| !bank.is_frozen()) else {
+                continue;
+            };
+            info!("Cancelling replay of finalized skipped slot {slot}");
+            bank.request_replay_cancel();
+            Self::report_cancelled_bank(slot, *requested_at, progress);
+        }
+    }
+
+    /// Reports how far replay of a cancelled bank got, and how long it ran, in
+    /// `replay-slot-cancelled-stats`.
+    ///
+    /// A bank whose replay hadn't started (no `ForkProgress`) or had already stopped (dead) cost
+    /// nothing, so there is nothing to report.
+    fn report_cancelled_bank(slot: Slot, requested_at: Instant, progress: &ProgressMap) {
+        let Some(fork_progress) = progress
+            .get(&slot)
+            .filter(|fork_progress| fork_progress.dead_reason.is_none())
+        else {
+            return;
+        };
+        let replay_total_elapsed_us = fork_progress
+            .replay_stats
+            .read()
+            .unwrap()
+            .started
+            .elapsed()
+            .as_micros() as i64;
+        let (num_txs, num_entries, num_shreds) = {
+            let replay_progress = fork_progress.replay_progress.read().unwrap();
+            (
+                replay_progress.num_txs as i64,
+                replay_progress.num_entries as i64,
+                replay_progress.num_shreds as i64,
+            )
+        };
+        datapoint_info!(
+            "replay-slot-cancelled-stats",
+            ("slot", slot as i64, i64),
+            ("replay_total_elapsed", replay_total_elapsed_us, i64),
+            (
+                "cancel_latency_us",
+                requested_at.elapsed().as_micros() as i64,
+                i64
+            ),
+            ("total_transactions", num_txs, i64),
+            ("total_entries", num_entries, i64),
+            ("total_shreds", num_shreds, i64),
+        );
+    }
+
     fn complete_bank_replay(
         bank: &BankWithScheduler,
         bank_progress: &mut ForkProgress,
@@ -1464,6 +1553,12 @@ impl ReplayStage {
                 info!("Abandoning replay of unrooted slot {bank_slot}");
                 continue;
             };
+            // Replay of a cancelled bank never completes, even if all of its entries were replayed
+            // and its scheduler session ended before it was cancelled. Cancellation is only
+            // applied between replay iterations, so a bank can't be cancelled past this point.
+            if bank.is_replay_cancel_requested() {
+                continue;
+            }
             if let Some(replay_result) = &replay_result.replay_result {
                 match replay_result {
                     Ok(_) => {}
@@ -1883,6 +1978,11 @@ impl ReplayStage {
         if let Some(command) = bank_forks_controller_receiver.take_set_root_command() {
             Self::process_set_root_command(command, context, my_pubkey, progress);
         }
+        Self::process_replay_cancels(
+            bank_forks_controller_receiver.take_replay_cancels(),
+            &context.bank_forks,
+            progress,
+        );
 
         loop {
             let command = bank_forks_controller_receiver.receiver().try_recv()?;
@@ -2064,6 +2164,10 @@ impl ReplayStage {
             for child_slot in children {
                 if known_bank_slots.contains(&child_slot) || new_banks.contains_key(&child_slot) {
                     trace!("child already active or frozen {child_slot}");
+                    continue;
+                }
+                if progress.is_replay_cancelled(child_slot) {
+                    trace!("replay of child {child_slot} was cancelled");
                     continue;
                 }
 

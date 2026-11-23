@@ -3,6 +3,7 @@ use {
     crate::consensus::progress_map::DeadSlotReason,
     crossbeam_channel::bounded,
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
+    solana_cost_model::transaction_cost::TrackedCost,
     solana_entry::{
         block_component::{
             BlockComponent, BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedBlockMarker,
@@ -31,23 +32,33 @@ use {
     solana_runtime::{
         bank::{BankId, BankTestConfig},
         genesis_utils::GenesisConfigInfo,
+        installed_scheduler_pool::SchedulingContext,
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
             TransactionStatusSender,
         },
     },
+    solana_runtime_transaction::runtime_transaction::ReplayTransaction,
     solana_sha256_hasher::hash,
     solana_signature::Signature,
     solana_signer::Signer,
+    solana_svm_timings::ExecuteTimings,
     solana_system_transaction as system_transaction,
     solana_transaction::Transaction,
-    solana_transaction_error::TransactionError,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status::VersionedTransactionWithStatusMeta,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_logic::{OrderedTaskId, Task},
+    solana_unified_scheduler_pool::{
+        DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
+        TaskHandler,
+    },
     std::{
         assert_matches,
         collections::HashSet,
-        sync::{Arc, Mutex, atomic::AtomicU64},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU64, AtomicUsize},
+        },
         time::Instant,
     },
     test_case::test_case,
@@ -1981,4 +1992,291 @@ fn test_latest_parent_coalesces() {
     );
     assert_eq!(receiver.try_recv().unwrap().start_slot, 20);
     assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn test_finalized_skipped_replay_stops_without_dead_mark() {
+    static HANDLED_TASKS: AtomicUsize = AtomicUsize::new(0);
+    const NUM_TXS: usize = 50;
+
+    // Executes every transaction slowly, like a block crafted to be expensive to replay.
+    #[derive(Debug)]
+    struct StallingHandler;
+    impl TaskHandler for StallingHandler {
+        fn handle(
+            timings: &mut ExecuteTimings,
+            scheduling_context: &SchedulingContext,
+            task: &Task,
+            handler_context: &HandlerContext,
+        ) -> TransactionResult<TrackedCost> {
+            HANDLED_TASKS.fetch_add(1, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(100));
+            DefaultTaskHandler::handle(timings, scheduling_context, task, handler_context)
+        }
+    }
+
+    let AlpenglowReplayComponents {
+        blockstore,
+        bank_forks,
+        mut progress,
+        mint_keypair: funded_keypair,
+        ..
+    } = alpenglow_replay_components(tr(0));
+
+    let slot = 1;
+    let bank = {
+        let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+        bank_forks
+            .write()
+            .unwrap()
+            .install_scheduler_pool(
+                SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
+                    None, None, None, None,
+                ),
+            );
+        let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+        bank_forks.write().unwrap().insert(bank)
+    };
+    progress.insert(slot, ForkProgress::new(bank.last_blockhash(), 0, 0, None));
+    blockstore
+        .insert_shreds(alpenglow_complete_slot_shreds(&bank, vec![]), false)
+        .unwrap();
+
+    // Transfers from the same payer conflict, so they are executed one after the other.
+    let txs = (0..NUM_TXS).map(|task_id| {
+        let tx = system_transaction::transfer(
+            &funded_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        (ReplayTransaction::from(tx), task_id as OrderedTaskId)
+    });
+    bank.schedule_transaction_executions(txs).unwrap();
+
+    // Replay waits for the scheduler, like it does at the block footer.
+    let replay_wait = {
+        let bank = bank.clone_with_scheduler();
+        std::thread::spawn(move || bank.wait_for_completed_scheduler())
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while HANDLED_TASKS.load(Ordering::Relaxed) == 0 {
+        assert!(Instant::now() < deadline, "scheduler did not start");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // Votor proves that the finalized chain skips this slot, and replay applies the cancellation.
+    ReplayStage::process_replay_cancels(
+        PendingReplayCancels::from([(slot, Instant::now())]),
+        &bank_forks,
+        &mut progress,
+    );
+    assert!(bank.is_replay_cancel_requested());
+
+    // Cancelling unblocks replay before the remaining transactions execute.
+    let (result, _timings) = replay_wait.join().unwrap().unwrap();
+    assert_eq!(result, Err(TransactionError::CommitCancelled));
+    assert!(HANDLED_TASKS.load(Ordering::Relaxed) < NUM_TXS);
+
+    // The replay error of the iteration that was running when the cancellation was requested
+    // doesn't mark the slot dead.
+    let process_active_banks_context =
+        ProcessActiveBanksContext::new_for_tests(bank_forks.clone(), blockstore.clone());
+    let replay_result = ReplaySlotFromBlockstore {
+        is_slot_dead: false,
+        bank_slot: slot,
+        replay_result: Some(Err(BlockstoreProcessorError::InvalidTransaction(
+            TransactionError::CommitCancelled,
+        ))),
+    };
+    let new_frozen_slots = ReplayStage::process_replay_results(
+        &process_active_banks_context,
+        &mut progress,
+        &mut Vec::new(),
+        &[replay_result],
+        &Pubkey::new_unique(),
+    )
+    .unwrap();
+    assert!(new_frozen_slots.is_empty());
+    assert!(progress.get(&slot).unwrap().dead_reason.is_none());
+    assert!(!blockstore.is_dead(slot));
+    assert!(bank_forks.read().unwrap().get(slot).is_some());
+
+    // The retained bank prevents recreation and is excluded from subsequent replay iterations.
+    let mut replay_result = ReplaySlotFromBlockstore::new(slot);
+    assert!(
+        ReplayStage::prepare_active_bank_for_replay(
+            &process_active_banks_context,
+            &mut progress,
+            &mut Vec::new(),
+            &mut replay_result,
+        )
+        .is_none()
+    );
+    assert!(!replay_result.is_slot_dead);
+}
+
+fn new_bank_forks_context<'a>(
+    blockstore: &'a Blockstore,
+    bank_forks: &'a RwLock<BankForks>,
+    leader_schedule_cache: &'a LeaderScheduleCache,
+    my_pubkey: &'a Pubkey,
+) -> NewBankForksContext<'a> {
+    NewBankForksContext {
+        blockstore,
+        bank_forks,
+        leader_schedule_cache,
+        rpc_subscriptions: None,
+        slot_status_notifier: &None,
+        transaction_status_sender: None,
+        my_pubkey,
+    }
+}
+
+#[test]
+fn test_process_replay_cancels() {
+    let AlpenglowReplayComponents {
+        blockstore,
+        bank_forks,
+        mut progress,
+        my_pubkey,
+        leader_schedule_cache,
+        ..
+    } = alpenglow_replay_components(tr(0) / tr(1));
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let new_bank = |slot| Bank::new_from_parent(bank0.clone(), SlotLeader::default(), slot);
+
+    // Slot 1 is frozen, slot 2 is being replayed, slot 3 is our leader bank, and slots 4 and 5
+    // have shreds but no bank yet.
+    for bank in [new_bank(2), new_bank(3).mark_leader_bank()] {
+        bank_forks.write().unwrap().insert(bank);
+    }
+    progress.insert(2, ForkProgress::new(Hash::default(), 0, 0, None));
+    for slot in [2, 4, 5] {
+        blockstore
+            .insert_shreds(
+                alpenglow_complete_slot_shreds(&new_bank(slot), vec![]),
+                false,
+            )
+            .unwrap();
+    }
+    let get_bank = |slot| bank_forks.read().unwrap().get(slot).unwrap();
+
+    let requested_at = Instant::now();
+    ReplayStage::process_replay_cancels(
+        PendingReplayCancels::from_iter([0, 1, 2, 3, 4].map(|slot| (slot, requested_at))),
+        &bank_forks,
+        &mut progress,
+    );
+    // Slots at or below the root, and our leader slots, are ignored.
+    assert!(!progress.is_replay_cancelled(0));
+    assert!(!progress.is_replay_cancelled(3));
+    assert!(!get_bank(3).is_replay_cancel_requested());
+    // Only the bank being replayed stops executing.
+    assert!(progress.is_replay_cancelled(1));
+    assert!(!get_bank(1).is_replay_cancel_requested());
+    assert!(progress.is_replay_cancelled(2));
+    assert!(get_bank(2).is_replay_cancel_requested());
+    assert!(get_bank(2).try_enter_transaction_execution().is_none());
+    assert!(progress.is_replay_cancelled(4));
+
+    // Replay doesn't create a bank for a cancelled slot, nor recreate a cleared cancelled bank.
+    ReplayStage::clear_slots([2], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
+    ReplayStage::generate_new_bank_forks(
+        new_bank_forks_context(&blockstore, &bank_forks, &leader_schedule_cache, &my_pubkey),
+        &mut progress,
+        &mut ReplayLoopTiming::default(),
+    )
+    .unwrap();
+    assert!(bank_forks.read().unwrap().get(2).is_none());
+    assert!(bank_forks.read().unwrap().get(4).is_none());
+    assert!(bank_forks.read().unwrap().get(5).is_some());
+
+    // Cancelled slots are forgotten once rooted past.
+    bank_forks.write().unwrap().set_root(1, None, None);
+    progress.handle_new_root(&bank_forks.read().unwrap());
+    assert!(!progress.is_replay_cancelled(1));
+    assert!(progress.is_replay_cancelled(2));
+    assert!(progress.is_replay_cancelled(4));
+}
+
+#[test]
+fn test_cancelled_bank_is_never_completed() {
+    let AlpenglowReplayComponents {
+        blockstore,
+        bank_forks,
+        mut progress,
+        ..
+    } = alpenglow_replay_components(tr(0));
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let slot = 1;
+
+    // All of the bank's entries were replayed before its replay was cancelled.
+    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    bank.fill_bank_with_ticks_for_tests();
+    let bank = bank_forks.write().unwrap().insert(bank);
+    assert!(bank.is_complete());
+    progress.insert(slot, ForkProgress::new(Hash::default(), 0, 0, None));
+    ReplayStage::process_replay_cancels(
+        PendingReplayCancels::from([(slot, Instant::now())]),
+        &bank_forks,
+        &mut progress,
+    );
+
+    let new_frozen_slots = ReplayStage::process_replay_results(
+        &ProcessActiveBanksContext::new_for_tests(bank_forks.clone(), blockstore),
+        &mut progress,
+        &mut Vec::new(),
+        &[ReplaySlotFromBlockstore::new(slot)],
+        &Pubkey::new_unique(),
+    )
+    .unwrap();
+    assert!(new_frozen_slots.is_empty());
+    assert!(!bank.is_frozen());
+}
+
+#[test]
+fn test_update_parent_does_not_restart_cancelled_slot() {
+    let AlpenglowReplayComponents {
+        blockstore,
+        bank_forks,
+        mut progress,
+        ..
+    } = alpenglow_replay_components(tr(0) / tr(1) / tr(2) / tr(3));
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+    let slot = 4;
+
+    // Like in `test_update_parent_restart`, slot 4 is eligible to restart from its UpdateParent.
+    let bank = Bank::new_from_parent(bank0, SlotLeader::default(), slot);
+    let bank_id = bank_forks.write().unwrap().insert(bank).bank_id();
+    let fork_progress = ForkProgress::new(Hash::default(), 0, 0, None);
+    fork_progress.replay_progress.write().unwrap().num_shreds = 5;
+    progress.insert(slot, fork_progress);
+    insert_update_parent_slot(&blockstore, slot, 3, 0, BlockId::new_unique(), 32);
+
+    ReplayStage::process_replay_cancels(
+        PendingReplayCancels::from([(slot, Instant::now())]),
+        &bank_forks,
+        &mut progress,
+    );
+    let (sender, receiver) = bounded(1);
+    sender.send(UpdateParentSignal { slot }).unwrap();
+    handle_update_parent_interrupts(
+        &Pubkey::new_unique(),
+        &blockstore,
+        &bank_forks,
+        &mut progress,
+        &mut Vec::new(),
+        &receiver,
+        None,
+        None,
+    )
+    .unwrap();
+
+    // The cancelled bank is kept, rather than cleared and replayed again.
+    assert_eq!(
+        bank_forks.read().unwrap().get(slot).unwrap().bank_id(),
+        bank_id
+    );
+    assert!(progress.contains_key(&slot));
 }

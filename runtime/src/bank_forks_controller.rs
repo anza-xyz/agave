@@ -6,6 +6,7 @@ use {
     solana_clock::Slot,
     solana_metrics::datapoint_info,
     std::{
+        collections::BTreeMap,
         fmt,
         sync::{Arc, Mutex},
         time::{Duration, Instant},
@@ -73,31 +74,44 @@ pub trait BankForksController: Send + Sync {
     fn enqueue_set_root(&self, new_root: Block);
 
     fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError>;
+
+    /// Requests that replay stops replaying `slot`, because finality proved that no block in
+    /// `slot` can be on the finalized chain. Does not wait for replay to apply the request.
+    fn request_replay_cancel(&self, slot: Slot);
 }
+
+/// Replay cancellations requested by votor, but not yet applied by replay, with the time each
+/// slot was first requested.
+pub type PendingReplayCancels = BTreeMap<Slot, Instant>;
 
 /// Handle used by non-replay threads to serialize BankForks writes onto ReplayStage.
 #[derive(Clone)]
 pub struct BankForksControllerHandle {
     sender: Sender<BankForksCommand>,
     pending_set_root: Arc<Mutex<Option<SetRootCommand>>>,
-    set_root_signal_sender: Sender<()>,
+    pending_replay_cancels: Arc<Mutex<PendingReplayCancels>>,
+    /// Wakes replay up when a pending request is updated.
+    pending_signal_sender: Sender<()>,
 }
 
 impl BankForksControllerHandle {
     pub fn new() -> (Self, BankForksCommandReceiver) {
         let (sender, receiver) = bounded(CHANNEL_SIZE);
-        let (set_root_signal_sender, set_root_signal_receiver) = bounded(1);
+        let (pending_signal_sender, pending_signal_receiver) = bounded(1);
         let pending_set_root = Arc::new(Mutex::new(None));
+        let pending_replay_cancels = Arc::new(Mutex::new(PendingReplayCancels::new()));
         (
             Self {
                 sender,
                 pending_set_root: pending_set_root.clone(),
-                set_root_signal_sender,
+                pending_replay_cancels: pending_replay_cancels.clone(),
+                pending_signal_sender,
             },
             BankForksCommandReceiver {
                 receiver,
                 pending_set_root,
-                set_root_signal_receiver,
+                pending_replay_cancels,
+                pending_signal_receiver,
             },
         )
     }
@@ -176,7 +190,7 @@ impl BankForksController for BankForksControllerHandle {
                 *pending_set_root = Some(command);
             }
         }
-        let _ = self.set_root_signal_sender.try_send(());
+        let _ = self.pending_signal_sender.try_send(());
 
         let total_us = total_start.elapsed().as_micros() as i64;
 
@@ -198,12 +212,23 @@ impl BankForksController for BankForksControllerHandle {
             response_receiver,
         )
     }
+
+    fn request_replay_cancel(&self, slot: Slot) {
+        // Votor repeats its request until replay applies it. Keep the time of the first request.
+        self.pending_replay_cancels
+            .lock()
+            .unwrap()
+            .entry(slot)
+            .or_insert_with(Instant::now);
+        let _ = self.pending_signal_sender.try_send(());
+    }
 }
 
 pub struct BankForksCommandReceiver {
     receiver: Receiver<BankForksCommand>,
     pending_set_root: Arc<Mutex<Option<SetRootCommand>>>,
-    set_root_signal_receiver: Receiver<()>,
+    pending_replay_cancels: Arc<Mutex<PendingReplayCancels>>,
+    pending_signal_receiver: Receiver<()>,
 }
 
 impl BankForksCommandReceiver {
@@ -211,12 +236,16 @@ impl BankForksCommandReceiver {
         &self.receiver
     }
 
-    pub fn set_root_signal_receiver(&self) -> &Receiver<()> {
-        &self.set_root_signal_receiver
+    pub fn pending_signal_receiver(&self) -> &Receiver<()> {
+        &self.pending_signal_receiver
     }
 
     pub fn take_set_root_command(&self) -> Option<SetRootCommand> {
         self.pending_set_root.lock().unwrap().take()
+    }
+
+    pub fn take_replay_cancels(&self) -> PendingReplayCancels {
+        std::mem::take(&mut self.pending_replay_cancels.lock().unwrap())
     }
 }
 
@@ -258,7 +287,7 @@ mod tests {
 
         controller.enqueue_set_root(Block::new_unique(1));
         receiver
-            .set_root_signal_receiver()
+            .pending_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 1);
@@ -266,11 +295,32 @@ mod tests {
         controller.enqueue_set_root(Block::new_unique(2));
         controller.enqueue_set_root(Block::new_unique(3));
         receiver
-            .set_root_signal_receiver()
+            .pending_signal_receiver()
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        assert!(receiver.set_root_signal_receiver().try_recv().is_err());
+        assert!(receiver.pending_signal_receiver().try_recv().is_err());
         assert_eq!(receiver.take_set_root_command().unwrap().new_root.slot, 3);
+    }
+
+    #[test]
+    fn test_bank_forks_controller_signals_pending_replay_cancels() {
+        let (controller, receiver) = BankForksControllerHandle::new();
+
+        controller.request_replay_cancel(3);
+        let first_requested_at = receiver.pending_replay_cancels.lock().unwrap()[&3];
+        controller.request_replay_cancel(1);
+        controller.request_replay_cancel(3);
+        receiver
+            .pending_signal_receiver()
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(receiver.pending_signal_receiver().try_recv().is_err());
+
+        // Repeated requests keep the time of the first one.
+        let cancels = receiver.take_replay_cancels();
+        assert_eq!(cancels.keys().copied().collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(cancels[&3], first_requested_at);
+        assert!(receiver.take_replay_cancels().is_empty());
     }
 
     #[test]

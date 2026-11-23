@@ -121,7 +121,9 @@ fn try_restart_slot_from_update_parent(
     entry_notification_sender: Option<&EntryNotifierSender>,
     transaction_status_sender: Option<&TransactionStatusSender>,
 ) -> Result<bool, ReplayStageError> {
-    if blockstore.is_dead(slot) {
+    // Finality proved the slot was skipped, so it is never replayed again. Its bank must also not
+    // be cleared: that would wait for its in-flight execution.
+    if progress.is_replay_cancelled(slot) || blockstore.is_dead(slot) {
         return Ok(false);
     }
     let Some(slot_meta) = blockstore.meta(slot).expect("Blockstore should not fail") else {

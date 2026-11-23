@@ -1559,6 +1559,8 @@ mod tests {
             self.bank_forks.write().unwrap().clear_bank(slot, false);
             Ok(())
         }
+
+        fn request_replay_cancel(&self, _slot: Slot) {}
     }
 
     fn test_bank_forks_controller(
