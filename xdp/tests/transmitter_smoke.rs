@@ -14,9 +14,7 @@ use {
             BytesTxPacket, NeighborIntervals, QueueCpuBinding, Transmitter, TransmitterBuilder,
             XdpConfig, XdpSender,
         },
-        tx_loop::{
-            self, TrySendError, TxLoopBuilder, TxLoopConfigBuilder, TxPacket, TxReceiver, TxSender,
-        },
+        tx_loop::{self, TrySendError, TxLoopBuilder, TxLoopConfigBuilder, TxPacket, TxReceiver},
     },
     bytes::Bytes,
     nix::{
@@ -795,23 +793,13 @@ fn run_tx_loop(
     });
 }
 
-type TxLoopTrySend =
-    fn(&TxSender<BytesTxPacket>, BytesTxPacket) -> Result<(), TrySendError<BytesTxPacket>>;
-
-/// Queues `lower` packets with `send_lower`, then `higher` packets with `send_higher`, and has the
-/// tx loop queue `more_higher` packets with `send_higher` right after it is done with its tenth
-/// `send_lower` packet. Expects every `send_higher` packet on the right veth end ahead of the
-/// `send_lower` packets that still wait when it is queued.
-fn assert_tx_loop_sends_the_higher_class_first(
-    (sender, receiver): (TxSender<BytesTxPacket>, TxReceiver<BytesTxPacket>),
-    send_lower: TxLoopTrySend,
-    lower: usize,
-    send_higher: TxLoopTrySend,
-    higher: usize,
-    more_higher: usize,
-) {
-    // The loop queues the later packets right after it is done with this `send_lower` packet.
-    const LAST_LOWER_PACKET_BEFORE_MORE: usize = 9;
+#[test]
+#[ignore = "requires root and network namespace privileges"]
+fn tx_loop_sends_low_priority_packets_when_nothing_else_waits() {
+    const LOW_PRIORITY_PACKETS: usize = 200;
+    const PACKETS: usize = 64;
+    // The other packets are queued right after the loop is done with this low priority packet.
+    const LAST_LOW_PRIORITY_PACKET_BEFORE_THE_OTHERS: usize = 9;
 
     let _netns = common::NetNsGuard::new().expect("create network namespace");
     let links = common::setup_veth_pair_with_tx_queue_count(1);
@@ -820,56 +808,49 @@ fn assert_tx_loop_sends_the_higher_class_first(
         .set_receive_buffer(8 << 20)
         .expect("grow the receive buffer of the raw packet receiver");
 
-    let lower_payload = |i: usize| Bytes::from(format!("lower-{i:03}"));
-    let higher_payload = |i: usize| Bytes::from(format!("higher-{i:03}"));
+    let low_priority_payload = |i: usize| Bytes::from(format!("low-priority-{i:03}"));
+    let payload = |i: usize| Bytes::from(format!("packet-{i:03}"));
 
-    // The `send_lower` packets are queued first.
-    for i in 0..lower {
-        send_lower(
-            &sender,
-            tx_loop_packet(&links, links.right_ip, lower_payload(i)),
-        )
-        .expect("queue packet of the lower class");
-    }
-    for i in 0..higher {
-        send_higher(
-            &sender,
-            tx_loop_packet(&links, links.right_ip, higher_payload(i)),
-        )
-        .expect("queue packet of the higher class");
+    let (sender, receiver) = tx_loop::channel(PACKETS, LOW_PRIORITY_PACKETS);
+    for i in 0..LOW_PRIORITY_PACKETS {
+        sender
+            .try_send_low_priority(tx_loop_packet(
+                &links,
+                links.right_ip,
+                low_priority_payload(i),
+            ))
+            .expect("queue low priority packet");
     }
 
-    // The loop queues the later packets itself, with this sender. The test holds it so that it
+    // The loop queues the other packets itself, with this sender. The test holds it so that it
     // can end the loop even when the loop never gets to that point.
-    let more = higher..higher.saturating_add(more_higher);
     let loop_sender = Mutex::new(Some(sender.clone()));
     let mismatch = std::thread::scope(|scope| {
         let (links, loop_sender) = (&links, &loop_sender);
-        let trigger = lower_payload(LAST_LOWER_PACKET_BEFORE_MORE);
-        let more_from_the_loop = more.clone();
+        let trigger = low_priority_payload(LAST_LOW_PRIORITY_PACKET_BEFORE_THE_OTHERS);
         scope.spawn(move || {
             run_tx_loop(links, receiver, |item| {
                 if item.payload() == &trigger {
                     let sender = loop_sender.lock().unwrap().take();
                     let sender = sender.expect("the trigger is sent once");
-                    for i in more_from_the_loop.clone() {
-                        send_higher(
-                            &sender,
-                            tx_loop_packet(links, links.right_ip, higher_payload(i)),
-                        )
-                        .expect("queue packet of the higher class");
+                    for i in 0..PACKETS {
+                        sender
+                            .try_send(tx_loop_packet(links, links.right_ip, payload(i)))
+                            .expect("queue packet");
                     }
                 }
             });
         });
 
-        let first_lower = 0..=LAST_LOWER_PACKET_BEFORE_MORE;
-        let rest_lower = LAST_LOWER_PACKET_BEFORE_MORE.saturating_add(1)..lower;
-        let wire_order = (0..higher)
-            .map(higher_payload)
-            .chain(first_lower.map(lower_payload))
-            .chain(more.map(higher_payload))
-            .chain(rest_lower.map(lower_payload));
+        // The loop sends everything that is not low priority first, however many low priority
+        // packets wait, and then goes on with those.
+        let first_low_priority = 0..=LAST_LOW_PRIORITY_PACKET_BEFORE_THE_OTHERS;
+        let rest_low_priority =
+            LAST_LOW_PRIORITY_PACKET_BEFORE_THE_OTHERS.saturating_add(1)..LOW_PRIORITY_PACKETS;
+        let wire_order = first_low_priority
+            .map(low_priority_payload)
+            .chain((0..PACKETS).map(payload))
+            .chain(rest_low_priority.map(low_priority_payload));
         let mut buf = [0u8; 2048];
         let mismatch = wire_order.enumerate().find_map(|(position, expected)| {
             capture
@@ -887,42 +868,6 @@ fn assert_tx_loop_sends_the_higher_class_first(
         mismatch
     });
     assert_eq!(mismatch, None);
-}
-
-#[test]
-#[ignore = "requires root and network namespace privileges"]
-fn tx_loop_sends_low_priority_packets_when_nothing_else_waits() {
-    const LOW_PRIORITY_PACKETS: usize = 200;
-    const PACKETS: usize = 64;
-
-    // The loop sends everything that is not low priority first, however many low priority
-    // packets wait, and then goes on with those.
-    assert_tx_loop_sends_the_higher_class_first(
-        tx_loop::channel(PACKETS, LOW_PRIORITY_PACKETS),
-        TxSender::try_send_low_priority,
-        LOW_PRIORITY_PACKETS,
-        TxSender::try_send,
-        0,
-        PACKETS,
-    );
-}
-
-#[test]
-#[ignore = "requires root and network namespace privileges"]
-fn tx_loop_sends_lowest_priority_packets_after_the_low_priority_ones() {
-    const PACKETS_OF_EACH_KIND: usize = 40;
-    const MORE_LOW_PRIORITY_PACKETS: usize = 8;
-
-    // Every low priority packet leaves before the first lowest priority one, and those that
-    // arrive later go ahead of the lowest priority packets that still wait.
-    assert_tx_loop_sends_the_higher_class_first(
-        tx_loop::channel(1, PACKETS_OF_EACH_KIND),
-        TxSender::try_send_lowest_priority,
-        PACKETS_OF_EACH_KIND,
-        TxSender::try_send_low_priority,
-        PACKETS_OF_EACH_KIND,
-        MORE_LOW_PRIORITY_PACKETS,
-    );
 }
 
 #[test]
