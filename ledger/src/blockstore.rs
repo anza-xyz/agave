@@ -429,7 +429,7 @@ pub struct Blockstore {
     insert_shreds_lock: Mutex<()>,
     switch_block_lock: SwitchBlockLock,
     /// Signals when an insert advances the contiguous shreds of a parent-connected slot.
-    shred_progress_signal: Option<Sender<()>>,
+    shred_progress_signal: OnceLock<Sender<()>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     slot_meta_topology_generation: AtomicU64,
     update_parent_signals: Mutex<Vec<UpdateParentSender>>,
@@ -731,6 +731,14 @@ impl Blockstore {
         &self.ledger_path
     }
 
+    /// Wires the channel used to signal when an insert advances the contiguous shreds of a
+    /// parent-connected slot.
+    pub fn set_shred_progress_signal(&self, sender: Sender<()>) {
+        self.shred_progress_signal
+            .set(sender)
+            .expect("shred progress signal already set");
+    }
+
     /// Wires the channel used to hand certificates recovered from blockstore to the BLS
     /// sigverifier.
     ///
@@ -765,22 +773,14 @@ impl Blockstore {
 
     /// Opens a Ledger in directory, provides "infinite" window of shreds
     pub fn open(ledger_path: &Path) -> Result<Blockstore> {
-        Self::do_open(ledger_path, BlockstoreOptions::default(), None)
+        Self::do_open(ledger_path, BlockstoreOptions::default())
     }
 
-    pub fn open_with_options(
-        ledger_path: &Path,
-        options: BlockstoreOptions,
-        shred_progress_signal: Option<Sender<()>>,
-    ) -> Result<Blockstore> {
-        Self::do_open(ledger_path, options, shred_progress_signal)
+    pub fn open_with_options(ledger_path: &Path, options: BlockstoreOptions) -> Result<Blockstore> {
+        Self::do_open(ledger_path, options)
     }
 
-    fn do_open(
-        ledger_path: &Path,
-        options: BlockstoreOptions,
-        shred_progress_signal: Option<Sender<()>>,
-    ) -> Result<Blockstore> {
+    fn do_open(ledger_path: &Path, options: BlockstoreOptions) -> Result<Blockstore> {
         fs::create_dir_all(ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL);
 
@@ -855,7 +855,7 @@ impl Blockstore {
             alt_data_shred_cf,
             alt_merkle_root_meta_cf,
 
-            shred_progress_signal,
+            shred_progress_signal: OnceLock::new(),
             completed_slots_senders: Mutex::default(),
             slot_meta_topology_generation: AtomicU64::default(),
             update_parent_signals: Mutex::default(),
@@ -882,8 +882,8 @@ impl Blockstore {
     ) -> Result<BlockstoreSignals> {
         let (shred_progress_signal, shred_progress_receiver) =
             bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
-        let blockstore =
-            Self::open_with_options(ledger_path, options, Some(shred_progress_signal))?;
+        let blockstore = Self::open_with_options(ledger_path, options)?;
+        blockstore.set_shred_progress_signal(shred_progress_signal);
         let (completed_slots_sender, completed_slots_receiver) =
             bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
         let (update_parent_sender, update_parent_receiver) = bounded(MAX_UPDATE_PARENT_SIGNALS);
@@ -2495,7 +2495,7 @@ impl Blockstore {
         }
 
         send_signals(
-            self.shred_progress_signal.as_ref(),
+            self.shred_progress_signal.get(),
             &self.completed_slots_senders.lock().unwrap(),
             &self.update_parent_signals.lock().unwrap(),
             self.first_shred_sender.get(),
@@ -6686,7 +6686,6 @@ pub fn create_new_ledger(
             column_options,
             ..BlockstoreOptions::default()
         },
-        None,
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
     // Slot-0 tick entries are created before a Bank exists, so use the

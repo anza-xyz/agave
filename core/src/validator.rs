@@ -39,7 +39,7 @@ use {
     agave_xdp::transmitter::{Transmitter, TransmitterBuilder, XdpSender},
     anyhow::{Result, anyhow},
     arc_swap::ArcSwap,
-    crossbeam_channel::{Receiver, Sender, bounded, unbounded},
+    crossbeam_channel::{Receiver, bounded, unbounded},
     serde::{Deserialize, Serialize},
     solana_account::{ReadableAccount, WINCODE_CONFIG},
     solana_accounts_db::{
@@ -905,8 +905,6 @@ impl Validator {
         ));
 
         let dependency_tracker = Arc::new(DependencyTracker::default());
-        let (replay_wakeup_sender, replay_wakeup_receiver) =
-            bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
 
         let (
             bank_forks,
@@ -932,7 +930,6 @@ impl Validator {
             &genesis_config,
             exit.clone(),
             &start_progress,
-            replay_wakeup_sender.clone(),
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
@@ -942,6 +939,10 @@ impl Validator {
                 .then(|| dependency_tracker.clone()),
         )
         .map_err(ValidatorError::Other)?;
+
+        let (replay_wakeup_sender, replay_wakeup_receiver) =
+            bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
+        blockstore.set_shred_progress_signal(replay_wakeup_sender.clone());
 
         let event_system = initialize_event_system(&blockstore)?;
         let (root_slot, hard_forks) = {
@@ -2190,14 +2191,13 @@ fn initialize_event_system(
     Ok(event_system)
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::type_complexity)]
 fn load_blockstore(
     config: &ValidatorConfig,
     ledger_path: &Path,
     genesis_config: &GenesisConfig,
     exit: Arc<AtomicBool>,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
-    shred_progress_signal: Sender<()>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
@@ -2246,12 +2246,9 @@ fn load_blockstore(
                 )
             })
             .expect("should spawn thread");
-        let blockstore = Blockstore::open_with_options(
-            ledger_path,
-            config.blockstore_options.clone(),
-            Some(shred_progress_signal),
-        )
-        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+        let blockstore =
+            Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
+                .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
         let bank_from_snapshot_result = load_snapshot_handle.join().expect("join thread");
 
         Ok::<_, String>((Arc::new(blockstore), bank_from_snapshot_result.transpose()))
@@ -2743,7 +2740,6 @@ fn cleanup_blockstore_incorrect_shred_versions(
     match Blockstore::open_with_options(
         &blockstore.ledger_path().join(backup_folder),
         config.blockstore_options.clone(),
-        None,
     ) {
         Ok(backup_blockstore) => {
             info!("Backing up slots from {start_slot} to {end_slot}");
@@ -3086,7 +3082,6 @@ mod tests {
                 access_type: AccessType::PrimaryForMaintenance,
                 ..BlockstoreOptions::default()
             },
-            None,
         )
         .unwrap();
         assert!(stale_event.exists());
@@ -3096,7 +3091,6 @@ mod tests {
                 access_type: AccessType::ReadOnly,
                 ..BlockstoreOptions::default()
             },
-            None,
         )
         .unwrap();
         assert_matches!(

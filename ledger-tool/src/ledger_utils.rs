@@ -234,7 +234,6 @@ pub fn load_and_process_ledger(
                     access_type: AccessType::PrimaryForMaintenance,
                     ..BlockstoreOptions::default()
                 },
-                None,
             )
             // Couldn't get Primary access, error out to be defensive.
             .map_err(LoadAndProcessLedgerError::CustomAccountsPathUnsupported)?;
@@ -506,7 +505,6 @@ pub fn open_blockstore(
             recovery_mode: wal_recovery_mode.clone(),
             ..BlockstoreOptions::default()
         },
-        None,
     ) {
         Ok(blockstore) => blockstore,
         Err(BlockstoreError::RocksDb(err)) => {
@@ -580,7 +578,6 @@ fn open_blockstore_with_temporary_primary_access(
                 recovery_mode: wal_recovery_mode.clone(),
                 ..BlockstoreOptions::default()
             },
-            None,
         )?;
     }
     // Now, attempt to open the blockstore with original AccessType
@@ -594,7 +591,6 @@ fn open_blockstore_with_temporary_primary_access(
             recovery_mode: wal_recovery_mode,
             ..BlockstoreOptions::default()
         },
-        None,
     )
 }
 

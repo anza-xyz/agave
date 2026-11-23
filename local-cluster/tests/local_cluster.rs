@@ -2502,7 +2502,6 @@ fn test_alpenglow_basic_equivocation() {
                 access_type: AccessType::ReadOnly,
                 ..BlockstoreOptions::default()
             },
-            None,
         )
         .unwrap();
         let total_duplicate_blocks_observed = (1..=last_duplicate)
