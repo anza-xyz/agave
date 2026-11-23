@@ -130,7 +130,7 @@ impl VoteState {
     /// Updates `votes` and `last_timestamp` in the vote state.
     fn maybe_update_votes(&mut self, slot: Slot, slot_timestamp_ns: i64) {
         let latest_voted_slot = slot
-            .max(self.handler.last_voted_slot().unwrap_or(0))
+            .max(self.handler.latest_vote_slot().unwrap_or(0))
             .max(self.handler.root_slot().unwrap_or(0));
         self.handler.set_votes(VecDeque::from([LandedVote {
             lockout: Lockout::new(latest_voted_slot),
