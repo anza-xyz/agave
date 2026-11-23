@@ -247,6 +247,26 @@ impl<T: Clone> Stakes<T> {
         )
     }
 
+    pub fn clone_and_filter_for_vat_with_location(
+        &self,
+        max_vote_accounts: usize,
+        minimum_vote_account_balance: u64,
+        minimum_v5_balance: u64,
+        block_revenue_sharing: bool,
+        enforce_location: bool,
+    ) -> Stakes<T> {
+        Self::new(
+            self.vote_accounts.clone_and_filter_for_vat_with_location(
+                max_vote_accounts,
+                minimum_vote_account_balance,
+                minimum_v5_balance,
+                block_revenue_sharing,
+                enforce_location,
+            ),
+            self.epoch,
+        )
+    }
+
     pub fn vote_accounts(&self) -> &VoteAccounts {
         &self.vote_accounts
     }

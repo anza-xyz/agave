@@ -628,8 +628,26 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
+solana-vote-interface = { git = "https://github.com/anza-xyz/solana-sdk", rev = "a0d12066a505ca9c453a584518db3b34af898bd5" }
 blstrs = { git = "https://github.com/anza-xyz/blstrs", rev = "a1faffa3420bdaf4102425c43f00cdd815d4f145" }
 # for details, see https://github.com/anza-xyz/crossbeam/commit/5ee1c6ec671d94db14ed9238eb99e59a84555aad
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "5ee1c6ec671d94db14ed9238eb99e59a84555aad" }
 librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
 rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
+
+# Keep SDK PR #1059's unchanged dependencies on the workspace registry sources.
+# Otherwise Cargo creates incompatible duplicate Pubkey, Clock and error types.
+[patch."https://github.com/anza-xyz/solana-sdk"]
+solana-clock = { version = "=4.0.0" }
+solana-frozen-abi = { version = "=3.9.1" }
+solana-frozen-abi-macro = { version = "=3.7.0" }
+solana-hash = { version = "=4.7.0" }
+solana-instruction = { version = "=4.0.0" }
+solana-instruction-error = { version = "=3.1.0" }
+solana-pubkey = { version = "=4.4.0" }
+solana-sdk-ids = { version = "=3.1.0" }
+solana-serde-varint = { version = "=3.0.1" }
+solana-serialize-utils = { version = "=4.0.0" }
+solana-short-vec = { version = "=3.3.0" }
+solana-system-interface = { version = "=3.3.0" }
+solana-wincode-varint = { version = "=1.1.0" }

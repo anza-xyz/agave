@@ -282,7 +282,7 @@ impl Bank {
         }
 
         let account_data = account.data_as_mut_slice();
-        let mut vote_state = VoteStateViewMut::new_v4(account_data)
+        let mut vote_state = VoteStateViewMut::new_v4_or_v5(account_data)
             .map_err(|_| DepositFeeError::InvalidVoteAccount)?;
 
         vote_state

@@ -12,6 +12,7 @@ use {
 #[derive(Debug)]
 pub struct VoteStateViewMut<'account> {
     data: &'account mut [u8],
+    pending_offset: usize,
 }
 
 const VOTE_STATE_V4_DISCRIMINANT: u32 = 3;
@@ -36,20 +37,38 @@ impl<'account> VoteStateViewMut<'account> {
         if version != VOTE_STATE_V4_DISCRIMINANT {
             return Err(VoteStateViewError::UnsupportedVersion);
         }
-        Ok(Self { data })
+        Ok(Self {
+            data,
+            pending_offset: PENDING_DELEGATOR_REWARDS_START_OFFSET,
+        })
+    }
+
+    /// Accept V4 or a fully validated V5 account without changing its version.
+    pub fn new_v4_or_v5(data: &'account mut [u8]) -> Result<Self, VoteStateViewError> {
+        use solana_vote_interface::state::vote_state_v5::VoteStateV5;
+        if data.get(..4) == Some(&4u32.to_le_bytes()) {
+            VoteStateV5::from_account_data_unaligned(data)
+                .map_err(|_| VoteStateViewError::InvalidVoteStateV5)?;
+            Ok(Self {
+                data,
+                pending_offset: std::mem::offset_of!(VoteStateV5, pending_delegator_rewards),
+            })
+        } else {
+            Self::new_v4(data)
+        }
     }
 
     /// Increment pending delegator rewards, used during block reward deposit
     pub fn increment_pending_delegator_rewards_checked(&mut self, lamports: u64) -> Option<()> {
         // Size is checked at creation, so this is safe
         let current_pending_delegator_rewards = u64::from_le_bytes(
-            self.data[PENDING_DELEGATOR_REWARDS_START_OFFSET..PENDING_DELEGATOR_REWARDS_END_OFFSET]
+            self.data[self.pending_offset..self.pending_offset + 8]
                 .try_into()
                 .unwrap(),
         );
         let new_pending_delegator_rewards =
             current_pending_delegator_rewards.checked_add(lamports)?;
-        self.data[PENDING_DELEGATOR_REWARDS_START_OFFSET..PENDING_DELEGATOR_REWARDS_END_OFFSET]
+        self.data[self.pending_offset..self.pending_offset + 8]
             .copy_from_slice(&new_pending_delegator_rewards.to_le_bytes());
         Some(())
     }
@@ -59,11 +78,11 @@ impl<'account> VoteStateViewMut<'account> {
     pub fn reset_pending_delegator_rewards(&mut self) -> u64 {
         // Size is checked at creation, so this is safe
         let pending_delegator_rewards = u64::from_le_bytes(
-            self.data[PENDING_DELEGATOR_REWARDS_START_OFFSET..PENDING_DELEGATOR_REWARDS_END_OFFSET]
+            self.data[self.pending_offset..self.pending_offset + 8]
                 .try_into()
                 .unwrap(),
         );
-        self.data[PENDING_DELEGATOR_REWARDS_START_OFFSET..PENDING_DELEGATOR_REWARDS_END_OFFSET]
+        self.data[self.pending_offset..self.pending_offset + 8]
             .copy_from_slice(&0u64.to_le_bytes());
         pending_delegator_rewards
     }

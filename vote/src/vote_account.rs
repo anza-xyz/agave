@@ -217,11 +217,33 @@ impl VoteAccounts {
         minimum_vote_account_balance: u64,
         block_revenue_sharing: bool,
     ) -> VoteAccounts {
+        self.clone_and_filter_for_vat_with_location(
+            max_vote_accounts,
+            minimum_vote_account_balance,
+            minimum_vote_account_balance,
+            block_revenue_sharing,
+            false,
+        )
+    }
+
+    /// Apply VAT admission and the optional location requirement before the stake
+    /// cutoff. The two minimum balances account for V4 and V5's different sizes.
+    pub fn clone_and_filter_for_vat_with_location(
+        &self,
+        max_vote_accounts: usize,
+        minimum_vote_account_balance: u64,
+        minimum_v5_balance: u64,
+        block_revenue_sharing: bool,
+        enforce_location: bool,
+    ) -> VoteAccounts {
         assert!(max_vote_accounts > 0, "max_vote_accounts must be > 0");
         let capacity = max_vote_accounts.min(self.vote_accounts.len());
         let mut entries_to_sort: Vec<(&Pubkey, &VoteAccount, u64)> = Vec::with_capacity(capacity);
         for (pubkey, (stake, vote_account)) in self.vote_accounts.iter() {
             let vote_state_view = vote_account.vote_state_view();
+            if enforce_location && vote_state_view.location().is_none() {
+                continue;
+            }
             let has_bls = vote_state_view.bls_pubkey_compressed().is_some();
             let has_stake = *stake != 0u64;
             // Pending delegator rewards are deducted at the start of the epoch,
@@ -233,7 +255,12 @@ impl VoteAccounts {
             } else {
                 vote_account.lamports()
             };
-            let has_balance = available_balance >= minimum_vote_account_balance;
+            let minimum_balance = if vote_state_view.location().is_some() {
+                minimum_v5_balance
+            } else {
+                minimum_vote_account_balance
+            };
+            let has_balance = available_balance >= minimum_balance;
 
             if !has_bls || !has_stake || !has_balance {
                 continue;

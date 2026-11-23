@@ -14,6 +14,7 @@ use {
     core::fmt::Debug,
     field_frames::{CommissionFrame, CommissionView},
     frame_v4::VoteStateFrameV4,
+    frame_v5::VoteStateFrameV5,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, Lockout},
@@ -24,11 +25,13 @@ mod field_frames;
 mod frame_v1_14_11;
 mod frame_v3;
 pub(crate) mod frame_v4;
+mod frame_v5;
 mod list_view;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VoteStateViewError {
     AccountDataTooSmall,
+    InvalidVoteStateV5,
     InvalidVotesLength,
     InvalidRootSlotOption,
     InvalidBlsPubkeyCompressedOption,
@@ -76,6 +79,14 @@ impl VoteStateView {
         Ok(Self { data, frame })
     }
 
+    /// Location captured with this account snapshot; older versions have none.
+    pub fn location(&self) -> Option<solana_vote_interface::state::vote_state_v5::Location> {
+        match &self.frame {
+            VoteStateFrame::V5(frame) => Some(frame.location),
+            _ => None,
+        }
+    }
+
     pub fn node_pubkey(&self) -> &Pubkey {
         let offset = self.frame.offset(Field::NodePubkey);
         // SAFETY: `frame` was created from `data`.
@@ -120,32 +131,60 @@ impl VoteStateView {
     }
 
     pub fn bls_pubkey_compressed(&self) -> Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]> {
+        if matches!(self.frame, VoteStateFrame::V5(_)) {
+            let offset = self
+                .frame
+                .simd185_field_offset(Simd185Field::BlsPubkeyCompressed)?;
+            return Some(
+                self.data[offset..offset + BLS_PUBLIC_KEY_COMPRESSED_SIZE]
+                    .try_into()
+                    .unwrap(),
+            );
+        }
         self.bls_pubkey_compressed_view()
             .and_then(|view| view.pubkey())
     }
 
     pub fn votes_iter(&self) -> impl Iterator<Item = Lockout> + '_ {
-        self.votes_view().into_iter().map(|vote| {
-            Lockout::new_with_confirmation_count(vote.slot(), vote.confirmation_count())
-        })
+        let latest = match &self.frame {
+            VoteStateFrame::V5(frame) => frame.latest_vote.map(Lockout::new),
+            _ => None,
+        };
+        latest
+            .into_iter()
+            .chain(self.votes_view().into_iter().map(|vote| {
+                Lockout::new_with_confirmation_count(vote.slot(), vote.confirmation_count())
+            }))
     }
 
     #[inline]
     pub fn votes_len(&self) -> usize {
+        if let VoteStateFrame::V5(frame) = &self.frame {
+            return usize::from(frame.latest_vote.is_some());
+        }
         self.votes_view().len()
     }
 
     pub fn last_lockout(&self) -> Option<Lockout> {
+        if let VoteStateFrame::V5(frame) = &self.frame {
+            return frame.latest_vote.map(Lockout::new);
+        }
         self.votes_view().last().map(|item| {
             Lockout::new_with_confirmation_count(item.slot(), item.confirmation_count())
         })
     }
 
     pub fn last_voted_slot(&self) -> Option<Slot> {
+        if let VoteStateFrame::V5(frame) = &self.frame {
+            return frame.latest_vote;
+        }
         self.votes_view().last().map(|item| item.slot())
     }
 
     pub fn root_slot(&self) -> Option<Slot> {
+        if let VoteStateFrame::V5(frame) = &self.frame {
+            return frame.root_slot;
+        }
         self.root_slot_view().root_slot()
     }
 
@@ -228,13 +267,21 @@ impl VoteStateView {
     fn authorized_voters_view(&self) -> ListView<'_, AuthorizedVotersListFrame> {
         let offset = self.frame.offset(Field::AuthorizedVoters);
         // SAFETY: `frame` was created from `data`.
-        ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
+        if matches!(self.frame, VoteStateFrame::V5(_)) {
+            ListView::from_items(self.frame.authorized_voters_frame(), &self.data[offset..])
+        } else {
+            ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
+        }
     }
 
     fn epoch_credits_view(&self) -> ListView<'_, EpochCreditsListFrame> {
         let offset = self.frame.offset(Field::EpochCredits);
         // SAFETY: `frame` was created from `data`.
-        ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])
+        if matches!(self.frame, VoteStateFrame::V5(_)) {
+            ListView::from_items(self.frame.epoch_credits_frame(), &self.data[offset..])
+        } else {
+            ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])
+        }
     }
 }
 
@@ -259,6 +306,7 @@ enum VoteStateFrame {
     V1_14_11(VoteStateFrameV1_14_11),
     V3(VoteStateFrameV3),
     V4(VoteStateFrameV4),
+    V5(VoteStateFrameV5),
 }
 
 impl VoteStateFrame {
@@ -275,6 +323,7 @@ impl VoteStateFrame {
             1 => Self::V1_14_11(VoteStateFrameV1_14_11::try_new(bytes)?),
             2 => Self::V3(VoteStateFrameV3::try_new(bytes)?),
             3 => Self::V4(VoteStateFrameV4::try_new(bytes)?),
+            4 => Self::V5(VoteStateFrameV5::try_new(bytes)?),
             _ => return Err(VoteStateViewError::UnsupportedVersion),
         })
     }
@@ -284,6 +333,7 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => frame.field_offset(field),
             Self::V3(frame) => frame.field_offset(field),
             Self::V4(frame) => frame.field_offset(field),
+            Self::V5(frame) => frame.field_offset(field),
         }
     }
 
@@ -292,6 +342,7 @@ impl VoteStateFrame {
             Self::V1_14_11(_frame) => None,
             Self::V3(_frame) => None,
             Self::V4(frame) => Some(frame.simd185_field_offset(field)),
+            Self::V5(frame) => Some(frame.simd185_field_offset(field)),
         }
     }
 
@@ -299,7 +350,7 @@ impl VoteStateFrame {
         match &self {
             Self::V1_14_11(_) => CommissionFrame::new_percent(),
             Self::V3(_) => CommissionFrame::new_percent(),
-            Self::V4(_) => CommissionFrame::new_bps(),
+            Self::V4(_) | Self::V5(_) => CommissionFrame::new_bps(),
         }
     }
 
@@ -307,6 +358,7 @@ impl VoteStateFrame {
         match &self {
             Self::V1_14_11 { .. } | Self::V3 { .. } => None,
             Self::V4(frame) => Some(frame.bls_pubkey_compressed_frame),
+            Self::V5(_) => None,
         }
     }
 
@@ -315,6 +367,7 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => VotesFrame::Lockout(frame.votes_frame),
             Self::V3(frame) => VotesFrame::Landed(frame.votes_frame),
             Self::V4(frame) => VotesFrame::Landed(frame.votes_frame),
+            Self::V5(_) => VotesFrame::Landed(field_frames::LandedVotesListFrame { len: 0 }),
         }
     }
 
@@ -323,6 +376,9 @@ impl VoteStateFrame {
             Self::V1_14_11(vote_frame) => vote_frame.root_slot_frame,
             Self::V3(vote_frame) => vote_frame.root_slot_frame,
             Self::V4(vote_frame) => vote_frame.root_slot_frame,
+            Self::V5(_) => RootSlotFrame {
+                has_root_slot: false,
+            },
         }
     }
 
@@ -331,6 +387,9 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => frame.authorized_voters_frame,
             Self::V3(frame) => frame.authorized_voters_frame,
             Self::V4(frame) => frame.authorized_voters_frame,
+            Self::V5(frame) => AuthorizedVotersListFrame {
+                len: frame.authorized_voters_len,
+            },
         }
     }
 
@@ -339,6 +398,9 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => frame.epoch_credits_frame,
             Self::V3(frame) => frame.epoch_credits_frame,
             Self::V4(frame) => frame.epoch_credits_frame,
+            Self::V5(frame) => EpochCreditsListFrame {
+                len: frame.accumulated_lamports_len,
+            },
         }
     }
 }
@@ -755,7 +817,7 @@ mod tests {
 
     #[test]
     fn test_vote_state_view_unsupported_version() {
-        let vote_data = Arc::new(4u32.to_le_bytes().to_vec());
+        let vote_data = Arc::new(5u32.to_le_bytes().to_vec());
         let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
         assert_eq!(vote_state_view_err, VoteStateViewError::UnsupportedVersion);
     }

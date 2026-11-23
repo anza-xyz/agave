@@ -927,7 +927,7 @@ mod tests {
         let stake_account_pubkey = Pubkey::new_unique();
         let feature_set = match features {
             Features::None => FeatureSet::default(),
-            Features::All => FeatureSet::all_enabled(),
+            Features::All => crate::genesis_utils::features_for_v4_genesis(),
         };
 
         let config = create_genesis_config_with_leader_ex(
