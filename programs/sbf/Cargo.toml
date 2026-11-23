@@ -116,7 +116,7 @@ byteorder = "1.3.2"
 libsecp256k1 = { version = "0.7.2", default-features = false }
 num-derive = "0.5.1"
 num-traits = "0.2.19"
-solana-account-info = "=3.1.1"
+solana-account-info = "=3.2.0"
 solana-account-view = "=3.0.0"
 solana-address = "=2.9.0"
 solana-big-mod-exp = "4.0.0"
@@ -135,7 +135,7 @@ solana-instructions-sysvar = "=5.0.0"
 solana-keccak-hasher = { version = "=3.1.0", features = ["sha3"] }
 solana-msg = "=3.1.0"
 solana-poseidon = "=5.0.1"
-solana-program = { version = "=5.2.0", features = ["wincode"] }
+solana-program = { version = "=6.0.0", features = ["wincode"] }
 solana-program-binaries = { path = "../../program-binaries", version = "=5.0.0-alpha.1" }
 solana-program-entrypoint = "=3.1.1"
 solana-program-error = "=3.0.1"
