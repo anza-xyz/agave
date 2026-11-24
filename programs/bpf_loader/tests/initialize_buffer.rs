@@ -1,11 +1,12 @@
 use {
-    common::process_instruction,
-    solana_account::{AccountSharedData, state_traits::StateMutWincode as StateMut},
-    solana_instruction::AccountMeta,
+    common::{LoaderV3Features, process_instruction_with_conformance_harness},
+    solana_account::{Account, state_traits::StateMutWincode as StateMut},
+    solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
 };
@@ -16,13 +17,13 @@ mod common;
 fn test_bpf_loader_upgradeable_initialize_buffer() {
     let loader_id = bpf_loader_upgradeable::id();
     let buffer_address = Pubkey::new_unique();
-    let buffer_account = AccountSharedData::new_with_data(
+    let buffer_account = Account::new_with_data(
         1,
         vec![0; UpgradeableLoaderState::size_of_buffer(9)],
         &loader_id,
     );
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::new_with_data(
+    let authority_account = Account::new_with_data(
         1,
         vec![0; UpgradeableLoaderState::size_of_buffer(9)],
         &loader_id,
@@ -43,17 +44,17 @@ fn test_bpf_loader_upgradeable_initialize_buffer() {
     ];
 
     // Case: Success
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction_data,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(loader_id, &instruction_data, instruction_accounts.clone()),
         vec![
             (buffer_address, buffer_account),
             (authority_address, authority_account),
         ],
-        instruction_accounts.clone(),
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -62,17 +63,17 @@ fn test_bpf_loader_upgradeable_initialize_buffer() {
     );
 
     // Case: Already initialized
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction_data,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(loader_id, &instruction_data, instruction_accounts),
         vec![
-            (buffer_address, accounts.first().unwrap().clone()),
-            (authority_address, accounts.get(1).unwrap().clone()),
+            (buffer_address, accounts.first().unwrap().1.clone()),
+            (authority_address, accounts.get(1).unwrap().1.clone()),
         ],
-        instruction_accounts,
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::AccountAlreadyInitialized),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {

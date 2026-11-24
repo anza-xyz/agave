@@ -361,7 +361,7 @@ soketto = "0.8"
 solana-account = "5.4.0"
 solana-account-decoder = { path = "account-decoder", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
-solana-account-info = "3.1.1"
+solana-account-info = "3.2.0"
 solana-account-view = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 solana-address = "2.9.0"
@@ -456,7 +456,7 @@ solana-poh-config = "3.1.1"
 solana-poseidon = "5.0.1"
 solana-precompile-error = "3.0.0"
 solana-presigner = "4.0.0"
-solana-program = { version = "5.2.0", default-features = false }
+solana-program = { version = "6.0.0", default-features = false, features = ["wincode"] }
 solana-program-binaries = { path = "program-binaries", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 solana-program-entrypoint = "3.1.1"
 solana-program-error = "3.0.1"

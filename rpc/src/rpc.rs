@@ -1315,9 +1315,9 @@ impl JsonRpcRequestProcessor {
 
                 let vote_state_view = account.vote_state_view();
                 let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
-                let num_epoch_credits = vote_state_view.num_epoch_credits();
+                let num_epoch_credits = vote_state_view.num_accumulated_lamports();
                 let epoch_credits = vote_state_view
-                    .epoch_credits_iter()
+                    .accumulated_lamports_iter()
                     .skip(
                         num_epoch_credits
                             .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
@@ -3682,10 +3682,12 @@ pub mod rpc_accounts {
 // the future.
 pub mod rpc_accounts_scan {
     use super::*;
+    #[allow(deprecated)]
     #[rpc]
     pub trait AccountsScan {
         type Metadata;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getProgramAccounts")]
         fn get_program_accounts(
             &self,
@@ -3694,6 +3696,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcProgramAccountsConfig>,
         ) -> BoxFuture<Result<OptionalContext<Vec<RpcKeyedAccount>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getLargestAccounts")]
         fn get_largest_accounts(
             &self,
@@ -3701,6 +3704,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcLargestAccountsConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcAccountBalance>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getSupply")]
         fn get_supply(
             &self,
@@ -3712,6 +3716,7 @@ pub mod rpc_accounts_scan {
         // See https://github.com/solana-labs/solana-program-library/releases/tag/token-v2.0.0 for
         // program details
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getTokenLargestAccounts")]
         fn get_token_largest_accounts(
             &self,
@@ -3720,6 +3725,7 @@ pub mod rpc_accounts_scan {
             commitment: Option<CommitmentConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcTokenAccountBalance>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getTokenAccountsByOwner")]
         fn get_token_accounts_by_owner(
             &self,
@@ -3729,6 +3735,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcAccountInfoConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcKeyedAccount>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getTokenAccountsByDelegate")]
         fn get_token_accounts_by_delegate(
             &self,
@@ -4997,7 +5004,7 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
         },
-        solana_vote_interface::state::{LandedVote, Lockout, VoteStateV4},
+        solana_vote_interface::state::VoteStateV4,
         solana_vote_program::vote_state::{
             MAX_LOCKOUT_HISTORY, VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteInit, VoteStateVersions,
             handler::{VoteStateHandler, VoteStateVersionsInline},
@@ -5012,7 +5019,7 @@ pub mod tests {
         },
         std::{
             borrow::Cow,
-            collections::{HashMap, HashSet, VecDeque},
+            collections::{HashMap, HashSet},
             net::Ipv4Addr,
         },
         test_case::test_case,
@@ -9202,10 +9209,7 @@ pub mod tests {
                     VoteStateVersionsInline::V4(vote_state),
                 )
                 .expect("create vote state handler");
-                vote_state.set_votes(VecDeque::from([LandedVote {
-                    latency: 1,
-                    lockout: Lockout::new(vote_slot),
-                }]));
+                vote_state.set_latest_vote(vote_slot);
                 vote_state.increment_credits(bank.epoch(), credits_per_slot);
                 vote_state
                     .serialize_into(vote_account.data_as_mut_slice())

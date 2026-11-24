@@ -1987,7 +1987,7 @@ pub fn should_require_vote_history_file(
         return false;
     }
 
-    let Some(last_voted_slot) = vote_state_handler.last_voted_slot() else {
+    let Some(last_voted_slot) = vote_state_handler.latest_vote_slot() else {
         // New vote account
         return false;
     };

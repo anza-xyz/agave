@@ -587,7 +587,6 @@ dependencies = [
  "solana-clock",
  "solana-epoch-schedule",
  "solana-hash",
- "solana-leader-schedule",
  "solana-pubkey 4.4.0",
  "solana-short-vec",
  "solana-signer-store",
@@ -5902,9 +5901,9 @@ dependencies = [
 
 [[package]]
 name = "solana-account-info"
-version = "3.1.1"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9cf16495d9eb53e3d04e72366a33bb1c20c24e78c171d8b8f5978357b63ae95"
+checksum = "57ad0fe88ccbdba196bb7657534e9caf69397e9b503371261eebd9ad1d7a9ed7"
 dependencies = [
  "solana-address 2.9.0",
  "solana-program-error",
@@ -6294,6 +6293,7 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction",
  "solana-transaction-status-client-types",
+ "solana-vote-interface",
  "solana-vote-program",
  "spl-memo-interface",
  "wincode",
@@ -6920,7 +6920,6 @@ version = "5.0.0-alpha.1"
 dependencies = [
  "agave-logger",
  "agave-random",
- "agave-votor-messages",
  "arc-swap",
  "arrayvec",
  "bv",
@@ -6939,10 +6938,8 @@ dependencies = [
  "solana-bloom",
  "solana-clock",
  "solana-ed25519",
- "solana-entry",
  "solana-hash",
  "solana-keypair",
- "solana-ledger",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",

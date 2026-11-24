@@ -79,7 +79,10 @@ use {
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
+    solana_ledger::{
+        blockstore::{Blockstore, FirstShredReceiver},
+        leader_schedule_cache::LeaderScheduleCache,
+    },
     solana_pubkey::Pubkey,
     solana_rpc::optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
     solana_runtime::{
@@ -151,6 +154,8 @@ pub struct VotorConfig {
 
     // Receivers
     pub event_receiver: VotorEventReceiver,
+    /// Slots whose block location received its first shred, sent by Blockstore.
+    pub first_shred_receiver: FirstShredReceiver,
     pub consensus_message_receiver: Receiver<SigVerifiedBatch>,
     pub own_votes_receiver: Receiver<VoteMessage>,
     pub footer_certs_receiver: Receiver<SmallVec<[Certificate; 2]>>,
@@ -203,6 +208,7 @@ impl Votor {
             repair_event_sender,
             latest_switch_request,
             event_receiver,
+            first_shred_receiver,
             consensus_message_receiver,
             consensus_metrics_sender,
             consensus_metrics_receiver,
@@ -268,6 +274,7 @@ impl Votor {
             validator_exit: validator_exit.clone(),
             migration_status: migration_status.clone(),
             event_receiver,
+            first_shred_receiver,
             timer_manager: Arc::clone(&timer_manager),
             shared_context,
             voting_context,

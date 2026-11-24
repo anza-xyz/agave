@@ -589,24 +589,10 @@ pub(crate) fn submit_gossip_stats(
         ("Version-pull", crds_stats.pull.counts[7], i64),
         ("NodeInstance-push", crds_stats.push.counts[8], i64),
         ("NodeInstance-pull", crds_stats.pull.counts[8], i64),
-        ("DuplicateShred-push", crds_stats.push.counts[9], i64),
-        ("DuplicateShred-pull", crds_stats.pull.counts[9], i64),
         ("SnapshotHashes-push", crds_stats.push.counts[10], i64),
         ("SnapshotHashes-pull", crds_stats.pull.counts[10], i64),
         ("ContactInfo-push", crds_stats.push.counts[11], i64),
         ("ContactInfo-pull", crds_stats.pull.counts[11], i64),
-        (
-            "RestartLastVotedForkSlots-push",
-            crds_stats.push.counts[12],
-            i64
-        ),
-        (
-            "RestartLastVotedForkSlots-pull",
-            crds_stats.pull.counts[12],
-            i64
-        ),
-        ("RestartHeaviestFork-push", crds_stats.push.counts[13], i64),
-        ("RestartHeaviestFork-pull", crds_stats.pull.counts[13], i64),
         (
             "all-push",
             crds_stats.push.counts.iter().sum::<usize>(),
@@ -632,24 +618,10 @@ pub(crate) fn submit_gossip_stats(
         ("Version-pull", crds_stats.pull.fails[7], i64),
         ("NodeInstance-push", crds_stats.push.fails[8], i64),
         ("NodeInstance-pull", crds_stats.pull.fails[8], i64),
-        ("DuplicateShred-push", crds_stats.push.fails[9], i64),
-        ("DuplicateShred-pull", crds_stats.pull.fails[9], i64),
         ("SnapshotHashes-push", crds_stats.push.fails[10], i64),
         ("SnapshotHashes-pull", crds_stats.pull.fails[10], i64),
         ("ContactInfo-push", crds_stats.push.fails[11], i64),
         ("ContactInfo-pull", crds_stats.pull.fails[11], i64),
-        (
-            "RestartLastVotedForkSlots-push",
-            crds_stats.push.fails[12],
-            i64
-        ),
-        (
-            "RestartLastVotedForkSlots-pull",
-            crds_stats.pull.fails[12],
-            i64
-        ),
-        ("RestartHeaviestFork-push", crds_stats.push.fails[13], i64),
-        ("RestartHeaviestFork-pull", crds_stats.pull.fails[13], i64),
         ("all-push", crds_stats.push.fails.iter().sum::<usize>(), i64),
         ("all-pull", crds_stats.pull.fails.iter().sum::<usize>(), i64),
     );
