@@ -3680,10 +3680,12 @@ pub mod rpc_accounts {
 // the future.
 pub mod rpc_accounts_scan {
     use super::*;
+    #[allow(deprecated)]
     #[rpc]
     pub trait AccountsScan {
         type Metadata;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getProgramAccounts")]
         fn get_program_accounts(
             &self,
@@ -3692,6 +3694,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcProgramAccountsConfig>,
         ) -> BoxFuture<Result<OptionalContext<Vec<RpcKeyedAccount>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getLargestAccounts")]
         fn get_largest_accounts(
             &self,
@@ -3699,6 +3702,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcLargestAccountsConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcAccountBalance>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getSupply")]
         fn get_supply(
             &self,
@@ -3710,6 +3714,7 @@ pub mod rpc_accounts_scan {
         // See https://github.com/solana-labs/solana-program-library/releases/tag/token-v2.0.0 for
         // program details
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getTokenLargestAccounts")]
         fn get_token_largest_accounts(
             &self,
@@ -3718,6 +3723,7 @@ pub mod rpc_accounts_scan {
             commitment: Option<CommitmentConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcTokenAccountBalance>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getTokenAccountsByOwner")]
         fn get_token_accounts_by_owner(
             &self,
@@ -3727,6 +3733,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcAccountInfoConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcKeyedAccount>>>>;
 
+        #[deprecated(since = "4.5.0")]
         #[rpc(meta, name = "getTokenAccountsByDelegate")]
         fn get_token_accounts_by_delegate(
             &self,
