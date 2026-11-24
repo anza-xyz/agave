@@ -34,8 +34,7 @@ use {
     solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
-        non_circulating_supply::calculate_non_circulating_supply,
+        bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
@@ -149,7 +148,6 @@ struct RpcRequestMiddleware {
     snapshot_config: Option<SnapshotConfig>,
     bank_forks: Arc<RwLock<BankForks>>,
     health: Arc<RpcHealth>,
-    full_api: bool,
 }
 
 impl RpcRequestMiddleware {
@@ -158,7 +156,6 @@ impl RpcRequestMiddleware {
         snapshot_config: Option<SnapshotConfig>,
         bank_forks: Arc<RwLock<BankForks>>,
         health: Arc<RpcHealth>,
-        full_api: bool,
     ) -> Self {
         Self {
             ledger_path,
@@ -173,7 +170,6 @@ impl RpcRequestMiddleware {
             snapshot_config,
             bank_forks,
             health,
-            full_api,
         }
     }
 
@@ -414,9 +410,6 @@ impl RequestMiddleware for RpcRequestMiddleware {
         }
 
         if let Some(path) = match_supply_path(request.uri().path()) {
-            if path == "/v0/circulating-supply" && !self.full_api {
-                return RpcRequestMiddleware::not_found().into();
-            }
             process_rest(self.bank_forks.clone(), path)
         } else if self.is_file_get_path(request.uri().path()) {
             self.process_file_get(request.uri().path())
@@ -434,38 +427,13 @@ impl RequestMiddleware for RpcRequestMiddleware {
 
 fn match_supply_path(path: &str) -> Option<&str> {
     match path {
-        "/v0/circulating-supply" | "/v0/total-supply" => Some(path),
+        "/v0/total-supply" => Some(path),
         _ => None,
     }
 }
 
-#[derive(Debug)]
-pub enum SupplyCalcError {
-    Scan(String),
-}
-
-async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, SupplyCalcError> {
-    let total_supply = bank.capitalization();
-    let bank = Arc::clone(bank);
-    let non_circulating_supply =
-        tokio::task::spawn_blocking(move || calculate_non_circulating_supply(&bank))
-            .await
-            .expect("Failed to spawn blocking task")
-            .map_err(|e| SupplyCalcError::Scan(e.to_string()))?;
-
-    Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
-}
-
 async fn handle_rest(bank_forks: &RwLock<BankForks>, path: &str) -> Option<String> {
     match path {
-        "/v0/circulating-supply" => {
-            let bank = bank_forks.read().unwrap().root_bank();
-            let supply_result = calculate_circulating_supply_async(&bank).await;
-            match supply_result {
-                Ok(supply) => Some(build_balance_message(supply, false, false)),
-                Err(_) => None,
-            }
-        }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
@@ -745,7 +713,6 @@ impl JsonRpcService {
                     snapshot_config,
                     bank_forks,
                     health.clone(),
-                    full_api,
                 );
                 let server = ServerBuilder::with_meta_extractor(
                     io,
@@ -1267,50 +1234,9 @@ mod tests {
                 handle_rest(&bank_forks, "not-a-supported-rest-api").await
             );
 
-            let circulating_supply = handle_rest(&bank_forks, "/v0/circulating-supply").await;
-            assert!(circulating_supply.is_some());
-
             let total_supply = handle_rest(&bank_forks, "/v0/total-supply").await;
             assert!(total_supply.is_some());
-
-            assert_eq!(
-                handle_rest(&bank_forks, "/v0/circulating-supply").await,
-                handle_rest(&bank_forks, "/v0/total-supply").await
-            );
         });
-    }
-
-    #[tokio::test]
-    async fn test_circulating_supply_requires_full_api() {
-        let bank_forks = create_bank_forks();
-        let optimistically_confirmed_bank =
-            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let health = RpcHealth::stub(optimistically_confirmed_bank);
-
-        for full_api in [false, true] {
-            let middleware = RpcRequestMiddleware::new(
-                PathBuf::default(),
-                None,
-                bank_forks.clone(),
-                health.clone(),
-                full_api,
-            );
-            let request = hyper::Request::builder()
-                .uri("/v0/circulating-supply")
-                .body(hyper::Body::empty())
-                .unwrap();
-            let RequestMiddlewareAction::Respond { response, .. } = middleware.on_request(request)
-            else {
-                panic!("Expected a REST response");
-            };
-            let response = response.await.unwrap();
-            let expected_status = if full_api {
-                hyper::StatusCode::OK
-            } else {
-                hyper::StatusCode::NOT_FOUND
-            };
-            assert_eq!(response.status(), expected_status);
-        }
     }
 
     #[test]
@@ -1356,14 +1282,12 @@ mod tests {
             None,
             bank_forks.clone(),
             health.clone(),
-            false,
         );
         let rrm_with_snapshot_config = RpcRequestMiddleware::new(
             ledger_path.path().to_path_buf(),
             Some(SnapshotConfig::default()),
             bank_forks,
             health,
-            false,
         );
 
         assert!(rrm.is_file_get_path(DEFAULT_GENESIS_DOWNLOAD_PATH));
@@ -1483,7 +1407,6 @@ mod tests {
             None,
             bank_forks,
             RpcHealth::stub(optimistically_confirmed_bank),
-            false,
         );
 
         // File does not exist => request should fail.
