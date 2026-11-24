@@ -27,10 +27,16 @@ use {
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, LandedVote, Lockout,
             MAX_EPOCH_CREDITS_HISTORY, VoteInit, VoteInitV2, VoteState1_14_11, VoteStateV3,
             VoteStateV4,
+            vote_state_v5::{VOTE_STATE_V5_SIZE, VoteStateV5},
         },
     },
-    std::collections::VecDeque,
-    wincode::{SchemaRead, SchemaWrite},
+    std::{collections::VecDeque, mem::MaybeUninit},
+    wincode::{
+        ReadResult, SchemaRead, SchemaWrite,
+        config::ConfigCore,
+        error::{invalid_tag_encoding, invalid_value},
+        io::Reader,
+    },
 };
 
 /// Copy of `VoteStateVersions` except that state is without a `Box`.
@@ -43,12 +49,48 @@ use {
     ),
     derive(StableAbi, StableAbiSample, SchemaWrite)
 )]
-#[derive(Debug, PartialEq, Eq, SchemaRead)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum VoteStateVersionsInline {
     Uninitialized,
     V1_14_11(VoteState1_14_11),
     V3(VoteStateV3),
     V4(VoteStateV4),
+    V5(VoteStateV5),
+}
+
+/// Reads the `u32` tag first. Tags 0 to 3 delegate to the payload decoder, as the former
+/// derive did. Tag 4 is part of `VoteStateV5` itself, so the tag bytes are put back in front
+/// of the remaining bytes before the SDK decodes the whole account.
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for VoteStateVersionsInline
+where
+    u32: SchemaRead<'de, C, Dst = u32>,
+    VoteState1_14_11: SchemaRead<'de, C, Dst = VoteState1_14_11>,
+    VoteStateV3: SchemaRead<'de, C, Dst = VoteStateV3>,
+    VoteStateV4: SchemaRead<'de, C, Dst = VoteStateV4>,
+{
+    type Dst = Self;
+
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self>) -> ReadResult<()> {
+        let tag = <u32 as SchemaRead<C>>::get(reader.by_ref())?;
+        let state = match tag {
+            0 => Self::Uninitialized,
+            1 => Self::V1_14_11(<VoteState1_14_11 as SchemaRead<C>>::get(reader)?),
+            2 => Self::V3(<VoteStateV3 as SchemaRead<C>>::get(reader)?),
+            3 => Self::V4(<VoteStateV4 as SchemaRead<C>>::get(reader)?),
+            4 => {
+                let mut account = [0u8; VOTE_STATE_V5_SIZE];
+                account[..4].copy_from_slice(&tag.to_le_bytes());
+                reader.copy_into_slice(&mut account[4..])?;
+                Self::V5(
+                    VoteStateV5::from_account_data_unaligned(&account)
+                        .map_err(|_| invalid_value("invalid VoteStateV5"))?,
+                )
+            }
+            tag => return Err(invalid_tag_encoding(tag as usize)),
+        };
+        dst.write(state);
+        Ok(())
+    }
 }
 
 impl VoteStateVersionsInline {
@@ -58,6 +100,10 @@ impl VoteStateVersionsInline {
         match versioned {
             // Preserve VoteStateVersions::deserialize's rejection of discriminant 0.
             Self::Uninitialized => Err(InstructionError::InvalidAccountData),
+            // The v5 layout is fixed, so the reader cannot see trailing bytes.
+            Self::V5(_) if input.len() != VOTE_STATE_V5_SIZE => {
+                Err(InstructionError::InvalidAccountData)
+            }
             _ => Ok(versioned),
         }
     }
@@ -68,7 +114,7 @@ impl VoteStateVersionsInline {
             Self::V1_14_11(vote_state) => vote_state.is_uninitialized(),
             Self::V3(vote_state) => vote_state.is_uninitialized(),
             // As per SIMD-0185, v4 is always initialized.
-            Self::V4(_) => false,
+            Self::V4(_) | Self::V5(_) => false,
         }
     }
 }
@@ -476,6 +522,7 @@ impl VoteStateHandler {
         match versions {
             VoteStateVersionsInline::V4(state) => Ok(Self::new_v4(state)),
             VoteStateVersionsInline::V3(_)
+            | VoteStateVersionsInline::V5(_)
             | VoteStateVersionsInline::V1_14_11(_)
             | VoteStateVersionsInline::Uninitialized => Err(InstructionError::InvalidAccountData),
         }
@@ -576,6 +623,8 @@ pub(crate) fn try_convert_to_vote_state_v4(
             last_timestamp: state.last_timestamp,
         }),
         VoteStateVersionsInline::V4(state) => Ok(state),
+        // The program has no v5 target yet and never downgrades.
+        VoteStateVersionsInline::V5(_) => Err(InstructionError::InvalidAccountData),
     }
 }
 

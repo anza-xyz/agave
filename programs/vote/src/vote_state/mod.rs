@@ -655,12 +655,17 @@ mod tests {
             }
             VoteStateVersionsInline::V3(state) => VoteStateVersions::V3(Box::new(state)),
             VoteStateVersionsInline::V4(state) => VoteStateVersions::V4(Box::new(state)),
+            VoteStateVersionsInline::V5(_) => unreachable!("the boxed enum has no v5"),
         }
     }
 
     /// Checks that the inline wincode decoders match the boxed `VoteStateVersions` wincode decoder
     /// and the hand-written `VoteStateVersions::deserialize` on `data`.
     fn assert_vote_state_decoders_agree(data: &[u8]) {
+        // The boxed SDK enum has no v5, so tag 4 is covered by its own test.
+        if data.starts_with(&[4, 0, 0, 0]) {
+            return;
+        }
         let inline = wincode::config::deserialize::<VoteStateVersionsInline, _>(
             data,
             solana_account::WINCODE_CONFIG,
@@ -680,6 +685,55 @@ mod tests {
             VoteStateVersionsInline::deserialize(data).map(boxed),
             VoteStateVersions::deserialize(data),
             "data: {data:?}",
+        );
+    }
+
+    #[test]
+    fn test_vote_state_versions_inline_decodes_v5() {
+        use solana_vote_interface::state::{
+            VoteInitV2,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+
+        let state = VoteStateV5::new(
+            &VoteInitV2::default(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Location::try_new(6_378_137, 0, 0).unwrap(),
+            &Clock::default(),
+        );
+        let expected = VoteStateVersionsInline::V5(state.clone());
+        let mut storage = vec![0xffu8; VOTE_STATE_V5_SIZE + 16];
+        for offset in 0..8 {
+            let account = &mut storage[offset..offset + VOTE_STATE_V5_SIZE];
+            state.write_account_data(account).unwrap();
+            assert_eq!(
+                VoteStateVersionsInline::deserialize(account).as_ref(),
+                Ok(&expected)
+            );
+            assert_eq!(
+                wincode::config::deserialize::<VoteStateVersionsInline, _>(
+                    &*account,
+                    solana_account::WINCODE_CONFIG,
+                )
+                .unwrap(),
+                expected,
+            );
+            assert!(
+                VoteStateVersionsInline::deserialize(&account[..VOTE_STATE_V5_SIZE - 1]).is_err()
+            );
+        }
+        let account = &mut storage[..VOTE_STATE_V5_SIZE + 1];
+        account[VOTE_STATE_V5_SIZE] = 0;
+        state
+            .write_account_data(&mut account[..VOTE_STATE_V5_SIZE])
+            .unwrap();
+        assert!(VoteStateVersionsInline::deserialize(account).is_err());
+
+        assert!(!expected.is_uninitialized());
+        assert_eq!(
+            VoteStateHandler::try_new_from_vote_state_versions(expected).err(),
+            Some(InstructionError::InvalidAccountData),
         );
     }
 
