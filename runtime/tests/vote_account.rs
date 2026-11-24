@@ -639,7 +639,10 @@ fn test_vote_account_v3_vs_v4_accessor_parity() {
     assert_eq!(view_v3.root_slot(), view_v4.root_slot());
     assert_eq!(view_v3.last_voted_slot(), view_v4.last_voted_slot());
     assert_eq!(view_v3.last_timestamp(), view_v4.last_timestamp());
-    assert_eq!(view_v3.num_epoch_credits(), view_v4.num_epoch_credits());
+    assert_eq!(
+        view_v3.num_accumulated_lamports(),
+        view_v4.num_accumulated_lamports()
+    );
     assert_eq!(
         view_v3.get_authorized_voter(0),
         view_v4.get_authorized_voter(0)

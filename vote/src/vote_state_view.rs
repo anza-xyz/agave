@@ -3,9 +3,9 @@ use solana_vote_interface::state::{VoteStateV3, VoteStateV4, VoteStateVersions};
 use {
     self::{
         field_frames::{
-            AuthorizedVotersListFrame, BlsPubkeyCompressedFrame, BlsPubkeyCompressedView,
-            EpochCreditsItem, EpochCreditsListFrame, PendingDelegatorRewardsView, RootSlotFrame,
-            RootSlotView, VotesFrame,
+            AccumulatedLamportsItem, AuthorizedVotersListFrame, BlsPubkeyCompressedFrame,
+            BlsPubkeyCompressedView, EpochCreditsListFrame, PendingDelegatorRewardsView,
+            RootSlotFrame, RootSlotView, VotesFrame,
         },
         frame_v1_14_11::VoteStateFrameV1_14_11,
         frame_v3::VoteStateFrameV3,
@@ -153,18 +153,18 @@ impl VoteStateView {
         self.authorized_voters_view().get_authorized_voter(epoch)
     }
 
-    pub fn num_epoch_credits(&self) -> usize {
+    pub fn num_accumulated_lamports(&self) -> usize {
         self.epoch_credits_view().len()
     }
 
-    pub fn epoch_credits_iter(&self) -> impl Iterator<Item = &EpochCreditsItem> + '_ {
+    pub fn accumulated_lamports_iter(&self) -> impl Iterator<Item = &AccumulatedLamportsItem> + '_ {
         self.epoch_credits_view().into_iter()
     }
 
-    pub fn credits(&self) -> u64 {
+    pub fn accumulated_lamports(&self) -> u64 {
         self.epoch_credits_view()
             .last()
-            .map(|item| item.credits())
+            .map(|item| item.lamports())
             .unwrap_or(0)
     }
 
@@ -611,17 +611,17 @@ mod tests {
         }
 
         assert_eq!(
-            vote_state_view.num_epoch_credits(),
+            vote_state_view.num_accumulated_lamports(),
             vote_state.epoch_credits.len()
         );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
-            .epoch_credits_iter()
+            .accumulated_lamports_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
         assert_eq!(view_credits, vote_state.epoch_credits);
 
         assert_eq!(
-            vote_state_view.credits(),
+            vote_state_view.accumulated_lamports(),
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
@@ -667,17 +667,17 @@ mod tests {
         }
 
         assert_eq!(
-            vote_state_view.num_epoch_credits(),
+            vote_state_view.num_accumulated_lamports(),
             vote_state.epoch_credits.len()
         );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
-            .epoch_credits_iter()
+            .accumulated_lamports_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
         assert_eq!(view_credits, vote_state.epoch_credits);
 
         assert_eq!(
-            vote_state_view.credits(),
+            vote_state_view.accumulated_lamports(),
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
@@ -721,17 +721,17 @@ mod tests {
         }
 
         assert_eq!(
-            vote_state_view.num_epoch_credits(),
+            vote_state_view.num_accumulated_lamports(),
             vote_state.epoch_credits.len()
         );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
-            .epoch_credits_iter()
+            .accumulated_lamports_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
         assert_eq!(view_credits, vote_state.epoch_credits);
 
         assert_eq!(
-            vote_state_view.credits(),
+            vote_state_view.accumulated_lamports(),
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
@@ -875,8 +875,8 @@ mod tests {
         );
         assert_eq!(view_zero.root_slot(), view_garbage.root_slot());
         assert_eq!(
-            view_zero.num_epoch_credits(),
-            view_garbage.num_epoch_credits()
+            view_zero.num_accumulated_lamports(),
+            view_garbage.num_accumulated_lamports()
         );
     }
 }

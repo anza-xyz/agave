@@ -1315,9 +1315,9 @@ impl JsonRpcRequestProcessor {
 
                 let vote_state_view = account.vote_state_view();
                 let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
-                let num_epoch_credits = vote_state_view.num_epoch_credits();
+                let num_epoch_credits = vote_state_view.num_accumulated_lamports();
                 let epoch_credits = vote_state_view
-                    .epoch_credits_iter()
+                    .accumulated_lamports_iter()
                     .skip(
                         num_epoch_credits
                             .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
