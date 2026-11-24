@@ -130,7 +130,7 @@ impl VoteState {
         let latest_voted_slot = slot
             .max(self.handler.latest_vote_slot().unwrap_or(0))
             .max(self.handler.root_slot().unwrap_or(0));
-        self.handler.set_latest_vote(latest_voted_slot);
+        self.handler.set_latest_vote_slot(latest_voted_slot);
 
         let timestamp = slot_timestamp_ns / 1_000_000_000;
         if timestamp > self.handler.last_timestamp().timestamp {
@@ -899,9 +899,8 @@ mod tests {
 
         let handle = vote_state_from_bank(&bank, &target_vote_pubkey);
         assert_eq!(handle.root_slot(), Some(final_cert.slot().slot()));
-        assert_eq!(handle.votes().len(), 1);
         assert_eq!(
-            handle.votes().front().unwrap().lockout.slot(),
+            handle.latest_vote_slot().unwrap(),
             final_cert.slot().slot().max(reward_slot)
         );
     }
@@ -971,11 +970,7 @@ mod tests {
 
         let vote_state = vote_state_from_bank(&bank, &target_vote_pubkey);
         assert_eq!(vote_state.root_slot(), None);
-        assert_eq!(vote_state.votes().len(), 1);
-        assert_eq!(
-            vote_state.votes().front().unwrap().lockout.slot(),
-            reward_slot
-        );
+        assert_eq!(vote_state.latest_vote_slot().unwrap(), reward_slot);
     }
 
     #[test]

@@ -9202,7 +9202,7 @@ pub mod tests {
                     VoteStateVersionsInline::V4(vote_state),
                 )
                 .expect("create vote state handler");
-                vote_state.set_latest_vote(vote_slot);
+                vote_state.set_latest_vote_slot(vote_slot);
                 vote_state.increment_credits(bank.epoch(), credits_per_slot);
                 vote_state
                     .serialize_into(vote_account.data_as_mut_slice())

@@ -2759,7 +2759,7 @@ mod tests {
             new_vote_init.authorized_withdrawer
         );
         assert_eq!(vote_state.commission(), 10);
-        assert!(vote_state.votes().is_empty());
+        assert!(vote_state.latest_vote_slot().is_none());
         assert!(vote_state.epoch_credits().is_empty());
     }
 

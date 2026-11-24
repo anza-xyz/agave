@@ -260,15 +260,7 @@ impl VoteStateHandler {
         }
     }
 
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn votes(&self) -> &VecDeque<LandedVote> {
-        match &self.target_state {
-            TargetVoteState::V4(v4) => &v4.votes,
-        }
-    }
-
-    pub fn set_latest_vote(&mut self, slot: Slot) {
+    pub fn set_latest_vote_slot(&mut self, slot: Slot) {
         match &mut self.target_state {
             TargetVoteState::V4(v4) => {
                 v4.votes = VecDeque::from([LandedVote {
