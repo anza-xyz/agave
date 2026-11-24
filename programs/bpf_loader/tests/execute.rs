@@ -1,10 +1,10 @@
 use {
-    common::{LoaderV3Features, process_instruction, process_instruction_with_setup},
+    common::{LoaderV3Features, process_instruction_with_conformance_harness},
     rand::Rng,
-    solana_account::{AccountSharedData, WritableAccount},
-    solana_bpf_loader_program::test_utils,
-    solana_instruction::AccountMeta,
+    solana_account::{Account, WritableAccount},
+    solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
@@ -13,13 +13,13 @@ use {
 
 mod common;
 
-fn load_program_account_from_elf(loader_id: &Pubkey, path: &str) -> AccountSharedData {
+fn load_program_account_from_elf(loader_id: &Pubkey, path: &str) -> Account {
     let mut file = File::open(path).expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
     let rent = Rent::default();
     let mut program_account =
-        AccountSharedData::new_with_data(rent.minimum_balance(elf.len()), elf, loader_id);
+        Account::new_with_data(rent.minimum_balance(elf.len()), elf, loader_id);
     program_account.set_executable(true);
     program_account
 }
@@ -30,7 +30,7 @@ fn test_bpf_loader_invoke_main() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/sbpfv3_return_ok.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::empty(1, &loader_id);
+    let parameter_account = Account::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -38,78 +38,66 @@ fn test_bpf_loader_invoke_main() {
     };
 
     // Case: No program account
-    process_instruction(
-        &loader_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(loader_id, &[], Vec::new()),
         Vec::new(),
-        Vec::new(),
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::UnsupportedProgramId),
     );
 
     // Case: Only a program account
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(program_id, &[], Vec::new()),
         vec![(program_id, program_account.clone())],
-        Vec::new(),
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: With program and parameter account
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(program_id, &[], vec![parameter_meta.clone()]),
         vec![
             (program_id, program_account.clone()),
             (parameter_id, parameter_account.clone()),
         ],
-        vec![parameter_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: With duplicate accounts
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            program_id,
+            &[],
+            vec![parameter_meta.clone(), parameter_meta],
+        ),
         vec![
             (program_id, program_account.clone()),
             (parameter_id, parameter_account.clone()),
         ],
-        vec![parameter_meta.clone(), parameter_meta],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: limited budget
-    process_instruction_with_setup(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(program_id, &[], Vec::new()),
         vec![(program_id, program_account)],
-        Vec::new(),
         LoaderV3Features::all_enabled(),
+        0,
         Err(InstructionError::ProgramFailedToComplete),
-        |invoke_context| {
-            invoke_context.mock_set_remaining(0);
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
     );
 
     // Case: Account not a program
-    process_instruction_with_setup(
-        &program_id,
-        &[],
-        vec![(program_id, parameter_account.clone())],
-        Vec::new(),
-        LoaderV3Features::all_enabled(),
-        Err(InstructionError::UnsupportedProgramId),
-        |invoke_context| {
-            test_utils::load_all_invoked_programs(invoke_context);
-        },
-    );
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(program_id, &[], Vec::new()),
         vec![(program_id, parameter_account)],
-        Vec::new(),
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::UnsupportedProgramId),
     );
 }
@@ -120,7 +108,7 @@ fn test_bpf_loader_serialize_unaligned() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/noop_unaligned.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::empty(1, &loader_id);
+    let parameter_account = Account::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -128,26 +116,30 @@ fn test_bpf_loader_serialize_unaligned() {
     };
 
     // Case: With program and parameter account
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(program_id, &[], vec![parameter_meta.clone()]),
         vec![
             (program_id, program_account.clone()),
             (parameter_id, parameter_account.clone()),
         ],
-        vec![parameter_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: With duplicate accounts
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            program_id,
+            &[],
+            vec![parameter_meta.clone(), parameter_meta],
+        ),
         vec![
             (program_id, program_account),
             (parameter_id, parameter_account),
         ],
-        vec![parameter_meta.clone(), parameter_meta],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 }
@@ -158,7 +150,7 @@ fn test_bpf_loader_serialize_aligned() {
     let program_account =
         load_program_account_from_elf(&loader_id, "test_elfs/out/noop_aligned.so");
     let parameter_id = Pubkey::new_unique();
-    let parameter_account = AccountSharedData::empty(1, &loader_id);
+    let parameter_account = Account::empty(1, &loader_id);
     let parameter_meta = AccountMeta {
         pubkey: parameter_id,
         is_signer: false,
@@ -166,26 +158,30 @@ fn test_bpf_loader_serialize_aligned() {
     };
 
     // Case: With program and parameter account
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(program_id, &[], vec![parameter_meta.clone()]),
         vec![
             (program_id, program_account.clone()),
             (parameter_id, parameter_account.clone()),
         ],
-        vec![parameter_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: With duplicate accounts
-    process_instruction(
-        &program_id,
-        &[],
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            program_id,
+            &[],
+            vec![parameter_meta.clone(), parameter_meta],
+        ),
         vec![
             (program_id, program_account),
             (parameter_id, parameter_account),
         ],
-        vec![parameter_meta.clone(), parameter_meta],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 }
@@ -231,13 +227,13 @@ fn test_fuzz() {
         0..elf_len,
         0..255,
         |bytes: Vec<u8>| {
-            let mut program_account = AccountSharedData::new_with_data(1, bytes, &loader_id);
+            let mut program_account = Account::new_with_data(1, bytes, &loader_id);
             program_account.set_executable(true);
-            process_instruction(
-                &program_id,
-                &[],
+            process_instruction_with_conformance_harness(
+                Instruction::new_with_bytes(program_id, &[], Vec::new()),
                 vec![(program_id, program_account)],
-                Vec::new(),
+                LoaderV3Features::all_enabled(),
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
                 Ok(()),
             );
         },
