@@ -715,16 +715,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     debug_assert!(false);
                     return;
                 };
-                if accounts.touch(index_in_transaction).is_err() {
-                    debug_assert!(false);
-                    return;
-                }
 
                 let remaining_allowed_growth = MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
                     .saturating_sub(accounts.resize_delta())
                     .max(0) as usize;
 
-                if requested_length > region.len() {
+                let new_len = if requested_length > region.len() {
                     // Realloc immediately here to fit the requested access,
                     // then later in CPI or deserialization realloc again to the
                     // account length the program stored in AccountInfo.
@@ -741,7 +737,17 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     {
                         return;
                     }
+                    Some(new_len)
+                } else {
+                    None
+                };
 
+                if accounts.touch(index_in_transaction).is_err() {
+                    debug_assert!(false);
+                    return;
+                }
+
+                if let Some(new_len) = new_len {
                     account.resize(new_len, 0);
                     let data_ptr = region.host_buffer().ptr() as *mut u8;
                     let new_buffer = std::ptr::slice_from_raw_parts_mut(data_ptr, new_len);
