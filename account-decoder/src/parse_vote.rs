@@ -7,8 +7,17 @@ use {
 };
 
 pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, ParseAccountError> {
-    let vote_state =
-        VoteStateV4::deserialize(data, vote_pubkey).map_err(ParseAccountError::from)?;
+    use solana_vote_interface::state::vote_state_v5::VoteStateV5;
+    let v5 = if data.get(..4) == Some(&4u32.to_le_bytes()) {
+        Some(VoteStateV5::from_account_data_unaligned(data).map_err(ParseAccountError::from)?)
+    } else {
+        None
+    };
+    let vote_state = if let Some(state) = &v5 {
+        solana_vote::vote_state_v5::common_fields(state)
+    } else {
+        VoteStateV4::deserialize(data, vote_pubkey).map_err(ParseAccountError::from)?
+    };
     let epoch_credits = vote_state
         .epoch_credits
         .iter()
@@ -28,6 +37,36 @@ pub fn parse_vote(data: &[u8], vote_pubkey: &Pubkey) -> Result<VoteAccountType, 
         })
         .collect();
     Ok(VoteAccountType::Vote(UiVoteState {
+        location: v5.as_ref().map(|state| UiLocation {
+            x: state.location.x(),
+            y: state.location.y(),
+            z: state.location.z(),
+        }),
+        latest_vote: v5.as_ref().and_then(|state| state.latest_vote()),
+        inflation_rewards_commission_schedule: v5.as_ref().map(|state| {
+            let schedule = state.inflation_rewards_commission_ref();
+            schedule
+                .epochs
+                .iter()
+                .zip(schedule.bps)
+                .map(|(&epoch, bps)| UiCommissionChange {
+                    epoch,
+                    bps: bps.get(),
+                })
+                .collect()
+        }),
+        block_revenue_commission_schedule: v5.as_ref().map(|state| {
+            let schedule = state.block_revenue_commission_ref();
+            schedule
+                .epochs
+                .iter()
+                .zip(schedule.bps)
+                .map(|(&epoch, bps)| UiCommissionChange {
+                    epoch,
+                    bps: bps.get(),
+                })
+                .collect()
+        }),
         node_pubkey: vote_state.node_pubkey.to_string(),
         authorized_withdrawer: vote_state.authorized_withdrawer.to_string(),
         commission: vote_state
@@ -78,6 +117,27 @@ pub struct UiVoteState {
     block_revenue_commission_bps: u16,
     pending_delegator_rewards: StringAmount,
     bls_pubkey_compressed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    location: Option<UiLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    latest_vote: Option<Slot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inflation_rewards_commission_schedule: Option<Vec<UiCommissionChange>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    block_revenue_commission_schedule: Option<Vec<UiCommissionChange>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct UiLocation {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct UiCommissionChange {
+    epoch: Epoch,
+    bps: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,6 +226,7 @@ mod test {
             block_revenue_commission_bps: vote_state.block_revenue_commission_bps,
             pending_delegator_rewards: vote_state.pending_delegator_rewards.to_string(),
             bls_pubkey_compressed: None,
+            ..UiVoteState::default()
         };
         assert_eq!(
             parse_vote(&vote_account_data, &vote_pubkey).unwrap(),
@@ -174,6 +235,40 @@ mod test {
 
         let bad_data = vec![0; 4];
         assert!(parse_vote(&bad_data, &vote_pubkey).is_err());
+    }
+
+    #[test]
+    fn test_parse_vote_v5() {
+        use solana_vote_interface::{
+            authorized_voters::AuthorizedVoters,
+            state::vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+        let voter = Pubkey::new_unique();
+        let state = VoteStateV5::from_vote_state_v4(
+            VoteStateV4 {
+                authorized_voters: AuthorizedVoters::new(0, voter),
+                bls_pubkey_compressed: Some([1; 48]),
+                inflation_rewards_commission_bps: 123,
+                ..VoteStateV4::default()
+            },
+            Location::try_new(4_051_542, 618_526, 4_870_645).unwrap(),
+            10,
+        )
+        .unwrap();
+        let mut bytes = vec![0; VOTE_STATE_V5_SIZE];
+        state.write_account_data(&mut bytes).unwrap();
+        let parsed = parse_vote(&bytes, &Pubkey::new_unique()).unwrap();
+        let json = serde_json::to_value(parsed).unwrap();
+        assert_eq!(
+            json["info"]["location"],
+            serde_json::json!({"x": 4_051_542, "y": 618_526, "z": 4_870_645})
+        );
+        assert_eq!(
+            json["info"]["inflationRewardsCommissionSchedule"],
+            serde_json::json!([{"epoch": 12, "bps": 123}])
+        );
+        bytes[950] = 1;
+        assert!(parse_vote(&bytes, &voter).is_err());
     }
 
     #[test]

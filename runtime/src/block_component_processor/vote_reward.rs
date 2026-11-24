@@ -85,17 +85,10 @@ impl VoteState {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
         };
-        let versions = match wincode::deserialize(account.account().data()) {
-            Ok(s) => s,
-            Err(e) => {
-                info!("wincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
-                return None;
-            }
-        };
-        let handler = match VoteStateHandler::try_new_from_vote_state_versions(versions) {
-            Ok(h) => h,
-            Err(e) => {
-                info!("VoteStateHandler::try_new() for vote_pubkey={vote_pubkey} failed with {e}");
+        let handler = match VoteStateHandler::from_account_data(account.account().data()) {
+            Ok(handler) => handler,
+            Err(error) => {
+                info!("vote state for vote_pubkey={vote_pubkey} failed with {error}");
                 return None;
             }
         };
@@ -569,7 +562,6 @@ mod tests {
             stake_utils,
             validated_block_finalization::ValidatedBlockFinalizationCert,
         },
-        agave_feature_set::FeatureSet,
         agave_votor_messages::{
             certificate::{CertSignature, FastFinalizeCert},
             consensus_message::Block,
@@ -1128,7 +1120,7 @@ mod tests {
                 FeeRateGovernor::new(0, 0),
                 Rent::default(),
                 ClusterType::Development,
-                &FeatureSet::all_enabled(),
+                &crate::genesis_utils::features_for_v4_genesis(),
                 vec![],
             );
             genesis_config.epoch_schedule = EpochSchedule::without_warmup();

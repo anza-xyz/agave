@@ -29,6 +29,9 @@ fn get_vote_state_handler_checked(
     vote_account: &BorrowedInstructionAccount,
     target_version: VoteStateTargetVersion,
 ) -> Result<VoteStateHandler, InstructionError> {
+    if vote_account.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+        return VoteStateHandler::from_account_data(vote_account.get_data());
+    }
     match target_version {
         VoteStateTargetVersion::V4 => {
             // New flow after v4 feature gate activation:
@@ -44,6 +47,49 @@ fn get_vote_state_handler_checked(
             Ok(VoteStateHandler::new_v4(vote_state))
         }
     }
+}
+
+/// Register a validator's integer ECEF location (SIMD-0674).
+pub fn update_location<S: std::hash::BuildHasher, F>(
+    vote_account: &mut BorrowedInstructionAccount,
+    x: i32,
+    y: i32,
+    z: i32,
+    signers: &HashSet<Pubkey, S>,
+    get_clock: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<std::sync::Arc<Clock>, InstructionError>,
+{
+    use solana_vote_interface::state::vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5};
+    let mut handler = get_vote_state_handler_checked(vote_account, VoteStateTargetVersion::V4)
+        .map_err(|_| InstructionError::InvalidAccountData)?;
+    let clock = get_clock()?;
+    let voter = handler.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&voter, signers)?;
+    let location = Location::try_new(x, y, z).ok_or(InstructionError::InvalidArgument)?;
+    let mut state = if let Some(state) = handler.updated_v5()? {
+        state
+    } else {
+        if vote_account.get_data().len() != VoteStateV4::size_of() {
+            return Err(InstructionError::InvalidAccountData);
+        }
+        let v4 = handler.unwrap_v4_for_conversion();
+        if v4.bls_pubkey_compressed.is_none()
+            || v4.authorized_voters.len() > 4
+            || v4.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY
+        {
+            return Err(InstructionError::InvalidAccountData);
+        }
+        VoteStateV5::from_vote_state_v4(v4, location, clock.epoch)
+            .map_err(|_| InstructionError::InvalidAccountData)?
+    };
+    state.location = location;
+    // A V4 conversion releases the tower storage; account lamports are unchanged.
+    vote_account.set_state(&state)?;
+    vote_account.set_data_length(VOTE_STATE_V5_SIZE)?;
+    vote_account.get_data_mut()?[std::mem::size_of_val(&state)..].fill(0);
+    Ok(())
 }
 
 /// Authorize the given pubkey to withdraw or sign votes. This may be called multiple times,
@@ -200,6 +246,27 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
     vote_state.set_vote_account_state(vote_account)
 }
 
+/// Update one V5 commission schedule without discarding the other history.
+pub fn update_commission_v5<S: std::hash::BuildHasher>(
+    vote_account: &mut BorrowedInstructionAccount,
+    commission_bps: u16,
+    kind: CommissionKind,
+    signers: &HashSet<Pubkey, S>,
+    clock: &Clock,
+) -> Result<(), InstructionError> {
+    let mut state = VoteStateHandler::from_account_data(vote_account.get_data())?;
+    verify_authorized_signer(state.authorized_withdrawer(), signers)?;
+    let inflation = matches!(kind, CommissionKind::InflationRewards);
+    state.set_commission_change_epoch(clock.epoch, inflation);
+    match kind {
+        CommissionKind::InflationRewards => {
+            state.set_inflation_rewards_commission_bps(commission_bps)
+        }
+        CommissionKind::BlockRevenue => state.set_block_revenue_commission_bps(commission_bps),
+    }
+    state.set_vote_account_state(vote_account)
+}
+
 /// Validates the collector per SIMD-0232 and returns its pubkey.
 ///
 /// The designated commission collector must either be equal to the vote
@@ -310,11 +377,15 @@ pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
         // Can't use `get_vote_state_handler_checked`, since it will convert
         // the underlying vote state to v4.
         // SIMD-0123 requires an *initialized v4*.
-        let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
-        if let VoteStateVersionsInline::V4(vote_state_v4) = versioned {
-            Ok(VoteStateHandler::new_v4(vote_state_v4))
+        if vote_account.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+            VoteStateHandler::from_account_data(vote_account.get_data())
         } else {
-            Err(InstructionError::InvalidAccountData)
+            let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
+            if let VoteStateVersionsInline::V4(vote_state_v4) = versioned {
+                Ok(VoteStateHandler::new_v4(vote_state_v4))
+            } else {
+                Err(InstructionError::InvalidAccountData)
+            }
         }
     }?;
 
@@ -501,6 +572,10 @@ where
 {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
+    if vote_account.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+        VoteStateHandler::from_account_data(vote_account.get_data())?;
+        return Err(InstructionError::AccountAlreadyInitialized);
+    }
     VoteStateHandler::check_vote_account_length(&mut vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
@@ -554,6 +629,10 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
+    if vote_account.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+        VoteStateHandler::from_account_data(vote_account.get_data())?;
+        return Err(InstructionError::AccountAlreadyInitialized);
+    }
     VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 

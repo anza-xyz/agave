@@ -103,9 +103,93 @@ enum TargetVoteState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteStateHandler {
     target_state: TargetVoteState,
+    // Preserve V5's bounded histories and reserved fields when operating through
+    // the common-field API. Serialization never writes the V4 projection.
+    v5: Option<solana_vote_interface::state::vote_state_v5::VoteStateV5>,
+    commission_change_epoch: Option<(Epoch, bool)>,
 }
 
 impl VoteStateHandler {
+    pub fn from_account_data(data: &[u8]) -> Result<Self, InstructionError> {
+        use solana_vote_interface::state::vote_state_v5::VoteStateV5;
+        if data.get(..4) == Some(&4u32.to_le_bytes()) {
+            let state = VoteStateV5::from_account_data_unaligned(data)
+                .map_err(|_| InstructionError::InvalidAccountData)?;
+            let mut handler = Self::new_v4(solana_vote::vote_state_v5::common_fields(&state));
+            handler.v5 = Some(state);
+            Ok(handler)
+        } else {
+            Self::try_new_from_vote_state_versions(VoteStateVersionsInline::deserialize(data)?)
+        }
+    }
+
+    pub(crate) fn set_commission_change_epoch(&mut self, epoch: Epoch, inflation: bool) {
+        self.commission_change_epoch = Some((epoch, inflation));
+    }
+
+    pub(super) fn updated_v5(
+        &self,
+    ) -> Result<Option<solana_vote_interface::state::vote_state_v5::VoteStateV5>, InstructionError>
+    {
+        use solana_vote_interface::state::vote_state_v5::Commission;
+        let Some(mut state) = self.v5.clone() else {
+            return Ok(None);
+        };
+        let TargetVoteState::V4(common) = &self.target_state;
+        state.node_pubkey = common.node_pubkey;
+        state.authorized_withdrawer = common.authorized_withdrawer;
+        state.inflation_rewards_collector = common.inflation_rewards_collector;
+        state.block_revenue_collector = common.block_revenue_collector;
+        state.pending_delegator_rewards = common.pending_delegator_rewards;
+        state.bls_pubkey_compressed = common
+            .bls_pubkey_compressed
+            .ok_or(InstructionError::InvalidAccountData)?;
+        state.last_timestamp = common.last_timestamp.clone();
+        state.set_latest_vote(common.votes.back().map(|vote| vote.slot()));
+        state.set_root_slot(common.root_slot);
+        if let Some((&epoch, _)) = common.authorized_voters.first() {
+            state.authorized_voters_mut().purge_before(epoch);
+        }
+        for (&epoch, &voter) in common.authorized_voters.iter() {
+            state.authorized_voters_mut().update(epoch, voter)?;
+        }
+        for &(epoch, cumulative, previous) in &common.epoch_credits {
+            if (epoch, cumulative, previous) == (u64::MAX, u64::MAX, u64::MAX) {
+                continue;
+            }
+            let entries = state.accumulated_lamports_ref();
+            let last = entries.0.iter().rev().find(|entry| {
+                !(entry.epoch == u64::MAX
+                    && entry.lamports == u64::MAX
+                    && entry.prev_lamports == u64::MAX)
+            });
+            if last.is_some_and(|entry| entry.epoch > epoch) {
+                continue;
+            }
+            let previous = last.map_or(0, |entry| entry.lamports);
+            if cumulative >= previous
+                && (cumulative > previous || last.is_none_or(|entry| entry.epoch != epoch))
+            {
+                state
+                    .accumulated_lamports_mut()
+                    .update(epoch, cumulative.saturating_sub(previous))?;
+            }
+        }
+        if let Some((epoch, inflation)) = self.commission_change_epoch {
+            if inflation {
+                state.inflation_rewards_commission_mut().update(
+                    epoch,
+                    Commission::new(common.inflation_rewards_commission_bps),
+                )?;
+            } else {
+                state
+                    .block_revenue_commission_mut()
+                    .update(epoch, Commission::new(common.block_revenue_commission_bps))?;
+            }
+        }
+        Ok(Some(state))
+    }
+
     pub(crate) fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V4(v4) => &v4.authorized_withdrawer,
@@ -326,6 +410,12 @@ impl VoteStateHandler {
         &self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
+        if let Some(state) = self.updated_v5()? {
+            // Use set_state for the normal writable/owner checks, then zero the tail.
+            vote_account.set_state(&state)?;
+            vote_account.get_data_mut()?[std::mem::size_of_val(&state)..].fill(0);
+            return Ok(());
+        }
         match &self.target_state {
             TargetVoteState::V4(v4) => {
                 // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
@@ -463,6 +553,8 @@ impl VoteStateHandler {
     pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
+            v5: None,
+            commission_change_epoch: None,
         }
     }
 
@@ -493,6 +585,11 @@ impl VoteStateHandler {
         }
     }
 
+    pub(super) fn unwrap_v4_for_conversion(self) -> VoteStateV4 {
+        let TargetVoteState::V4(state) = self.target_state;
+        state
+    }
+
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn unwrap_v4(self) -> VoteStateV4 {
         match self.target_state {
@@ -504,6 +601,9 @@ impl VoteStateHandler {
     ///
     /// Returns `Err(InstructionError::InvalidAccountData)` if serialization fails.
     pub fn serialize_into(&self, data: &mut [u8]) -> Result<(), InstructionError> {
+        if let Some(state) = self.updated_v5()? {
+            return state.write_account_data(data);
+        }
         match &self.target_state {
             TargetVoteState::V4(v4) => {
                 let versioned = VoteStateVersionsRef::V4(v4);
@@ -518,6 +618,11 @@ impl VoteStateHandler {
     ///
     /// Returns `Err(InstructionError::InvalidAccountData)` if the encoding exceeds `len` bytes.
     pub fn serialize_padded(&self, len: usize) -> Result<Vec<u8>, InstructionError> {
+        if self.v5.is_some() {
+            let mut data = vec![0; len];
+            self.serialize_into(&mut data)?;
+            return Ok(data);
+        }
         let mut data = Vec::with_capacity(len);
         match &self.target_state {
             TargetVoteState::V4(v4) => {

@@ -254,7 +254,9 @@ impl LocalCluster {
         let leader_pubkey = leader_keypair.pubkey();
         let leader_node = Node::new_localhost_with_pubkey(&leader_pubkey);
 
-        let feature_set = FeatureSet::all_enabled();
+        let mut feature_set = FeatureSet::all_enabled();
+        // Bootstrap vote accounts are V4; registration must precede enforcement.
+        feature_set.deactivate(&agave_feature_set::enforce_validator_location_registration::id());
 
         let GenesisConfigInfo {
             mut genesis_config,

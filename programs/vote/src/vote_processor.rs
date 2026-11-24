@@ -94,6 +94,23 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
             .map_err(|_| InstructionError::ComputationalBudgetExceeded)
     };
+    // SDK PR #1059 defines V5 but has not yet added SIMD-0674's instruction.
+    // Keep the wire tag explicit so existing VoteInstruction encodings are unchanged.
+    if data.get(..4) == Some(&20u32.to_le_bytes()) {
+        if !invoke_context
+            .get_feature_set()
+            .validator_location_registration
+        {
+            return Err(InstructionError::InvalidInstructionData);
+        }
+        use solana_vote::location::LocationInstruction;
+        let LocationInstruction::UpdateLocation { x, y, z } =
+            wincode::config::deserialize(data, PACKET_DATA_WINCODE_CONFIG)
+                .map_err(|_| InstructionError::InvalidInstructionData)?;
+        return vote_state::update_location(&mut me, x, y, z, &signers, || {
+            invoke_context.environment_config.sysvar_cache().get_clock()
+        });
+    }
     let instruction: VoteInstruction =
         wincode::config::deserialize(data, PACKET_DATA_WINCODE_CONFIG)
             .map_err(|_| InstructionError::InvalidInstructionData)?;
@@ -159,6 +176,19 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             vote_state::update_validator_identity(&mut me, target_version, node_pubkey, &signers)
         }
         VoteInstruction::UpdateCommission(commission) => {
+            if me.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+                let clock = invoke_context
+                    .environment_config
+                    .sysvar_cache()
+                    .get_clock()?;
+                return vote_state::update_commission_v5(
+                    &mut me,
+                    u16::from(commission).saturating_mul(100),
+                    solana_vote_interface::instruction::CommissionKind::InflationRewards,
+                    &signers,
+                    &clock,
+                );
+            }
             vote_state::update_commission(&mut me, target_version, commission, &signers)
         }
         VoteInstruction::Vote(_)
@@ -238,14 +268,36 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateCommissionBps {
             commission_bps,
             kind,
-        } => vote_state::update_commission_bps(
-            &mut me,
-            target_version,
-            commission_bps,
-            kind,
-            &signers,
-            invoke_context.get_feature_set().block_revenue_sharing,
-        ),
+        } => {
+            if matches!(
+                kind,
+                solana_vote_interface::instruction::CommissionKind::BlockRevenue
+            ) && !invoke_context.get_feature_set().block_revenue_sharing
+            {
+                return Err(InstructionError::InvalidInstructionData);
+            }
+            if me.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+                let clock = invoke_context
+                    .environment_config
+                    .sysvar_cache()
+                    .get_clock()?;
+                return vote_state::update_commission_v5(
+                    &mut me,
+                    commission_bps,
+                    kind,
+                    &signers,
+                    &clock,
+                );
+            }
+            vote_state::update_commission_bps(
+                &mut me,
+                target_version,
+                commission_bps,
+                kind,
+                &signers,
+                invoke_context.get_feature_set().block_revenue_sharing,
+            )
+        }
         VoteInstruction::UpdateCommissionCollector(kind) => {
             instruction_context.check_number_of_instruction_accounts(3)?;
 
@@ -4770,3 +4822,7 @@ mod tests {
         assert_eq!(accounts[1].lamports(), vote_account_lamports);
     }
 }
+
+#[cfg(test)]
+#[path = "location_tests.rs"]
+mod location_tests;

@@ -12,6 +12,11 @@ impl<'a, F: ListFrame> ListView<'a, F> {
         Self { frame, item_buffer }
     }
 
+    /// Fixed-layout arrays have no serialized length prefix to skip.
+    pub(super) fn from_items(frame: F, item_buffer: &'a [u8]) -> Self {
+        Self { frame, item_buffer }
+    }
+
     #[inline]
     pub(super) fn len(&self) -> usize {
         self.frame.len()
