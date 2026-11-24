@@ -77,6 +77,17 @@ Release channels have their own copy of this changelog:
   nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
   block.
 
+#### Deprecations
+
+* The `rpc_accounts_scan` RPC methods are deprecated.
+  * `getProgramAccounts`
+  * `getLargestAccounts`
+  * `getSupply`
+  * `getTokenLargestAccounts`
+  * `getTokenAccountsByOwner`
+  * `getTokenAccountsByDelegate`
+* The `/v0/circulating-supply` endpoint is deprecated.
+
 #### Changes
 
 * `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns

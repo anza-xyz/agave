@@ -1,13 +1,12 @@
 use {
-    common::process_instruction,
-    solana_account::{
-        AccountSharedData, WritableAccount, state_traits::StateMutWincode as StateMut,
-    },
-    solana_instruction::AccountMeta,
+    common::{LoaderV3Features, process_instruction_with_conformance_harness},
+    solana_account::{Account, WritableAccount, state_traits::StateMutWincode as StateMut},
+    solana_instruction::{AccountMeta, Instruction},
     solana_instruction_error::InstructionError,
     solana_loader_v3_interface::{
         instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
+    solana_program_runtime::execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     std::{fs::File, io::Read},
@@ -21,13 +20,13 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
-    let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_upgrade_authority_address = Pubkey::new_unique();
-    let new_upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
-    let mut programdata_account = AccountSharedData::new_data_with_space(
+    let mut programdata_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::ProgramData {
             slot,
@@ -54,9 +53,16 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     };
 
     // Case: Set to new authority
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                upgrade_authority_meta.clone(),
+                new_upgrade_authority_meta.clone(),
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
@@ -65,14 +71,11 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
                 new_upgrade_authority_account.clone(),
             ),
         ],
-        vec![
-            programdata_meta.clone(),
-            upgrade_authority_meta.clone(),
-            new_upgrade_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -82,17 +85,21 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     );
 
     // Case: Finalize
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
         ],
-        vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -105,47 +112,68 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
     let mut file = File::open("test_elfs/out/sbpfv0_verifier_err.so").expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
-    programdata_account.resize(UpgradeableLoaderState::size_of_programdata(elf.len()), 0);
+    programdata_account
+        .data
+        .resize(UpgradeableLoaderState::size_of_programdata(elf.len()), 0);
     programdata_account
         .data_as_mut_slice()
         .get_mut(UpgradeableLoaderState::size_of_programdata_metadata()..)
         .unwrap()
         .copy_from_slice(&elf);
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
         ],
-        vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::InvalidAccountData),
     );
 
     // Case: Authority did not sign
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                AccountMeta {
+                    pubkey: upgrade_authority_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
         ],
-        vec![
-            programdata_meta.clone(),
-            AccountMeta {
-                pubkey: upgrade_authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingRequiredSignature),
     );
 
     // Case: wrong authority
     let invalid_upgrade_authority_address = Pubkey::new_unique();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                AccountMeta {
+                    pubkey: invalid_upgrade_authority_address,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                new_upgrade_authority_meta,
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (
@@ -154,15 +182,8 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
             ),
             (new_upgrade_authority_address, new_upgrade_authority_account),
         ],
-        vec![
-            programdata_meta.clone(),
-            AccountMeta {
-                pubkey: invalid_upgrade_authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-            new_upgrade_authority_meta,
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::IncorrectAuthority),
     );
 
@@ -173,14 +194,18 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
             upgrade_authority_address: None,
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
         ],
-        vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::Immutable),
     );
 
@@ -190,14 +215,18 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority() {
             programdata_address: Pubkey::new_unique(),
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![programdata_meta, upgrade_authority_meta],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account),
         ],
-        vec![programdata_meta, upgrade_authority_meta],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::InvalidArgument),
     );
 }
@@ -209,13 +238,13 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     let loader_id = bpf_loader_upgradeable::id();
     let slot = 0;
     let upgrade_authority_address = Pubkey::new_unique();
-    let upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_upgrade_authority_address = Pubkey::new_unique();
-    let new_upgrade_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_upgrade_authority_account = Account::empty(1, &Pubkey::new_unique());
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) =
         Pubkey::find_program_address(&[program_address.as_ref()], &bpf_loader_upgradeable::id());
-    let mut programdata_account = AccountSharedData::new_data_with_space(
+    let mut programdata_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::ProgramData {
             slot,
@@ -242,9 +271,16 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     };
 
     // Case: Set to new authority
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                upgrade_authority_meta.clone(),
+                new_upgrade_authority_meta.clone(),
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
@@ -253,15 +289,12 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
                 new_upgrade_authority_account.clone(),
             ),
         ],
-        vec![
-            programdata_meta.clone(),
-            upgrade_authority_meta.clone(),
-            new_upgrade_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::ProgramData {
@@ -271,25 +304,32 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
     );
 
     // Case: set to same authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                upgrade_authority_meta.clone(),
+                upgrade_authority_meta.clone(),
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
         ],
-        vec![
-            programdata_meta.clone(),
-            upgrade_authority_meta.clone(),
-            upgrade_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: present authority not in instruction
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![programdata_meta.clone(), new_upgrade_authority_meta.clone()],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
@@ -298,14 +338,18 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
                 new_upgrade_authority_account.clone(),
             ),
         ],
-        vec![programdata_meta.clone(), new_upgrade_authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingAccount),
     );
 
     // Case: new authority not in instruction
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
@@ -314,14 +358,26 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
                 new_upgrade_authority_account.clone(),
             ),
         ],
-        vec![programdata_meta.clone(), upgrade_authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingAccount),
     );
 
     // Case: present authority did not sign
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                AccountMeta {
+                    pubkey: upgrade_authority_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+                new_upgrade_authority_meta.clone(),
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
@@ -330,22 +386,26 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
                 new_upgrade_authority_account.clone(),
             ),
         ],
-        vec![
-            programdata_meta.clone(),
-            AccountMeta {
-                pubkey: upgrade_authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-            new_upgrade_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingRequiredSignature),
     );
 
     // Case: New authority did not sign
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                upgrade_authority_meta.clone(),
+                AccountMeta {
+                    pubkey: new_upgrade_authority_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
@@ -354,40 +414,40 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
                 new_upgrade_authority_account.clone(),
             ),
         ],
-        vec![
-            programdata_meta.clone(),
-            upgrade_authority_meta.clone(),
-            AccountMeta {
-                pubkey: new_upgrade_authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingRequiredSignature),
     );
 
     // Case: wrong present authority
     let invalid_upgrade_authority_address = Pubkey::new_unique();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                AccountMeta {
+                    pubkey: invalid_upgrade_authority_address,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                new_upgrade_authority_meta.clone(),
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (
                 invalid_upgrade_authority_address,
                 upgrade_authority_account.clone(),
             ),
-            (new_upgrade_authority_address, new_upgrade_authority_account),
+            (
+                new_upgrade_authority_address,
+                new_upgrade_authority_account.clone(),
+            ),
         ],
-        vec![
-            programdata_meta.clone(),
-            AccountMeta {
-                pubkey: invalid_upgrade_authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-            new_upgrade_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::IncorrectAuthority),
     );
 
@@ -398,18 +458,26 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
             upgrade_authority_address: None,
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta.clone(),
+                upgrade_authority_meta.clone(),
+                new_upgrade_authority_meta.clone(),
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account.clone()),
+            (
+                new_upgrade_authority_address,
+                new_upgrade_authority_account.clone(),
+            ),
         ],
-        vec![
-            programdata_meta.clone(),
-            upgrade_authority_meta.clone(),
-            new_upgrade_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::Immutable),
     );
 
@@ -419,18 +487,23 @@ fn test_bpf_loader_upgradeable_set_upgrade_authority_checked() {
             programdata_address: Pubkey::new_unique(),
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                programdata_meta,
+                upgrade_authority_meta,
+                new_upgrade_authority_meta,
+            ],
+        ),
         vec![
             (programdata_address, programdata_account.clone()),
             (upgrade_authority_address, upgrade_authority_account),
+            (new_upgrade_authority_address, new_upgrade_authority_account),
         ],
-        vec![
-            programdata_meta,
-            upgrade_authority_meta,
-            new_upgrade_authority_meta,
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::InvalidArgument),
     );
 }
@@ -441,11 +514,11 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_authority_address = Pubkey::new_unique();
-    let new_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_authority_account = Account::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account = AccountSharedData::new_data_with_space(
+    let mut buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
@@ -476,14 +549,18 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
     };
 
     // Case: New authority required
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![buffer_meta.clone(), authority_meta.clone()],
+        ),
         transaction_accounts.clone(),
-        vec![buffer_meta.clone(), authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::IncorrectAuthority),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -497,18 +574,22 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
             authority_address: Some(authority_address),
         })
         .unwrap();
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                authority_meta.clone(),
+                new_authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            authority_meta.clone(),
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -517,49 +598,61 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
     );
 
     // Case: Authority did not sign
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                AccountMeta {
+                    pubkey: authority_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+                new_authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            AccountMeta {
-                pubkey: authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingRequiredSignature),
     );
 
     // Case: wrong authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                AccountMeta {
+                    pubkey: invalid_authority_address,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                new_authority_meta.clone(),
+            ],
+        ),
         vec![
             (buffer_address, buffer_account.clone()),
             (invalid_authority_address, authority_account),
             (new_authority_address, new_authority_account),
         ],
-        vec![
-            buffer_meta.clone(),
-            AccountMeta {
-                pubkey: invalid_authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::IncorrectAuthority),
     );
 
     // Case: No authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![buffer_meta.clone(), authority_meta.clone()],
+        ),
         transaction_accounts.clone(),
-        vec![buffer_meta.clone(), authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::IncorrectAuthority),
     );
 
@@ -572,15 +665,19 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
             authority_address: None,
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                authority_meta.clone(),
+                new_authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            authority_meta.clone(),
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::Immutable),
     );
 
@@ -593,11 +690,15 @@ fn test_bpf_loader_upgradeable_set_buffer_authority() {
             programdata_address: Pubkey::new_unique(),
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![buffer_meta, authority_meta, new_authority_meta],
+        ),
         transaction_accounts.clone(),
-        vec![buffer_meta, authority_meta, new_authority_meta],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::InvalidArgument),
     );
 }
@@ -609,11 +710,11 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     let loader_id = bpf_loader_upgradeable::id();
     let invalid_authority_address = Pubkey::new_unique();
     let authority_address = Pubkey::new_unique();
-    let authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let authority_account = Account::empty(1, &Pubkey::new_unique());
     let new_authority_address = Pubkey::new_unique();
-    let new_authority_account = AccountSharedData::empty(1, &Pubkey::new_unique());
+    let new_authority_account = Account::empty(1, &Pubkey::new_unique());
     let buffer_address = Pubkey::new_unique();
-    let mut buffer_account = AccountSharedData::new_data_with_space(
+    let mut buffer_account = Account::new_data_with_space(
         1,
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(authority_address),
@@ -649,18 +750,22 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
             authority_address: Some(authority_address),
         })
         .unwrap();
-    let accounts = process_instruction(
-        &loader_id,
-        &instruction,
+    let accounts = process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                authority_meta.clone(),
+                new_authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            authority_meta.clone(),
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
-    let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+    let state: UpgradeableLoaderState = accounts.first().unwrap().1.state().unwrap();
     assert_eq!(
         state,
         UpgradeableLoaderState::Buffer {
@@ -669,88 +774,112 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
     );
 
     // Case: set to same authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                authority_meta.clone(),
+                authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            authority_meta.clone(),
-            authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Ok(()),
     );
 
     // Case: Missing current authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![buffer_meta.clone(), new_authority_meta.clone()],
+        ),
         transaction_accounts.clone(),
-        vec![buffer_meta.clone(), new_authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingAccount),
     );
 
     // Case: Missing new authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![buffer_meta.clone(), authority_meta.clone()],
+        ),
         transaction_accounts.clone(),
-        vec![buffer_meta.clone(), authority_meta.clone()],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingAccount),
     );
 
     // Case: wrong present authority
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                AccountMeta {
+                    pubkey: invalid_authority_address,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                new_authority_meta.clone(),
+            ],
+        ),
         vec![
             (buffer_address, buffer_account.clone()),
             (invalid_authority_address, authority_account),
             (new_authority_address, new_authority_account),
         ],
-        vec![
-            buffer_meta.clone(),
-            AccountMeta {
-                pubkey: invalid_authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::IncorrectAuthority),
     );
 
     // Case: present authority did not sign
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                AccountMeta {
+                    pubkey: authority_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+                new_authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            AccountMeta {
-                pubkey: authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingRequiredSignature),
     );
 
     // Case: new authority did not sign
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                authority_meta.clone(),
+                AccountMeta {
+                    pubkey: new_authority_address,
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            authority_meta.clone(),
-            AccountMeta {
-                pubkey: new_authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::MissingRequiredSignature),
     );
 
@@ -763,15 +892,19 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
             programdata_address: Pubkey::new_unique(),
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![
+                buffer_meta.clone(),
+                authority_meta.clone(),
+                new_authority_meta.clone(),
+            ],
+        ),
         transaction_accounts.clone(),
-        vec![
-            buffer_meta.clone(),
-            authority_meta.clone(),
-            new_authority_meta.clone(),
-        ],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::InvalidArgument),
     );
 
@@ -784,11 +917,15 @@ fn test_bpf_loader_upgradeable_set_buffer_authority_checked() {
             authority_address: None,
         })
         .unwrap();
-    process_instruction(
-        &loader_id,
-        &instruction,
+    process_instruction_with_conformance_harness(
+        Instruction::new_with_bytes(
+            loader_id,
+            &instruction,
+            vec![buffer_meta, authority_meta, new_authority_meta],
+        ),
         transaction_accounts.clone(),
-        vec![buffer_meta, authority_meta, new_authority_meta],
+        LoaderV3Features::all_enabled(),
+        DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT as u64,
         Err(InstructionError::Immutable),
     );
 }

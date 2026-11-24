@@ -1058,9 +1058,9 @@ impl JsonRpcRequestProcessor {
 
                 let vote_state_view = account.vote_state_view();
                 let last_vote = vote_state_view.last_voted_slot().unwrap_or(0);
-                let num_epoch_credits = vote_state_view.num_epoch_credits();
+                let num_epoch_credits = vote_state_view.num_accumulated_lamports();
                 let epoch_credits = vote_state_view
-                    .epoch_credits_iter()
+                    .accumulated_lamports_iter()
                     .skip(
                         num_epoch_credits
                             .saturating_sub(MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY),
@@ -2941,8 +2941,8 @@ pub mod rpc_accounts {
     }
 }
 
-// Expected to be provided by API nodes for now, but collected for easy separation and removal in
-// the future.
+// Full RPC interface that an API node is expected to provide
+// (rpc_minimal should also be provided by an API node)
 pub mod rpc_full {
     use {
         super::*,
@@ -4098,7 +4098,7 @@ pub mod tests {
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
         },
-        solana_vote_interface::state::{LandedVote, Lockout, VoteStateV4},
+        solana_vote_interface::state::VoteStateV4,
         solana_vote_program::vote_state::{
             MAX_LOCKOUT_HISTORY, VOTE_CREDITS_MAXIMUM_PER_SLOT, VoteInit, VoteStateVersions,
             handler::{VoteStateHandler, VoteStateVersionsInline},
@@ -4113,7 +4113,7 @@ pub mod tests {
         },
         std::{
             borrow::Cow,
-            collections::{HashMap, HashSet, VecDeque},
+            collections::{HashMap, HashSet},
             net::Ipv4Addr,
         },
         test_case::test_case,
@@ -8001,10 +8001,7 @@ pub mod tests {
                     VoteStateVersionsInline::V4(vote_state),
                 )
                 .expect("create vote state handler");
-                vote_state.set_votes(VecDeque::from([LandedVote {
-                    latency: 1,
-                    lockout: Lockout::new(vote_slot),
-                }]));
+                vote_state.set_latest_vote(vote_slot);
                 vote_state.increment_credits(bank.epoch(), credits_per_slot);
                 vote_state
                     .serialize_into(vote_account.data_as_mut_slice())

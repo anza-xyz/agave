@@ -1,6 +1,6 @@
 use {
     super::{
-        AuthorizedVotersListFrame, EpochCreditsListFrame, Field, Result, RootSlotFrame,
+        AccumulatedLamportsListFrame, AuthorizedVotersListFrame, Field, Result, RootSlotFrame,
         Simd185Field, VoteStateViewError,
         field_frames::{BlsPubkeyCompressedFrame, LandedVotesListFrame, ListFrame},
     },
@@ -15,7 +15,7 @@ pub(crate) struct VoteStateFrameV4 {
     pub(super) votes_frame: LandedVotesListFrame,
     pub(super) root_slot_frame: RootSlotFrame,
     pub(super) authorized_voters_frame: AuthorizedVotersListFrame,
-    pub(super) epoch_credits_frame: EpochCreditsListFrame,
+    pub(super) epoch_credits_frame: AccumulatedLamportsListFrame,
 }
 
 impl VoteStateFrameV4 {
@@ -28,7 +28,7 @@ impl VoteStateFrameV4 {
         let votes_frame = LandedVotesListFrame::read(&mut cursor)?;
         let root_slot_frame = RootSlotFrame::read(&mut cursor)?;
         let authorized_voters_frame = AuthorizedVotersListFrame::read(&mut cursor)?;
-        let epoch_credits_frame = EpochCreditsListFrame::read(&mut cursor)?;
+        let epoch_credits_frame = AccumulatedLamportsListFrame::read(&mut cursor)?;
         cursor.consume(core::mem::size_of::<BlockTimestamp>());
         if cursor.position() as usize <= bytes.len() {
             Ok(Self {
@@ -158,7 +158,7 @@ mod tests {
                         has_root_slot: false,
                     },
                     authorized_voters_frame: AuthorizedVotersListFrame { len: 0 },
-                    epoch_credits_frame: EpochCreditsListFrame { len: 0 },
+                    epoch_credits_frame: AccumulatedLamportsListFrame { len: 0 },
                 })
             );
         }
@@ -202,7 +202,7 @@ mod tests {
                         has_root_slot: true,
                     },
                     authorized_voters_frame: AuthorizedVotersListFrame { len: 1 },
-                    epoch_credits_frame: EpochCreditsListFrame { len: 1 },
+                    epoch_credits_frame: AccumulatedLamportsListFrame { len: 1 },
                 })
             );
         }
@@ -299,7 +299,7 @@ mod tests {
                     has_root_slot: true,
                 },
                 authorized_voters_frame: AuthorizedVotersListFrame { len: 1 },
-                epoch_credits_frame: EpochCreditsListFrame { len: 1 },
+                epoch_credits_frame: AccumulatedLamportsListFrame { len: 1 },
             })
         );
     }

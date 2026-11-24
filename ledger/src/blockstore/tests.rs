@@ -3111,6 +3111,7 @@ fn test_get_rooted_block() {
             }
             let compute_units_consumed = Some(12345);
             let cost_units = Some(6789);
+            let loaded_accounts_data_size = Some(4096);
             let signature = transaction.signatures[0];
             let status = TransactionStatusMeta {
                 status: Ok(()),
@@ -3126,6 +3127,7 @@ fn test_get_rooted_block() {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed,
                 cost_units,
+                loaded_accounts_data_size,
             }
             .into();
             blockstore
@@ -3146,6 +3148,7 @@ fn test_get_rooted_block() {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed,
                 cost_units,
+                loaded_accounts_data_size,
             }
             .into();
             blockstore
@@ -3166,6 +3169,7 @@ fn test_get_rooted_block() {
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed,
                 cost_units,
+                loaded_accounts_data_size,
             }
             .into();
             blockstore
@@ -3188,6 +3192,7 @@ fn test_get_rooted_block() {
                     return_data: Some(TransactionReturnData::default()),
                     compute_units_consumed,
                     cost_units,
+                    loaded_accounts_data_size,
                 },
             }
         })
@@ -3430,8 +3435,10 @@ fn test_persist_transaction_status() {
     };
     let compute_units_consumed_1 = Some(3812649u64);
     let cost_units_1 = Some(1234);
+    let loaded_accounts_data_size_1 = Some(1024);
     let compute_units_consumed_2 = Some(42u64);
     let cost_units_2 = Some(5678);
+    let loaded_accounts_data_size_2 = Some(2048);
 
     // result not found
     assert!(
@@ -3458,6 +3465,7 @@ fn test_persist_transaction_status() {
         return_data: Some(test_return_data.clone()),
         compute_units_consumed: compute_units_consumed_1,
         cost_units: cost_units_1,
+        loaded_accounts_data_size: loaded_accounts_data_size_1,
     }
     .into();
     assert!(
@@ -3481,6 +3489,7 @@ fn test_persist_transaction_status() {
         return_data,
         compute_units_consumed,
         cost_units,
+        loaded_accounts_data_size,
     } = transaction_status_cf
         .get_protobuf((Signature::default(), 0))
         .unwrap()
@@ -3500,6 +3509,7 @@ fn test_persist_transaction_status() {
     assert_eq!(return_data.unwrap(), test_return_data);
     assert_eq!(compute_units_consumed, compute_units_consumed_1);
     assert_eq!(cost_units, cost_units_1);
+    assert_eq!(loaded_accounts_data_size, loaded_accounts_data_size_1);
 
     // insert value
     let status = TransactionStatusMeta {
@@ -3516,6 +3526,7 @@ fn test_persist_transaction_status() {
         return_data: Some(test_return_data.clone()),
         compute_units_consumed: compute_units_consumed_2,
         cost_units: cost_units_2,
+        loaded_accounts_data_size: loaded_accounts_data_size_2,
     }
     .into();
     assert!(
@@ -3539,6 +3550,7 @@ fn test_persist_transaction_status() {
         return_data,
         compute_units_consumed,
         cost_units,
+        loaded_accounts_data_size,
     } = transaction_status_cf
         .get_protobuf((Signature::from([2u8; 64]), 9))
         .unwrap()
@@ -3560,6 +3572,7 @@ fn test_persist_transaction_status() {
     assert_eq!(return_data.unwrap(), test_return_data);
     assert_eq!(compute_units_consumed, compute_units_consumed_2);
     assert_eq!(cost_units, cost_units_2);
+    assert_eq!(loaded_accounts_data_size, loaded_accounts_data_size_2);
 }
 
 #[test]
@@ -3584,6 +3597,7 @@ fn test_get_transaction_status() {
         return_data: Some(TransactionReturnData::default()),
         compute_units_consumed: Some(42u64),
         cost_units: Some(1234),
+        loaded_accounts_data_size: Some(4096),
     }
     .into();
 
@@ -3761,6 +3775,7 @@ fn test_get_transaction_status_with_old_data() {
         return_data: Some(TransactionReturnData::default()),
         compute_units_consumed: Some(42u64),
         cost_units: Some(1234),
+        loaded_accounts_data_size: Some(4096),
     }
     .into();
 
@@ -3892,6 +3907,7 @@ fn do_test_lowest_cleanup_slot_and_special_cfs(simulate_blockstore_cleanup_servi
         return_data: Some(TransactionReturnData::default()),
         compute_units_consumed: Some(42u64),
         cost_units: Some(1234),
+        loaded_accounts_data_size: Some(4096),
     }
     .into();
 
@@ -4063,6 +4079,7 @@ fn test_get_rooted_transaction() {
                 return_data: return_data.clone(),
                 compute_units_consumed: Some(42),
                 cost_units: Some(1234),
+                loaded_accounts_data_size: Some(4096),
             }
             .into();
             blockstore
@@ -4085,6 +4102,7 @@ fn test_get_rooted_transaction() {
                     return_data,
                     compute_units_consumed: Some(42),
                     cost_units: Some(1234),
+                    loaded_accounts_data_size: Some(4096),
                 },
             }
         })
@@ -4188,6 +4206,7 @@ fn test_get_complete_transaction() {
                 return_data: return_data.clone(),
                 compute_units_consumed: Some(42u64),
                 cost_units: Some(1234),
+                loaded_accounts_data_size: Some(4096),
             }
             .into();
             blockstore
@@ -4210,6 +4229,7 @@ fn test_get_complete_transaction() {
                     return_data,
                     compute_units_consumed: Some(42u64),
                     cost_units: Some(1234),
+                    loaded_accounts_data_size: Some(4096),
                 },
             }
         })
@@ -4862,6 +4882,7 @@ fn test_map_transactions_to_statuses() {
             return_data: Some(TransactionReturnData::default()),
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         }
         .into();
         transaction_status_cf
@@ -7512,6 +7533,7 @@ pub(crate) fn write_transaction_statuses_for_entries(
                 return_data: Some(TransactionReturnData::default()),
                 compute_units_consumed: Some(12345),
                 cost_units: Some(6789),
+                loaded_accounts_data_size: Some(4096),
             };
             blockstore
                 .write_transaction_status(
@@ -8610,4 +8632,130 @@ fn test_connectivity_does_not_propagate_through_incomplete_slot() {
     // Children stay disconnected since parent 48 is incomplete
     assert!(!blockstore.meta(60).unwrap().unwrap().is_connected());
     assert!(!blockstore.meta(70).unwrap().unwrap().is_connected());
+}
+
+fn insert_first_shred_test_batch(
+    blockstore: &Blockstore,
+    shreds: Vec<(Shred, bool, BlockLocation)>,
+) {
+    let is_trusted = false;
+    let shred_recovery_context = None;
+    blockstore
+        .do_insert_shreds(
+            shreds
+                .into_iter()
+                .map(|(shred, repair, location)| (shred, repair, location, None)),
+            is_trusted,
+            shred_recovery_context,
+            &mut blockstore.new_pinnable_slice(),
+            &mut blockstore.get_write_batch(),
+            &mut BlockstoreInsertionMetrics::default(),
+        )
+        .unwrap();
+}
+
+fn open_with_first_shred_receiver(ledger_path: &Path) -> (Blockstore, FirstShredReceiver) {
+    let blockstore = Blockstore::open(ledger_path).unwrap();
+    let (sender, receiver) = bounded(MAX_FIRST_SHRED_SIGNALS);
+    blockstore.set_first_shred_sender(sender);
+    (blockstore, receiver)
+}
+
+#[test_matrix([false, true], [false, true])]
+fn test_first_shred_signal(coding_first: bool, repaired_first: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let (blockstore, receiver) = open_with_first_shred_receiver(ledger_path.path());
+    let slot = 4;
+    let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+    let first = if coding_first { &coding[0] } else { &data[0] };
+    // The duplicate within the batch is rejected and does not add a notification.
+    let batch = vec![(first.clone(), repaired_first, BlockLocation::Original); 2];
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+
+    // Further shreds in an already populated location do not notify.
+    let batch = data
+        .iter()
+        .chain(&coding)
+        .map(|shred| (shred.clone(), false, BlockLocation::Original))
+        .collect();
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert!(
+        receiver.is_empty(),
+        "an already populated block location must not emit another first-shred notification"
+    );
+}
+
+#[test_matrix([false, true], [false, true])]
+fn test_first_shred_signal_across_locations(alternate_first: bool, same_batch: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let (blockstore, receiver) = open_with_first_shred_receiver(ledger_path.path());
+    let slot = 4;
+    let (data, _) = setup_erasure_shreds(slot, slot - 1, 10);
+    let alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    let mut batch = vec![
+        (data[0].clone(), false, BlockLocation::Original),
+        (data[0].clone(), true, alternate),
+    ];
+    if alternate_first {
+        batch.reverse();
+    }
+    let second = (!same_batch).then(|| batch.pop().unwrap());
+    // Locations populated in the same batch are reported once.
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+    if let Some(second) = second {
+        // A different location populated in a later batch reports the slot again.
+        insert_first_shred_test_batch(&blockstore, vec![second]);
+        assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+    }
+    let another_alternate = BlockLocation::Alternate {
+        block_id: Hash::new_unique(),
+    };
+    insert_first_shred_test_batch(
+        &blockstore,
+        vec![(data[0].clone(), true, another_alternate)],
+    );
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![slot]);
+}
+
+#[test]
+fn test_first_shred_signal_rejected_shreds() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let (blockstore, receiver) = open_with_first_shred_receiver(ledger_path.path());
+    let slot = 4;
+    let (data, coding) = setup_erasure_shreds(slot, slot - 1, 10);
+    blockstore.set_roots([slot + 1].iter()).unwrap();
+    let batch = [&data[0], &coding[0]]
+        .into_iter()
+        .map(|shred| (shred.clone(), false, BlockLocation::Original))
+        .collect();
+    insert_first_shred_test_batch(&blockstore, batch);
+    assert!(blockstore.get_index(slot).unwrap().is_none());
+    assert!(
+        receiver.is_empty(),
+        "rejected shreds must not emit a first-shred notification"
+    );
+}
+
+#[test]
+fn test_first_shred_signal_full_channel() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+    let (sender, receiver) = bounded(1);
+    blockstore.set_first_shred_sender(sender);
+    let batch = (4..7)
+        .map(|slot| {
+            let (data, _) = setup_erasure_shreds(slot, slot - 1, 10);
+            (data[0].clone(), false, BlockLocation::Original)
+        })
+        .collect();
+    // A full channel does not block insertion; notifications that do not fit are dropped.
+    insert_first_shred_test_batch(&blockstore, batch);
+    for slot in 4..7 {
+        assert!(blockstore.get_index(slot).unwrap().is_some());
+    }
+    assert_eq!(receiver.try_iter().collect::<Vec<_>>(), vec![4]);
 }

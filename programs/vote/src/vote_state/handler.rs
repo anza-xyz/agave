@@ -268,20 +268,21 @@ impl VoteStateHandler {
         }
     }
 
-    pub fn set_votes(&mut self, votes: VecDeque<LandedVote>) {
+    pub fn set_latest_vote(&mut self, slot: Slot) {
         match &mut self.target_state {
-            TargetVoteState::V4(v4) => v4.votes = votes,
+            TargetVoteState::V4(v4) => {
+                v4.votes = VecDeque::from([LandedVote {
+                    lockout: Lockout::new(slot),
+                    latency: 0,
+                }])
+            }
         }
     }
 
-    pub(crate) fn last_lockout(&self) -> Option<&Lockout> {
+    pub fn latest_vote_slot(&self) -> Option<Slot> {
         match &self.target_state {
-            TargetVoteState::V4(v4) => v4.votes.back().map(|vote| &vote.lockout),
+            TargetVoteState::V4(v4) => v4.votes.back().map(|vote| vote.lockout.slot()),
         }
-    }
-
-    pub fn last_voted_slot(&self) -> Option<Slot> {
-        self.last_lockout().map(|v| v.slot())
     }
 
     pub fn root_slot(&self) -> Option<Slot> {
