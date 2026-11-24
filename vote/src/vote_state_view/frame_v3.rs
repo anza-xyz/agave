@@ -2,8 +2,8 @@ use {
     super::{
         Field, Result, VoteStateViewError,
         field_frames::{
-            AuthorizedVotersListFrame, EpochCreditsListFrame, LandedVotesListFrame, ListFrame,
-            PriorVotersFrame, RootSlotFrame,
+            AccumulatedLamportsListFrame, AuthorizedVotersListFrame, LandedVotesListFrame,
+            ListFrame, PriorVotersFrame, RootSlotFrame,
         },
     },
     solana_pubkey::Pubkey,
@@ -16,7 +16,7 @@ pub(super) struct VoteStateFrameV3 {
     pub(super) votes_frame: LandedVotesListFrame,
     pub(super) root_slot_frame: RootSlotFrame,
     pub(super) authorized_voters_frame: AuthorizedVotersListFrame,
-    pub(super) epoch_credits_frame: EpochCreditsListFrame,
+    pub(super) epoch_credits_frame: AccumulatedLamportsListFrame,
 }
 
 impl VoteStateFrameV3 {
@@ -29,7 +29,7 @@ impl VoteStateFrameV3 {
         let root_slot_frame = RootSlotFrame::read(&mut cursor)?;
         let authorized_voters_frame = AuthorizedVotersListFrame::read(&mut cursor)?;
         PriorVotersFrame::read(&mut cursor);
-        let epoch_credits_frame = EpochCreditsListFrame::read(&mut cursor)?;
+        let epoch_credits_frame = AccumulatedLamportsListFrame::read(&mut cursor)?;
         cursor.consume(core::mem::size_of::<BlockTimestamp>());
         // trailing bytes are allowed. consistent with default behavior of
         // function bincode::deserialize
@@ -130,7 +130,7 @@ mod tests {
                         has_root_slot: false,
                     },
                     authorized_voters_frame: AuthorizedVotersListFrame { len: 0 },
-                    epoch_credits_frame: EpochCreditsListFrame { len: 0 },
+                    epoch_credits_frame: AccumulatedLamportsListFrame { len: 0 },
                 })
             );
         }
@@ -169,7 +169,7 @@ mod tests {
                         has_root_slot: true,
                     },
                     authorized_voters_frame: AuthorizedVotersListFrame { len: 1 },
-                    epoch_credits_frame: EpochCreditsListFrame { len: 1 },
+                    epoch_credits_frame: AccumulatedLamportsListFrame { len: 1 },
                 })
             );
         }

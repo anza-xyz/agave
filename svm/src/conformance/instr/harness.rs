@@ -389,3 +389,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, feature = "conformance"))]
+#[path = "location_tests.rs"]
+mod location_tests;

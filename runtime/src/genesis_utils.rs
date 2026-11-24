@@ -148,9 +148,17 @@ pub fn create_genesis_config_with_default_rent(mint_lamports: u64) -> GenesisCon
         mint_lamports,
         &solana_pubkey::new_rand(), // validator_pubkey
         0,                          // validator_stake_lamports
-        &FeatureSet::all_enabled(),
+        &features_for_v4_genesis(),
         Rent::default(),
     )
+}
+
+// These fixtures create V4 accounts. Mandatory registration is activated
+// explicitly in tests once their validators have registered a location.
+pub(crate) fn features_for_v4_genesis() -> FeatureSet {
+    let mut features = FeatureSet::all_enabled();
+    features.deactivate(&agave_feature_set::enforce_validator_location_registration::id());
+    features
 }
 
 pub fn create_genesis_config_with_vote_accounts(
@@ -163,7 +171,7 @@ pub fn create_genesis_config_with_vote_accounts(
         voting_keypairs,
         stakes,
         ClusterType::Development,
-        FeatureSet::all_enabled(),
+        features_for_v4_genesis(),
     )
 }
 
@@ -173,7 +181,7 @@ pub fn create_genesis_config_with_tower_vote_accounts(
     voting_keypairs: &[impl Borrow<ValidatorVoteKeypairs>],
     stakes: Vec<u64>,
 ) -> GenesisConfigInfo {
-    let mut feature_set = FeatureSet::all_enabled();
+    let mut feature_set = features_for_v4_genesis();
     feature_set.deactivate(&agave_feature_set::alpenglow::id());
     create_genesis_config_with_vote_accounts_and_cluster_type(
         mint_lamports,
@@ -297,7 +305,7 @@ pub fn create_genesis_config_with_tower_leader(
     validator_stake_lamports: u64,
 ) -> GenesisConfigInfo {
     let mint_keypair = Keypair::from_seed(&MINT_KEYPAIR_SEED).unwrap();
-    let mut feature_set = FeatureSet::all_enabled();
+    let mut feature_set = features_for_v4_genesis();
     feature_set.deactivate(&agave_feature_set::alpenglow::id());
     create_genesis_config_with_leader_with_mint_keypair_and_feature_set(
         mint_keypair,
@@ -320,7 +328,7 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
         mint_lamports,
         validator_pubkey,
         validator_stake_lamports,
-        &FeatureSet::all_enabled(),
+        &features_for_v4_genesis(),
         Rent::free(),
     )
 }

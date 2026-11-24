@@ -486,6 +486,8 @@ pub enum VATHealthError {
     VoteAccountNotFound,
     #[error("missing BLS pubkey")]
     NoBLSPubkey,
+    #[error("missing registered validator location")]
+    NoRegisteredLocation,
     #[error("insufficient lamports in vote account: {0} < {1}")]
     InsufficientFundsInVoteAccount(u64, u64),
 }
@@ -1832,10 +1834,14 @@ impl Bank {
         // Apply stake rewards and commission using the VAT-filtered distribution
         // vote-account snapshot.
         let filtered_distribution_vote_accounts = unfiltered_distribution_vote_accounts
-            .clone_and_filter_for_vat(
+            .clone_and_filter_for_vat_with_location(
                 MAX_ALPENGLOW_VOTE_ACCOUNTS,
                 self.minimum_vote_account_balance_for_vat(),
+                self.minimum_v5_vote_account_balance_for_vat(),
                 self.feature_set.snapshot().block_revenue_sharing,
+                self.feature_set
+                    .snapshot()
+                    .enforce_validator_location_registration,
             );
         if AlpenglowEpochType::is_alpenglow_or_migration_epoch(self, rewarded_epoch) {
             reward_epoch_delegated_stakes.set(self, &filtered_distribution_vote_accounts);
@@ -2975,9 +2981,18 @@ impl Bank {
             return Err(VATHealthError::NoBLSPubkey);
         }
 
+        if self
+            .feature_set
+            .snapshot()
+            .enforce_validator_location_registration
+            && vote_account.vote_state_view().location().is_none()
+        {
+            return Err(VATHealthError::NoRegisteredLocation);
+        }
+
         let my_balance = vote_account.lamports();
         let minimum_required_balance = self
-            .minimum_vote_account_balance_for_vat()
+            .minimum_vote_account_balance_for_vat_at_size(vote_account.account().data().len())
             .saturating_add(vote_account.vote_state_view().pending_delegator_rewards());
         if vote_account.lamports() < minimum_required_balance {
             return Err(VATHealthError::InsufficientFundsInVoteAccount(
@@ -6736,25 +6751,38 @@ impl Bank {
     /// under the current feature set. When `alpenglow` is active the threshold
     /// also includes one epoch's worth of VAT burn.
     pub fn minimum_vote_account_balance_for_vat(&self) -> u64 {
-        let vote_account_rent_exempt_minimum = self
-            .rent_collector
-            .rent
-            .minimum_balance(VoteStateV4::size_of());
+        self.minimum_vote_account_balance_for_vat_at_size(VoteStateV4::size_of())
+    }
+
+    fn minimum_v5_vote_account_balance_for_vat(&self) -> u64 {
+        self.minimum_vote_account_balance_for_vat_at_size(
+            solana_vote_interface::state::vote_state_v5::VOTE_STATE_V5_SIZE,
+        )
+    }
+
+    fn minimum_vote_account_balance_for_vat_at_size(&self, size: usize) -> u64 {
+        let rent = self.rent_collector.rent.minimum_balance(size);
         if self.feature_set.snapshot().alpenglow {
-            vote_account_rent_exempt_minimum + self.vat_to_burn_per_epoch()
+            rent.saturating_add(self.vat_to_burn_per_epoch())
         } else {
-            vote_account_rent_exempt_minimum
+            rent
         }
     }
 
     /// Returns the `Stakes` as filtered by SIMD-0357
     /// See `VoteAccounts::clone_and_filter_for_vat` for the full criteria
     pub fn get_top_epoch_stakes(&self) -> Stakes<StakeAccount<Delegation>> {
-        self.stakes_cache.stakes().clone_and_filter_for_vat(
-            MAX_ALPENGLOW_VOTE_ACCOUNTS,
-            self.minimum_vote_account_balance_for_vat(),
-            self.feature_set.snapshot().block_revenue_sharing,
-        )
+        self.stakes_cache
+            .stakes()
+            .clone_and_filter_for_vat_with_location(
+                MAX_ALPENGLOW_VOTE_ACCOUNTS,
+                self.minimum_vote_account_balance_for_vat(),
+                self.minimum_v5_vote_account_balance_for_vat(),
+                self.feature_set.snapshot().block_revenue_sharing,
+                self.feature_set
+                    .snapshot()
+                    .enforce_validator_location_registration,
+            )
     }
 
     /// Calculates and sets block id for `bank`.

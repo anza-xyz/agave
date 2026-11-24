@@ -5874,6 +5874,7 @@ dependencies = [
  "solana-stake-history",
  "solana-stake-interface",
  "solana-sysvar",
+ "solana-vote",
  "solana-vote-interface",
  "solana-zk-sdk-pod",
  "spl-generic-token",
@@ -5907,7 +5908,7 @@ checksum = "57ad0fe88ccbdba196bb7657534e9caf69397e9b503371261eebd9ad1d7a9ed7"
 dependencies = [
  "solana-address 2.9.0",
  "solana-program-error",
- "solana-program-memory",
+ "solana-program-memory 3.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -6602,6 +6603,11 @@ name = "solana-define-syscall"
 version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57e5b1c0bc1d4a4d10c88a4100499d954c09d3fecfae4912c1a074dff68b1738"
+
+[[package]]
+name = "solana-define-syscall"
+version = "5.3.0"
+source = "git+https://github.com/anza-xyz/solana-sdk?rev=a01720bc887d2af8d01675bd4a70259e1617e713#a01720bc887d2af8d01675bd4a70259e1617e713"
 
 [[package]]
 name = "solana-define-syscall"
@@ -7587,6 +7593,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4068648649653c2c50546e9a7fb761791b5ab0cda054c771bb5808d3a4b9eb52"
 dependencies = [
  "solana-define-syscall 4.0.1",
+]
+
+[[package]]
+name = "solana-program-memory"
+version = "3.1.0"
+source = "git+https://github.com/anza-xyz/solana-sdk?rev=a01720bc887d2af8d01675bd4a70259e1617e713#a01720bc887d2af8d01675bd4a70259e1617e713"
+dependencies = [
+ "solana-define-syscall 5.3.0",
 ]
 
 [[package]]
@@ -8729,7 +8743,7 @@ dependencies = [
  "solana-last-restart-slot",
  "solana-program-entrypoint",
  "solana-program-error",
- "solana-program-memory",
+ "solana-program-memory 3.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "solana-pubkey 4.4.0",
  "solana-rent",
  "solana-sdk-ids",
@@ -9049,9 +9063,9 @@ dependencies = [
 [[package]]
 name = "solana-vote-interface"
 version = "7.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91bf90031e7387f9a57f8c4203d433a3ca08b9c1f24d95424e9bab38d5b2620"
+source = "git+https://github.com/anza-xyz/solana-sdk?rev=a01720bc887d2af8d01675bd4a70259e1617e713#a01720bc887d2af8d01675bd4a70259e1617e713"
 dependencies = [
+ "bytemuck",
  "cfg_eval",
  "num-derive 0.4.2",
  "num-traits",
@@ -9062,6 +9076,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
+ "solana-program-memory 3.1.0 (git+https://github.com/anza-xyz/solana-sdk?rev=a01720bc887d2af8d01675bd4a70259e1617e713)",
  "solana-pubkey 4.4.0",
  "solana-sdk-ids",
  "solana-serde-varint",
@@ -9090,6 +9105,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-system-interface",
  "solana-transaction-context",
+ "solana-vote",
  "solana-vote-interface",
  "wincode",
 ]
@@ -10940,3 +10956,13 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "solana-frozen-abi"
+version = "3.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[patch.unused]]
+name = "solana-frozen-abi-macro"
+version = "3.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"

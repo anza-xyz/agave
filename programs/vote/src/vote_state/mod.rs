@@ -39,11 +39,54 @@ fn get_vote_state_handler_checked(
             if versioned.is_uninitialized() {
                 return Err(InstructionError::UninitializedAccount);
             }
+            if let VoteStateVersionsInline::V5(state) = versioned {
+                return Ok(VoteStateHandler::from_v5(state));
+            }
             let vote_state =
                 handler::try_convert_to_vote_state_v4(versioned, vote_account.get_key())?;
             Ok(VoteStateHandler::new_v4(vote_state))
         }
     }
+}
+
+/// Register a validator's integer ECEF location (SIMD-0674).
+pub fn update_location<S: std::hash::BuildHasher, F>(
+    vote_account: &mut BorrowedInstructionAccount,
+    x: i32,
+    y: i32,
+    z: i32,
+    signers: &HashSet<Pubkey, S>,
+    get_clock: F,
+) -> Result<(), InstructionError>
+where
+    F: FnOnce() -> Result<std::sync::Arc<Clock>, InstructionError>,
+{
+    use solana_vote_interface::state::vote_state_v5::{Location, VoteStateV5};
+    let mut handler = get_vote_state_handler_checked(vote_account, VoteStateTargetVersion::V4)
+        .map_err(|_| InstructionError::InvalidAccountData)?;
+    let clock = get_clock()?;
+    let voter = handler.get_and_update_authorized_voter(clock.epoch)?;
+    verify_authorized_signer(&voter, signers)?;
+    let location = Location::try_new(x, y, z).ok_or(InstructionError::InvalidArgument)?;
+    let mut state = if let Some(state) = handler.updated_v5()? {
+        state
+    } else {
+        if vote_account.get_data().len() != VoteStateV4::size_of() {
+            return Err(InstructionError::InvalidAccountData);
+        }
+        let v4 = handler.unwrap_v4_for_conversion();
+        if v4.bls_pubkey_compressed.is_none()
+            || v4.authorized_voters.len() > 4
+            || v4.epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY
+        {
+            return Err(InstructionError::InvalidAccountData);
+        }
+        VoteStateV5::from_vote_state_v4(v4, location, clock.epoch)
+            .map_err(|_| InstructionError::InvalidAccountData)?
+    };
+    state.location = location;
+    // A V4 conversion releases the tower storage; account lamports are unchanged.
+    VoteStateHandler::set_vote_account_state_v5(vote_account, &state)
 }
 
 /// Authorize the given pubkey to withdraw or sign votes. This may be called multiple times,
@@ -200,6 +243,27 @@ pub fn update_commission_bps<S: std::hash::BuildHasher>(
     vote_state.set_vote_account_state(vote_account)
 }
 
+/// Update one V5 commission schedule without discarding the other history.
+pub fn update_commission_v5<S: std::hash::BuildHasher>(
+    vote_account: &mut BorrowedInstructionAccount,
+    commission_bps: u16,
+    kind: CommissionKind,
+    signers: &HashSet<Pubkey, S>,
+    clock: &Clock,
+) -> Result<(), InstructionError> {
+    let mut state = VoteStateHandler::from_account_data(vote_account.get_data())?;
+    verify_authorized_signer(state.authorized_withdrawer(), signers)?;
+    let inflation = matches!(kind, CommissionKind::InflationRewards);
+    state.set_commission_change_epoch(clock.epoch, inflation);
+    match kind {
+        CommissionKind::InflationRewards => {
+            state.set_inflation_rewards_commission_bps(commission_bps)
+        }
+        CommissionKind::BlockRevenue => state.set_block_revenue_commission_bps(commission_bps),
+    }
+    state.set_vote_account_state(vote_account)
+}
+
 /// Validates the collector per SIMD-0232 and returns its pubkey.
 ///
 /// The designated commission collector must either be equal to the vote
@@ -310,12 +374,7 @@ pub fn deposit_delegator_rewards<S: std::hash::BuildHasher>(
         // Can't use `get_vote_state_handler_checked`, since it will convert
         // the underlying vote state to v4.
         // SIMD-0123 requires an *initialized v4*.
-        let versioned = VoteStateVersionsInline::deserialize(vote_account.get_data())?;
-        if let VoteStateVersionsInline::V4(vote_state_v4) = versioned {
-            Ok(VoteStateHandler::new_v4(vote_state_v4))
-        } else {
-            Err(InstructionError::InvalidAccountData)
-        }
+        VoteStateHandler::from_account_data(vote_account.get_data())
     }?;
 
     // CPI to System: Transfer from sender to vote account.
@@ -501,6 +560,10 @@ where
 {
     let mut vote_account =
         instruction_context.try_borrow_instruction_account(vote_account_index)?;
+    if vote_account.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+        VoteStateHandler::from_account_data(vote_account.get_data())?;
+        return Err(InstructionError::AccountAlreadyInitialized);
+    }
     VoteStateHandler::check_vote_account_length(&mut vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
@@ -554,6 +617,10 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
+    if vote_account.get_data().get(..4) == Some(&4u32.to_le_bytes()) {
+        VoteStateHandler::from_account_data(vote_account.get_data())?;
+        return Err(InstructionError::AccountAlreadyInitialized);
+    }
     VoteStateHandler::check_vote_account_length(vote_account, target_version)?;
     let versioned = vote_account.get_state::<VoteStateVersionsInline>()?;
 
@@ -655,12 +722,17 @@ mod tests {
             }
             VoteStateVersionsInline::V3(state) => VoteStateVersions::V3(Box::new(state)),
             VoteStateVersionsInline::V4(state) => VoteStateVersions::V4(Box::new(state)),
+            VoteStateVersionsInline::V5(_) => unreachable!("the boxed enum has no v5"),
         }
     }
 
     /// Checks that the inline wincode decoders match the boxed `VoteStateVersions` wincode decoder
     /// and the hand-written `VoteStateVersions::deserialize` on `data`.
     fn assert_vote_state_decoders_agree(data: &[u8]) {
+        // The boxed SDK enum has no v5, so tag 4 is covered by its own test.
+        if data.starts_with(&[4, 0, 0, 0]) {
+            return;
+        }
         let inline = wincode::config::deserialize::<VoteStateVersionsInline, _>(
             data,
             solana_account::WINCODE_CONFIG,
@@ -681,6 +753,53 @@ mod tests {
             VoteStateVersions::deserialize(data),
             "data: {data:?}",
         );
+    }
+
+    #[test]
+    fn test_vote_state_versions_inline_decodes_v5() {
+        use solana_vote_interface::state::{
+            VoteInitV2,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+
+        let state = VoteStateV5::new(
+            &VoteInitV2::default(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Location::try_new(6_378_137, 0, 0).unwrap(),
+            &Clock::default(),
+        );
+        let expected = VoteStateVersionsInline::V5(state.clone());
+        let mut storage = vec![0xffu8; VOTE_STATE_V5_SIZE + 16];
+        for offset in 0..8 {
+            let account = &mut storage[offset..offset + VOTE_STATE_V5_SIZE];
+            state.write_account_data(account).unwrap();
+            assert_eq!(
+                VoteStateVersionsInline::deserialize(account).as_ref(),
+                Ok(&expected)
+            );
+            assert_eq!(
+                wincode::config::deserialize::<VoteStateVersionsInline, _>(
+                    &*account,
+                    solana_account::WINCODE_CONFIG,
+                )
+                .unwrap(),
+                expected,
+            );
+            assert!(
+                VoteStateVersionsInline::deserialize(&account[..VOTE_STATE_V5_SIZE - 1]).is_err()
+            );
+        }
+        let account = &mut storage[..VOTE_STATE_V5_SIZE + 1];
+        account[VOTE_STATE_V5_SIZE] = 0;
+        state
+            .write_account_data(&mut account[..VOTE_STATE_V5_SIZE])
+            .unwrap();
+        assert!(VoteStateVersionsInline::deserialize(account).is_err());
+
+        assert!(!expected.is_uninitialized());
+        let handler = VoteStateHandler::try_new_from_vote_state_versions(expected).unwrap();
+        assert_eq!(handler.updated_v5(), Ok(Some(state)));
     }
 
     #[test]

@@ -85,8 +85,8 @@ pub(crate) struct DelegatedVoteState<'a> {
 impl<'a> From<&'a VoteStateView> for DelegatedVoteState<'a> {
     fn from(vote_state: &'a VoteStateView) -> Self {
         DelegatedVoteState {
-            credits: vote_state.credits(),
-            epoch_credits_iter: Box::new(vote_state.epoch_credits_iter().map(Into::into)),
+            credits: vote_state.accumulated_lamports(),
+            epoch_credits_iter: Box::new(vote_state.accumulated_lamports_iter().map(Into::into)),
         }
     }
 }

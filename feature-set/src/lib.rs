@@ -55,6 +55,8 @@ pub struct FeatureSnapshot {
     pub poseidon_enforce_padding: bool,
     pub fix_alt_bn128_pairing_length_check: bool,
     pub alt_bn128_little_endian: bool,
+    pub validator_location_registration: bool,
+    pub enforce_validator_location_registration: bool,
     pub bls_pubkey_management_in_vote_account: bool,
     pub relax_programdata_account_check_migration: bool,
     pub enable_alt_bn128_g2_syscalls: bool,
@@ -148,6 +150,10 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             poseidon_enforce_padding: is_active(&poseidon_enforce_padding::ID),
             fix_alt_bn128_pairing_length_check: is_active(&fix_alt_bn128_pairing_length_check::ID),
             alt_bn128_little_endian: is_active(&alt_bn128_little_endian::ID),
+            enforce_validator_location_registration: is_active(
+                &enforce_validator_location_registration::ID,
+            ),
+            validator_location_registration: is_active(&validator_location_registration::ID),
             bls_pubkey_management_in_vote_account: is_active(
                 &bls_pubkey_management_in_vote_account::ID,
             ),
@@ -328,6 +334,7 @@ impl FeatureSet {
             fix_alt_bn128_pairing_length_check: snapshot.fix_alt_bn128_pairing_length_check,
             alt_bn128_little_endian: snapshot.alt_bn128_little_endian,
             create_account_allow_prefund: snapshot.create_account_allow_prefund,
+            validator_location_registration: snapshot.validator_location_registration,
             bls_pubkey_management_in_vote_account: snapshot.bls_pubkey_management_in_vote_account,
             enable_alt_bn128_g2_syscalls: snapshot.enable_alt_bn128_g2_syscalls,
             block_revenue_sharing: snapshot.block_revenue_sharing,
@@ -402,6 +409,7 @@ impl FeatureSet {
             fix_alt_bn128_pairing_length_check,
             alt_bn128_little_endian,
             create_account_allow_prefund,
+            validator_location_registration,
             bls_pubkey_management_in_vote_account,
             enable_alt_bn128_g2_syscalls,
             block_revenue_sharing,
@@ -1450,6 +1458,15 @@ pub mod replace_spl_token_with_p_token {
 
 pub mod alt_bn128_little_endian {
     solana_pubkey::declare_id!("bn2oPgpkzQPT3tohMaAsMVGjhDmmDa4jCaVPqCFmtxM");
+}
+
+// Provisional feature IDs for SIMD-0674; no cluster activation is scheduled.
+pub mod validator_location_registration {
+    solana_pubkey::declare_id!("7xn4UGnAsSvgcrf1jfjC7bKyHU2Z7UKEAxv6BPey3gZ3");
+}
+
+pub mod enforce_validator_location_registration {
+    solana_pubkey::declare_id!("BTYi67yDpRvT57BKZcUvwmqaVfSHSEvpxGZC8sQjVLqX");
 }
 
 pub mod bls_pubkey_management_in_vote_account {
@@ -2649,6 +2666,14 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             alt_bn128_little_endian::id(),
             "SIMD-0284: Add little-endian compatibility for alt_bn128",
+        ),
+        (
+            validator_location_registration::id(),
+            "SIMD-0674: Validator location registration",
+        ),
+        (
+            enforce_validator_location_registration::id(),
+            "SIMD-0674: Enforce validator location registration",
         ),
         (
             bls_pubkey_management_in_vote_account::id(),

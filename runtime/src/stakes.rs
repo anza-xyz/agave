@@ -247,6 +247,26 @@ impl<T: Clone> Stakes<T> {
         )
     }
 
+    pub fn clone_and_filter_for_vat_with_location(
+        &self,
+        max_vote_accounts: usize,
+        minimum_vote_account_balance: u64,
+        minimum_v5_balance: u64,
+        block_revenue_sharing: bool,
+        enforce_location: bool,
+    ) -> Stakes<T> {
+        Self::new(
+            self.vote_accounts.clone_and_filter_for_vat_with_location(
+                max_vote_accounts,
+                minimum_vote_account_balance,
+                minimum_v5_balance,
+                block_revenue_sharing,
+                enforce_location,
+            ),
+            self.epoch,
+        )
+    }
+
     pub fn vote_accounts(&self) -> &VoteAccounts {
         &self.vote_accounts
     }
@@ -879,7 +899,10 @@ pub(crate) mod tests {
         solana_rent::Rent,
         solana_stake_history::StakeHistoryEntry,
         solana_stake_interface::{self as stake, state::StakeStateV2},
-        solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4},
+        solana_vote_interface::state::{
+            BLS_PUBLIC_KEY_COMPRESSED_SIZE, VoteStateV4, VoteStateVersions,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        },
         solana_vote_program::vote_state,
         test_case::test_matrix,
     };
@@ -1092,6 +1115,58 @@ pub(crate) mod tests {
                 id: vote11_node_pubkey,
                 vote_address: vote11_pubkey,
             })
+        );
+    }
+
+    #[test]
+    fn test_stakes_cache_accepts_vote_state_v5_account() {
+        let stakes_cache = StakesCache::new(Stakes {
+            epoch: 4,
+            ..Stakes::default()
+        });
+        let rent = Rent::default();
+        let ((vote_pubkey, mut vote_account), (stake_pubkey, stake_account)) =
+            create_staked_node_accounts(10, &rent);
+
+        // Convert the v4 account into an aligned 951-byte v5 account.
+        let v4 = match VoteStateVersions::deserialize(vote_account.data()).unwrap() {
+            VoteStateVersions::V4(v4) => *v4,
+            _ => unreachable!(),
+        };
+        let v5 = VoteStateV5::from_vote_state_v4(
+            VoteStateV4 {
+                bls_pubkey_compressed: Some([1; BLS_PUBLIC_KEY_COMPRESSED_SIZE]),
+                ..v4
+            },
+            Location::try_new(4051542, 618526, 4870645).unwrap(),
+            4,
+        )
+        .unwrap();
+        let mut data = vec![0; VOTE_STATE_V5_SIZE];
+        v5.write_account_data(&mut data).unwrap();
+        vote_account.set_data_from_slice(&data);
+
+        stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, false, false);
+        stakes_cache.check_and_store(&stake_pubkey, &stake_account, None, false, false);
+
+        let stakes = stakes_cache.stakes();
+        let vote_accounts = stakes.vote_accounts();
+        let cached = vote_accounts.get(&vote_pubkey).unwrap();
+        assert_eq!(cached.node_pubkey(), &v5.node_pubkey);
+        assert_eq!(vote_accounts.get_delegated_stake(&vote_pubkey), 10);
+        drop(stakes);
+
+        // A dirty reserved tail makes the account invalid, so it leaves the cache.
+        let mut dirty = data.clone();
+        dirty[VOTE_STATE_V5_SIZE - 1] = 1;
+        vote_account.set_data_from_slice(&dirty);
+        stakes_cache.check_and_store(&vote_pubkey, &vote_account, None, false, false);
+        assert!(
+            stakes_cache
+                .stakes()
+                .vote_accounts()
+                .get(&vote_pubkey)
+                .is_none()
         );
     }
 

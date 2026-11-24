@@ -1,11 +1,13 @@
 #[cfg(feature = "dev-context-only-utils")]
-use solana_vote_interface::state::{VoteStateV3, VoteStateV4, VoteStateVersions};
+use solana_vote_interface::state::{
+    VoteStateV3, VoteStateV4, VoteStateVersions, vote_state_v5::VOTE_STATE_V5_SIZE,
+};
 use {
     self::{
         field_frames::{
-            AuthorizedVotersListFrame, BlsPubkeyCompressedFrame, BlsPubkeyCompressedView,
-            EpochCreditsItem, EpochCreditsListFrame, PendingDelegatorRewardsView, RootSlotFrame,
-            RootSlotView, VotesFrame,
+            AccumulatedLamportsItem, AccumulatedLamportsListFrame, AuthorizedVotersListFrame,
+            BlsPubkeyCompressedFrame, BlsPubkeyCompressedView, PendingDelegatorRewardsView,
+            RootSlotFrame, RootSlotView, VotesFrame,
         },
         frame_v1_14_11::VoteStateFrameV1_14_11,
         frame_v3::VoteStateFrameV3,
@@ -16,7 +18,10 @@ use {
     frame_v4::VoteStateFrameV4,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote_interface::state::{BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, Lockout},
+    solana_vote_interface::state::{
+        BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, Lockout,
+        vote_state_v5::{CommissionScheduleRef, Location, VOTE_STATE_V5_DISCRIMINANT, VoteStateV5},
+    },
     std::sync::Arc,
 };
 
@@ -37,6 +42,7 @@ pub enum VoteStateViewError {
     OldVersion,
     UnsupportedVersion,
     AccountDataSizeIncorrect,
+    InvalidVoteStateV5,
 }
 
 pub type Result<T> = core::result::Result<T, VoteStateViewError>;
@@ -76,18 +82,41 @@ impl VoteStateView {
         Ok(Self { data, frame })
     }
 
+    /// The v5 state, if this view is over a v5 account.
+    #[inline]
+    fn v5(&self) -> Option<&VoteStateV5> {
+        match &self.frame {
+            VoteStateFrame::V5(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Location registered in a v5 account; older versions have none.
+    pub fn location(&self) -> Option<Location> {
+        self.v5().map(|state| state.location)
+    }
+
     pub fn node_pubkey(&self) -> &Pubkey {
+        if let Some(state) = self.v5() {
+            return &state.node_pubkey;
+        }
         let offset = self.frame.offset(Field::NodePubkey);
         // SAFETY: `frame` was created from `data`.
         unsafe { &*(self.data.as_ptr().add(offset) as *const Pubkey) }
     }
 
     pub fn commission(&self) -> u8 {
+        if self.v5().is_some() {
+            return (self.inflation_rewards_commission() / 100).min(u8::MAX as u16) as u8;
+        }
         self.inflation_rewards_commission_view()
             .commission_percent()
     }
 
     pub fn block_revenue_collector(&self) -> Option<&Pubkey> {
+        if let Some(state) = self.v5() {
+            return Some(&state.block_revenue_collector);
+        }
         let offset = self
             .frame
             .simd185_field_offset(Simd185Field::BlockRevenueCollector)?;
@@ -96,6 +125,9 @@ impl VoteStateView {
     }
 
     pub fn inflation_rewards_collector(&self) -> Option<&Pubkey> {
+        if let Some(state) = self.v5() {
+            return Some(&state.inflation_rewards_collector);
+        }
         let offset = self
             .frame
             .simd185_field_offset(Simd185Field::InflationRewardsCollector)?;
@@ -104,71 +136,143 @@ impl VoteStateView {
     }
 
     pub fn inflation_rewards_commission(&self) -> u16 {
+        if let Some(state) = self.v5() {
+            return latest_commission_bps(state.inflation_rewards_commission_ref(), 0);
+        }
         self.inflation_rewards_commission_view().commission_bps()
     }
 
     pub fn block_revenue_commission(&self) -> u16 {
+        // Pre-v4 states have no block revenue commission, so the validator keeps all
+        // block revenue, which is 100%.
+        const NO_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
+        if let Some(state) = self.v5() {
+            return latest_commission_bps(
+                state.block_revenue_commission_ref(),
+                NO_BLOCK_REVENUE_COMMISSION_BPS,
+            );
+        }
         self.block_revenue_commission_view()
             .map(|view| view.commission_bps())
-            .unwrap_or(10_000)
+            .unwrap_or(NO_BLOCK_REVENUE_COMMISSION_BPS)
     }
 
     pub fn pending_delegator_rewards(&self) -> u64 {
+        if let Some(state) = self.v5() {
+            return state.pending_delegator_rewards;
+        }
         self.pending_delegator_rewards_view()
             .map(|view| view.value())
             .unwrap_or(0)
     }
 
     pub fn bls_pubkey_compressed(&self) -> Option<[u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]> {
+        if let Some(state) = self.v5() {
+            return Some(state.bls_pubkey_compressed);
+        }
         self.bls_pubkey_compressed_view()
             .and_then(|view| view.pubkey())
     }
 
     pub fn votes_iter(&self) -> impl Iterator<Item = Lockout> + '_ {
-        self.votes_view().into_iter().map(|vote| {
-            Lockout::new_with_confirmation_count(vote.slot(), vote.confirmation_count())
-        })
+        let v5_vote = self.v5().and_then(|_| self.last_lockout());
+        let tower = self.v5().is_none().then(|| self.votes_view());
+        v5_vote
+            .into_iter()
+            .chain(tower.into_iter().flatten().map(|vote| {
+                Lockout::new_with_confirmation_count(vote.slot(), vote.confirmation_count())
+            }))
     }
 
     #[inline]
     pub fn votes_len(&self) -> usize {
-        self.votes_view().len()
+        match self.v5() {
+            Some(state) => usize::from(state.latest_vote().is_some()),
+            None => self.votes_view().len(),
+        }
     }
 
     pub fn last_lockout(&self) -> Option<Lockout> {
+        if let Some(state) = self.v5() {
+            return state.latest_vote().map(Lockout::new);
+        }
         self.votes_view().last().map(|item| {
             Lockout::new_with_confirmation_count(item.slot(), item.confirmation_count())
         })
     }
 
     pub fn last_voted_slot(&self) -> Option<Slot> {
+        if let Some(state) = self.v5() {
+            return state.latest_vote();
+        }
         self.votes_view().last().map(|item| item.slot())
     }
 
     pub fn root_slot(&self) -> Option<Slot> {
+        if let Some(state) = self.v5() {
+            return state.root_slot();
+        }
         self.root_slot_view().root_slot()
     }
 
     pub fn get_authorized_voter(&self, epoch: Epoch) -> Option<&Pubkey> {
+        if let Some(state) = self.v5() {
+            return state
+                .authorized_voters_ref()
+                .0
+                .iter()
+                .rev()
+                .find(|voter| voter.epoch <= epoch)
+                .map(|voter| &voter.pubkey);
+        }
         self.authorized_voters_view().get_authorized_voter(epoch)
     }
 
-    pub fn num_epoch_credits(&self) -> usize {
-        self.epoch_credits_view().len()
+    pub fn num_accumulated_lamports(&self) -> usize {
+        if let Some(state) = self.v5() {
+            return state.accumulated_lamports_ref().0.len();
+        }
+        self.accumulated_lamports_view().len()
     }
 
-    pub fn epoch_credits_iter(&self) -> impl Iterator<Item = &EpochCreditsItem> + '_ {
-        self.epoch_credits_view().into_iter()
+    /// Entries are oldest first, for every version.
+    pub fn accumulated_lamports_iter(&self) -> impl Iterator<Item = &AccumulatedLamportsItem> + '_ {
+        let v5_entries = self
+            .v5()
+            .map(|state| state.accumulated_lamports_ref().0)
+            .unwrap_or_default();
+        let tower = self
+            .v5()
+            .is_none()
+            .then(|| self.accumulated_lamports_view());
+        v5_entries
+            .iter()
+            .map(AccumulatedLamportsItem::from_accumulated_lamports)
+            .chain(tower.into_iter().flatten())
     }
 
-    pub fn credits(&self) -> u64 {
-        self.epoch_credits_view()
+    pub fn accumulated_lamports(&self) -> u64 {
+        if let Some(state) = self.v5() {
+            return state
+                .accumulated_lamports_ref()
+                .0
+                .last()
+                .map(|entry| entry.lamports)
+                .unwrap_or(0);
+        }
+        self.accumulated_lamports_view()
             .last()
-            .map(|item| item.credits())
+            .map(|item| item.lamports())
             .unwrap_or(0)
     }
 
     pub fn last_timestamp(&self) -> BlockTimestamp {
+        if let Some(state) = self.v5() {
+            return BlockTimestamp {
+                slot: state.last_timestamp.slot,
+                timestamp: state.last_timestamp.timestamp,
+            };
+        }
         let offset = self.frame.offset(Field::LastTimestamp);
         // SAFETY: `frame` was created from `data`.
         let buffer = &self.data[offset..];
@@ -231,11 +335,22 @@ impl VoteStateView {
         ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
     }
 
-    fn epoch_credits_view(&self) -> ListView<'_, EpochCreditsListFrame> {
+    fn accumulated_lamports_view(&self) -> ListView<'_, AccumulatedLamportsListFrame> {
         let offset = self.frame.offset(Field::EpochCredits);
         // SAFETY: `frame` was created from `data`.
-        ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])
+        ListView::new(
+            self.frame.accumulated_lamports_frame(),
+            &self.data[offset..],
+        )
     }
+}
+
+/// Returns the commission in effect, which is the latest change of a v5 schedule.
+///
+/// The SDK validates 1 to 4 changes, so `default` is unreachable.
+fn latest_commission_bps(schedule: CommissionScheduleRef<'_>, default: u16) -> u16 {
+    debug_assert!(!schedule.bps.is_empty());
+    schedule.bps.last().map_or(default, |bps| bps.get())
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -254,11 +369,24 @@ impl From<VoteStateV4> for VoteStateView {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl From<VoteStateV5> for VoteStateView {
+    fn from(vote_state: VoteStateV5) -> Self {
+        let mut vote_account_data = vec![0; VOTE_STATE_V5_SIZE];
+        vote_state
+            .write_account_data(&mut vote_account_data)
+            .unwrap();
+        VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
+    }
+}
+
 #[derive(Debug, Clone)]
 enum VoteStateFrame {
     V1_14_11(VoteStateFrameV1_14_11),
     V3(VoteStateFrameV3),
     V4(VoteStateFrameV4),
+    /// Owned copy, so that the account data needs no particular alignment.
+    V5(Box<VoteStateV5>),
 }
 
 impl VoteStateFrame {
@@ -275,6 +403,10 @@ impl VoteStateFrame {
             1 => Self::V1_14_11(VoteStateFrameV1_14_11::try_new(bytes)?),
             2 => Self::V3(VoteStateFrameV3::try_new(bytes)?),
             3 => Self::V4(VoteStateFrameV4::try_new(bytes)?),
+            VOTE_STATE_V5_DISCRIMINANT => Self::V5(Box::new(
+                VoteStateV5::from_account_data_unaligned(bytes)
+                    .map_err(|_| VoteStateViewError::InvalidVoteStateV5)?,
+            )),
             _ => return Err(VoteStateViewError::UnsupportedVersion),
         })
     }
@@ -284,6 +416,7 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => frame.field_offset(field),
             Self::V3(frame) => frame.field_offset(field),
             Self::V4(frame) => frame.field_offset(field),
+            Self::V5(_) => unreachable!("v5 accessors do not use offsets"),
         }
     }
 
@@ -292,6 +425,7 @@ impl VoteStateFrame {
             Self::V1_14_11(_frame) => None,
             Self::V3(_frame) => None,
             Self::V4(frame) => Some(frame.simd185_field_offset(field)),
+            Self::V5(_) => unreachable!("v5 accessors do not use offsets"),
         }
     }
 
@@ -300,6 +434,7 @@ impl VoteStateFrame {
             Self::V1_14_11(_) => CommissionFrame::new_percent(),
             Self::V3(_) => CommissionFrame::new_percent(),
             Self::V4(_) => CommissionFrame::new_bps(),
+            Self::V5(_) => unreachable!("v5 accessors do not use frames"),
         }
     }
 
@@ -307,6 +442,7 @@ impl VoteStateFrame {
         match &self {
             Self::V1_14_11 { .. } | Self::V3 { .. } => None,
             Self::V4(frame) => Some(frame.bls_pubkey_compressed_frame),
+            Self::V5(_) => unreachable!("v5 accessors do not use frames"),
         }
     }
 
@@ -315,6 +451,7 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => VotesFrame::Lockout(frame.votes_frame),
             Self::V3(frame) => VotesFrame::Landed(frame.votes_frame),
             Self::V4(frame) => VotesFrame::Landed(frame.votes_frame),
+            Self::V5(_) => unreachable!("v5 accessors do not use frames"),
         }
     }
 
@@ -323,6 +460,7 @@ impl VoteStateFrame {
             Self::V1_14_11(vote_frame) => vote_frame.root_slot_frame,
             Self::V3(vote_frame) => vote_frame.root_slot_frame,
             Self::V4(vote_frame) => vote_frame.root_slot_frame,
+            Self::V5(_) => unreachable!("v5 accessors do not use frames"),
         }
     }
 
@@ -331,14 +469,16 @@ impl VoteStateFrame {
             Self::V1_14_11(frame) => frame.authorized_voters_frame,
             Self::V3(frame) => frame.authorized_voters_frame,
             Self::V4(frame) => frame.authorized_voters_frame,
+            Self::V5(_) => unreachable!("v5 accessors do not use frames"),
         }
     }
 
-    fn epoch_credits_frame(&self) -> EpochCreditsListFrame {
+    fn accumulated_lamports_frame(&self) -> AccumulatedLamportsListFrame {
         match &self {
             Self::V1_14_11(frame) => frame.epoch_credits_frame,
             Self::V3(frame) => frame.epoch_credits_frame,
             Self::V4(frame) => frame.epoch_credits_frame,
+            Self::V5(_) => unreachable!("v5 accessors do not use frames"),
         }
     }
 }
@@ -611,17 +751,17 @@ mod tests {
         }
 
         assert_eq!(
-            vote_state_view.num_epoch_credits(),
+            vote_state_view.num_accumulated_lamports(),
             vote_state.epoch_credits.len()
         );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
-            .epoch_credits_iter()
+            .accumulated_lamports_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
         assert_eq!(view_credits, vote_state.epoch_credits);
 
         assert_eq!(
-            vote_state_view.credits(),
+            vote_state_view.accumulated_lamports(),
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
@@ -667,17 +807,17 @@ mod tests {
         }
 
         assert_eq!(
-            vote_state_view.num_epoch_credits(),
+            vote_state_view.num_accumulated_lamports(),
             vote_state.epoch_credits.len()
         );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
-            .epoch_credits_iter()
+            .accumulated_lamports_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
         assert_eq!(view_credits, vote_state.epoch_credits);
 
         assert_eq!(
-            vote_state_view.credits(),
+            vote_state_view.accumulated_lamports(),
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
@@ -721,17 +861,17 @@ mod tests {
         }
 
         assert_eq!(
-            vote_state_view.num_epoch_credits(),
+            vote_state_view.num_accumulated_lamports(),
             vote_state.epoch_credits.len()
         );
         let view_credits: Vec<(Epoch, u64, u64)> = vote_state_view
-            .epoch_credits_iter()
+            .accumulated_lamports_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
         assert_eq!(view_credits, vote_state.epoch_credits);
 
         assert_eq!(
-            vote_state_view.credits(),
+            vote_state_view.accumulated_lamports(),
             vote_state.epoch_credits.last().map(|x| x.1).unwrap_or(0)
         );
         assert_eq!(vote_state_view.last_timestamp(), vote_state.last_timestamp);
@@ -755,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_vote_state_view_unsupported_version() {
-        let vote_data = Arc::new(4u32.to_le_bytes().to_vec());
+        let vote_data = Arc::new(5u32.to_le_bytes().to_vec());
         let vote_state_view_err = VoteStateView::try_new(vote_data).unwrap_err();
         assert_eq!(vote_state_view_err, VoteStateViewError::UnsupportedVersion);
     }
@@ -875,8 +1015,76 @@ mod tests {
         );
         assert_eq!(view_zero.root_slot(), view_garbage.root_slot());
         assert_eq!(
-            view_zero.num_epoch_credits(),
-            view_garbage.num_epoch_credits()
+            view_zero.num_accumulated_lamports(),
+            view_garbage.num_accumulated_lamports()
         );
+    }
+
+    #[test]
+    fn test_v5_view_matches_v4_view_after_conversion() {
+        use solana_vote_interface::state::vote_state_v5::Location;
+
+        for credits_len in [0u64, 1, 3, 5, 8] {
+            let mut v4 = new_test_vote_state_v4();
+            v4.epoch_credits = (0..credits_len)
+                .map(|e| (e + 10, (e + 1) * 100, e * 100))
+                .collect();
+            v4.authorized_voters = AuthorizedVoters::new(3, Pubkey::new_unique());
+            v4.authorized_voters.insert(7, Pubkey::new_unique());
+            let v4_view = VoteStateView::from(v4.clone());
+            let v5 = VoteStateV5::from_vote_state_v4(
+                v4.clone(),
+                Location::try_new(4051542, 618526, 4870645).unwrap(),
+                20,
+            )
+            .unwrap();
+            let v5_view = VoteStateView::from(v5);
+
+            assert_eq!(v5_view.node_pubkey(), v4_view.node_pubkey());
+            assert_eq!(
+                v5_view.inflation_rewards_collector(),
+                v4_view.inflation_rewards_collector()
+            );
+            assert_eq!(
+                v5_view.block_revenue_collector(),
+                v4_view.block_revenue_collector()
+            );
+            assert_eq!(v5_view.commission(), v4_view.commission());
+            assert_eq!(
+                v5_view.inflation_rewards_commission(),
+                v4_view.inflation_rewards_commission()
+            );
+            assert_eq!(
+                v5_view.block_revenue_commission(),
+                v4_view.block_revenue_commission()
+            );
+            assert_eq!(
+                v5_view.pending_delegator_rewards(),
+                v4_view.pending_delegator_rewards()
+            );
+            assert_eq!(
+                v5_view.bls_pubkey_compressed(),
+                v4_view.bls_pubkey_compressed()
+            );
+            assert_eq!(v5_view.root_slot(), v4_view.root_slot());
+            assert_eq!(v5_view.last_voted_slot(), v4_view.last_voted_slot());
+            assert_eq!(v5_view.last_timestamp(), v4_view.last_timestamp());
+            assert_eq!(
+                v5_view.accumulated_lamports(),
+                v4_view.accumulated_lamports()
+            );
+            for epoch in [0, 3, 6, 7, 100] {
+                assert_eq!(
+                    v5_view.get_authorized_voter(epoch),
+                    v4_view.get_authorized_voter(epoch)
+                );
+            }
+            let tail = |view: &VoteStateView| -> Vec<(Epoch, u64, u64)> {
+                let all: Vec<_> = view.accumulated_lamports_iter().map(Into::into).collect();
+                all[all.len().saturating_sub(5)..].to_vec()
+            };
+            assert_eq!(tail(&v5_view), tail(&v4_view));
+            assert_eq!(v5_view.num_accumulated_lamports(), tail(&v4_view).len());
+        }
     }
 }

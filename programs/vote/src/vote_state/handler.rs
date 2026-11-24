@@ -27,10 +27,19 @@ use {
             BLS_PUBLIC_KEY_COMPRESSED_SIZE, BlockTimestamp, LandedVote, Lockout,
             MAX_EPOCH_CREDITS_HISTORY, VoteInit, VoteInitV2, VoteState1_14_11, VoteStateV3,
             VoteStateV4,
+            vote_state_v5::{VOTE_STATE_V5_SIZE, VoteStateV5},
         },
     },
-    std::collections::VecDeque,
-    wincode::{SchemaRead, SchemaWrite},
+    std::{
+        collections::VecDeque,
+        mem::{MaybeUninit, size_of},
+    },
+    wincode::{
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
+        config::ConfigCore,
+        error::{invalid_tag_encoding, invalid_value},
+        io::{Reader, Writer},
+    },
 };
 
 /// Copy of `VoteStateVersions` except that state is without a `Box`.
@@ -43,12 +52,48 @@ use {
     ),
     derive(StableAbi, StableAbiSample, SchemaWrite)
 )]
-#[derive(Debug, PartialEq, Eq, SchemaRead)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum VoteStateVersionsInline {
     Uninitialized,
     V1_14_11(VoteState1_14_11),
     V3(VoteStateV3),
     V4(VoteStateV4),
+    V5(VoteStateV5),
+}
+
+/// Reads the `u32` tag first. Tags 0 to 3 delegate to the payload decoder, as the former
+/// derive did. Tag 4 is part of `VoteStateV5` itself, so the tag bytes are put back in front
+/// of the remaining bytes before the SDK decodes the whole account.
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for VoteStateVersionsInline
+where
+    u32: SchemaRead<'de, C, Dst = u32>,
+    VoteState1_14_11: SchemaRead<'de, C, Dst = VoteState1_14_11>,
+    VoteStateV3: SchemaRead<'de, C, Dst = VoteStateV3>,
+    VoteStateV4: SchemaRead<'de, C, Dst = VoteStateV4>,
+{
+    type Dst = Self;
+
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self>) -> ReadResult<()> {
+        let tag = <u32 as SchemaRead<C>>::get(reader.by_ref())?;
+        let state = match tag {
+            0 => Self::Uninitialized,
+            1 => Self::V1_14_11(<VoteState1_14_11 as SchemaRead<C>>::get(reader)?),
+            2 => Self::V3(<VoteStateV3 as SchemaRead<C>>::get(reader)?),
+            3 => Self::V4(<VoteStateV4 as SchemaRead<C>>::get(reader)?),
+            4 => {
+                let mut account = [0u8; VOTE_STATE_V5_SIZE];
+                account[..4].copy_from_slice(&tag.to_le_bytes());
+                reader.copy_into_slice(&mut account[4..])?;
+                Self::V5(
+                    VoteStateV5::from_account_data_unaligned(&account)
+                        .map_err(|_| invalid_value("invalid VoteStateV5"))?,
+                )
+            }
+            tag => return Err(invalid_tag_encoding(tag as usize)),
+        };
+        dst.write(state);
+        Ok(())
+    }
 }
 
 impl VoteStateVersionsInline {
@@ -58,6 +103,10 @@ impl VoteStateVersionsInline {
         match versioned {
             // Preserve VoteStateVersions::deserialize's rejection of discriminant 0.
             Self::Uninitialized => Err(InstructionError::InvalidAccountData),
+            // The v5 layout is fixed, so the reader cannot see trailing bytes.
+            Self::V5(_) if input.len() != VOTE_STATE_V5_SIZE => {
+                Err(InstructionError::InvalidAccountData)
+            }
             _ => Ok(versioned),
         }
     }
@@ -68,18 +117,51 @@ impl VoteStateVersionsInline {
             Self::V1_14_11(vote_state) => vote_state.is_uninitialized(),
             Self::V3(vote_state) => vote_state.is_uninitialized(),
             // As per SIMD-0185, v4 is always initialized.
-            Self::V4(_) => false,
+            Self::V4(_) | Self::V5(_) => false,
         }
     }
 }
 
 /// Copy of `VoteStateVersions` except that references to state are stored.
 /// Allows for faster serialization as data doesn't have to be moved around.
-#[derive(SchemaWrite)]
 enum VoteStateVersionsRef<'a> {
-    #[wincode(tag = 3)]
     V4(&'a VoteStateV4),
+    V5(&'a VoteStateV5),
 }
+
+/// Writes v4 as tag 3 followed by the payload. Writes v5 as the struct, which holds its own
+/// tag, followed by the zeroed tail, so that the encoding is always `VOTE_STATE_V5_SIZE` bytes.
+unsafe impl<C: ConfigCore> SchemaWrite<C> for VoteStateVersionsRef<'_>
+where
+    u32: SchemaWrite<C, Src = u32>,
+    VoteStateV4: SchemaWrite<C, Src = VoteStateV4>,
+    VoteStateV5: SchemaWrite<C, Src = VoteStateV5>,
+{
+    type Src = Self;
+
+    fn size_of(src: &Self) -> WriteResult<usize> {
+        match src {
+            Self::V4(v4) => Ok(<u32 as SchemaWrite<C>>::size_of(&V4_TAG)?
+                .saturating_add(<VoteStateV4 as SchemaWrite<C>>::size_of(v4)?)),
+            Self::V5(_) => Ok(VOTE_STATE_V5_SIZE),
+        }
+    }
+
+    fn write(mut writer: impl Writer, src: &Self) -> WriteResult<()> {
+        match src {
+            Self::V4(v4) => {
+                <u32 as SchemaWrite<C>>::write(writer.by_ref(), &V4_TAG)?;
+                <VoteStateV4 as SchemaWrite<C>>::write(writer, v4)
+            }
+            Self::V5(v5) => {
+                <VoteStateV5 as SchemaWrite<C>>::write(writer.by_ref(), v5)?;
+                Ok(writer.write(&[0; VOTE_STATE_V5_SIZE - size_of::<VoteStateV5>()])?)
+            }
+        }
+    }
+}
+
+const V4_TAG: u32 = 3;
 
 /// The target version to convert all deserialized vote state into.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,9 +185,90 @@ enum TargetVoteState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VoteStateHandler {
     target_state: TargetVoteState,
+    // Preserve V5's bounded histories and reserved fields when operating through
+    // the common-field API. Serialization never writes the V4 projection.
+    v5: Option<solana_vote_interface::state::vote_state_v5::VoteStateV5>,
+    commission_change_epoch: Option<(Epoch, bool)>,
 }
 
 impl VoteStateHandler {
+    pub fn from_account_data(data: &[u8]) -> Result<Self, InstructionError> {
+        Self::try_new_from_vote_state_versions(VoteStateVersionsInline::deserialize(data)?)
+    }
+
+    pub(super) fn from_v5(state: VoteStateV5) -> Self {
+        let mut handler = Self::new_v4(solana_vote::vote_state_v5::common_fields(&state));
+        handler.v5 = Some(state);
+        handler
+    }
+
+    pub(crate) fn set_commission_change_epoch(&mut self, epoch: Epoch, inflation: bool) {
+        self.commission_change_epoch = Some((epoch, inflation));
+    }
+
+    pub(super) fn updated_v5(
+        &self,
+    ) -> Result<Option<solana_vote_interface::state::vote_state_v5::VoteStateV5>, InstructionError>
+    {
+        use solana_vote_interface::state::vote_state_v5::Commission;
+        let Some(mut state) = self.v5.clone() else {
+            return Ok(None);
+        };
+        let TargetVoteState::V4(common) = &self.target_state;
+        state.node_pubkey = common.node_pubkey;
+        state.authorized_withdrawer = common.authorized_withdrawer;
+        state.inflation_rewards_collector = common.inflation_rewards_collector;
+        state.block_revenue_collector = common.block_revenue_collector;
+        state.pending_delegator_rewards = common.pending_delegator_rewards;
+        state.bls_pubkey_compressed = common
+            .bls_pubkey_compressed
+            .ok_or(InstructionError::InvalidAccountData)?;
+        state.last_timestamp = common.last_timestamp.clone();
+        state.set_latest_vote(common.votes.back().map(|vote| vote.slot()));
+        state.set_root_slot(common.root_slot);
+        if let Some((&epoch, _)) = common.authorized_voters.first() {
+            state.authorized_voters_mut().purge_before(epoch);
+        }
+        for (&epoch, &voter) in common.authorized_voters.iter() {
+            state.authorized_voters_mut().update(epoch, voter)?;
+        }
+        for &(epoch, cumulative, previous) in &common.epoch_credits {
+            if (epoch, cumulative, previous) == (u64::MAX, u64::MAX, u64::MAX) {
+                continue;
+            }
+            let entries = state.accumulated_lamports_ref();
+            let last = entries.0.iter().rev().find(|entry| {
+                !(entry.epoch == u64::MAX
+                    && entry.lamports == u64::MAX
+                    && entry.prev_lamports == u64::MAX)
+            });
+            if last.is_some_and(|entry| entry.epoch > epoch) {
+                continue;
+            }
+            let previous = last.map_or(0, |entry| entry.lamports);
+            if cumulative >= previous
+                && (cumulative > previous || last.is_none_or(|entry| entry.epoch != epoch))
+            {
+                state
+                    .accumulated_lamports_mut()
+                    .update(epoch, cumulative.saturating_sub(previous))?;
+            }
+        }
+        if let Some((epoch, inflation)) = self.commission_change_epoch {
+            if inflation {
+                state.inflation_rewards_commission_mut().update(
+                    epoch,
+                    Commission::new(common.inflation_rewards_commission_bps),
+                )?;
+            } else {
+                state
+                    .block_revenue_commission_mut()
+                    .update(epoch, Commission::new(common.block_revenue_commission_bps))?;
+            }
+        }
+        Ok(Some(state))
+    }
+
     pub(crate) fn authorized_withdrawer(&self) -> &Pubkey {
         match &self.target_state {
             TargetVoteState::V4(v4) => &v4.authorized_withdrawer,
@@ -326,6 +489,9 @@ impl VoteStateHandler {
         &self,
         vote_account: &mut BorrowedInstructionAccount,
     ) -> Result<(), InstructionError> {
+        if let Some(state) = self.updated_v5()? {
+            return Self::set_vote_account_state_v5(vote_account, &state);
+        }
         match &self.target_state {
             TargetVoteState::V4(v4) => {
                 // If the account is not large enough to store the vote state, then attempt a realloc to make it large enough.
@@ -344,6 +510,27 @@ impl VoteStateHandler {
                 vote_account.set_state(&VoteStateVersionsRef::V4(v4))
             }
         }
+    }
+
+    /// Stores a v5 state in an account of exactly `VOTE_STATE_V5_SIZE` bytes, resizing it first.
+    ///
+    /// Growing needs rent exemption at the new size. Shrinking drops the tail of an older
+    /// version, since the SDK accepts only v5 accounts of that exact size.
+    pub(crate) fn set_vote_account_state_v5(
+        vote_account: &mut BorrowedInstructionAccount,
+        state: &VoteStateV5,
+    ) -> Result<(), InstructionError> {
+        let len = vote_account.get_data().len();
+        if len < VOTE_STATE_V5_SIZE
+            && (!vote_account.is_rent_exempt_at_data_length(VOTE_STATE_V5_SIZE)
+                || vote_account.set_data_length(VOTE_STATE_V5_SIZE).is_err())
+        {
+            return Err(InstructionError::AccountNotRentExempt);
+        }
+        if len > VOTE_STATE_V5_SIZE {
+            vote_account.set_data_length(VOTE_STATE_V5_SIZE)?;
+        }
+        vote_account.set_state(&VoteStateVersionsRef::V5(state))
     }
 
     pub(crate) fn has_bls_pubkey(&self) -> bool {
@@ -463,6 +650,8 @@ impl VoteStateHandler {
     pub(crate) fn new_v4(vote_state: VoteStateV4) -> Self {
         Self {
             target_state: TargetVoteState::V4(vote_state),
+            v5: None,
+            commission_change_epoch: None,
         }
     }
 
@@ -475,6 +664,7 @@ impl VoteStateHandler {
     ) -> Result<Self, InstructionError> {
         match versions {
             VoteStateVersionsInline::V4(state) => Ok(Self::new_v4(state)),
+            VoteStateVersionsInline::V5(state) => Ok(Self::from_v5(state)),
             VoteStateVersionsInline::V3(_)
             | VoteStateVersionsInline::V1_14_11(_)
             | VoteStateVersionsInline::Uninitialized => Err(InstructionError::InvalidAccountData),
@@ -493,6 +683,11 @@ impl VoteStateHandler {
         }
     }
 
+    pub(super) fn unwrap_v4_for_conversion(self) -> VoteStateV4 {
+        let TargetVoteState::V4(state) = self.target_state;
+        state
+    }
+
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn unwrap_v4(self) -> VoteStateV4 {
         match self.target_state {
@@ -504,6 +699,9 @@ impl VoteStateHandler {
     ///
     /// Returns `Err(InstructionError::InvalidAccountData)` if serialization fails.
     pub fn serialize_into(&self, data: &mut [u8]) -> Result<(), InstructionError> {
+        if let Some(state) = self.updated_v5()? {
+            return state.write_account_data(data);
+        }
         match &self.target_state {
             TargetVoteState::V4(v4) => {
                 let versioned = VoteStateVersionsRef::V4(v4);
@@ -518,6 +716,11 @@ impl VoteStateHandler {
     ///
     /// Returns `Err(InstructionError::InvalidAccountData)` if the encoding exceeds `len` bytes.
     pub fn serialize_padded(&self, len: usize) -> Result<Vec<u8>, InstructionError> {
+        if self.v5.is_some() {
+            let mut data = vec![0; len];
+            self.serialize_into(&mut data)?;
+            return Ok(data);
+        }
         let mut data = Vec::with_capacity(len);
         match &self.target_state {
             TargetVoteState::V4(v4) => {
@@ -576,6 +779,8 @@ pub(crate) fn try_convert_to_vote_state_v4(
             last_timestamp: state.last_timestamp,
         }),
         VoteStateVersionsInline::V4(state) => Ok(state),
+        // The program has no v5 target yet and never downgrades.
+        VoteStateVersionsInline::V5(_) => Err(InstructionError::InvalidAccountData),
     }
 }
 
@@ -612,6 +817,83 @@ mod tests {
 
     /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
     const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
+
+    #[test]
+    fn test_set_vote_account_state_v5_resizes_to_the_v5_size() {
+        use solana_vote_interface::state::{
+            VoteInitV2,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+
+        let state = VoteStateV5::new(
+            &VoteInitV2::default(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Location::try_new(6_378_137, 0, 0).unwrap(),
+            &Clock::default(),
+        );
+        let rent = Rent::default();
+        let funded = rent.minimum_balance(VOTE_STATE_V5_SIZE);
+
+        for (len, lamports, expected) in [
+            (100, funded, Ok(())),
+            (VOTE_STATE_V5_SIZE, funded, Ok(())),
+            (VoteStateV4::size_of(), funded, Ok(())),
+            (100, funded - 1, Err(InstructionError::AccountNotRentExempt)),
+        ] {
+            let vote_pubkey = Pubkey::new_unique();
+            let vote_account = AccountSharedData::new_with_data(lamports, vec![0xaa; len], &id());
+            let transaction_context =
+                mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                VoteStateHandler::set_vote_account_state_v5(&mut vote_account, &state),
+                expected,
+                "length {len}",
+            );
+            if expected.is_ok() {
+                assert_eq!(vote_account.get_data().len(), VOTE_STATE_V5_SIZE);
+                assert_eq!(
+                    VoteStateVersionsInline::deserialize(vote_account.get_data()),
+                    Ok(VoteStateVersionsInline::V5(state.clone())),
+                    "length {len}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_vote_state_versions_ref_v5_is_a_full_account() {
+        use solana_vote_interface::state::{
+            VoteInitV2,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+
+        let state = VoteStateV5::new(
+            &VoteInitV2::default(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Location::try_new(6_378_137, 0, 0).unwrap(),
+            &Clock::default(),
+        );
+        let versioned = VoteStateVersionsRef::V5(&state);
+        assert_eq!(
+            wincode::serialized_size(&versioned).unwrap(),
+            VOTE_STATE_V5_SIZE as u64
+        );
+        let encoded = wincode::serialize(&versioned).unwrap();
+        let mut expected = vec![0xff; VOTE_STATE_V5_SIZE];
+        state.write_account_data(&mut expected).unwrap();
+        assert_eq!(encoded, expected);
+        assert_eq!(
+            VoteStateVersionsInline::deserialize(&encoded),
+            Ok(VoteStateVersionsInline::V5(state)),
+        );
+    }
 
     #[test]
     fn test_vote_state_handler_compatibility() {
