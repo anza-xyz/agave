@@ -400,6 +400,42 @@ pub struct RpcVatActiveSetRankMapEntry {
     pub stake: NonZero<u64>,
 }
 
+/// The finalization certificate carried in the footer of an Alpenglow block.
+///
+/// To verify it, check each aggregate's signature, and that its signers hold the stake its
+/// certificate type requires, against the ranked validators of the epoch containing `slot` (see
+/// `getVatActiveSetRankMap`), over the vote payloads for `slot`, `block_id` and `shred_version`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcBlockFooterCert {
+    /// Slot whose block footer carries the certificate.
+    pub footer_slot: Slot,
+    /// Slot the certificate finalizes: the highest finalized slot the leader of `footer_slot`
+    /// had seen, often but not always `footer_slot - 1`. Consecutive footers can carry the same
+    /// certificate, and a finalized slot may never be certified directly by any footer.
+    pub slot: Slot,
+    /// Block id the certificate finalizes, as a base-58 encoded string.
+    pub block_id: String,
+    /// Shred version of the footer's shreds. The certificate's votes sign it.
+    pub shred_version: u16,
+    /// Fast finalization: notarize votes for `block_id`. Slow finalization: finalize votes for
+    /// `slot`.
+    pub final_aggregate: RpcVotesAggregate,
+    /// Slow finalization only: notarize votes for `block_id`.
+    pub notar_aggregate: Option<RpcVotesAggregate>,
+}
+
+/// A BLS aggregate signature over Alpenglow votes, with the ranks of its signers.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcVotesAggregate {
+    /// Compressed BLS aggregate signature, as a base-58 encoded string.
+    pub signature: String,
+    /// Signer bitmap over the epoch's validator ranks, in the solana-signer-store encoding, as a
+    /// base-58 encoded string.
+    pub bitmap: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcVoteAccountStatus {

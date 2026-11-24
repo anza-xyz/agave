@@ -21,6 +21,13 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Added `getAgBlockFooterCert` to the full RPC API to return the finalization certificate in the
+  footer of a rooted block (block id, BLS aggregate signatures and signer bitmaps, base-58
+  encoded) with the footer's shred version. Returns `null` when there is none or the block cannot
+  be read. Errors match `getBlock`, with no BigTable fallback and no transaction-history
+  requirement. Always serves rooted data; there is no commitment parameter.
+* Added `RpcClient::get_ag_block_footer_cert`.
+
 ### Validator
 
 #### Breaking
