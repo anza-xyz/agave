@@ -30,12 +30,15 @@ use {
             vote_state_v5::{VOTE_STATE_V5_SIZE, VoteStateV5},
         },
     },
-    std::{collections::VecDeque, mem::MaybeUninit},
+    std::{
+        collections::VecDeque,
+        mem::{MaybeUninit, size_of},
+    },
     wincode::{
-        ReadResult, SchemaRead, SchemaWrite,
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::ConfigCore,
         error::{invalid_tag_encoding, invalid_value},
-        io::Reader,
+        io::{Reader, Writer},
     },
 };
 
@@ -121,11 +124,46 @@ impl VoteStateVersionsInline {
 
 /// Copy of `VoteStateVersions` except that references to state are stored.
 /// Allows for faster serialization as data doesn't have to be moved around.
-#[derive(SchemaWrite)]
 enum VoteStateVersionsRef<'a> {
-    #[wincode(tag = 3)]
     V4(&'a VoteStateV4),
+    // Constructed once the handler has a v5 target.
+    #[cfg_attr(not(test), allow(dead_code))]
+    V5(&'a VoteStateV5),
 }
+
+/// Writes v4 as tag 3 followed by the payload. Writes v5 as the struct, which holds its own
+/// tag, followed by the zeroed tail, so that the encoding is always `VOTE_STATE_V5_SIZE` bytes.
+unsafe impl<C: ConfigCore> SchemaWrite<C> for VoteStateVersionsRef<'_>
+where
+    u32: SchemaWrite<C, Src = u32>,
+    VoteStateV4: SchemaWrite<C, Src = VoteStateV4>,
+    VoteStateV5: SchemaWrite<C, Src = VoteStateV5>,
+{
+    type Src = Self;
+
+    fn size_of(src: &Self) -> WriteResult<usize> {
+        match src {
+            Self::V4(v4) => Ok(<u32 as SchemaWrite<C>>::size_of(&V4_TAG)?
+                .saturating_add(<VoteStateV4 as SchemaWrite<C>>::size_of(v4)?)),
+            Self::V5(_) => Ok(VOTE_STATE_V5_SIZE),
+        }
+    }
+
+    fn write(mut writer: impl Writer, src: &Self) -> WriteResult<()> {
+        match src {
+            Self::V4(v4) => {
+                <u32 as SchemaWrite<C>>::write(writer.by_ref(), &V4_TAG)?;
+                <VoteStateV4 as SchemaWrite<C>>::write(writer, v4)
+            }
+            Self::V5(v5) => {
+                <VoteStateV5 as SchemaWrite<C>>::write(writer.by_ref(), v5)?;
+                Ok(writer.write(&[0; VOTE_STATE_V5_SIZE - size_of::<VoteStateV5>()])?)
+            }
+        }
+    }
+}
+
+const V4_TAG: u32 = 3;
 
 /// The target version to convert all deserialized vote state into.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -661,6 +699,35 @@ mod tests {
 
     /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
     const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
+
+    #[test]
+    fn test_vote_state_versions_ref_v5_is_a_full_account() {
+        use solana_vote_interface::state::{
+            VoteInitV2,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+
+        let state = VoteStateV5::new(
+            &VoteInitV2::default(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Location::try_new(6_378_137, 0, 0).unwrap(),
+            &Clock::default(),
+        );
+        let versioned = VoteStateVersionsRef::V5(&state);
+        assert_eq!(
+            wincode::serialized_size(&versioned).unwrap(),
+            VOTE_STATE_V5_SIZE as u64
+        );
+        let encoded = wincode::serialize(&versioned).unwrap();
+        let mut expected = vec![0xff; VOTE_STATE_V5_SIZE];
+        state.write_account_data(&mut expected).unwrap();
+        assert_eq!(encoded, expected);
+        assert_eq!(
+            VoteStateVersionsInline::deserialize(&encoded),
+            Ok(VoteStateVersionsInline::V5(state)),
+        );
+    }
 
     #[test]
     fn test_vote_state_handler_compatibility() {
