@@ -1,7 +1,7 @@
 use {
     crate::bank::{Bank, MAX_ALPENGLOW_VOTE_ACCOUNTS},
     solana_account::{AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _},
-    solana_clock::{Epoch, Slot},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_sdk_ids::system_program,
     solana_vote::vote_account::VoteAccounts,
@@ -160,14 +160,10 @@ pub(crate) enum AlpenglowEpochType<'a> {
     Tower,
     /// The epoch started in tower and then switched to alpenglow
     MigrationEpoch {
-        num_tower_slots: Slot,
-        num_ag_slots: Slot,
-        migration_epoch: Epoch,
         reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
     },
     /// This is a full alpenglow epoch
     Alpenglow {
-        migration_epoch: Epoch,
         reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
     },
 }
@@ -208,20 +204,11 @@ impl<'a> AlpenglowEpochType<'a> {
                     "reward epoch delegated stakes must match rewarded epoch"
                 );
                 Self::Alpenglow {
-                    migration_epoch,
                     reward_epoch_delegated_stakes,
                 }
             }
             Ordering::Greater => Self::Tower,
             Ordering::Equal => {
-                let first_slot_in_epoch = bank
-                    .epoch_schedule()
-                    .get_first_slot_in_epoch(migration_epoch);
-                // + 1 because the migration_slot is still tower.
-                let num_tower_slots = migration_slot - first_slot_in_epoch + 1;
-                let slots_in_epoch = bank.epoch_schedule().get_slots_in_epoch(migration_epoch);
-                let num_ag_slots = slots_in_epoch - num_tower_slots;
-                assert_eq!(slots_in_epoch, num_tower_slots + num_ag_slots);
                 let reward_epoch_delegated_stakes =
                     reward_epoch_delegated_stakes.unwrap_or_else(|| {
                         panic!(
@@ -234,9 +221,6 @@ impl<'a> AlpenglowEpochType<'a> {
                     "reward epoch delegated stakes must match rewarded epoch"
                 );
                 Self::MigrationEpoch {
-                    num_tower_slots,
-                    num_ag_slots,
-                    migration_epoch,
                     reward_epoch_delegated_stakes,
                 }
             }

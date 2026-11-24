@@ -199,7 +199,6 @@ fn calculate_stake_rewards<'a>(
 
     // ensure to run to trigger (optional) inflation_point_calc_tracer
     let CalculatedStakePoints {
-        tower_points,
         ag_points,
         new_credits_observed,
         mut force_credits_update_with_skipped_reward,
@@ -264,51 +263,7 @@ fn calculate_stake_rewards<'a>(
             // In alpenglow, `points` represents the actual reward that this `stake` earned.
             ag_points
         }
-        AlpenglowEpochType::Tower => {
-            if tower_points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPoints.into());
-                }
-                return None;
-            }
-            if point_value.points == 0 {
-                if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
-                    inflation_point_calc_tracer(&SkippedReason::ZeroPointValue.into());
-                }
-                return None;
-            }
-            // In tower, `points` still needs to be scaled by `point_value` to calculate this
-            // `vote_state` earned.
-            // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
-            tower_points
-                .checked_mul(u128::from(point_value.rewards))
-                .expect("Rewards intermediate calculation should fit within u128")
-                .checked_div(point_value.points)
-                .unwrap()
-        }
-        AlpenglowEpochType::MigrationEpoch {
-            num_tower_slots,
-            num_ag_slots,
-            ..
-        } => {
-            if tower_points == 0 && ag_points == 0 {
-                return skip_reward(SkippedReason::ZeroPoints);
-            }
-            if ag_points == 0 && point_value.points == 0 {
-                return skip_reward(SkippedReason::ZeroPointValue);
-            }
-            let total_slots = (num_tower_slots + num_ag_slots) as u128;
-            let tower_points = tower_points
-                .checked_mul(u128::from(point_value.rewards))
-                .expect("Rewards intermediate calculation should fit within u128")
-                .checked_div(point_value.points)
-                .unwrap()
-                .checked_mul(*num_tower_slots as u128)
-                .unwrap()
-                .checked_div(total_slots)
-                .unwrap();
-            tower_points + ag_points
-        }
+        AlpenglowEpochType::Tower | AlpenglowEpochType::MigrationEpoch { .. } => return None,
     };
 
     let rewards = u64::try_from(rewards).expect("Rewards should fit within u64");
@@ -456,7 +411,6 @@ mod tests {
             .sum::<u64>();
         (
             AlpenglowEpochType::Alpenglow {
-                migration_epoch: reward_epoch_delegated_stakes.epoch - 1,
                 reward_epoch_delegated_stakes,
             },
             total_stake,
@@ -484,7 +438,6 @@ mod tests {
         reward_epoch_delegated_stakes: &'a RewardEpochDelegatedStakes,
     ) -> AlpenglowEpochType<'a> {
         AlpenglowEpochType::Alpenglow {
-            migration_epoch: 0,
             reward_epoch_delegated_stakes,
         }
     }
@@ -918,7 +871,6 @@ mod tests {
         );
         assert_eq!(
             CalculatedStakePoints {
-                tower_points: 0,
                 ag_points: 0,
                 new_credits_observed: 4 * ag_total_stake_multiplier,
                 force_credits_update_with_skipped_reward: false,
@@ -943,7 +895,6 @@ mod tests {
         );
         assert_eq!(
             CalculatedStakePoints {
-                tower_points: 0,
                 ag_points: 0,
                 new_credits_observed: 4 * ag_total_stake_multiplier,
                 force_credits_update_with_skipped_reward: true,
@@ -965,7 +916,6 @@ mod tests {
         );
         assert_eq!(
             CalculatedStakePoints {
-                tower_points: 0,
                 ag_points: 0,
                 new_credits_observed: 4 * ag_total_stake_multiplier,
                 force_credits_update_with_skipped_reward: false,
