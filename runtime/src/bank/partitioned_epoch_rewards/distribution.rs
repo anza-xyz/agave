@@ -449,7 +449,7 @@ mod tests {
         solana_sysvar as sysvar,
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state::{self, VoteStateV4, handler::VoteStateHandler},
-        std::sync::Arc,
+        std::{num::NonZero, sync::Arc},
     };
 
     #[test]
@@ -1281,7 +1281,7 @@ mod tests {
         // This delegation is the vote account's entire stake, so its reward is
         // the vote account's reward credits. Keep one credit when inflation is
         // disabled to also exercise advancing credits without paying rewards.
-        vote_state.increment_credits(rewarded_epoch, total_rewards.max(1));
+        vote_state.increment_credits(rewarded_epoch, NonZero::new(total_rewards.max(1)).unwrap());
         let reward_epoch_delegated_stakes = RewardEpochDelegatedStakes {
             epoch: rewarded_epoch,
             delegated_stakes: [(

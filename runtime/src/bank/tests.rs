@@ -153,6 +153,7 @@ use {
         collections::{BTreeMap, HashMap, HashSet},
         convert::TryInto,
         io::Cursor,
+        num::NonZero,
         str::FromStr,
         sync::{
             Arc,
@@ -801,7 +802,7 @@ where
     // generate some rewards
     let mut vote_state =
         VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-    vote_state.increment_credits(bank0.epoch(), 42);
+    vote_state.increment_credits(bank0.epoch(), NonZero::new(42).unwrap());
     let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
     vote_account.set_state(&versioned).unwrap();
     bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
@@ -962,7 +963,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     // generate some rewards
     let mut vote_state =
         VoteStateHandler::new_v4(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-    vote_state.increment_credits(bank.epoch(), 42);
+    vote_state.increment_credits(bank.epoch(), NonZero::new(42).unwrap());
     let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
     vote_account.set_state(&versioned).unwrap();
     bank.store_account_and_update_capitalization(&vote_id, &vote_account);
@@ -5601,7 +5602,7 @@ fn test_bank_hash_consistency() {
     let mut vote_state = VoteStateHandler::new_v4(
         VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
     );
-    vote_state.increment_credits(bank.epoch(), 4);
+    vote_state.increment_credits(bank.epoch(), NonZero::new(4).unwrap());
     vote_account
         .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
         .unwrap();
@@ -5746,7 +5747,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
         let mut vote_state = VoteStateHandler::new_v4(
             VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
         );
-        vote_state.increment_credits(bank0.epoch(), 42);
+        vote_state.increment_credits(bank0.epoch(), NonZero::new(42).unwrap());
         vote_account
             .set_state(&VoteStateVersions::V4(Box::new(vote_state.unwrap_v4())))
             .unwrap();

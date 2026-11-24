@@ -643,7 +643,7 @@ mod tests {
             instruction_accounts::InstructionAccount, transaction::TransactionContext,
         },
         solana_vote_interface::authorized_voters::AuthorizedVoters,
-        std::{assert_matches, collections::VecDeque},
+        std::{assert_matches, collections::VecDeque, num::NonZero},
         test_case::test_case,
     };
 
@@ -752,7 +752,7 @@ mod tests {
         let mut vote_state = vote_state_new_for_test(&vote_pubkey, target_version);
 
         // Simulate prior epochs completed with credits and each setting a new authorized voter
-        vote_state.increment_credits(0, 100);
+        vote_state.increment_credits(0, NonZero::new(100).unwrap());
         assert_eq!(
             vote_state.set_new_authorized_voter(
                 &solana_pubkey::new_rand(),
@@ -763,7 +763,7 @@ mod tests {
             ),
             Ok(())
         );
-        vote_state.increment_credits(1, 200);
+        vote_state.increment_credits(1, NonZero::new(200).unwrap());
         assert_eq!(
             vote_state.set_new_authorized_voter(
                 &solana_pubkey::new_rand(),
@@ -774,7 +774,7 @@ mod tests {
             ),
             Ok(())
         );
-        vote_state.increment_credits(2, 300);
+        vote_state.increment_credits(2, NonZero::new(300).unwrap());
         assert_eq!(
             vote_state.set_new_authorized_voter(
                 &solana_pubkey::new_rand(),

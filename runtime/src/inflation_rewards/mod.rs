@@ -425,6 +425,7 @@ mod tests {
         solana_stake_history::StakeHistory,
         solana_stake_interface::state::{Delegation, StakeStateV2},
         solana_vote_program::vote_state::{VoteStateV4, handler::VoteStateHandler},
+        std::num::NonZero,
     };
 
     fn new_stake(
@@ -509,7 +510,10 @@ mod tests {
 
         let inc_credits = |handler: &mut VoteStateHandler, epoch: Epoch, credits: u64| {
             let (_, _, first_ag_epoch) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
-            handler.increment_credits(epoch + first_ag_epoch, credits * ag_total_stake_multiplier);
+            handler.increment_credits(
+                epoch + first_ag_epoch,
+                NonZero::new(credits * ag_total_stake_multiplier).unwrap(),
+            );
         };
         let mut rent = Rent::default();
         let minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
@@ -597,7 +601,10 @@ mod tests {
 
         let inc_credits = |handler: &mut VoteStateHandler, epoch: Epoch, credits: u64| {
             let (_, _, first_ag_epoch) = get_ag_epoch_type(&reward_epoch_delegated_stakes);
-            handler.increment_credits(epoch + first_ag_epoch, credits * ag_total_stake_multiplier);
+            handler.increment_credits(
+                epoch + first_ag_epoch,
+                NonZero::new(credits * ag_total_stake_multiplier).unwrap(),
+            );
         };
         // this one can't collect now, credits_observed == vote_state.credits()
         let reward_epoch_delegated_stakes = make_reward_epoch_delegated_stakes_for_test(
