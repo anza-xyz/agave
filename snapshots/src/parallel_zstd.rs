@@ -9,7 +9,10 @@ use {
         mem,
         num::NonZeroUsize,
     },
-    zstd::zstd_safe,
+    zstd::zstd_safe::{
+        self,
+        zstd_sys::{ZSTD_ErrorCode, ZSTD_getErrorCode},
+    },
 };
 
 /// A mainnet archive reads at 6 GB/s with one decoder and tops out at 21 GB/s with 4, where copying
@@ -35,6 +38,25 @@ fn max_decoded_frame_size(frame_prefix: &[u8]) -> u64 {
         .ok()
         .flatten()
         .unwrap_or(u64::MAX)
+}
+
+fn invalid_data(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+/// Returns the size of the frame at the start of `input`, or `Ok(None)` if `input` doesn't hold it
+/// all yet. Fails if `input` isn't a valid frame.
+fn find_frame_len(input: &[u8]) -> io::Result<Option<usize>> {
+    fn is_src_size_wrong(code: zstd_safe::ErrorCode) -> bool {
+        // Safety: the function only decodes the error code out of its argument.
+        unsafe { ZSTD_getErrorCode(code) == ZSTD_ErrorCode::ZSTD_error_srcSize_wrong }
+    }
+
+    match zstd_safe::find_frame_compressed_size(input) {
+        Ok(frame_len) => Ok(Some(frame_len)),
+        Err(code) if is_src_size_wrong(code) => Ok(None),
+        Err(code) => Err(invalid_data(zstd_safe::get_error_name(code))),
+    }
 }
 
 /// Returns whether the archive that starts with `first_frame_prefix` can be decoded in parallel.
@@ -105,8 +127,7 @@ impl<R: BufRead> ParallelZstdReader<R> {
     /// Cuts the next frame out of the input, or returns `Ok(None)` at its end.
     fn cut_frame(&mut self) -> io::Result<Option<CompressedFrame>> {
         loop {
-            // The size lookup fails until the whole frame is read.
-            if let Ok(frame_len) = zstd_safe::find_frame_compressed_size(&self.uncut_input) {
+            if let Some(frame_len) = find_frame_len(&self.uncut_input)? {
                 let mut next = self.buffers.get();
                 next.extend_from_slice(&self.uncut_input[frame_len..]);
                 self.uncut_input.truncate(frame_len);
@@ -163,8 +184,7 @@ impl FrameDecoder {
     fn decode_frame(&mut self, compressed_frame: &[u8]) -> io::Result<DecodedFrame> {
         let decoded_size = max_decoded_frame_size(compressed_frame);
         if decoded_size > MAX_PARALLEL_FRAME_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+            return Err(invalid_data(
                 "missing or non-uniform zstd frame size in parallel mode",
             ));
         }
@@ -251,6 +271,15 @@ mod tests {
             .read_to_end(&mut Vec::new())
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_corrupt_frame_fails_without_reading_everything() {
+        let mut archive = compress(&test_data(5 * TEST_FRAME_SIZE as usize));
+        let first_frame_len = zstd_safe::find_frame_compressed_size(&archive).unwrap();
+        archive[first_frame_len..first_frame_len + 4].fill(0);
+        let err = reader(archive, 2).read_to_end(&mut Vec::new()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
