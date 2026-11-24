@@ -50,7 +50,7 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
         );
         assert_eq!(
             vote_state.epoch_credits.len(),
-            vote_state_view.num_epoch_credits()
+            vote_state_view.num_accumulated_lamports()
         );
         assert_eq!(vote_state.last_timestamp, vote_state_view.last_timestamp());
         assert_eq!(vote_state.root_slot, vote_state_view.root_slot());

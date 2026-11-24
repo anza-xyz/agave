@@ -251,18 +251,18 @@ impl<'a> ListView<'a, AuthorizedVotersListFrame> {
 }
 
 #[repr(C)]
-pub struct EpochCreditsItem {
+pub struct AccumulatedLamportsItem {
     epoch: [u8; 8],
-    credits: [u8; 8],
-    prev_credits: [u8; 8],
+    lamports: [u8; 8],
+    prev_lamports: [u8; 8],
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub(super) struct EpochCreditsListFrame {
+pub(super) struct AccumulatedLamportsListFrame {
     pub(super) len: u8,
 }
 
-impl EpochCreditsListFrame {
+impl AccumulatedLamportsListFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::AccountDataTooSmall)? as usize;
@@ -273,32 +273,32 @@ impl EpochCreditsListFrame {
     }
 }
 
-impl ListFrame for EpochCreditsListFrame {
-    type Item = EpochCreditsItem;
+impl ListFrame for AccumulatedLamportsListFrame {
+    type Item = AccumulatedLamportsItem;
 
     fn len(&self) -> usize {
         self.len as usize
     }
 }
 
-impl EpochCreditsItem {
+impl AccumulatedLamportsItem {
     #[inline]
     pub fn epoch(&self) -> u64 {
         u64::from_le_bytes(self.epoch)
     }
     #[inline]
-    pub fn credits(&self) -> u64 {
-        u64::from_le_bytes(self.credits)
+    pub fn lamports(&self) -> u64 {
+        u64::from_le_bytes(self.lamports)
     }
     #[inline]
-    pub fn prev_credits(&self) -> u64 {
-        u64::from_le_bytes(self.prev_credits)
+    pub fn prev_lamports(&self) -> u64 {
+        u64::from_le_bytes(self.prev_lamports)
     }
 }
 
-impl From<&EpochCreditsItem> for (Epoch, u64, u64) {
-    fn from(item: &EpochCreditsItem) -> Self {
-        (item.epoch(), item.credits(), item.prev_credits())
+impl From<&AccumulatedLamportsItem> for (Epoch, u64, u64) {
+    fn from(item: &AccumulatedLamportsItem) -> Self {
+        (item.epoch(), item.lamports(), item.prev_lamports())
     }
 }
 pub(super) struct CommissionView<'a> {
