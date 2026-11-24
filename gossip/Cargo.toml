@@ -81,7 +81,6 @@ thiserror = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
 bs58 = { workspace = true, features = ["alloc"] }
 criterion = { workspace = true }
 num_cpus = { workspace = true }

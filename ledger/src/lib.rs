@@ -41,8 +41,6 @@ extern crate solana_metrics;
 #[macro_use]
 extern crate log;
 
-mod wire_format_tests;
-
 #[doc(hidden)]
 pub mod macro_reexports {
     pub use solana_genesis_utils::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE;
