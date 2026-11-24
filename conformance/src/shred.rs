@@ -7,6 +7,7 @@
 
 use {
     agave_feature_set::FeatureSet,
+    agave_shred_wire_format::constants::{CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK},
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     agave_votor_messages::migration::MigrationStatus,
     prost::Message,
@@ -24,7 +25,7 @@ use {
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PurgeType},
         blockstore_processor::{set_alpenglow_ticks, verify_ticks},
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, Shred,
+            Shred,
             filter::{ShredFilterContext, ShredRecoveryContext, new_dummy_retransmit_sender},
             wire,
         },

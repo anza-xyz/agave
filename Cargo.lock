@@ -9116,6 +9116,7 @@ version = "5.0.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-shred-wire-format",
  "agave-snapshots",
  "agave-votor",
  "agave-votor-messages",

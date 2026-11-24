@@ -3,8 +3,7 @@ use {
     crate::{
         genesis_utils::{GenesisConfigInfo, create_genesis_config},
         shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, MAX_DATA_SHREDS_PER_SLOT,
-            ShredFlags,
+            MAX_DATA_SHREDS_PER_SLOT, ShredFlags,
             filter::new_dummy_retransmit_sender,
             max_ticks_per_n_shreds,
             merkle::{
@@ -14,7 +13,9 @@ use {
             merkle_tree::{get_proof_size, hash_as_merkle_proof_entry, verify_merkle_proof},
         },
     },
-    agave_shred_wire_format::constants::SIZE_OF_MERKLE_PROOF_ENTRY,
+    agave_shred_wire_format::constants::{
+        CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, SIZE_OF_MERKLE_PROOF_ENTRY,
+    },
     agave_votor_messages::consensus_message::BlockId,
     rand::{Rng, rng, seq::SliceRandom},
     rand_chacha::{ChaChaRng, rand_core::SeedableRng},
