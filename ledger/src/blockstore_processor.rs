@@ -1783,11 +1783,7 @@ fn confirm_slot_entries(
     let mut top_level_programs = IndexSet::with_hasher(AHashRandomState::default());
     let mut guess_program_candidates = IndexSet::with_hasher(AHashRandomState::default());
     {
-        let builtins = bank
-            .get_transaction_processor()
-            .builtin_program_ids
-            .read()
-            .unwrap();
+        let builtins = bank.builtin_program_ids();
         for entry in &entries {
             if let EntryType::Transactions(transactions) = entry {
                 for tx in transactions {

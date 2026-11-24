@@ -1618,6 +1618,13 @@ impl Bank {
             .set_fork_graph(fork_graph);
     }
 
+    pub fn builtin_program_ids(&self) -> RwLockReadGuard<'_, HashSet<Pubkey>> {
+        self.transaction_processor
+            .builtin_program_ids
+            .read()
+            .unwrap()
+    }
+
     // Returns whether we've entered the recompilation window of the program
     // cache's Epoch Boundary Preparation Phase (EBPP)
     fn in_ebpp_recompilation_window(&self) -> bool {
