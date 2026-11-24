@@ -1,18 +1,15 @@
 use {
-    rand::{CryptoRng, Rng, RngCore},
-    solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::{
-        Instruction, Message, VersionedMessage, compiled_instruction::CompiledInstruction,
-        v0::Message as MessageV0,
+        AccountMeta, Instruction, Message, VersionedMessage,
+        compiled_instruction::CompiledInstruction, v0::Message as MessageV0,
     },
+    solana_pubkey::Pubkey,
     solana_sdk_ids::{stake, system_program},
     solana_signer::Signer,
     solana_system_interface::instruction::SystemInstruction,
     solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_vote::vote_transaction,
-    solana_vote_program::vote_state::TowerSync,
 };
 
 pub fn test_tx() -> Transaction {
@@ -48,23 +45,23 @@ pub fn test_multisig_tx() -> Transaction {
     )
 }
 
-pub fn new_test_vote_tx<R>(rng: &mut R) -> Transaction
-where
-    R: CryptoRng + RngCore,
-{
-    let mut slots: Vec<Slot> = std::iter::repeat_with(|| rng.random()).take(5).collect();
-    slots.sort_unstable();
-    slots.dedup();
-    let switch_proof_hash = rng.random_bool(0.5).then(Hash::new_unique);
-    let tower_sync = TowerSync::new_from_slots(slots, Hash::default(), None);
-    vote_transaction::new_tower_sync_transaction(
-        tower_sync,
-        Hash::new_unique(), // blockhash
-        &Keypair::new(),    // node_keypair
-        &Keypair::new(),    // vote_keypair
-        &Keypair::new(),    // authorized_voter_keypair
-        switch_proof_hash,
-    )
+/// Builds a legacy transaction with two signers and one vote program instruction.
+pub fn new_test_vote_tx() -> Transaction {
+    let node_keypair = Keypair::new();
+    let authorized_voter_keypair = Keypair::new();
+    let vote_ix = Instruction::new_with_bytes(
+        solana_vote_program::id(),
+        &[1, 2, 3],
+        vec![
+            AccountMeta::new(Pubkey::new_unique(), false),
+            AccountMeta::new_readonly(authorized_voter_keypair.pubkey(), true),
+        ],
+    );
+    let blockhash = Hash::new_unique();
+    let mut tx = Transaction::new_with_payer(&[vote_ix], Some(&node_keypair.pubkey()));
+    tx.partial_sign(&[&node_keypair], blockhash);
+    tx.partial_sign(&[&authorized_voter_keypair], blockhash);
+    tx
 }
 
 /// Trait that unifies building legacy vs v0 transactions
