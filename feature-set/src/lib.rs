@@ -47,7 +47,6 @@ pub struct FeatureSnapshot {
     pub alpenglow_fast_leader_handover: bool,
     pub disable_zk_elgamal_proof_program: bool,
     pub reenable_zk_elgamal_proof_program: bool,
-    pub raise_block_limits_to_100m: bool,
     pub raise_cpi_nesting_limit_to_8: bool,
     pub provide_instruction_data_offset_in_vm_r2: bool,
     pub create_account_allow_prefund: bool,
@@ -82,6 +81,11 @@ pub struct FeatureSnapshot {
     pub increase_tx_v1_account_lock_limit: bool,
     pub invoke_signed_v2: bool,
     pub loaderv3_programdata_size_floor: bool,
+    pub raise_block_limit_to_60m: bool,
+    pub raise_block_limit_to_70m: bool,
+    pub raise_block_limit_to_80m: bool,
+    pub raise_block_limit_to_90m: bool,
+    pub raise_block_limit_to_100m: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -138,7 +142,6 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             alpenglow_fast_leader_handover: is_active(&alpenglow_fast_leader_handover::ID),
             disable_zk_elgamal_proof_program: is_active(&disable_zk_elgamal_proof_program::ID),
             reenable_zk_elgamal_proof_program: is_active(&reenable_zk_elgamal_proof_program::ID),
-            raise_block_limits_to_100m: is_active(&raise_block_limits_to_100m::ID),
             raise_cpi_nesting_limit_to_8: is_active(&raise_cpi_nesting_limit_to_8::ID),
             provide_instruction_data_offset_in_vm_r2: is_active(
                 &provide_instruction_data_offset_in_vm_r2::ID,
@@ -187,6 +190,11 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             increase_tx_v1_account_lock_limit: is_active(&increase_tx_v1_account_lock_limit::ID),
             invoke_signed_v2: is_active(&invoke_signed_v2::ID),
             loaderv3_programdata_size_floor: is_active(&loaderv3_programdata_size_floor::ID),
+            raise_block_limit_to_60m: is_active(&raise_block_limit_to_60m::ID),
+            raise_block_limit_to_70m: is_active(&raise_block_limit_to_70m::ID),
+            raise_block_limit_to_80m: is_active(&raise_block_limit_to_80m::ID),
+            raise_block_limit_to_90m: is_active(&raise_block_limit_to_90m::ID),
+            raise_block_limit_to_100m: is_active(&raise_block_limit_to_100m::ID),
         }
     }
 }
@@ -1678,6 +1686,26 @@ pub mod loaderv3_programdata_size_floor {
     solana_pubkey::declare_id!("8whkDenELnfwYLirBc4Wb4H2Z1z5K7tiykpdxJS7cWg1");
 }
 
+pub mod raise_block_limit_to_60m {
+    solana_pubkey::declare_id!("iBRL9Qs3HzfcseQX3qveEVdSeWebqW9AT4UEoiTis1A");
+}
+
+pub mod raise_block_limit_to_70m {
+    solana_pubkey::declare_id!("iBRLacTyPUjZT3FbojPK8wVJmnaWzu3SiMktZxk4szT");
+}
+
+pub mod raise_block_limit_to_80m {
+    solana_pubkey::declare_id!("iBRLJsQJEcYfkvGkwUQMNGZNq32FmKEJcSgPHRygwtc");
+}
+
+pub mod raise_block_limit_to_90m {
+    solana_pubkey::declare_id!("iBRLLdADRxQBWUjSKf2tSStb4H3JDckTNCBtp5ohh4i");
+}
+
+pub mod raise_block_limit_to_100m {
+    solana_pubkey::declare_id!("iBRLSB8aewZRgj8UNDerrC5uQfJwC5nrs2MYd5JDXtr");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2823,6 +2851,26 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loaderv3_programdata_size_floor::id(),
             "Apply a minimum loaded data size to loader-v3 ProgramData accounts",
+        ),
+        (
+            raise_block_limit_to_60m::id(),
+            "SIMD-0698: Raise the 200ms block limit to 60M CUs",
+        ),
+        (
+            raise_block_limit_to_70m::id(),
+            "SIMD-0698: Raise the 200ms block limit to 70M CUs",
+        ),
+        (
+            raise_block_limit_to_80m::id(),
+            "SIMD-0698: Raise the 200ms block limit to 80M CUs",
+        ),
+        (
+            raise_block_limit_to_90m::id(),
+            "SIMD-0698: Raise the 200ms block limit to 90M CUs",
+        ),
+        (
+            raise_block_limit_to_100m::id(),
+            "SIMD-0698: Raise the 200ms block limit to 100M CUs",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
