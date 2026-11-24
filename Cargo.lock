@@ -8684,7 +8684,6 @@ dependencies = [
  "arc-swap",
  "arrayvec",
  "bs58",
- "bv",
  "bytes",
  "criterion",
  "crossbeam-channel",

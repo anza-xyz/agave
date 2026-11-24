@@ -6922,7 +6922,6 @@ dependencies = [
  "agave-random",
  "arc-swap",
  "arrayvec",
- "bv",
  "bytes",
  "crossbeam-channel",
  "indexmap",
