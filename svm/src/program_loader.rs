@@ -22,7 +22,7 @@ use {
 };
 
 #[derive(Debug)]
-enum ProgramAccountLoadResult {
+pub(crate) enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
     ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
@@ -34,7 +34,7 @@ impl ProgramAccountLoadResult {
     /// The global-cache key execution searches for, or `None` if the program is
     /// closed, retracted, or otherwise not executable. A `None` program must
     /// stay out of the search list (see `filter_executable_program_accounts`).
-    fn cache_key(&self) -> Option<(ProgramCacheEntryOwner, Slot)> {
+    pub(crate) fn cache_key(&self) -> Option<(ProgramCacheEntryOwner, Slot)> {
         match self {
             Self::InvalidAccountData(_) => None,
             // V1 & V2 programs are immutable and hold no deployment metadata.
@@ -53,7 +53,7 @@ impl ProgramAccountLoadResult {
     }
 }
 
-fn load_program_accounts<CB: AccountLoadCallback>(
+pub(crate) fn load_program_accounts<CB: AccountLoadCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
 ) -> Option<ProgramAccountLoadResult> {

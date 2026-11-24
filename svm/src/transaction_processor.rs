@@ -9,8 +9,8 @@ use {
         account_overrides::AccountOverrides,
         nonce_info::NonceInfo,
         program_loader::{
-            ProgramAccountLoadResult, filter_executable_program_accounts, load_program_accounts,
-            load_program_from_accounts, load_program_with_pubkey,
+            filter_executable_program_accounts, load_program_accounts, load_program_from_accounts,
+            load_program_with_pubkey,
         },
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
@@ -60,7 +60,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sbpf::elf_parser::consts::ELFMAG,
     solana_svm_callback::{
         AccountLoadCallback, InvokeContextCallback, TransactionProcessingCallback,
     },
@@ -1098,23 +1097,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .take_while(|_| !should_stop())
             .filter_map(|program_id| {
                 let accounts = load_program_accounts(callbacks, program_id)?;
-                let (loader, deployment_slot) = match &accounts {
-                    ProgramAccountLoadResult::InvalidAccountData(_) => return None,
-                    ProgramAccountLoadResult::ProgramOfLoaderV1(account) => account
-                        .data()
-                        .starts_with(&ELFMAG)
-                        .then_some((ProgramCacheEntryOwner::LoaderV1, 0))?,
-                    ProgramAccountLoadResult::ProgramOfLoaderV2(account) => account
-                        .data()
-                        .starts_with(&ELFMAG)
-                        .then_some((ProgramCacheEntryOwner::LoaderV2, 0))?,
-                    ProgramAccountLoadResult::ProgramOfLoaderV3(_, _, deployment_slot) => {
-                        (ProgramCacheEntryOwner::LoaderV3, *deployment_slot)
-                    }
-                    ProgramAccountLoadResult::ProgramOfLoaderV4(_, deployment_slot) => {
-                        (ProgramCacheEntryOwner::LoaderV4, *deployment_slot)
-                    }
-                };
+                let (loader, deployment_slot) = accounts.cache_key()?;
                 resolved_programs.insert(*program_id, accounts);
                 Some(ProgramToLoad {
                     program_id,
