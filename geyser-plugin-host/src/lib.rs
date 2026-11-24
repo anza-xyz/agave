@@ -605,12 +605,17 @@ mod tests {
         ));
     }
 
+    /// Cargo's build layout puts `target/<profile>/` five directories above the test executable.
+    const MAX_PLUGIN_DEPTH: usize = 5;
+
     #[test]
     fn test_load_shared_library_and_unload_plugin() {
         let library_name = libloading::library_filename("agave_geyser_plugin_host_test_plugin");
         let library = std::env::current_exe()
             .unwrap()
             .ancestors()
+            .skip(1)
+            .take(MAX_PLUGIN_DEPTH)
             .map(|dir| dir.join(&library_name))
             .find(|path| path.is_file())
             .expect("missing test plugin");

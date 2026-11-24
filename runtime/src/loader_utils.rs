@@ -26,10 +26,15 @@ use {
 
 const CHUNK_SIZE: usize = 512; // Size of chunk just needs to fit into tx
 
+/// Cargo's build layout puts the target directory six directories above the test executable.
+const MAX_TARGET_DEPTH: usize = 6;
+
 pub fn load_program_from_file(name: &str) -> Vec<u8> {
     let current_exe = env::current_exe().unwrap();
     let pathbuf = current_exe
         .ancestors()
+        .skip(1)
+        .take(MAX_TARGET_DEPTH)
         .map(|dir| dir.join("deploy").join(name).with_extension("so"))
         .find(|path| path.is_file())
         .unwrap_or_else(|| panic!("No deploy/{name}.so above {}", current_exe.display()));
