@@ -75,7 +75,7 @@ mod tests {
     fn test_get_crds_entry() {
         let mut rng = rand::rng();
         let mut crds = Crds::default();
-        let keypairs: Vec<_> = std::iter::repeat_with(Keypair::new).take(32).collect();
+        let keypairs: Vec<_> = std::iter::repeat_with(Keypair::new).take(64).collect();
         let mut entries = HashMap::new();
         for _ in 0..256 {
             let keypair = keypairs.choose(&mut rng).unwrap();
