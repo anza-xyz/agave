@@ -188,6 +188,10 @@ fn create_genesis_config_no_tx_fee(lamports: u64) -> (GenesisConfig, Keypair) {
 pub(in crate::bank) fn create_genesis_config(lamports: u64) -> (GenesisConfig, Keypair) {
     let (mut genesis_config, mint_keypair) = solana_genesis_config::create_genesis_config(lamports);
     activate_all_features(&mut genesis_config);
+    // This shared fixture still creates V4 vote accounts.
+    genesis_config
+        .accounts
+        .remove(&agave_feature_set::enforce_validator_location_registration::id());
     (genesis_config, mint_keypair)
 }
 
@@ -5577,7 +5581,7 @@ fn test_bank_hash_consistency() {
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
-    let feature_set = FeatureSet::all_enabled();
+    let feature_set = genesis_utils::features_for_v4_genesis();
     let (mut bank, _bank_forks) = Bank::new_from_genesis(
         &genesis_config,
         Arc::new(RuntimeConfig::default()),
@@ -5984,7 +5988,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "EZPqueG9qihQs5Ws2Fo2yUjg6BvQWcC2ZE4JBZ3dDtPq",
+        "HfQTWjagy2FDwvnAmxjoJSg9hpFthneafH5wdYf85XAM",
     );
 }
 
@@ -13076,5 +13080,138 @@ fn test_commit_noop_transaction_no_fees(relax_fee_payer_constraint: bool) {
     assert_eq!(
         bank.capitalization(),
         bank.calculate_capitalization_for_tests()
+    );
+}
+
+#[test]
+fn test_validator_location_registration_epoch_boundary() {
+    use {
+        solana_vote::{location::update_location, vote_state_v5::distance_squared},
+        solana_vote_interface::state::vote_state_v5::{Location, VoteStateV5},
+    };
+    let validators = [
+        ValidatorVoteKeypairs::new_rand(),
+        ValidatorVoteKeypairs::new_rand(),
+    ];
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_vote_accounts(10_000_000_000, &validators, vec![50, 70]);
+    genesis_config.epoch_schedule = EpochSchedule::custom(32, 32, false);
+    let gate = agave_feature_set::enforce_validator_location_registration::id();
+    assert!(!genesis_config.accounts.contains_key(&gate));
+    let (bank, forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let vote_key = validators[0].vote_keypair.pubkey();
+    let other_key = validators[1].vote_keypair.pubkey();
+    let initial_stakes = bank.epoch_stakes.get(&1).unwrap().clone();
+    assert!(
+        initial_stakes
+            .stakes()
+            .vote_accounts()
+            .get(&other_key)
+            .is_some()
+    );
+    let tx = Transaction::new_signed_with_payer(
+        &[update_location(
+            &vote_key, &vote_key, 4_051_542, 618_526, 4_870_645,
+        )],
+        Some(&mint_keypair.pubkey()),
+        &[&mint_keypair, &validators[0].vote_keypair],
+        bank.last_blockhash(),
+    );
+    bank.process_transaction(&tx).unwrap();
+    let account = bank.get_account(&vote_key).unwrap();
+    let state = VoteStateV5::from_account_data_unaligned(account.data()).unwrap();
+    assert_eq!(
+        state.location,
+        Location::try_new(4_051_542, 618_526, 4_870_645).unwrap()
+    );
+    assert_eq!(bank.get_top_epoch_stakes().vote_accounts().len(), 2);
+    // Schedules already captured before registration retain their account state.
+    assert_eq!(
+        initial_stakes
+            .stakes()
+            .vote_accounts()
+            .get(&vote_key)
+            .unwrap()
+            .vote_state_view()
+            .location(),
+        None
+    );
+    bank.store_account_and_update_capitalization(
+        &gate,
+        &feature::create_account(&Feature::default(), 1),
+    );
+    goto_end_of_slot(bank.clone());
+    let bank = new_from_parent_next_epoch(bank, &forks, 1);
+    assert!(bank.feature_set.is_active(&gate));
+    assert!(matches!(
+        bank.get_vat_health_for_next_epoch(&other_key),
+        Err(VATHealthError::NoRegisteredLocation)
+    ));
+    let admitted = bank.epoch_stakes.get(&2).unwrap();
+    assert_eq!(admitted.stakes().vote_accounts().len(), 1);
+    assert!(admitted.stakes().vote_accounts().get(&other_key).is_none());
+    assert_eq!(admitted.total_stake(), 50);
+    let captured_location = admitted
+        .stakes()
+        .vote_accounts()
+        .get(&vote_key)
+        .unwrap()
+        .vote_state_view()
+        .location()
+        .unwrap();
+    assert_eq!(captured_location, state.location);
+    assert_eq!(
+        bank.epoch_stakes.get(&1).unwrap().total_stake(),
+        initial_stakes.total_stake()
+    );
+    // Snapshot decoding must retain the filtered membership and captured account.
+    let snapshot_bytes =
+        wincode::config::serialize(admitted, crate::serde_snapshot::BANK_SNAPSHOT_CONFIG).unwrap();
+    let restored: crate::epoch_stakes::DeserializableVersionedEpochStakes =
+        wincode::config::deserialize(&snapshot_bytes, crate::serde_snapshot::BANK_SNAPSHOT_CONFIG)
+            .unwrap();
+    let restored = VersionedEpochStakes::from(restored);
+    assert_eq!(restored.total_stake(), admitted.total_stake());
+    assert!(restored.stakes().vote_accounts().get(&other_key).is_none());
+    assert_eq!(
+        restored
+            .stakes()
+            .vote_accounts()
+            .get(&vote_key)
+            .unwrap()
+            .vote_state_view()
+            .location(),
+        Some(captured_location)
+    );
+    // Updating the live account cannot change the location captured for epoch 2.
+    let tx = Transaction::new_signed_with_payer(
+        &[update_location(
+            &vote_key, &vote_key, -3_955_214, 3_355_452, 3_699_409,
+        )],
+        Some(&mint_keypair.pubkey()),
+        &[&mint_keypair, &validators[0].vote_keypair],
+        bank.last_blockhash(),
+    );
+    bank.process_transaction(&tx).unwrap();
+    let current = bank.get_account(&vote_key).unwrap();
+    let current = VoteStateV5::from_account_data_unaligned(current.data()).unwrap();
+    assert_eq!(
+        distance_squared(&captured_location, &current.location),
+        72_970_699_340_708
+    );
+    assert_eq!(
+        bank.epoch_stakes
+            .get(&2)
+            .unwrap()
+            .stakes()
+            .vote_accounts()
+            .get(&vote_key)
+            .unwrap()
+            .vote_state_view()
+            .location(),
+        Some(captured_location)
     );
 }

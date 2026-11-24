@@ -282,8 +282,8 @@ impl Bank {
         }
 
         let account_data = account.data_as_mut_slice();
-        let mut vote_state = VoteStateViewMut::new_v4(account_data)
-            .map_err(|_| DepositFeeError::InvalidVoteAccount)?;
+        let mut vote_state =
+            VoteStateViewMut::new(account_data).map_err(|_| DepositFeeError::InvalidVoteAccount)?;
 
         vote_state
             .increment_pending_delegator_rewards_checked(fees)

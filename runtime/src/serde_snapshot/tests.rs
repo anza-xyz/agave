@@ -1043,6 +1043,9 @@ mod serde_snapshot_tests {
             mut genesis_config, ..
         } = create_genesis_config_with_leader(500, &leader_id, LAMPORTS_PER_SOL);
         activate_all_features(&mut genesis_config);
+        genesis_config
+            .accounts
+            .remove(&agave_feature_set::enforce_validator_location_registration::id());
 
         let (bank0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();

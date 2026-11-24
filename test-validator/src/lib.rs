@@ -889,6 +889,8 @@ impl TestValidator {
 
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::all_enabled();
+        // Bootstrap vote accounts are V4; registration must precede enforcement.
+        feature_set.deactivate(&agave_feature_set::enforce_validator_location_registration::id());
         for feature in &config.deactivate_feature_set {
             if FEATURE_NAMES.contains_key(feature) {
                 feature_set.deactivate(feature);

@@ -240,7 +240,7 @@ fn sweep_vote_account(
     // `VoteStateViewMut::new_v4` returns an error if the account data bytes do
     // not represent a `VoteStateV4`. In the current implementation of the
     // function, no other error matters.
-    let mut vote_state = VoteStateViewMut::new_v4(account_data).ok()?;
+    let mut vote_state = VoteStateViewMut::new(account_data).ok()?;
     let pending_delegator_rewards = vote_state.reset_pending_delegator_rewards();
     // If validator has no stake, delegator rewards go back to the validator, no
     // distribution needed.

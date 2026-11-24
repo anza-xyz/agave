@@ -836,6 +836,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
     }
 
+    // Bootstrap validators start with V4 vote accounts and register after startup.
+    genesis_config
+        .accounts
+        .remove(&agave_feature_set::enforce_validator_location_registration::id());
+
     if !features_to_deactivate.is_empty() {
         solana_runtime::genesis_utils::deactivate_features(
             &mut genesis_config,
