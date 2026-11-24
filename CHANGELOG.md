@@ -13,12 +13,6 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 #### Breaking
 
-<<<<<<< HEAD
-=======
-* `getBlockTime` now requires `--enable-rpc-transaction-history` to serve results. Previously, RPC
-  nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
-  block.
-
 #### Deprecations
 
 * The `rpc_accounts_scan` RPC methods are deprecated.
@@ -30,7 +24,6 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
   * `getTokenAccountsByDelegate`
 * The `/v0/circulating-supply` endpoint is deprecated.
 
->>>>>>> f9f160e (rpc: Deprecates methods that use account scans (#17045))
 #### Changes
 
 * `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
