@@ -126,8 +126,6 @@ impl VoteStateVersionsInline {
 /// Allows for faster serialization as data doesn't have to be moved around.
 enum VoteStateVersionsRef<'a> {
     V4(&'a VoteStateV4),
-    // Constructed once the handler has a v5 target.
-    #[cfg_attr(not(test), allow(dead_code))]
     V5(&'a VoteStateV5),
 }
 
@@ -430,6 +428,28 @@ impl VoteStateHandler {
         }
     }
 
+    /// Stores a v5 state in an account of exactly `VOTE_STATE_V5_SIZE` bytes, resizing it first.
+    ///
+    /// Growing needs rent exemption at the new size. Shrinking drops the tail of an older
+    /// version, since the SDK accepts only v5 accounts of that exact size.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn set_vote_account_state_v5(
+        vote_account: &mut BorrowedInstructionAccount,
+        state: &VoteStateV5,
+    ) -> Result<(), InstructionError> {
+        let len = vote_account.get_data().len();
+        if len < VOTE_STATE_V5_SIZE
+            && (!vote_account.is_rent_exempt_at_data_length(VOTE_STATE_V5_SIZE)
+                || vote_account.set_data_length(VOTE_STATE_V5_SIZE).is_err())
+        {
+            return Err(InstructionError::AccountNotRentExempt);
+        }
+        if len > VOTE_STATE_V5_SIZE {
+            vote_account.set_data_length(VOTE_STATE_V5_SIZE)?;
+        }
+        vote_account.set_state(&VoteStateVersionsRef::V5(state))
+    }
+
     pub(crate) fn has_bls_pubkey(&self) -> bool {
         match &self.target_state {
             TargetVoteState::V4(v4) => v4.bls_pubkey_compressed.is_some(),
@@ -699,6 +719,54 @@ mod tests {
 
     /// Default block revenue commission rate in basis points (100%) per SIMD-0185.
     const DEFAULT_BLOCK_REVENUE_COMMISSION_BPS: u16 = 10_000;
+
+    #[test]
+    fn test_set_vote_account_state_v5_resizes_to_the_v5_size() {
+        use solana_vote_interface::state::{
+            VoteInitV2,
+            vote_state_v5::{Location, VOTE_STATE_V5_SIZE, VoteStateV5},
+        };
+
+        let state = VoteStateV5::new(
+            &VoteInitV2::default(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Location::try_new(6_378_137, 0, 0).unwrap(),
+            &Clock::default(),
+        );
+        let rent = Rent::default();
+        let funded = rent.minimum_balance(VOTE_STATE_V5_SIZE);
+
+        for (len, lamports, expected) in [
+            (100, funded, Ok(())),
+            (VOTE_STATE_V5_SIZE, funded, Ok(())),
+            (VoteStateV4::size_of(), funded, Ok(())),
+            (100, funded - 1, Err(InstructionError::AccountNotRentExempt)),
+        ] {
+            let vote_pubkey = Pubkey::new_unique();
+            let vote_account = AccountSharedData::new_with_data(lamports, vec![0xaa; len], &id());
+            let transaction_context =
+                mock_transaction_context(vote_pubkey, vote_account, rent.clone());
+            let instruction_context = transaction_context.get_next_instruction_context().unwrap();
+            let mut vote_account = instruction_context
+                .try_borrow_instruction_account(0)
+                .unwrap();
+
+            assert_eq!(
+                VoteStateHandler::set_vote_account_state_v5(&mut vote_account, &state),
+                expected,
+                "length {len}",
+            );
+            if expected.is_ok() {
+                assert_eq!(vote_account.get_data().len(), VOTE_STATE_V5_SIZE);
+                assert_eq!(
+                    VoteStateVersionsInline::deserialize(vote_account.get_data()),
+                    Ok(VoteStateVersionsInline::V5(state.clone())),
+                    "length {len}",
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_vote_state_versions_ref_v5_is_a_full_account() {
