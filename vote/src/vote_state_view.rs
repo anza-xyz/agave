@@ -3,8 +3,8 @@ use solana_vote_interface::state::{VoteStateV3, VoteStateV4, VoteStateVersions};
 use {
     self::{
         field_frames::{
-            AccumulatedLamportsItem, AuthorizedVotersListFrame, BlsPubkeyCompressedFrame,
-            BlsPubkeyCompressedView, EpochCreditsListFrame, PendingDelegatorRewardsView,
+            AccumulatedLamportsItem, AccumulatedLamportsListFrame, AuthorizedVotersListFrame,
+            BlsPubkeyCompressedFrame, BlsPubkeyCompressedView, PendingDelegatorRewardsView,
             RootSlotFrame, RootSlotView, VotesFrame,
         },
         frame_v1_14_11::VoteStateFrameV1_14_11,
@@ -154,15 +154,15 @@ impl VoteStateView {
     }
 
     pub fn num_accumulated_lamports(&self) -> usize {
-        self.epoch_credits_view().len()
+        self.accumulated_lamports_view().len()
     }
 
     pub fn accumulated_lamports_iter(&self) -> impl Iterator<Item = &AccumulatedLamportsItem> + '_ {
-        self.epoch_credits_view().into_iter()
+        self.accumulated_lamports_view().into_iter()
     }
 
     pub fn accumulated_lamports(&self) -> u64 {
-        self.epoch_credits_view()
+        self.accumulated_lamports_view()
             .last()
             .map(|item| item.lamports())
             .unwrap_or(0)
@@ -231,10 +231,13 @@ impl VoteStateView {
         ListView::new(self.frame.authorized_voters_frame(), &self.data[offset..])
     }
 
-    fn epoch_credits_view(&self) -> ListView<'_, EpochCreditsListFrame> {
+    fn accumulated_lamports_view(&self) -> ListView<'_, AccumulatedLamportsListFrame> {
         let offset = self.frame.offset(Field::EpochCredits);
         // SAFETY: `frame` was created from `data`.
-        ListView::new(self.frame.epoch_credits_frame(), &self.data[offset..])
+        ListView::new(
+            self.frame.accumulated_lamports_frame(),
+            &self.data[offset..],
+        )
     }
 }
 
@@ -334,7 +337,7 @@ impl VoteStateFrame {
         }
     }
 
-    fn epoch_credits_frame(&self) -> EpochCreditsListFrame {
+    fn accumulated_lamports_frame(&self) -> AccumulatedLamportsListFrame {
         match &self {
             Self::V1_14_11(frame) => frame.epoch_credits_frame,
             Self::V3(frame) => frame.epoch_credits_frame,

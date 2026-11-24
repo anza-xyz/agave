@@ -258,11 +258,11 @@ pub struct AccumulatedLamportsItem {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub(super) struct EpochCreditsListFrame {
+pub(super) struct AccumulatedLamportsListFrame {
     pub(super) len: u8,
 }
 
-impl EpochCreditsListFrame {
+impl AccumulatedLamportsListFrame {
     pub(super) fn read(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self> {
         let len = solana_serialize_utils::cursor::read_u64(cursor)
             .map_err(|_err| VoteStateViewError::AccountDataTooSmall)? as usize;
@@ -273,7 +273,7 @@ impl EpochCreditsListFrame {
     }
 }
 
-impl ListFrame for EpochCreditsListFrame {
+impl ListFrame for AccumulatedLamportsListFrame {
     type Item = AccumulatedLamportsItem;
 
     fn len(&self) -> usize {
