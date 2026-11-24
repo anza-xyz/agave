@@ -2,7 +2,8 @@
 use {
     agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
+        ReplicaAccountInfoV3, ReplicaAccountInfoVersions, ReplicaAccountUpdateCount,
+        ReplicaAccountUpdateCountVersions,
     },
     arc_swap::ArcSwap,
     log::*,
@@ -26,6 +27,35 @@ pub(crate) struct AccountsUpdateNotifierImpl {
 impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     fn account_notifications_enabled(&self) -> bool {
         self.account_notifications_enabled
+    }
+
+    fn account_update_count_notifications_enabled(&self) -> bool {
+        self.plugin_manager
+            .load()
+            .account_update_count_notifications_enabled()
+    }
+
+    fn notify_account_update_count(&self, slot: Slot, bank_id: BankId, count: u64) {
+        let plugin_manager = self.plugin_manager.load();
+        let count = ReplicaAccountUpdateCount {
+            slot,
+            account_update_count: count,
+        };
+        for plugin in plugin_manager.plugins() {
+            if !plugin.account_update_count_notifications_enabled() {
+                continue;
+            }
+            if let Err(err) = plugin.notify_account_update_count(
+                ReplicaAccountUpdateCountVersions::V0_0_1(&count),
+                bank_id.into(),
+            ) {
+                error!(
+                    "Failed to notify account-update count at slot {slot}, bank {bank_id:?}, \
+                     error: {err} to plugin {}",
+                    plugin.name()
+                );
+            }
+        }
     }
 
     fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
@@ -391,6 +421,84 @@ mod tests {
         notifier.notify_end_of_restore_from_snapshot();
         for count in counts {
             assert_eq!(count.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[derive(Debug)]
+    struct CountPlugin {
+        enabled: bool,
+        fail: bool,
+        received: Arc<Mutex<Vec<(u64, ReplicaAccountUpdateCount)>>>,
+    }
+
+    impl GeyserPlugin for CountPlugin {
+        fn name(&self) -> &'static str {
+            "account-update-count"
+        }
+
+        fn account_data_notifications_enabled(&self) -> bool {
+            false
+        }
+
+        fn account_update_count_notifications_enabled(&self) -> bool {
+            self.enabled
+        }
+
+        fn notify_account_update_count(
+            &self,
+            count: ReplicaAccountUpdateCountVersions,
+            bank_id: u64,
+        ) -> agave_geyser_plugin_interface::geyser_plugin_interface::Result<()> {
+            let ReplicaAccountUpdateCountVersions::V0_0_1(count) = count;
+            self.received.lock().unwrap().push((bank_id, *count));
+            if self.fail {
+                Err(agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPluginError::Custom(
+                    "test callback failure".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_account_update_count_filters_plugins_and_survives_failure() {
+        let received: Vec<_> = (0..3).map(|_| Arc::new(Mutex::new(Vec::new()))).collect();
+        let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::from_plugins(
+            [(false, false), (true, true), (true, false)]
+                .into_iter()
+                .zip(&received)
+                .map(|((enabled, fail), received)| {
+                    loaded_test_plugin(CountPlugin {
+                        enabled,
+                        fail,
+                        received: Arc::clone(received),
+                    })
+                })
+                .collect(),
+        )));
+        let notifier = AccountsUpdateNotifierImpl::new(Arc::clone(&manager), false, false);
+        assert!(!notifier.account_notifications_enabled());
+        assert!(notifier.account_update_count_notifications_enabled());
+        notifier.notify_account_update_count(42, BankId::new(7), 3);
+        assert!(received[0].lock().unwrap().is_empty());
+        let expected = [(
+            7,
+            ReplicaAccountUpdateCount {
+                slot: 42,
+                account_update_count: 3,
+            },
+        )];
+        for received in &received[1..] {
+            assert_eq!(*received.lock().unwrap(), expected);
+        }
+
+        // Reloading the plugin set updates the subscription without rebuilding the notifier.
+        manager.store(Arc::new(GeyserPluginHost::default()));
+        assert!(!notifier.account_update_count_notifications_enabled());
+        notifier.notify_account_update_count(42, BankId::new(7), 3);
+        for received in &received[1..] {
+            assert_eq!(*received.lock().unwrap(), expected);
         }
     }
 
