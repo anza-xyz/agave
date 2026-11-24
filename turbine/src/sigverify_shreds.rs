@@ -1048,10 +1048,10 @@ mod tests {
 
         let turbine_a = shred_a.payload().to_bytes_packet(None);
 
-        let mut repair_a = shred_a.payload().to_bytes_packet(None);
+        let mut repair_a = shred_a.payload().to_bytes_packet(Some(1));
         repair_a.meta_mut().flags |= PacketFlags::REPAIR;
 
-        let mut repair_b = shred_b.payload().to_bytes_packet(None);
+        let mut repair_b = shred_b.payload().to_bytes_packet(Some(2));
         repair_b.meta_mut().flags |= PacketFlags::REPAIR;
 
         let turbine_b = shred_b.payload().to_bytes_packet(None);
