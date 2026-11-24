@@ -734,9 +734,10 @@ impl<'ix_data> TransactionContext<'ix_data> {
                         .min(old_len.saturating_add(remaining_allowed_growth));
                     // The last two min operations ensure the following:
                     debug_assert!(accounts.can_data_be_resized(old_len, new_len).is_ok());
-                    if accounts
-                        .update_accounts_resize_delta(old_len, new_len)
-                        .is_err()
+                    if requested_length > new_len
+                        || accounts
+                            .update_accounts_resize_delta(old_len, new_len)
+                            .is_err()
                     {
                         return;
                     }
