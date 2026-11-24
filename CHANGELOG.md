@@ -46,6 +46,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `--sign-only` no longer requires `--blockhash`; without it, a recent blockhash is fetched from the cluster. `--signer` still requires `--blockhash`, so the submit step reuses the blockhash printed by `--sign-only`.
+
 ### solana-client
 
 #### Breaking

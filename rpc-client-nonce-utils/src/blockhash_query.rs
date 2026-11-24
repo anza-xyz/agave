@@ -68,9 +68,8 @@ impl BlockhashQuery {
             .unwrap_or(Source::Cluster);
         match blockhash {
             Some(hash) if sign_only => Self::None(hash),
-            Some(hash) if !sign_only => Self::FeeCalculator(source, hash),
-            None if !sign_only => Self::All(source),
-            _ => panic!("Cannot resolve blockhash"),
+            Some(hash) => Self::FeeCalculator(source, hash),
+            None => Self::All(source),
         }
     }
 
@@ -162,16 +161,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_blockhash_query_new_no_nonce_fail() {
-        BlockhashQuery::new(None, true, None);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_blockhash_query_new_nonce_fail() {
+    fn test_blockhash_query_new_sign_only_without_blockhash() {
+        assert_eq!(
+            BlockhashQuery::new(None, true, None),
+            BlockhashQuery::All(blockhash_query::Source::Cluster),
+        );
         let nonce_pubkey = Pubkey::from([1u8; 32]);
-        BlockhashQuery::new(None, true, Some(nonce_pubkey));
+        assert_eq!(
+            BlockhashQuery::new(None, true, Some(nonce_pubkey)),
+            BlockhashQuery::All(blockhash_query::Source::NonceAccount(nonce_pubkey)),
+        );
     }
 
     #[cfg(feature = "clap")]
@@ -245,37 +244,15 @@ mod tests {
 
     #[cfg(feature = "clap")]
     #[test]
-    #[should_panic]
-    fn test_blockhash_query_new_from_matches_without_nonce_fail() {
+    fn test_blockhash_query_new_from_matches_sign_only_without_blockhash() {
         let test_commands = App::new("blockhash_query_test")
             .arg(blockhash_arg())
-            // We can really only hit this case if the arg requirements
-            // are broken, so unset the requires() to recreate that condition
-            .arg(sign_only_arg().requires(""));
-
+            .arg(sign_only_arg());
         let matches = test_commands.get_matches_from(vec!["blockhash_query_test", "--sign-only"]);
-        BlockhashQuery::new_from_matches(&matches);
-    }
-
-    #[cfg(feature = "clap")]
-    #[test]
-    #[should_panic]
-    fn test_blockhash_query_new_from_matches_with_nonce_fail() {
-        let test_commands = App::new("blockhash_query_test")
-            .arg(blockhash_arg())
-            // We can really only hit this case if the arg requirements
-            // are broken, so unset the requires() to recreate that condition
-            .arg(sign_only_arg().requires(""));
-        let nonce_pubkey = Pubkey::from([1u8; 32]);
-        let nonce_string = nonce_pubkey.to_string();
-
-        let matches = test_commands.get_matches_from(vec![
-            "blockhash_query_test",
-            "--sign-only",
-            "--nonce",
-            &nonce_string,
-        ]);
-        BlockhashQuery::new_from_matches(&matches);
+        assert_eq!(
+            BlockhashQuery::new_from_matches(&matches),
+            BlockhashQuery::All(blockhash_query::Source::Cluster),
+        );
     }
 
     #[test]

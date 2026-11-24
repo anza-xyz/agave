@@ -12,7 +12,8 @@ pub const BLOCKHASH_ARG: ArgConstant<'static> = ArgConstant {
 pub const SIGN_ONLY_ARG: ArgConstant<'static> = ArgConstant {
     name: "sign_only",
     long: "sign-only",
-    help: "Sign the transaction offline",
+    help: "Sign the transaction offline. Without --blockhash, a recent blockhash is fetched from \
+           the cluster",
 };
 
 pub const SIGNER_ARG: ArgConstant<'static> = ArgConstant {
@@ -40,7 +41,6 @@ pub fn sign_only_arg<'a, 'b>() -> Arg<'a, 'b> {
     Arg::with_name(SIGN_ONLY_ARG.name)
         .long(SIGN_ONLY_ARG.long)
         .takes_value(false)
-        .requires(BLOCKHASH_ARG.name)
         .help(SIGN_ONLY_ARG.help)
 }
 
