@@ -29,7 +29,7 @@ type DecodedFrame = Vec<u8>;
 
 struct DecodeJob {
     compressed_frame: CompressedFrame,
-    decoded: Sender<io::Result<DecodedFrame>>,
+    decoded_sender: Sender<io::Result<DecodedFrame>>,
 }
 
 /// Returns the decoded size of the frame starting in `frame_prefix`, or `u64::MAX` if unrecorded.
@@ -114,12 +114,12 @@ impl<R: BufRead> ParallelZstdReader<R> {
             let Some(compressed_frame) = self.cut_frame()? else {
                 break;
             };
-            let (decoded_sender, decoded) = bounded(1);
+            let (decoded_sender, decoded_receiver) = bounded(1);
             self.decoders.send(DecodeJob {
                 compressed_frame,
-                decoded: decoded_sender,
+                decoded_sender,
             });
-            self.pending_decoded_frames.push_back(decoded);
+            self.pending_decoded_frames.push_back(decoded_receiver);
         }
         Ok(())
     }
@@ -160,10 +160,10 @@ impl<R: BufRead> Read for ParallelZstdReader<R> {
                 return Ok(len);
             }
             self.queue_frames()?;
-            let Some(decoded) = self.pending_decoded_frames.pop_front() else {
+            let Some(decoded_receiver) = self.pending_decoded_frames.pop_front() else {
                 return Ok(0);
             };
-            let decoded_frame = decoded
+            let decoded_frame = decoded_receiver
                 .recv()
                 .map_err(|_| io::Error::other("zstd decoder thread exited"))??;
             let done = mem::replace(&mut self.current_decoded_frame, Cursor::new(decoded_frame));
@@ -182,7 +182,7 @@ impl FrameDecoder {
     fn decode(&mut self, job: DecodeJob) {
         let result = self.decode_frame(&job.compressed_frame);
         // The reader may be dropped before it takes the result.
-        let _ = job.decoded.send(result);
+        let _ = job.decoded_sender.send(result);
         self.buffers.put(job.compressed_frame);
     }
 
@@ -204,26 +204,29 @@ impl FrameDecoder {
 /// Shared by the reader and the decoders for compressed and decoded frames, to avoid alloc churn.
 #[derive(Clone)]
 struct BufferPool {
-    done: Sender<Vec<u8>>,
-    available: Receiver<Vec<u8>>,
+    done_sender: Sender<Vec<u8>>,
+    available_receiver: Receiver<Vec<u8>>,
 }
 
 impl BufferPool {
     fn new() -> Self {
-        let (done, available) = unbounded();
-        Self { done, available }
+        let (done_sender, available_receiver) = unbounded();
+        Self {
+            done_sender,
+            available_receiver,
+        }
     }
 
     fn get(&self) -> Vec<u8> {
         // Sized for a decoded frame of the archiver, which a compressed frame fits in too.
-        self.available
+        self.available_receiver
             .try_recv()
             .unwrap_or_else(|_| Vec::with_capacity(ZSTD_FRAME_SIZE as usize))
     }
 
     fn put(&self, mut buffer: Vec<u8>) {
         buffer.clear();
-        self.done
+        self.done_sender
             .send(buffer)
             .expect("the pool should keep its channel open");
     }
