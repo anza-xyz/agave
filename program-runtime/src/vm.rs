@@ -25,7 +25,7 @@ use {
     solana_svm_log_collector::ic_logger_msg,
     solana_svm_measure::measure::Measure,
     solana_transaction_context::IndexOfAccount,
-    std::{cell::RefCell, mem, time::Duration},
+    std::{cell::RefCell, mem, ops::Range, time::Duration},
 };
 
 thread_local! {
@@ -141,7 +141,7 @@ macro_rules! create_vm {
 /// The [`MemoryRegion`]s must satisfy the safety preconditions for
 /// [`MemoryMapping::new_uninitialized`].
 unsafe fn set_memory_context<'b>(
-    additional_initialized_regions: Vec<MemoryRegion>,
+    mut regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
     invoke_context: &mut InvokeContext<'b, 'b>,
     executable: &Executable<InvokeContext<'b, 'b>>,
@@ -149,14 +149,15 @@ unsafe fn set_memory_context<'b>(
     account_data_direct_mapping: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let heap_size = invoke_context.get_compute_budget().heap_size;
-    let regions = [
+    // `serialize_parameters()` reserved capacity for the rodata, stack and heap regions, so
+    // prepending them rotates the vector in place instead of collecting into a new allocation.
+    let program_regions: [MemoryRegion; serialization::PROGRAM_REGIONS_HEADROOM] = [
         MemoryRegion::new_empty(MM_RODATA_START),
         MemoryRegion::new_empty(MM_STACK_START),
         MemoryRegion::new_empty(MM_HEAP_START),
-    ]
-    .into_iter()
-    .chain(additional_initialized_regions)
-    .collect();
+    ];
+    regions.extend(program_regions);
+    regions.rotate_right(serialization::PROGRAM_REGIONS_HEADROOM);
     let memory_mapping = unsafe {
         // SAFETY: all memory regions are `default` (and thus implicitly valid) or valid by
         // delegating the safety invariant upon the caller.
@@ -179,6 +180,95 @@ unsafe fn set_memory_context<'b>(
             memory_mapping,
         ))
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
+}
+
+/// Returns the first instruction account whose reserved address space contains `vm_addr`,
+/// together with that half-open range.
+///
+/// The range starts at the account's data and spans its original data length plus the ABI's
+/// realloc padding, saturating at `u64::MAX`. Duplicate accounts share the metadata of their
+/// first occurrence, so the first occurrence is the one returned.
+pub(crate) fn find_account_region(
+    accounts_metadata: &[SerializedAccountMetadata],
+    account_realloc_padding: usize,
+    vm_addr: u64,
+) -> Option<(IndexOfAccount, Range<u64>)> {
+    accounts_metadata
+        .iter()
+        .enumerate()
+        .find_map(|(instruction_account_index, metadata)| {
+            let vm_end = metadata
+                .vm_data_addr
+                .saturating_add(metadata.original_data_len as u64)
+                .saturating_add(account_realloc_padding as u64);
+            let vm_addr_range = metadata.vm_data_addr..vm_end;
+            vm_addr_range
+                .contains(&vm_addr)
+                .then_some((instruction_account_index as IndexOfAccount, vm_addr_range))
+        })
+}
+
+/// Maps an access violation inside the reserved address space of an instruction account to a
+/// more specific error. Returns `Ok(None)` when the original error must be kept.
+///
+/// The account ranges are derived on demand from the current frame's `accounts_metadata`
+/// instead of being collected before every execution. `execute()` deserializes from the same
+/// metadata after the program returned, i.e. after nested CPIs pushed and popped their own
+/// memory contexts, so it belongs to the current frame here as well.
+pub(crate) fn account_access_violation_error(
+    invoke_context: &InvokeContext,
+    abi: ABI,
+    access_type: AccessType,
+    vm_addr: u64,
+    len: u64,
+) -> Result<Option<InstructionError>, InstructionError> {
+    let Ok(memory_context) = invoke_context.memory_contexts.memory_context_abi_v1() else {
+        return Ok(None);
+    };
+    let Some((instruction_account_index, vm_addr_range)) = find_account_region(
+        &memory_context.accounts_metadata,
+        abi.account_realloc_padding(),
+        vm_addr,
+    ) else {
+        return Ok(None);
+    };
+    let instruction_context = invoke_context
+        .transaction_context
+        .get_current_instruction_context()?;
+    let account = instruction_context.try_borrow_instruction_account(instruction_account_index)?;
+    let access_end = vm_addr.saturating_add(len);
+    if access_end > vm_addr_range.end {
+        return Ok(None);
+    }
+    // The access was within the range of the accounts address space, but it might not be within
+    // the range of the actual data. The range follows the original data length, while this
+    // check uses the current one.
+    let is_access_outside_of_data =
+        access_end.saturating_sub(vm_addr_range.start) as usize > account.get_data().len();
+    Ok(Some(match access_type {
+        AccessType::Store => {
+            if let Err(err) = account.can_data_be_changed() {
+                err
+            } else {
+                // The store was allowed but failed,
+                // thus it must have been an attempt to grow the account.
+                debug_assert!(is_access_outside_of_data);
+                InstructionError::InvalidRealloc
+            }
+        }
+        AccessType::Load => {
+            // Loads should only fail when they are outside of the account data.
+            debug_assert!(is_access_outside_of_data);
+            if account.can_data_be_changed().is_err() {
+                // Load beyond readonly account data happened because the program
+                // expected more data than there actually is.
+                InstructionError::AccountDataTooSmall
+            } else {
+                // Load beyond writable account data also attempted to grow.
+                InstructionError::InvalidRealloc
+            }
+        }
+    }))
 }
 
 #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
@@ -229,19 +319,6 @@ pub fn execute<'a, 'b: 'a>(
 
     let instruction_data_len = instruction_context.get_instruction_data().len();
     let number_of_instruction_accounts = instruction_context.get_number_of_instruction_accounts();
-
-    // save the account addresses so in case we hit an AccessViolation error we
-    // can map to a more specific error
-    let account_region_addrs = accounts_metadata
-        .iter()
-        .map(|m| {
-            let vm_end = m
-                .vm_data_addr
-                .saturating_add(m.original_data_len as u64)
-                .saturating_add(abi.account_realloc_padding() as u64);
-            m.vm_data_addr..vm_end
-        })
-        .collect::<Vec<_>>();
 
     #[cfg(feature = "sbpf-debugger")]
     let (debug_port, debug_metadata) = if invoke_context.debug_port.is_some() {
@@ -423,51 +500,14 @@ pub fn execute<'a, 'b: 'a>(
                         // If virtual_address_space_adjustments is enabled and a program tries to write to a readonly
                         // region we'll get a memory access violation. Map it to a more specific
                         // error so it's easier for developers to see what happened.
-                        if let Some((instruction_account_index, vm_addr_range)) =
-                            account_region_addrs
-                                .iter()
-                                .enumerate()
-                                .find(|(_, vm_addr_range)| vm_addr_range.contains(&vm_addr))
-                        {
-                            let transaction_context = &invoke_context.transaction_context;
-                            let instruction_context =
-                                transaction_context.get_current_instruction_context()?;
-                            let account = instruction_context.try_borrow_instruction_account(
-                                instruction_account_index as IndexOfAccount,
-                            )?;
-                            if vm_addr.saturating_add(len) <= vm_addr_range.end {
-                                // The access was within the range of the accounts address space,
-                                // but it might not be within the range of the actual data.
-                                let is_access_outside_of_data = vm_addr
-                                    .saturating_add(len)
-                                    .saturating_sub(vm_addr_range.start)
-                                    as usize
-                                    > account.get_data().len();
-                                error = EbpfError::SyscallError(Box::new(match access_type {
-                                    AccessType::Store => {
-                                        if let Err(err) = account.can_data_be_changed() {
-                                            err
-                                        } else {
-                                            // The store was allowed but failed,
-                                            // thus it must have been an attempt to grow the account.
-                                            debug_assert!(is_access_outside_of_data);
-                                            InstructionError::InvalidRealloc
-                                        }
-                                    }
-                                    AccessType::Load => {
-                                        // Loads should only fail when they are outside of the account data.
-                                        debug_assert!(is_access_outside_of_data);
-                                        if account.can_data_be_changed().is_err() {
-                                            // Load beyond readonly account data happened because the program
-                                            // expected more data than there actually is.
-                                            InstructionError::AccountDataTooSmall
-                                        } else {
-                                            // Load beyond writable account data also attempted to grow.
-                                            InstructionError::InvalidRealloc
-                                        }
-                                    }
-                                }));
-                            }
+                        if let Some(account_error) = account_access_violation_error(
+                            invoke_context,
+                            abi,
+                            access_type,
+                            vm_addr,
+                            len,
+                        )? {
+                            error = EbpfError::SyscallError(Box::new(account_error));
                         }
                     }
                 }
@@ -522,4 +562,60 @@ pub fn execute<'a, 'b: 'a>(
     invoke_context.timings.deserialize_us += deserialize_time.as_us();
 
     execute_or_deserialize_result
+}
+
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use super::*;
+
+    fn metadata(vm_data_addr: u64, original_data_len: usize) -> SerializedAccountMetadata {
+        SerializedAccountMetadata {
+            vm_addr: 0,
+            original_data_len,
+            vm_data_addr,
+            vm_key_addr: 0,
+            vm_lamports_addr: 0,
+            vm_owner_addr: 0,
+        }
+    }
+
+    #[test]
+    fn test_find_account_region() {
+        let accounts_metadata = [
+            metadata(0x100, 0x10),
+            metadata(0x108, 0x10),
+            metadata(0x108, 0x10), // duplicate of the previous account
+            metadata(u64::MAX - 4, 0x10),
+        ];
+        assert_eq!(find_account_region(&[], 0, 0x100), None);
+        // Before the first account.
+        assert_eq!(find_account_region(&accounts_metadata, 0, 0xff), None);
+        // The start is inclusive and overlapping ranges resolve to the first match.
+        assert_eq!(
+            find_account_region(&accounts_metadata, 0, 0x100),
+            Some((0, 0x100..0x110)),
+        );
+        assert_eq!(
+            find_account_region(&accounts_metadata, 0, 0x10f),
+            Some((0, 0x100..0x110)),
+        );
+        // The end is exclusive, the next match is the first of two identical ranges.
+        assert_eq!(
+            find_account_region(&accounts_metadata, 0, 0x110),
+            Some((1, 0x108..0x118)),
+        );
+        assert_eq!(find_account_region(&accounts_metadata, 0, 0x118), None);
+        // The realloc padding extends the range past the original data length.
+        assert_eq!(
+            find_account_region(&accounts_metadata, 8, 0x114),
+            Some((0, 0x100..0x118)),
+        );
+        // The end saturates instead of wrapping around, and stays exclusive.
+        assert_eq!(
+            find_account_region(&accounts_metadata, 8, u64::MAX - 1),
+            Some((3, u64::MAX - 4..u64::MAX)),
+        );
+        assert_eq!(find_account_region(&accounts_metadata, 8, u64::MAX), None);
+    }
 }
