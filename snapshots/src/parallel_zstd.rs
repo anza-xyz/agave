@@ -126,12 +126,17 @@ impl<R: BufRead> ParallelZstdReader<R> {
 
     /// Cuts the next frame out of the input, or returns `Ok(None)` at its end.
     fn cut_frame(&mut self) -> io::Result<Option<CompressedFrame>> {
+        let max_frame_len = zstd_safe::compress_bound(MAX_PARALLEL_FRAME_SIZE as usize);
         loop {
             if let Some(frame_len) = find_frame_len(&self.uncut_input)? {
                 let mut next = self.buffers.get();
                 next.extend_from_slice(&self.uncut_input[frame_len..]);
                 self.uncut_input.truncate(frame_len);
                 return Ok(Some(mem::replace(&mut self.uncut_input, next)));
+            }
+            let room = max_frame_len.saturating_sub(self.uncut_input.len());
+            if room == 0 {
+                return Err(invalid_data("zstd frame too large for parallel mode"));
             }
             let chunk = self.input.fill_buf()?;
             if chunk.is_empty() {
@@ -140,8 +145,8 @@ impl<R: BufRead> ParallelZstdReader<R> {
                 }
                 return Err(io::ErrorKind::UnexpectedEof.into());
             }
-            self.uncut_input.extend_from_slice(chunk);
-            let chunk_len = chunk.len();
+            let chunk_len = chunk.len().min(room);
+            self.uncut_input.extend_from_slice(&chunk[..chunk_len]);
             self.input.consume(chunk_len);
         }
     }
