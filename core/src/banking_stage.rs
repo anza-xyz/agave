@@ -656,7 +656,6 @@ mod tests {
             record_channels::{RecordReceiver, record_channels},
             transaction_recorder::RecordTransactionsSummary,
         },
-        solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -682,7 +681,6 @@ mod tests {
     fn create_test_recorder_without_service(
         bank: Arc<Bank>,
         blockstore: Arc<Blockstore>,
-        poh_config: &PohConfig,
     ) -> (
         Arc<RwLock<PohRecorder>>,
         TransactionRecorder,
@@ -698,7 +696,6 @@ mod tests {
             bank.ticks_per_slot(),
             blockstore,
             &leader_schedule_cache,
-            poh_config,
             Arc::default(),
         );
         poh_recorder.set_bank_for_test(bank.clone());
@@ -746,7 +743,6 @@ mod tests {
             bank.ticks_per_slot(),
             blockstore,
             &leader_schedule_cache,
-            &genesis_config.poh_config,
             Arc::default(),
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
@@ -797,11 +793,7 @@ mod tests {
                 .expect("Expected to be able to open database ledger"),
         );
         let (poh_recorder, transaction_recorder, mut record_receiver, entry_receiver) =
-            create_test_recorder_without_service(
-                bank.clone(),
-                blockstore,
-                &genesis_config.poh_config,
-            );
+            create_test_recorder_without_service(bank.clone(), blockstore);
 
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
@@ -916,11 +908,7 @@ mod tests {
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let (poh_recorder, transaction_recorder, mut record_receiver, entry_receiver) =
-            create_test_recorder_without_service(
-                bank.clone(),
-                blockstore,
-                &genesis_config.poh_config,
-            );
+            create_test_recorder_without_service(bank.clone(), blockstore);
         let banking_stage = BankingStage::new_num_threads(
             BlockProductionMethod::CentralSchedulerGreedy,
             poh_recorder.clone(),

@@ -21,14 +21,12 @@ use {
     solana_entry::{
         block_component::{BlockFooterV1, VersionedBlockMarker},
         entry::Entry,
-        poh::Poh,
         recorder_message::RecorderMessage,
     },
     solana_hash::Hash,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_measure::measure_us,
-    solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, BankId},
@@ -37,6 +35,7 @@ use {
         transaction_execution::TransactionStatusSenderError,
         validated_reward_certificate::Error as ValidatedRewardCertError,
     },
+    solana_sha256_hasher::{hash, hashv},
     solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
@@ -124,11 +123,6 @@ pub(crate) type Result<T> = std::result::Result<T, PohRecorderError>;
 
 pub type WorkingBankMessage = (Arc<Bank>, (RecorderMessage, u64));
 
-#[derive(Debug)]
-pub struct RecordSummary {
-    pub remaining_hashes_in_slot: u64,
-}
-
 pub struct Record {
     pub mixin: Hash,
     pub transactions: Vec<VersionedTransaction>,
@@ -162,12 +156,8 @@ struct PohRecorderMetrics {
     flush_cache_tick_us: u64,
     flush_cache_no_tick_us: u64,
     record_us: u64,
-    record_lock_contention_us: u64,
     report_metrics_us: u64,
     send_entry_us: u64,
-    tick_lock_contention_us: u64,
-    ticks_from_record: u64,
-    total_sleep_us: u64,
     last_metric: Instant,
 }
 
@@ -177,12 +167,8 @@ impl Default for PohRecorderMetrics {
             flush_cache_tick_us: 0,
             flush_cache_no_tick_us: 0,
             record_us: 0,
-            record_lock_contention_us: 0,
             report_metrics_us: 0,
             send_entry_us: 0,
-            tick_lock_contention_us: 0,
-            ticks_from_record: 0,
-            total_sleep_us: 0,
             last_metric: Instant::now(),
         }
     }
@@ -197,16 +183,8 @@ impl PohRecorderMetrics {
                 ("flush_cache_tick_us", self.flush_cache_tick_us, i64),
                 ("flush_cache_no_tick_us", self.flush_cache_no_tick_us, i64),
                 ("record_us", self.record_us, i64),
-                (
-                    "record_lock_contention_us",
-                    self.record_lock_contention_us,
-                    i64
-                ),
                 ("report_metrics_us", self.report_metrics_us, i64),
                 ("send_entry_us", self.send_entry_us, i64),
-                ("tick_lock_contention", self.tick_lock_contention_us, i64),
-                ("ticks_from_record", self.ticks_from_record, i64),
-                ("total_sleep_us", self.total_sleep_us, i64),
             );
 
             *self = Self::default();
@@ -215,7 +193,10 @@ impl PohRecorderMetrics {
 }
 
 pub struct PohRecorder {
-    pub(crate) poh: Arc<Mutex<Poh>>,
+    /// Hash of the last entry produced. Each new entry is one hash on top of it:
+    /// `hashv(last, mixin)` for a record, `hash(last)` for a tick. The tick that
+    /// ends a block becomes that bank's blockhash.
+    last_entry_hash: Hash,
     clear_bank_signal: Option<Sender<bool>>,
     // Cached from the bank PoH was last reset to (the parent slot). PoH does not hold the bank, so
     // it never keeps a bank alive after `BankForks` prunes it.
@@ -254,7 +235,6 @@ impl PohRecorder {
         ticks_per_slot: u64,
         blockstore: Arc<Blockstore>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
     ) -> (Self, Receiver<WorkingBankMessage>) {
         let delay_leader_block_for_pending_fork = false;
@@ -268,7 +248,6 @@ impl PohRecorder {
             blockstore,
             None,
             leader_schedule_cache,
-            poh_config,
             is_exited,
         )
     }
@@ -284,22 +263,14 @@ impl PohRecorder {
         blockstore: Arc<Blockstore>,
         clear_bank_signal: Option<Sender<bool>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
     ) -> (Self, Receiver<WorkingBankMessage>) {
-        let tick_number = 0;
-        let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
-            last_entry_hash,
-            poh_config.hashes_per_tick,
-            tick_number,
-        )));
-
         let (working_bank_sender, working_bank_receiver) = bounded(WORKING_BANK_CHANNEL_CAPACITY);
         let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
         (
             Self {
-                poh,
+                last_entry_hash,
                 tick_cache: vec![],
                 working_bank: None,
                 shared_leader_state: SharedLeaderState::new(
@@ -331,7 +302,7 @@ impl PohRecorder {
     // synchronize PoH with a bank
     pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
         self.clear_bank(false);
-        let tick_height = self.reset_poh(reset_bank, true);
+        let tick_height = self.reset_poh(reset_bank);
 
         let (leader_first_tick_height, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, self.ticks_per_slot);
@@ -395,7 +366,7 @@ impl PohRecorder {
         bank_id: BankId,
         mixin: Hash,
         transactions: Vec<VersionedTransaction>,
-    ) -> Result<RecordSummary> {
+    ) -> Result<()> {
         // Entries without transactions are used to track real-time passing in the ledger and
         // cannot be generated by `record()`
         assert!(!transactions.is_empty(), "No transactions provided");
@@ -406,94 +377,74 @@ impl PohRecorder {
             self.metrics.report_metrics_us += report_metrics_us;
         }
 
-        loop {
-            let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false, None));
-            self.metrics.flush_cache_no_tick_us += flush_cache_us;
-            flush_cache_res?;
+        let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false, None));
+        self.metrics.flush_cache_no_tick_us += flush_cache_us;
+        flush_cache_res?;
 
-            let tick_height = self.tick_height(); // cannot change until next loop iteration.
-            let working_bank = self
-                .working_bank
-                .as_mut()
-                .ok_or(PohRecorderError::MaxHeightReached)?;
-            if bank_id != working_bank.bank.bank_id() {
-                return Err(PohRecorderError::MaxHeightReached);
-            }
+        let tick_height = self.tick_height();
+        let working_bank = self
+            .working_bank
+            .as_ref()
+            .ok_or(PohRecorderError::MaxHeightReached)?;
+        if bank_id != working_bank.bank.bank_id() {
+            return Err(PohRecorderError::MaxHeightReached);
+        }
 
-            let (mut poh_lock, poh_lock_us) = measure_us!(self.poh.lock().unwrap());
-            self.metrics.record_lock_contention_us += poh_lock_us;
+        let (hash, record_us) =
+            measure_us!(hashv(&[self.last_entry_hash.as_ref(), mixin.as_ref()]));
+        self.last_entry_hash = hash;
+        self.metrics.record_us += record_us;
 
-            let (entry, record_mixin_us) = measure_us!(poh_lock.record(mixin));
-            self.metrics.record_us += record_mixin_us;
-            let remaining_hashes_in_slot =
-                poh_lock.remaining_hashes_in_slot(working_bank.bank.ticks_per_slot());
+        let (send_entry_res, send_entry_us) = measure_us!(send_working_bank_message(
+            &self.working_bank_sender,
+            (
+                working_bank.bank.clone(),
+                (
+                    Entry {
+                        num_hashes: 1,
+                        hash,
+                        transactions,
+                    }
+                    .into(),
+                    tick_height,
+                ),
+            ),
+        ));
+        self.metrics.send_entry_us += send_entry_us;
+        send_entry_res?;
 
-            drop(poh_lock);
+        Ok(())
+    }
 
-            if let Some(entry) = entry {
-                let (send_entry_res, send_entry_us) = measure_us!(send_working_bank_message(
-                    &self.working_bank_sender,
-                    (
-                        working_bank.bank.clone(),
-                        (
-                            Entry {
-                                num_hashes: entry.num_hashes,
-                                hash: entry.hash,
-                                transactions,
-                            }
-                            .into(),
-                            tick_height,
-                        ),
-                    ),
-                ));
-                self.metrics.send_entry_us += send_entry_us;
-                send_entry_res?;
-
-                return Ok(RecordSummary {
-                    remaining_hashes_in_slot,
-                });
-            }
-
-            // record() might fail if the next PoH hash needs to be a tick.  But that's ok, tick()
-            // and re-record()
-            self.metrics.ticks_from_record += 1;
-            self.tick();
+    /// Chains a tick onto the last entry hash.
+    fn next_tick_entry(&mut self) -> Entry {
+        self.last_entry_hash = hash(self.last_entry_hash.as_ref());
+        Entry {
+            num_hashes: 1,
+            hash: self.last_entry_hash,
+            transactions: vec![],
         }
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn tick(&mut self) {
-        let (poh_entry, tick_lock_contention_us) = measure_us!({
-            let mut poh_l = self.poh.lock().unwrap();
-            poh_l.tick()
-        });
-        self.metrics.tick_lock_contention_us += tick_lock_contention_us;
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn tick(&mut self) {
+        let tick = self.next_tick_entry();
+        self.shared_leader_state.increment_tick_height();
+        trace!("tick_height {}", self.tick_height());
 
-        if let Some(poh_entry) = poh_entry {
-            self.shared_leader_state.increment_tick_height();
-            trace!("tick_height {}", self.tick_height());
-
-            if self
-                .shared_leader_state
-                .load()
-                .leader_first_tick_height
-                .is_none()
-            {
-                return;
-            }
-
-            self.tick_cache.push((
-                Entry {
-                    num_hashes: poh_entry.num_hashes,
-                    hash: poh_entry.hash,
-                    transactions: vec![],
-                },
-                self.tick_height(),
-            ));
-
-            let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true, None));
-            self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
+        if self
+            .shared_leader_state
+            .load()
+            .leader_first_tick_height
+            .is_none()
+        {
+            return;
         }
+
+        self.tick_cache.push((tick, self.tick_height()));
+
+        let (_flush_res, flush_cache_and_tick_us) = measure_us!(self.flush_cache(true, None));
+        self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
     }
 
     /// Installs a working bank and notifies broadcast that its slot has started.
@@ -512,19 +463,7 @@ impl PohRecorder {
         };
         trace!("new working bank");
         assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
-        let mut tick_height = self.tick_height();
-        let hashes_per_tick = working_bank.bank.hashes_per_tick();
-        if self.poh.lock().unwrap().hashes_per_tick_config() != hashes_per_tick {
-            // We must clear/reset poh when changing hashes per tick because it's
-            // possible there are ticks in the cache created with the old hashes per
-            // tick value that would get flushed later. This would corrupt the leader's
-            // block and it would be disregarded by the network.
-            info!(
-                "resetting poh due to hashes per tick change detected at {}",
-                working_bank.bank.slot()
-            );
-            tick_height = self.reset_poh(working_bank.bank.clone(), false);
-        }
+        let tick_height = self.tick_height();
 
         let leader_state = self.shared_leader_state.load();
         let leader_first_tick_height = leader_state.leader_first_tick_height();
@@ -599,28 +538,21 @@ impl PohRecorder {
 
     /// Returns tick_height - does not update the internal state for tick_height.
     #[must_use]
-    fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) -> u64 {
+    fn reset_poh(&mut self, reset_bank: Arc<Bank>) -> u64 {
         let blockhash = reset_bank.last_blockhash();
-        let hashes_per_tick = reset_bank.hashes_per_tick();
-        let poh_hash = {
-            let mut poh = self.poh.lock().unwrap();
-            poh.reset(blockhash, hashes_per_tick);
-            poh.hash
-        };
         info!(
             "reset poh from: {},{},{} to: {},{}",
-            poh_hash,
+            self.last_entry_hash,
             self.tick_height(),
             self.start_slot(),
             blockhash,
             reset_bank.slot()
         );
+        self.last_entry_hash = blockhash;
 
         self.tick_cache = vec![];
-        if reset_start_bank {
-            self.set_start_bank(&reset_bank);
-            self.start_bank_active_descendants = vec![];
-        }
+        self.set_start_bank(&reset_bank);
+        self.start_bank_active_descendants = vec![];
 
         let tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
         self.start_tick_height = tick_height + 1;
@@ -1075,51 +1007,28 @@ impl PohRecorder {
         slot_max_tick_height: u64,
         footer: BlockFooterV1,
     ) -> Result<()> {
-        let (poh_entry, tick_lock_contention_us) = measure_us!({
-            let mut poh_l = self.poh.lock().unwrap();
-            poh_l.tick()
-        });
-        self.metrics.tick_lock_contention_us += tick_lock_contention_us;
+        let tick = self.next_tick_entry();
+        self.shared_leader_state
+            .0
+            .load()
+            .tick_height
+            .store(slot_max_tick_height, Ordering::Release);
 
-        if let Some(poh_entry) = poh_entry {
+        // Should be empty in most cases, but reset just to be safe
+        self.tick_cache = vec![];
+        self.tick_cache.push((
+            tick,
             self.shared_leader_state
                 .0
                 .load()
                 .tick_height
-                .store(slot_max_tick_height, Ordering::Release);
+                .load(Ordering::Acquire),
+        ));
 
-            // Should be empty in most cases, but reset just to be safe
-            self.tick_cache = vec![];
-            self.tick_cache.push((
-                Entry {
-                    num_hashes: poh_entry.num_hashes,
-                    hash: poh_entry.hash,
-                    transactions: vec![],
-                },
-                self.shared_leader_state
-                    .0
-                    .load()
-                    .tick_height
-                    .load(Ordering::Acquire),
-            ));
-
-            let (flush_res, flush_cache_and_tick_us) =
-                measure_us!(self.flush_cache(true, Some(footer)));
-            self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
-            flush_res?;
-        }
-        Ok(())
-    }
-
-    pub fn enable_alpenglow(&mut self) {
-        info!("Enabling Alpenglow, migrating poh to low power mode");
-        self.tick_cache = vec![];
-        {
-            let mut poh = self.poh.lock().unwrap();
-            let hashes_per_tick = None;
-            let current_hash = poh.hash;
-            poh.reset(current_hash, hashes_per_tick);
-        }
+        let (flush_res, flush_cache_and_tick_us) =
+            measure_us!(self.flush_cache(true, Some(footer)));
+        self.metrics.flush_cache_tick_us += flush_cache_and_tick_us;
+        flush_res
     }
 }
 
@@ -1154,8 +1063,8 @@ impl SharedLeaderState {
         self.0.store(state)
     }
 
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn increment_tick_height(&self) {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn increment_tick_height(&self) {
         let inner = self.0.load();
         inner.tick_height.fetch_add(1, Ordering::Release);
     }
@@ -1217,7 +1126,6 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
-        solana_sha256_hasher::hash,
         solana_signer::Signer,
         std::assert_matches,
     };
@@ -1238,7 +1146,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
@@ -1264,7 +1171,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
         poh_recorder.set_bank_for_test(bank);
@@ -1324,10 +1230,8 @@ mod tests {
             bank.ticks_per_slot(),
             blockstore,
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
-        poh_recorder.enable_alpenglow();
         bank.set_tick_height(bank.max_tick_height() - 1);
         poh_recorder.set_bank_for_test(bank);
         (poh_recorder, entry_receiver)
@@ -1387,64 +1291,6 @@ mod tests {
     }
 
     #[test]
-    fn test_set_bank_resets_to_low_power_mode() {
-        let ledger_path = get_tmp_ledger_path_auto_delete!();
-        let blockstore = Arc::new(
-            Blockstore::open(ledger_path.path()).expect("Expected to be able to open ledger"),
-        );
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config(2);
-        genesis_config.poh_config.hashes_per_tick = Some(4);
-        let (parent, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
-        let child = Bank::new_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            parent.clone(),
-            SlotLeader::default(),
-            parent.slot() + 1,
-        );
-        child.set_hashes_per_tick(None);
-        child.set_tick_height(child.max_tick_height() - 1);
-
-        let prev_hash = parent.last_blockhash();
-        let (mut poh_recorder, _entry_receiver) = PohRecorder::new(
-            parent.tick_height(),
-            prev_hash,
-            parent.clone(),
-            Some((child.slot(), child.slot())),
-            parent.ticks_per_slot(),
-            blockstore,
-            &Arc::new(LeaderScheduleCache::new_from_bank(&parent)),
-            &genesis_config.poh_config,
-            Arc::new(AtomicBool::default()),
-        );
-        assert_eq!(
-            poh_recorder.poh.lock().unwrap().hashes_per_tick_config(),
-            Some(4)
-        );
-
-        poh_recorder.set_bank_for_test(child.clone());
-        assert_eq!(
-            poh_recorder.poh.lock().unwrap().hashes_per_tick_config(),
-            None
-        );
-
-        let bank_to_freeze = child.clone();
-        let freezer = std::thread::spawn(move || {
-            while bank_to_freeze.tick_height() < bank_to_freeze.max_tick_height() {
-                std::hint::spin_loop();
-            }
-            bank_to_freeze.freeze();
-        });
-        poh_recorder
-            .tick_alpenglow(child.max_tick_height(), test_footer())
-            .unwrap();
-        freezer.join().unwrap();
-        assert!(!poh_recorder.has_bank());
-    }
-
-    #[test]
     fn test_poh_recorder_block_entries_verify() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -1460,7 +1306,6 @@ mod tests {
             bank0.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
         poh_recorder.set_bank_for_test(bank0.clone());
@@ -1521,7 +1366,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
@@ -1558,7 +1402,6 @@ mod tests {
             bank0.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
         let bank1 = Bank::new_from_parent_with_bank_forks(
@@ -1603,7 +1446,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
@@ -1631,7 +1473,6 @@ mod tests {
             Arc::new(blockstore),
             Some(sender),
             &Arc::new(LeaderScheduleCache::default()),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
         poh_recorder.set_bank_for_test(bank);
@@ -1661,7 +1502,6 @@ mod tests {
             bank0.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
@@ -1723,7 +1563,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(leader_schedule_cache),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
@@ -1796,7 +1635,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(leader_schedule_cache),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
         let ticks_per_slot = bank.ticks_per_slot();
@@ -1946,7 +1784,6 @@ mod tests {
             bank0.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank0)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
@@ -2188,7 +2025,6 @@ mod tests {
             bank.ticks_per_slot(),
             Arc::new(blockstore),
             &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
 
