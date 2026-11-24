@@ -1447,7 +1447,7 @@ pub fn confirm_slot(
                 // since it won't have the required block markers.
                 if slot != 0 {
                     processor
-                        .on_entry_batch(migration_status, slot, &entries, is_final)
+                        .on_entry_batch(&entries, is_final)
                         .inspect_err(|err| {
                             warn!(
                                 "BlockComponentProcessor::on_entry_batch() for slot {slot} failed \
@@ -1476,13 +1476,13 @@ pub fn confirm_slot(
                         replay_starts_at_update_parent && marker.is_update_parent();
                     processor
                         .on_marker(
+                            &migration_status.my_pubkey(),
                             bank,
                             parent_bank,
                             shred_version,
                             marker,
                             allow_initial_update_parent,
                             finalization_cert_sender,
-                            migration_status,
                             &mut timing.batch_execute.totals,
                         )
                         .inspect_err(|err| {
@@ -1522,7 +1522,7 @@ pub fn confirm_slot(
         // Skip block component validation for genesis block. Slot 0 is handled specially,
         // since it won't have the required block markers.
         if is_final && slot != 0 {
-            processor.on_final(migration_status, slot, bank.parent_slot())?;
+            processor.on_final()?;
         }
     }
 
