@@ -2,7 +2,9 @@ use {
     super::{Result, VoteStateViewError, list_view::ListView},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
+    solana_vote_interface::state::{
+        BLS_PUBLIC_KEY_COMPRESSED_SIZE, vote_state_v5::AccumulatedLamports,
+    },
     std::io::{BufRead, Read},
 };
 
@@ -281,7 +283,19 @@ impl ListFrame for AccumulatedLamportsListFrame {
     }
 }
 
+const _: () = {
+    assert!(size_of::<AccumulatedLamportsItem>() == size_of::<AccumulatedLamports>());
+    assert!(align_of::<AccumulatedLamportsItem>() <= align_of::<AccumulatedLamports>());
+    assert!(cfg!(target_endian = "little"));
+};
+
 impl AccumulatedLamportsItem {
+    pub(super) fn from_accumulated_lamports(entry: &AccumulatedLamports) -> &Self {
+        // SAFETY: both are `repr(C)` triples of u64 (little endian on all supported targets), and
+        // `Self` has alignment 1.
+        unsafe { &*std::ptr::from_ref(entry).cast::<Self>() }
+    }
+
     #[inline]
     pub fn epoch(&self) -> u64 {
         u64::from_le_bytes(self.epoch)
