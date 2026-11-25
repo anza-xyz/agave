@@ -463,6 +463,7 @@ mod tests {
 
     #[test]
     fn test_account_update_count_filters_plugins_and_survives_failure() {
+        agave_logger::setup();
         let received: Vec<_> = (0..3).map(|_| Arc::new(Mutex::new(Vec::new()))).collect();
         let manager = Arc::new(ArcSwap::from_pointee(GeyserPluginHost::from_plugins(
             [(false, false), (true, true), (true, false)]
@@ -477,6 +478,7 @@ mod tests {
                 })
                 .collect(),
         )));
+        assert!(!manager.load().account_data_notifications_enabled());
         let notifier = AccountsUpdateNotifierImpl::new(Arc::clone(&manager), false, false);
         assert!(!notifier.account_notifications_enabled());
         assert!(notifier.account_update_count_notifications_enabled());
