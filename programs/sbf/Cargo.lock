@@ -7928,7 +7928,6 @@ dependencies = [
  "solana-time-utils",
  "solana-tls-utils",
  "solana-transaction",
- "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
  "solana-validator-exit",

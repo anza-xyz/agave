@@ -20,6 +20,13 @@ Release channels have their own copy of this changelog:
 #### Breaking
 
 * The `/v0/circulating-supply` endpoint has been removed.
+* The `rpc_accounts_scan` RPC methods have been removed.
+  * `getProgramAccounts`
+  * `getLargestAccounts`
+  * `getSupply`
+  * `getTokenLargestAccounts`
+  * `getTokenAccountsByOwner`
+  * `getTokenAccountsByDelegate`
 
 #### Changes
 
