@@ -215,8 +215,7 @@ pub fn load_program_with_pubkey<CB: AccountLoadCallback>(
     Some(Arc::new(loaded_program))
 }
 
-/// Resolves `pubkey` to the program execution will search for in the global
-/// program cache.
+/// Resolves a `pubkey` to a `ProgramToLoad` for global program cache lookup.
 fn resolve_executable_program<'a, CB: AccountLoadCallback>(
     callbacks: &CB,
     pubkey: &'a Pubkey,
@@ -1001,8 +1000,12 @@ mod tests {
 
     const PROGRAMDATA_KEY: Pubkey = Pubkey::new_from_array([7; 32]);
 
-    fn account_with_data(owner: &Pubkey, data: &[u8]) -> AccountSharedData {
-        AccountSharedData::new_with_data(1, data.to_vec(), owner)
+    fn empty(owner: &Pubkey) -> AccountSharedData {
+        AccountSharedData::empty(1, owner)
+    }
+
+    fn account_with_data(owner: &Pubkey, data: Vec<u8>) -> AccountSharedData {
+        AccountSharedData::new_with_data(1, data, owner)
     }
 
     fn with_owner(mut account: AccountSharedData, owner: &Pubkey) -> AccountSharedData {
@@ -1011,28 +1014,40 @@ mod tests {
     }
 
     #[test_case(
-        Some(account_with_data(&bpf_loader_deprecated::id(), &ELFMAG)),
+        Some(account_with_data(&bpf_loader_deprecated::id(), ELFMAG.to_vec())),
         None,
         Some((ProgramCacheEntryOwner::LoaderV1, 0));
         "v1 with elf"
     )]
     #[test_case(
-        Some(account_with_data(&bpf_loader_deprecated::id(), &[0u8; 4])),
+        Some(account_with_data(&bpf_loader_deprecated::id(), vec![0u8; 4])),
         None,
         None;
         "v1 without elf"
     )]
     #[test_case(
-        Some(account_with_data(&bpf_loader::id(), &ELFMAG)),
+        Some(account_with_data(&bpf_loader_deprecated::id(), (1..=5).collect())),
+        None,
+        None;
+        "v1 with invalid data"
+    )]
+    #[test_case(
+        Some(account_with_data(&bpf_loader::id(), ELFMAG.to_vec())),
         None,
         Some((ProgramCacheEntryOwner::LoaderV2, 0));
         "v2 with elf"
     )]
     #[test_case(
-        Some(account_with_data(&bpf_loader::id(), &[0u8; 4])),
+        Some(account_with_data(&bpf_loader::id(), vec![0u8; 4])),
         None,
         None;
         "v2 without elf"
+    )]
+    #[test_case(
+        Some(account_with_data(&bpf_loader::id(), (1..=5).collect())),
+        None,
+        None;
+        "v2 with invalid data"
     )]
     #[test_case(
         Some(loader_v3_program_account(PROGRAMDATA_KEY)),
@@ -1042,13 +1057,19 @@ mod tests {
     )]
     #[test_case(
         Some(loader_v3_program_account(PROGRAMDATA_KEY)),
-        Some(account_with_data(&bpf_loader_upgradeable::id(), &[0u8; 4])), // `Uninitialized`
+        Some(account_with_data(&bpf_loader_upgradeable::id(), vec![0u8; 4])), // `Uninitialized`
         None;
         "v3 closed"
     )]
     #[test_case(
         Some(loader_v3_program_account(PROGRAMDATA_KEY)),
-        Some(account_with_data(&bpf_loader_upgradeable::id(), &[])),
+        Some(account_with_data(&bpf_loader_upgradeable::id(), (1..=4).collect())),
+        None;
+        "v3 invalid data"
+    )]
+    #[test_case(
+        Some(loader_v3_program_account(PROGRAMDATA_KEY)),
+        Some(empty(&bpf_loader_upgradeable::id())),
         None;
         "v3 programdata empty"
     )]
@@ -1078,7 +1099,7 @@ mod tests {
         "v3 programdata wrong state"
     )]
     #[test_case(
-        Some(account_with_data(&bpf_loader_upgradeable::id(), &[0u8; 4])), // `Uninitialized`
+        Some(account_with_data(&bpf_loader_upgradeable::id(), vec![0u8; 4])), // `Uninitialized`
         Some(loader_v3_programdata_account(7, &[])),
         None;
         "v3 program wrong state"
@@ -1102,25 +1123,25 @@ mod tests {
         "v4 retracted"
     )]
     #[test_case(
-        Some(account_with_data(&loader_v4::id(), &[0u8; LoaderV4State::program_data_offset()])),
+        Some(account_with_data(&loader_v4::id(), vec![0u8; LoaderV4State::program_data_offset()])),
         None,
         None;
         "v4 zeroed data"
     )]
     #[test_case(
-        Some(account_with_data(&loader_v4::id(), &[0u8; 4])),
+        Some(account_with_data(&loader_v4::id(), vec![0u8; 4])),
         None,
         None;
         "v4 data too small"
     )]
     #[test_case(
-        Some(account_with_data(&native_loader::id(), &ELFMAG)),
+        Some(account_with_data(&native_loader::id(), ELFMAG.to_vec())),
         None,
         None;
         "native loader"
     )]
     #[test_case(
-        Some(account_with_data(&Pubkey::new_unique(), &ELFMAG)),
+        Some(account_with_data(&Pubkey::new_unique(), ELFMAG.to_vec())),
         None,
         None;
         "unknown owner"
