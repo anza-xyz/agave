@@ -193,11 +193,8 @@ impl TryFrom<LegacyObsoleteAccountsMap> for SerdeObsoleteAccountsMap {
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        crate::serde_snapshot::{deserialize_wincode_from, serialize_into},
-        solana_accounts_db::account_info::Offset,
-        std::io::Cursor,
-        test_case::test_case,
+        super::*, crate::serde_snapshot::OBSOLETE_ACCOUNTS_CONFIG,
+        solana_accounts_db::account_info::Offset, test_case::test_case,
     };
 
     /// Tests the serialization and deserialization of obsolete accounts
@@ -239,13 +236,12 @@ mod test {
         let obsolete_accounts_map = SerdeObsoleteAccountsMap { map };
 
         // Serialize the obsolete accounts map
-        let mut buf = Vec::new();
-        serialize_into(Cursor::new(&mut buf), &obsolete_accounts_map).unwrap();
+        let buf =
+            wincode::config::serialize(&obsolete_accounts_map, OBSOLETE_ACCOUNTS_CONFIG).unwrap();
 
         // Deserialize the obsolete accounts map
-        let cursor = Cursor::new(buf.as_slice());
         let deserialized_obsolete_accounts: SerdeObsoleteAccountsMap =
-            deserialize_wincode_from(cursor).unwrap();
+            wincode::config::deserialize(&buf, OBSOLETE_ACCOUNTS_CONFIG).unwrap();
         let mut map = deserialized_obsolete_accounts.into_hashmap();
 
         // Verify the deserialized data matches the original obsolete accounts

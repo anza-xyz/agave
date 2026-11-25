@@ -6,6 +6,7 @@ pub mod error;
 pub mod hardened_unpack;
 mod kind;
 mod multiframe;
+mod parallel_zstd;
 pub mod paths;
 pub mod snapshot_archive_info;
 pub mod snapshot_config;

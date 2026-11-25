@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     solana_clock::Slot,
     solana_entry::entry::Entry,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
@@ -11,7 +12,7 @@ use {
         shred::{
             filter::{new_dummy_retransmit_sender, ShredRecoveryContext},
             max_entries_per_n_shred, verify_test_data_shred, ProcessShredsStats, Shred, ShredData,
-            Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+            Shredder,
         },
     },
     solana_runtime::bank::Bank,

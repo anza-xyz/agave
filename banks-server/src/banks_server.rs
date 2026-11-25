@@ -20,10 +20,7 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_send_transaction_service::send_transaction_service::TransactionInfo,
     solana_signature::Signature,
-    solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
-    },
+    solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
     std::{
         sync::{Arc, RwLock},
         thread::Builder,
@@ -161,7 +158,6 @@ fn simulate_transaction(
     let sanitized_transaction = match RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,
-        Some(false), // is_simple_vote_tx
         bank,
         bank.get_reserved_account_keys(),
     ) {
@@ -307,10 +303,9 @@ impl Banks for BanksServer {
         let wire_transaction = wincode::serialize(&transaction).unwrap();
 
         let bank = self.bank(commitment);
-        let sanitized_transaction = match SanitizedTransaction::try_create(
+        let sanitized_transaction = match RuntimeTransaction::try_create(
             transaction,
             MessageHash::Compute,
-            Some(false), // is_simple_vote_tx
             bank.as_ref(),
             bank.get_reserved_account_keys(),
         ) {

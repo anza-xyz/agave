@@ -2,7 +2,7 @@
 use {
     agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaDeshredTransactionInfoV2, ReplicaDeshredTransactionInfoVersions,
+        ReplicaDeshredTransactionInfoV3, ReplicaDeshredTransactionInfoVersions,
         ReplicaDeshredUpdateParentInfo, ReplicaDeshredUpdateParentInfoVersions,
     },
     arc_swap::ArcSwap,
@@ -35,7 +35,6 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
         completed_data_set_starting_shred_index: u32,
         completed_data_set_ending_shred_index_exclusive: u32,
         signature: &Signature,
-        is_vote: bool,
         transaction: &VersionedTransaction,
         loaded_addresses: Option<&LoadedAddresses>,
     ) {
@@ -47,9 +46,8 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
 
         let mut measure =
             Measure::start("geyser-plugin-notify_plugins_of_deshred_transaction_info");
-        let transaction_info = ReplicaDeshredTransactionInfoV2 {
+        let transaction_info = ReplicaDeshredTransactionInfoV3 {
             signature,
-            is_vote,
             transaction,
             loaded_addresses,
             completed_data_set_starting_shred_index,
@@ -61,7 +59,7 @@ impl DeshredTransactionNotifier for DeshredTransactionNotifierImpl {
                 continue;
             }
             match plugin.notify_deshred_transaction(
-                ReplicaDeshredTransactionInfoVersions::V0_0_2(&transaction_info),
+                ReplicaDeshredTransactionInfoVersions::V0_0_3(&transaction_info),
                 slot,
             ) {
                 Err(err) => {

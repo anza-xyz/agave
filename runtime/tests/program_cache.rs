@@ -9,18 +9,39 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
+    solana_program_runtime::program_cache::{
+        entry::ProgramCacheEntryType, env::ProgramRuntimeEnvironment, global::ProgramToLoad,
+        owner::ProgramCacheEntryOwner, tx_batch::ProgramCacheForTxBatch,
+    },
+    solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
         bank::{Bank, test_utils::goto_end_of_slot},
+        bank_forks::BankForks,
         genesis_utils::activate_feature,
         loader_utils::{create_buffer_with_elf, create_program_with_elf},
         program_cache_utils::{EntryType, ExpectedEntry, assert_cache_contents, current_env},
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
     solana_signer::Signer,
+    solana_svm::{
+        program_loader::load_program_with_pubkey,
+        transaction_error_metrics::TransactionErrorMetrics,
+        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
+    },
+    solana_svm_timings::ExecuteTimings,
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
-    std::{fs::File, io::Read, sync::Arc},
+    std::{
+        fs::File,
+        io::Read,
+        sync::{
+            Arc, RwLock,
+            atomic::{AtomicBool, Ordering::Relaxed},
+        },
+        time::Duration,
+    },
     test_case::test_case,
 };
 
@@ -88,7 +109,7 @@ fn test_bank_load_program() {
 }
 
 #[test]
-fn test_feature_activation_loaded_programs_cache_preparation_phase() {
+fn test_ebpp_feature_activation() {
     agave_logger::setup();
 
     // Bank Setup
@@ -225,9 +246,7 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
 
 #[test_case(false; "legacy")]
 #[test_case(true; "SIMD-0688")]
-fn test_feature_activation_loaded_programs_epoch_transition(
-    single_program_runtime_environment: bool,
-) {
+fn test_ebpp_epoch_transition(single_program_runtime_environment: bool) {
     agave_logger::setup();
 
     // Bank Setup
@@ -400,7 +419,7 @@ fn test_feature_activation_loaded_programs_epoch_transition(
 }
 
 #[test]
-fn test_feature_activation_loaded_programs_late_activation() {
+fn test_ebpp_late_activation() {
     agave_logger::setup();
 
     // Bank Setup
@@ -578,7 +597,7 @@ fn test_feature_activation_loaded_programs_late_activation() {
 }
 
 #[test]
-fn test_feature_activation_loaded_programs_revoked_activation() {
+fn test_ebpp_revoked_activation() {
     agave_logger::setup();
 
     // Bank Setup
@@ -710,6 +729,233 @@ fn test_feature_activation_loaded_programs_revoked_activation() {
     ); // `Arc::ptr_eq`
     let transaction = Transaction::new(&signers, message, bank.last_blockhash());
     assert_eq!(bank.process_transaction(&transaction), Ok(()));
+}
+
+#[test]
+fn test_ebpp_late_deployment() {
+    // Fork graph created for the test
+    //
+    //     0 - 1 ... 16 - 17 ... 30 - 31 - 32 - 33 - 34
+    //     ^   ^      ^    ^      ^    ^    ^    ^    ^
+    //     |   |      |    |      |    |    |    |    invokes
+    //     |   |      |    |      |    |    |    cache is rooted
+    //     |   |      |    |      |    |    epoch rolls over, invokes
+    //     |   |      |    |      |    invokes, loads the redeployment
+    //     |   |      |    |      redeployed, late in the epoch
+    //     |   |      |    program recompiled for the upcoming environment
+    //     |   |      rooted, latching the epoch boundary preparation
+    //     |   invokes, feature staged
+    //     deployed
+    //
+    // The redeployment lands after EBPP has already recompiled the original
+    // deployment for the upcoming environment, so before the epoch boundary it
+    // is only loaded on the environment being retired. Across the boundary,
+    // the cache holds the original deployment on the new environment, but
+    // invoking the program must still run the redeployed bytes.
+    agave_logger::setup();
+
+    let (mut genesis_config, mint_keypair) =
+        solana_genesis_config::create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    genesis_config
+        .accounts
+        .remove(&feature_set::enable_sha512_syscall::id());
+    let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    let return_ok_elf =
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
+    let return_err_elf =
+        include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_err.so");
+    let return_err_result = Err(TransactionError::InstructionError(
+        0,
+        InstructionError::Custom(1),
+    ));
+
+    // Start off with the `Ok` ELF.
+    let program_id = create_program_with_elf(
+        &root_bank,
+        &bpf_loader_upgradeable::id(),
+        &mint_keypair.pubkey(),
+        return_ok_elf,
+    );
+    let invoke = |bank: &Bank| {
+        let instruction = Instruction::new_with_bytes(program_id, &[], Vec::new());
+        let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+        bank.process_transaction(&Transaction::new(
+            &[&mint_keypair],
+            message,
+            bank.last_blockhash(),
+        ))
+    };
+    let advance = |bank: Arc<Bank>, slot| {
+        goto_end_of_slot(bank.clone());
+        Bank::new_from_parent_with_bank_forks(
+            bank_forks.as_ref(),
+            bank,
+            SlotLeader::default(),
+            slot,
+        )
+    };
+
+    // Load the original deployment by invoking.
+    let bank = advance(root_bank, 1);
+    assert_eq!(invoke(&bank), Ok(()));
+    let env = current_env(&bank);
+    assert_cache_contents(
+        &bank,
+        &program_id,
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 0,
+            environment: &env,
+        }],
+    );
+
+    // Stage the feature for activation at the epoch boundary.
+    bank.store_account(
+        &feature_set::enable_sha512_syscall::id(),
+        &feature::create_account(
+            &Feature { activated_at: None },
+            genesis_config.rent.minimum_balance(Feature::size_of()),
+        ),
+    );
+
+    // Move to the middle of the epoch and root, latching EBPP. This recompiles
+    // the original deployment for the upcoming environment.
+    let bank = advance(bank, 16);
+    bank.root_program_cache(&bank_forks.read().unwrap());
+    let bank = advance(bank, 17);
+    let upcoming_env = bank
+        .get_transaction_processor()
+        .program_runtime_environment_for_epoch(1);
+    assert_ne!(env, upcoming_env);
+    assert_cache_contents(
+        &bank,
+        &program_id,
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &env,
+            },
+            // Here's our EBPP entry.
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &upcoming_env,
+            },
+        ],
+    );
+
+    // Redeploy late in the epoch, this time with the `Err` ELF.
+    let bank = advance(bank, 30);
+    let buffer_address = create_buffer_with_elf(&bank, &mint_keypair.pubkey(), return_err_elf);
+    let message = Message::new(
+        &[solana_loader_v3_interface::instruction::upgrade(
+            &program_id,
+            &buffer_address,
+            &mint_keypair.pubkey(),
+            &mint_keypair.pubkey(),
+        )],
+        Some(&mint_keypair.pubkey()),
+    );
+    assert_eq!(
+        bank.process_transaction(&Transaction::new(
+            &[&mint_keypair],
+            message,
+            bank.last_blockhash(),
+        )),
+        Ok(())
+    );
+
+    // Try invoking, assert we get the error.
+    let bank = advance(bank, 31);
+    assert_eq!(bank.epoch(), 0);
+    assert_eq!(invoke(&bank), return_err_result);
+    assert_cache_contents(
+        &bank,
+        &program_id,
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &upcoming_env,
+            },
+            // We get a new, loaded entry for the current env, but the new
+            // deployment slot.
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 30,
+                environment: &env,
+            },
+        ],
+    );
+
+    // Cross the epoch boundary, and invoke before rooting. The program is
+    // reloaded for the new env.
+    let bank = advance(bank, 32);
+    assert_eq!(bank.epoch(), 1);
+    assert_eq!(current_env(&bank), upcoming_env);
+    assert_eq!(invoke(&bank), return_err_result);
+    assert_cache_contents(
+        &bank,
+        &program_id,
+        &[
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &upcoming_env,
+            },
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 30,
+                environment: &env,
+            },
+            // We get a new, loaded entry for the _new_ (now-current) env, and
+            // the new deployment slot.
+            ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 30,
+                environment: &upcoming_env,
+            },
+        ],
+    );
+
+    // Root. Everything on the retired environment is swept, and the original
+    // deployment is superseded by the redeployment.
+    let bank = advance(bank, 33);
+    bank.root_program_cache(&bank_forks.read().unwrap());
+    assert_cache_contents(
+        &bank,
+        &program_id,
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 30,
+            environment: &upcoming_env,
+        }],
+    );
+
+    // The redeployment on the new environment is served from here on.
+    let bank = advance(bank, 34);
+    assert_eq!(invoke(&bank), return_err_result);
+    assert_cache_contents(
+        &bank,
+        &program_id,
+        &[ExpectedEntry {
+            entry_type: EntryType::Loaded,
+            deployment_slot: 30,
+            environment: &upcoming_env,
+        }],
+    );
 }
 
 #[test_case(false; "legacy")]
@@ -914,4 +1160,262 @@ fn test_sbpf_v0_deploy_in_last_slot_before_feature_activation(
             InstructionError::InvalidAccountData
         ))
     );
+}
+
+fn invoke_all_txn(bank: &Bank, payer: &Keypair, programs: &[Pubkey]) -> Transaction {
+    let instructions = programs
+        .iter()
+        .map(|program| Instruction::new_with_bytes(*program, &[], Vec::new()))
+        .collect::<Vec<_>>();
+    let message = Message::new(&instructions, Some(&payer.pubkey()));
+    Transaction::new(&[payer], message, bank.last_blockhash())
+}
+
+fn setup_test_quiesce() -> (
+    Arc<Bank>,
+    Arc<RwLock<BankForks>>,
+    Keypair,
+    Vec<Pubkey>,
+    ProgramRuntimeEnvironment,
+) {
+    let (genesis_config, payer) =
+        solana_genesis_config::create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+    // Deploy three programs. They aren't cached until they're loaded.
+    let elf = include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
+    let programs = (0..3)
+        .map(|_| {
+            create_program_with_elf(&bank, &bpf_loader_upgradeable::id(), &payer.pubkey(), elf)
+        })
+        .collect::<Vec<_>>();
+    let env = current_env(&bank);
+    goto_end_of_slot(bank.clone());
+
+    // Assert none of the three programs are cached.
+    for program in &programs {
+        assert_cache_contents(&bank, program, &[]);
+    }
+
+    let bank =
+        Bank::new_from_parent_with_bank_forks(bank_forks.as_ref(), bank, SlotLeader::default(), 1);
+    (bank, bank_forks, payer, programs, env)
+}
+
+#[test]
+fn test_quiesce_waits_for_in_flight_cooperative_loads() {
+    agave_logger::setup();
+
+    let (bank, _bank_forks, payer, programs, env) = setup_test_quiesce();
+    let transactions = vec![invoke_all_txn(&bank, &payer, &programs)];
+    let loading_entries = || {
+        bank.get_transaction_processor()
+            .global_program_cache
+            .read()
+            .unwrap()
+            .get_loading_entries_for_tests()
+    };
+
+    // Claim the cooperative loading task for the first program, so any batch
+    // which needs it must wait on us.
+    let held = programs[0];
+    let claimed = bank
+        .get_transaction_processor()
+        .global_program_cache
+        .read()
+        .unwrap()
+        .extract(
+            &mut vec![ProgramToLoad {
+                program_id: &held,
+                loader: ProgramCacheEntryOwner::LoaderV3,
+                deployment_slot: 0,
+            }],
+            &mut ProgramCacheForTxBatch::new(bank.slot()),
+            &env,
+            false,
+            false,
+        );
+    assert_eq!(claimed, Some(held));
+    assert_eq!(loading_entries(), vec![held]);
+
+    let executing = Arc::new(AtomicBool::new(false));
+    let landed = Arc::new(AtomicBool::new(false));
+
+    let batch_thread = {
+        // Simulate a batch processor on some thread sending this batch.
+        let bank = Arc::clone(&bank);
+        let executing = Arc::clone(&executing);
+        let landed = Arc::clone(&landed);
+        std::thread::spawn(move || {
+            let guard = bank
+                .try_enter_transaction_execution()
+                .expect("execution is admitted");
+            executing.store(true, Relaxed);
+
+            // The batch loads the other programs itself, then blocks on our
+            // claim while holding the guard.
+            let batch = bank.prepare_batch_for_tests(transactions);
+            guard.load_and_execute_transactions(
+                &batch,
+                bank.max_processing_age(),
+                &mut ExecuteTimings::default(),
+                &mut TransactionErrorMetrics::default(),
+                TransactionProcessingConfig {
+                    limit_to_load_programs: true,
+                    recording_config: ExecutionRecordingConfig::new_single_setting(false),
+                    ..TransactionProcessingConfig::default()
+                },
+            );
+
+            landed.store(true, Relaxed);
+            drop(guard);
+        })
+    };
+
+    // Once the batch has loaded everything but the held program, it can only
+    // be waiting on our claim.
+    while !executing.load(Relaxed) {
+        std::hint::spin_loop();
+    }
+    while programs[1..].iter().any(|program| {
+        !matches!(
+            bank.get_transaction_processor()
+                .global_program_cache
+                .read()
+                .unwrap()
+                .get_slot_versions_for_tests(program),
+            [entry] if matches!(entry.program, ProgramCacheEntryType::Loaded(_))
+        )
+    }) {
+        std::hint::spin_loop();
+    }
+
+    // Quiesce from another thread.
+    let (quiesced_sender, quiesced_receiver) = std::sync::mpsc::channel();
+    let quiesce_thread = {
+        let bank = Arc::clone(&bank);
+        std::thread::spawn(move || {
+            bank.quiesce_transaction_execution();
+            quiesced_sender.send(()).unwrap();
+        })
+    };
+
+    // While the load is held, quiesce must not return.
+    assert!(
+        quiesced_receiver
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "quiesce returned while a cooperative load was still in flight",
+    );
+    assert!(!landed.load(Relaxed));
+
+    // Release the held load.
+    let loaded = load_program_with_pubkey(
+        bank.as_ref(),
+        &env,
+        &held,
+        bank.slot(),
+        &mut ExecuteTimings::default(),
+    )
+    .unwrap();
+    bank.get_transaction_processor()
+        .global_program_cache
+        .write()
+        .unwrap()
+        .finish_cooperative_loading_task(&env, bank.slot(), held, loaded);
+
+    // Now quiesce returns, and only once the batch has landed.
+    quiesced_receiver.recv().unwrap();
+    assert!(landed.load(Relaxed));
+    batch_thread.join().unwrap();
+    quiesce_thread.join().unwrap();
+
+    assert!(loading_entries().is_empty());
+    for program in &programs {
+        assert_cache_contents(
+            &bank,
+            program,
+            &[ExpectedEntry {
+                entry_type: EntryType::Loaded,
+                deployment_slot: 0,
+                environment: &env,
+            }],
+        );
+    }
+}
+
+enum Case {
+    Execute,
+    Simulate,
+    Commit,
+}
+
+#[test_case(Case::Execute; "execute")]
+#[test_case(Case::Simulate; "simulate")]
+#[test_case(Case::Commit; "commit")]
+fn test_quiesce_turns_away_new_work(case: Case) {
+    agave_logger::setup();
+
+    let (bank, _bank_forks, payer, programs, _env) = setup_test_quiesce();
+    let transaction = invoke_all_txn(&bank, &payer, &programs);
+
+    // Initiate quiesce.
+    bank.quiesce_transaction_execution();
+
+    let refused = match case {
+        Case::Execute => {
+            let batch = bank.prepare_batch_for_tests(vec![transaction]);
+            let mut output = bank.load_and_execute_transactions(
+                &batch,
+                bank.max_processing_age(),
+                &mut ExecuteTimings::default(),
+                &mut TransactionErrorMetrics::default(),
+                TransactionProcessingConfig {
+                    limit_to_load_programs: true,
+                    recording_config: ExecutionRecordingConfig::new_single_setting(false),
+                    ..TransactionProcessingConfig::default()
+                },
+            );
+            assert_eq!(output.processing_results.len(), 1);
+            output.processing_results.pop().unwrap().err()
+        }
+        Case::Simulate => {
+            let transaction = RuntimeTransaction::from_transaction_for_tests(transaction);
+            bank.simulate_transaction_unchecked(&transaction, false)
+                .result
+                .err()
+        }
+        Case::Commit => {
+            let batch = bank.prepare_batch_for_tests(vec![transaction]);
+            let (mut commit_results, _) = bank.load_execute_and_commit_transactions(
+                &batch,
+                ExecutionRecordingConfig::new_single_setting(false),
+                &mut ExecuteTimings::default(),
+                None,
+            );
+            assert_eq!(commit_results.len(), 1);
+            commit_results.pop().unwrap().err()
+        }
+    };
+    assert_eq!(
+        refused,
+        Some(TransactionError::CommitCancelled),
+        "the work should have been turned away",
+    );
+
+    // Nothing was claimed on the way out.
+    assert!(
+        bank.get_transaction_processor()
+            .global_program_cache
+            .read()
+            .unwrap()
+            .get_loading_entries_for_tests()
+            .is_empty(),
+        "refused work left a loading task behind",
+    );
+
+    // And no program was loaded into the cache for the quiesced bank.
+    for program in &programs {
+        assert_cache_contents(&bank, program, &[]);
+    }
 }

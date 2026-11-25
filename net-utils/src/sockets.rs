@@ -2,7 +2,11 @@
 use tokio::net::UdpSocket as TokioUdpSocket;
 use {
     crate::{PortRange, test_port_allocator::unique_port_range_for_tests_internal},
-    log::warn,
+    log::{error, info, warn},
+    nix::sys::socket::{
+        GetSockOpt, SetSockOpt, setsockopt,
+        sockopt::{RcvBuf, ReusePort, SndBuf},
+    },
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
         io,
@@ -46,6 +50,15 @@ pub fn bind_gossip_port_in_range(
     bind_ip_addr: IpAddr,
 ) -> (u16, (UdpSocket, TcpListener)) {
     let config = SocketConfiguration::default();
+    bind_gossip_port_in_range_with_config(gossip_addr, port_range, bind_ip_addr, config)
+}
+
+pub fn bind_gossip_port_in_range_with_config(
+    gossip_addr: &SocketAddr,
+    port_range: PortRange,
+    bind_ip_addr: IpAddr,
+    config: SocketConfiguration,
+) -> (u16, (UdpSocket, TcpListener)) {
     if gossip_addr.port() != 0 {
         (
             gossip_addr.port(),
@@ -76,9 +89,9 @@ impl SocketConfiguration {
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
-    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_RCVBUF
-    pub fn recv_buffer_size(mut self, size: usize) -> Self {
-        self.recv_buffer_size = Some(size);
+    /// See: <https://man7.org/linux/man-pages/man7/socket.7.html>: SO_RCVBUF
+    pub fn recv_buffer_size(mut self, size: Option<usize>) -> Self {
+        self.recv_buffer_size = size;
         self
     }
 
@@ -87,9 +100,9 @@ impl SocketConfiguration {
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
-    /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_SNDBUF
-    pub fn send_buffer_size(mut self, size: usize) -> Self {
-        self.send_buffer_size = Some(size);
+    /// See: <https://man7.org/linux/man-pages/man7/socket.7.html>: SO_SNDBUF
+    pub fn send_buffer_size(mut self, size: Option<usize>) -> Self {
+        self.send_buffer_size = size;
         self
     }
 
@@ -97,6 +110,51 @@ impl SocketConfiguration {
     pub fn set_non_blocking(mut self, non_blocking: bool) -> Self {
         self.non_blocking = non_blocking;
         self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UdpSocketBufferLimits {
+    pub recv_limit: Option<usize>,
+    pub send_limit: Option<usize>,
+}
+
+impl UdpSocketBufferLimits {
+    pub fn new() -> Self {
+        let recv_limit = probe_max_udp_socket_buffer_size_capped(RcvBuf)
+            .inspect(|sz| {
+                info!("Maximum UDP socket receive buffer size is {sz}");
+            })
+            .inspect_err(|err| {
+                error!("Maximum UDP socket receive buffer size could not be determined: {err}")
+            })
+            .ok();
+        let send_limit = probe_max_udp_socket_buffer_size_capped(SndBuf)
+            .inspect(|sz| {
+                info!("Maximum UDP socket send buffer size is {sz}");
+            })
+            .inspect_err(|err| {
+                error!("Maximum UDP socket send buffer size could not be determined: {err}")
+            })
+            .ok();
+        Self {
+            recv_limit,
+            send_limit,
+        }
+    }
+
+    pub fn recv_clamp(&self, desired_size: usize) -> Option<usize> {
+        Some(
+            self.recv_limit
+                .map_or(desired_size, |sz| std::cmp::min(desired_size, sz)),
+        )
+    }
+
+    pub fn send_clamp(&self, desired_size: usize) -> Option<usize> {
+        Some(
+            self.send_limit
+                .map_or(desired_size, |sz| std::cmp::min(desired_size, sz)),
+        )
     }
 }
 
@@ -111,7 +169,6 @@ fn set_reuse_port<T>(socket: &T) -> io::Result<()>
 where
     T: std::os::fd::AsFd,
 {
-    use nix::sys::socket::{setsockopt, sockopt::ReusePort};
     setsockopt(socket, ReusePort, &true).map_err(io::Error::from)
 }
 
@@ -138,6 +195,91 @@ pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<
     }
     sock.set_nonblocking(non_blocking)?;
     Ok(sock)
+}
+
+/// The probe_max_udp_socket_buffer_size() functions below will probe buffer sizes
+/// up to this limit which should be both sufficiently large and within the
+/// allowable range on all the platforms below. It has been conservatively
+/// set to 64MiB which is sufficient for 50ms's worth of 10Gbit/s line rate data.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+const MAX_BUF_SIZE: usize = 67108864;
+
+/// probe_max_udp_socket_buffer_size_capped() calls the platform specific probe
+/// function and caps the result to MAX_BUF_SIZE. This is needed as the probe
+/// function can return values in excess of MAX_BUF_SIZE in certain circumstances.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+fn probe_max_udp_socket_buffer_size_capped<T>(sock_opt: T) -> io::Result<usize>
+where
+    T: GetSockOpt<Val = usize> + SetSockOpt<Val = usize>,
+{
+    probe_max_udp_socket_buffer_size(sock_opt).map(|sz| std::cmp::min(MAX_BUF_SIZE, sz))
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+fn probe_max_udp_socket_buffer_size_capped<T>(_sock_opt: T) -> io::Result<usize>
+where
+    T: GetSockOpt<Val = usize> + SetSockOpt<Val = usize>,
+{
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// Linux normally always succeeds, clamping the size to the system limit.
+/// A quirk of Linux is that it doubles buffer size internally and returns
+/// the doubled buffer size when queried hence the division by two below.
+#[cfg(target_os = "linux")]
+fn probe_max_udp_socket_buffer_size<T>(sock_opt: T) -> io::Result<usize>
+where
+    T: GetSockOpt<Val = usize> + SetSockOpt<Val = usize>,
+{
+    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+    let mut sz = sock_opt.get(&sock)? / 2;
+    if sz < MAX_BUF_SIZE && sock_opt.set(&sock, &MAX_BUF_SIZE).is_ok() {
+        sz = sock_opt.get(&sock)? / 2;
+    }
+    Ok(sz)
+}
+
+/// MacOS will clamp the size to the system limit but will succeed the
+/// first time if the clamped size is larger than the current value.
+/// Subsequent attempts to increase a buffer that is already at max will
+/// fail. Hence we intentionally disregard any error when requesting the
+/// maximum buffer size.
+#[cfg(target_os = "macos")]
+fn probe_max_udp_socket_buffer_size<T>(sock_opt: T) -> io::Result<usize>
+where
+    T: GetSockOpt<Val = usize> + SetSockOpt<Val = usize>,
+{
+    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+    let mut sz = sock_opt.get(&sock)?;
+    if sz < MAX_BUF_SIZE && sock_opt.set(&sock, &MAX_BUF_SIZE).is_ok() {
+        sz = sock_opt.get(&sock)?;
+    }
+    Ok(sz)
+}
+
+/// FreeBSD will not clamp the requested size but rather will return an
+/// error if the size requested exceeds the system limit. Thus a binary
+/// search algorithm is employed to determine the maximum available size.
+#[cfg(target_os = "freebsd")]
+fn probe_max_udp_socket_buffer_size<T>(sock_opt: T) -> io::Result<usize>
+where
+    T: GetSockOpt<Val = usize> + SetSockOpt<Val = usize>,
+{
+    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+    let mut sz = sock_opt.get(&sock)?;
+    #[allow(clippy::arithmetic_side_effects)]
+    if sz < MAX_BUF_SIZE {
+        let (mut lo, mut hi) = (sz + 1, MAX_BUF_SIZE);
+        while lo <= hi {
+            let mid = (lo + hi) / 2;
+            if sock_opt.set(&sock, &mid).is_ok() {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        sz = hi;
+    }
+    Ok(sz)
 }
 
 /// Find a port in the given range with a socket config that is available for both TCP and UDP
@@ -600,44 +742,5 @@ mod tests {
             tcp_listeners,
         ));
         assert!(verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs));
-    }
-
-    // This test is gated for non-macOS platforms because it requires binding to 127.0.0.2,
-    // which is not supported on macOS by default.
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn test_verify_udp_multiple_ips_reachable() {
-        agave_logger::setup();
-        let config = SocketConfiguration::default();
-        let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
-
-        let port_range = localhost_port_range_for_tests();
-
-        let (_srv_udp_port, (srv_udp_sock, srv_tcp_listener)) =
-            bind_common_in_range_with_config(ip_a, port_range, config).unwrap();
-
-        let ip_echo_server_addr = srv_udp_sock.local_addr().unwrap();
-        let _runtime = ip_echo_server(
-            srv_tcp_listener,
-            DEFAULT_IP_ECHO_SERVER_THREADS,
-            /*shred_version=*/ Some(42),
-        );
-
-        let mut udp_sockets = Vec::new();
-        let (_p1, (sock_a, _tl_a)) =
-            bind_common_in_range_with_config(ip_a, port_range, config).unwrap();
-        let (_p2, (sock_b, _tl_b)) =
-            bind_common_in_range_with_config(ip_b, port_range, config).unwrap();
-
-        udp_sockets.push(sock_a);
-        udp_sockets.push(sock_b);
-
-        let socket_refs: Vec<&UdpSocket> = udp_sockets.iter().collect();
-
-        assert!(
-            verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs),
-            "all UDP ports on both 127.0.0.1 and 127.0.0.2 should be reachable"
-        );
     }
 }

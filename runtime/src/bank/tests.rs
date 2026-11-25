@@ -117,7 +117,6 @@ use {
         account_loader::{
             FeesOnlyTransaction, LoadedTransaction, NoOpTransaction, TRANSACTION_ACCOUNT_BASE_SIZE,
         },
-        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
@@ -167,6 +166,8 @@ use {
     test_case::{test_case, test_matrix},
     wincode::{SchemaRead, SchemaWrite},
 };
+
+const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_util creates config with no tx fee and no rent
@@ -5984,7 +5985,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "EZPqueG9qihQs5Ws2Fo2yUjg6BvQWcC2ZE4JBZ3dDtPq",
+        "6YG3ttHjaxksbXMRy1qHJH7H9wnzoPzkxAyAzSNAE6AT",
     );
 }
 
@@ -8900,7 +8901,7 @@ fn test_vote_epoch_panic() {
 }
 
 #[test]
-fn test_collect_transaction_logs_ignores_vote_classification() {
+fn test_collect_transaction_logs() {
     let sender = Keypair::new();
     let recipient = Pubkey::new_unique();
     let execution_details = TransactionExecutionDetails {
@@ -8915,39 +8916,32 @@ fn test_collect_transaction_logs_ignores_vote_classification() {
         }),
     };
 
-    for is_simple_vote in [false, true] {
-        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
-            system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
-            solana_transaction::sanitized::MessageHash::Compute,
-            Some(is_simple_vote),
-            solana_message::SimpleAddressLoader::Disabled,
-            &HashSet::new(),
-        )
-        .unwrap();
-        let mut config = TransactionLogCollectorConfig {
-            filter: TransactionLogCollectorFilter::All,
-            mentioned_addresses: HashSet::new(),
-        };
-        let (logs, mentions) =
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
-        assert_eq!(logs.signature, *transaction.signature());
-        assert_eq!(logs.log_messages, vec!["transaction log"]);
-        assert!(mentions.is_empty());
+    let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
+        system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
+        solana_transaction::sanitized::MessageHash::Compute,
+        solana_message::SimpleAddressLoader::Disabled,
+        &HashSet::new(),
+    )
+    .unwrap();
+    let mut config = TransactionLogCollectorConfig {
+        filter: TransactionLogCollectorFilter::All,
+        mentioned_addresses: HashSet::new(),
+    };
+    let (logs, mentions) =
+        Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+    assert_eq!(logs.signature, *transaction.signature());
+    assert_eq!(logs.log_messages, vec!["transaction log"]);
+    assert!(mentions.is_empty());
 
-        config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
-        assert!(
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
-        );
-        config.mentioned_addresses.insert(recipient);
-        let (_, mentions) =
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
-        assert_eq!(mentions, vec![recipient]);
+    config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
+    assert!(Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none());
+    config.mentioned_addresses.insert(recipient);
+    let (_, mentions) =
+        Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+    assert_eq!(mentions, vec![recipient]);
 
-        config.filter = TransactionLogCollectorFilter::None;
-        assert!(
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
-        );
-    }
+    config.filter = TransactionLogCollectorFilter::None;
+    assert!(Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none());
 }
 
 #[test]

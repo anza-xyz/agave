@@ -1955,7 +1955,7 @@ mod tests {
         solana_rpc_client_nonce_utils::nonblocking::blockhash_query::Source,
         solana_sdk_ids::{stake, system_program},
         solana_transaction_error::TransactionError,
-        solana_transaction_status::TransactionConfirmationStatus,
+        solana_transaction_status_client_types::TransactionConfirmationStatus,
     };
 
     fn legacy_message(instructions: &[Instruction], payer: &Pubkey) -> VersionedMessage {

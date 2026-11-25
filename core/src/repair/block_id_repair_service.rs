@@ -23,6 +23,7 @@ use {
         },
         shred_fetch_stage::SHRED_FETCH_CHANNEL_SIZE,
     },
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     agave_votor::{
         common::DELTA,
         event::{RepairEvent, RepairEventReceiver},
@@ -37,7 +38,6 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, CompletedSlotsReceiver, SlotMeta},
         blockstore_meta::BlockLocation,
-        shred::DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::packet::{BytesPacket, PacketBatch, packet_config},
     solana_pubkey::Pubkey,

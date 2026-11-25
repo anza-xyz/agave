@@ -812,15 +812,13 @@ impl ProgramTest {
     ) {
         self.add_account(
             address,
-            Account {
+            Account::new_with_data(
                 lamports,
-                data: read_file(find_file(filename).unwrap_or_else(|| {
+                read_file(find_file(filename).unwrap_or_else(|| {
                     panic!("Unable to locate {filename}");
                 })),
-                owner,
-                executable: false,
-                rent_epoch: 0,
-            },
+                &owner,
+            ),
         );
     }
 
@@ -835,15 +833,13 @@ impl ProgramTest {
     ) {
         self.add_account(
             address,
-            Account {
+            Account::new_with_data(
                 lamports,
-                data: BASE64_STANDARD
+                BASE64_STANDARD
                     .decode(data_base64)
                     .unwrap_or_else(|err| panic!("Failed to base64 decode: {err}")),
-                owner,
-                executable: false,
-                rent_epoch: 0,
-            },
+                &owner,
+            ),
         );
     }
 
@@ -932,7 +928,7 @@ impl ProgramTest {
                     data,
                     owner: solana_sdk_ids::bpf_loader::id(),
                     executable: true,
-                    rent_epoch: 0,
+                    ..Account::default()
                 },
             );
         };

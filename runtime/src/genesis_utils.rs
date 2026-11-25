@@ -543,13 +543,11 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     );
     initial_accounts.append(&mut validator_accounts);
 
-    let native_mint_account = solana_account::AccountSharedData::from(Account {
-        owner: spl_generic_token::token::id(),
-        data: spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
-        lamports: LAMPORTS_PER_SOL,
-        executable: false,
-        rent_epoch: 1,
-    });
+    let native_mint_account = AccountSharedData::new_with_data(
+        LAMPORTS_PER_SOL,
+        spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
+        &spl_generic_token::token::id(),
+    );
     initial_accounts.push((
         spl_generic_token::token::native_mint::id(),
         native_mint_account,

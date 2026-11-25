@@ -37,11 +37,10 @@ use {
     solana_stake_history::StakeHistoryItem,
     solana_stake_interface::state::{Authorized, Lockup},
     solana_transaction::versioned::VersionedTransaction,
-    solana_transaction_status::{
-        EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
-        UiTransactionStatusMeta,
+    solana_transaction_status_client_types::{
+        EncodedConfirmedBlock, EncodedTransaction, Rewards, TransactionConfirmationStatus,
+        UiTransactionError, UiTransactionStatusMeta,
     },
-    solana_transaction_status_client_types::{Rewards, UiTransactionError},
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
         vote_state::{

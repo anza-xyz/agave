@@ -43,14 +43,6 @@ use {
 #[macro_use]
 extern crate solana_metrics;
 
-// Serde derives are only needed for the bincode arm of the `frozen_abi` ABI-equivalence
-// checks; at runtime these types are (de)serialized with wincode via `SchemaRead`/`SchemaWrite`.
-#[cfg(feature = "stable-abi")]
-use {
-    serde::{Deserialize, Serialize},
-    solana_serde::default_on_eof,
-};
-
 mod access_token;
 mod bigtable;
 mod compression;
@@ -156,17 +148,17 @@ fn key_to_slot(key: &str) -> Option<Slot> {
 // A serialized `StoredConfirmedBlock` is stored in the `block` table
 //
 // StoredConfirmedBlock holds the same contents as ConfirmedBlock, but is slightly compressed and avoids
-// some serde JSON directives that cause issues with bincode
+// some serde JSON directives that are incompatible with the stored binary format
 //
 // Note: in order to continue to support old bincode-serialized bigtable entries, if new fields are
 // added to ConfirmedBlock, they must either be excluded or set to `default_on_eof` here
 //
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, PartialEq, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "8mtdxbe7kZ8oZi2HP3QFS2nXaT9maB4q2Msdx4AfiDRc",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
@@ -178,7 +170,6 @@ struct StoredConfirmedBlock {
     transactions: Vec<StoredConfirmedBlockTransaction>,
     rewards: StoredConfirmedBlockRewards,
     block_time: Option<UnixTimestamp>,
-    #[cfg_attr(feature = "stable-abi", serde(deserialize_with = "default_on_eof"))]
     #[wincode(with = "DefaultOnEmptyRead<Option<u64>>")]
     block_height: Option<u64>,
 }
@@ -234,26 +225,21 @@ impl From<StoredConfirmedBlock> for ConfirmedBlock {
     }
 }
 
-#[cfg_attr(
-    feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, PartialEq, Serialize, Deserialize)
-)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlockTransaction {
     #[cfg_attr(
         feature = "stable-abi",
-        stable_abi_sample(with = "sample_bincode_compatible_transaction(rng)")
+        stable_abi_sample(with = "sample_legacy_or_v0_transaction(rng)")
     )]
     transaction: VersionedTransaction,
     meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
 }
 
-// `VersionedTransaction`'s V1 layout is wincode-only and has no bincode equivalent, so sampling it
-// would make the bincode and wincode ABI digests of `StoredConfirmedBlock` diverge. Restrict the
-// sample to the legacy/v0 versions — the only formats present in historical bincode-serialized
-// bigtable blocks — which encode identically under bincode and wincode.
+// Historical bigtable blocks hold only legacy and v0 transactions, so the digest of
+// `StoredConfirmedBlock` samples only those versions.
 #[cfg(feature = "stable-abi")]
-fn sample_bincode_compatible_transaction(
+fn sample_legacy_or_v0_transaction(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> VersionedTransaction {
     use solana_frozen_abi::stable_abi::StableAbi;
@@ -301,10 +287,7 @@ impl From<StoredConfirmedBlockTransaction> for TransactionWithStatusMeta {
     }
 }
 
-#[cfg_attr(
-    feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, PartialEq, Serialize, Deserialize)
-)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlockTransactionStatusMeta {
     err: Option<TransactionError>,
@@ -339,6 +322,7 @@ impl From<StoredConfirmedBlockTransactionStatusMeta> for TransactionStatusMeta {
             return_data: None,
             compute_units_consumed: None,
             cost_units: None,
+            loaded_accounts_data_size: None,
         }
     }
 }
@@ -363,10 +347,7 @@ impl From<TransactionStatusMeta> for StoredConfirmedBlockTransactionStatusMeta {
 
 type StoredConfirmedBlockRewards = Vec<StoredConfirmedBlockReward>;
 
-#[cfg_attr(
-    feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, PartialEq, Serialize, Deserialize)
-)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(SchemaRead, SchemaWrite)]
 struct StoredConfirmedBlockReward {
     pubkey: String,
@@ -399,10 +380,10 @@ impl From<Reward> for StoredConfirmedBlockReward {
 // A serialized `TransactionInfo` is stored in the `tx` table
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "52D8hfqoXUUKceK5LX9U8d2jeFgCPf71rbY64myujjY3",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
@@ -451,10 +432,10 @@ impl From<TransactionInfo> for TransactionStatus {
 
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, Serialize, Deserialize),
+    derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "Arv3gGibvif2UEycMdRBdj4Jid2NaLmg5ZwXYLfBAsRS",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]

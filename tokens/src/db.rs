@@ -6,7 +6,7 @@ use {
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_transaction::Transaction,
-    solana_transaction_status::TransactionStatus,
+    solana_transaction_status_client_types::TransactionStatus,
     std::{cmp::Ordering, collections::HashMap, fs, io, path::Path},
 };
 
@@ -236,7 +236,7 @@ mod tests {
         super::*,
         csv::{ReaderBuilder, Trim},
         solana_transaction_error::TransactionError,
-        solana_transaction_status::TransactionConfirmationStatus,
+        solana_transaction_status_client_types::TransactionConfirmationStatus,
         std::assert_matches,
         tempfile::NamedTempFile,
     };

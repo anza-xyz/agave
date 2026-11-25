@@ -8,7 +8,6 @@ use {
         system_monitor_service::XdpNetworkConfigReport,
         validator::{XdpComponents, XdpTransmitSetup},
     },
-    solana_net_utils::multihomed_sockets::BindIpAddrs,
     std::{
         net::{IpAddr, Ipv4Addr},
         sync::{Arc, atomic::AtomicBool},
@@ -17,7 +16,7 @@ use {
 
 pub(super) fn build_xdp_transmit_setup(
     mut xdp_config: XdpConfig,
-    bind_addresses: &BindIpAddrs,
+    bind_ip_addr: IpAddr,
     exit: Arc<AtomicBool>,
 ) -> Result<(XdpTransmitSetup, XdpNetworkConfigReport), String> {
     let device = if let Some(interface) = xdp_config.interface.as_ref() {
@@ -34,7 +33,7 @@ pub(super) fn build_xdp_transmit_setup(
     // uses the same interface name, with bond-master fallback.
     xdp_config.interface = Some(xdp_interface.clone());
     let zero_copy = xdp_config.zero_copy;
-    let src_ip = resolve_xdp_source_ip(bind_addresses.active(), &xdp_interface)?;
+    let src_ip = resolve_xdp_source_ip(bind_ip_addr, &xdp_interface)?;
     let transmitter_builder = TransmitterBuilder::new(xdp_config, exit)
         .map_err(|err| format!("failed to create XDP transmitter on {xdp_interface}: {err}"))?;
     // Nothing can express per-component queue assignments yet, so every
@@ -73,7 +72,6 @@ mod xdp_tests {
     use {
         super::*,
         agave_xdp::transmitter::QueueCpuBinding,
-        solana_net_utils::multihomed_sockets::BindIpAddrs,
         std::net::{IpAddr, Ipv4Addr, Ipv6Addr},
     };
 
@@ -129,8 +127,7 @@ mod xdp_tests {
                 }],
                 false,
             ),
-            &BindIpAddrs::new(vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))])
-                .expect("a single specified IPv4 bind address should be valid"),
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
             Arc::new(AtomicBool::new(false)),
         );
         let error = result

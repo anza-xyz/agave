@@ -4,7 +4,6 @@
 pub mod banlist;
 mod ip_echo_client;
 mod ip_echo_server;
-pub mod multihomed_sockets;
 pub mod pinned_xdp_sender;
 pub mod quic_socket;
 pub mod socket_addr_space;
@@ -17,9 +16,6 @@ pub(crate) mod test_port_allocator;
 pub mod token_bucket;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod udp_relay;
-
-#[cfg(feature = "dev-context-only-utils")]
-pub mod tooling_for_tests;
 
 pub use {
     agave_xdp::transmitter::TrySendError,

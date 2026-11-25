@@ -821,7 +821,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
             genesis_config.add_account(
                 faucet_pubkey,
-                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+                AccountSharedData::empty(faucet_lamports, &system_program::id()),
             );
             faucet_lamports
         })
@@ -910,7 +910,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     data: program_data,
                     executable: true,
                     owner: loader,
-                    rent_epoch: 0,
+                    ..Account::default()
                 }),
             );
         }
@@ -946,13 +946,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             program_data.extend_from_slice(&program_data_elf);
             genesis_config.add_account(
                 programdata_address,
-                AccountSharedData::from(Account {
-                    lamports: genesis_config.rent.minimum_balance(program_data.len()),
-                    data: program_data,
-                    owner: loader,
-                    executable: false,
-                    rent_epoch: 0,
-                }),
+                AccountSharedData::new_with_data(
+                    genesis_config.rent.minimum_balance(program_data.len()),
+                    program_data,
+                    &loader,
+                ),
             );
 
             let program_data = wincode::serialize(&UpgradeableLoaderState::Program {
@@ -966,7 +964,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     data: program_data,
                     owner: loader,
                     executable: true,
-                    rent_epoch: 0,
+                    ..Account::default()
                 }),
             );
         }

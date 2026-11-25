@@ -32,6 +32,14 @@ pub enum StorageListItem {
 
 const _: () = assert!(size_of::<StorageListItem>() == 16);
 
+impl StorageListItem {
+    pub fn slot_and_id(&self) -> (Slot, AccountsFileId) {
+        match *self {
+            Self::AppendVec { slot, id } | Self::Split { slot, id, .. } => (slot, id),
+        }
+    }
+}
+
 /// On-disk format of the storages list file.
 ///
 /// Written next to the bank snapshot on graceful exit to record which storages in the account
@@ -110,11 +118,7 @@ pub struct LegacyStoragesList {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::serde_snapshot::{deserialize_wincode_from, serialize_into},
-        std::io::Cursor,
-    };
+    use {super::*, crate::serde_snapshot::STORAGES_LIST_CONFIG};
 
     #[test]
     fn test_roundtrip_storages_list() {
@@ -135,10 +139,10 @@ mod tests {
             ],
         };
 
-        let mut buf = Vec::new();
-        serialize_into(Cursor::new(&mut buf), &list).unwrap();
+        let buf = wincode::config::serialize(&list, STORAGES_LIST_CONFIG).unwrap();
 
-        let decoded: StoragesList = deserialize_wincode_from(Cursor::new(&buf)).unwrap();
+        let decoded: StoragesList =
+            wincode::config::deserialize(&buf, STORAGES_LIST_CONFIG).unwrap();
         assert_eq!(decoded.items, list.items);
     }
 
@@ -155,8 +159,7 @@ mod tests {
             ],
         };
 
-        let mut buf = Vec::new();
-        serialize_into(Cursor::new(&mut buf), &legacy_list).unwrap();
+        let buf = wincode::config::serialize(&legacy_list, STORAGES_LIST_CONFIG).unwrap();
 
         let expected_current: Vec<_> = legacy_list
             .items
@@ -167,7 +170,8 @@ mod tests {
             })
             .collect();
 
-        let decoded: LegacyStoragesList = deserialize_wincode_from(Cursor::new(&buf)).unwrap();
+        let decoded: LegacyStoragesList =
+            wincode::config::deserialize(&buf, STORAGES_LIST_CONFIG).unwrap();
         let actual_current = StoragesList::from(decoded);
         assert_eq!(actual_current.items, expected_current);
     }

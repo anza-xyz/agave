@@ -44,18 +44,12 @@ impl AccountPrivateFields {
         self.payload.len()
     }
 
-    #[expect(
-        deprecated,
-        reason = "only the deprecated constructor keeps a loaded `rent_epoch` with a shared \
-                  payload"
-    )]
     fn into_account_shared_data(self, shared_fields: &AccountSharedFields) -> AccountSharedData {
-        AccountSharedData::create_from_existing_shared_data(
+        AccountSharedData::new_with_shared_data(
             shared_fields.lamports,
             self.payload,
-            shared_fields.owner,
+            &shared_fields.owner,
             self.executable,
-            self.rent_epoch,
         )
     }
 }
