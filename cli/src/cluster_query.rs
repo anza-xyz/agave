@@ -226,6 +226,10 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                 .alias("get-slot"),
         )
         .subcommand(SubCommand::with_name("block-height").about("Get current block height"))
+        .subcommand(
+            SubCommand::with_name("blockhash")
+                .about("Get the latest blockhash, for use with --blockhash when signing offline"),
+        )
         .subcommand(SubCommand::with_name("epoch").about("Get current epoch"))
         .subcommand(
             SubCommand::with_name("largest-accounts")
@@ -542,6 +546,12 @@ pub fn parse_get_slot(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliEr
 
 pub fn parse_get_block_height(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     Ok(CliCommandInfo::without_signers(CliCommand::GetBlockHeight))
+}
+
+pub fn parse_get_latest_blockhash(_matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    Ok(CliCommandInfo::without_signers(
+        CliCommand::GetLatestBlockhash,
+    ))
 }
 
 pub fn parse_largest_accounts(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -1232,6 +1242,19 @@ pub async fn process_get_block_height(
 ) -> ProcessResult {
     let block_height = rpc_client.get_block_height().await?;
     Ok(block_height.to_string())
+}
+
+pub async fn process_get_latest_blockhash(
+    rpc_client: &RpcClient,
+    config: &CliConfig<'_>,
+) -> ProcessResult {
+    let (blockhash, last_valid_block_height) = rpc_client
+        .get_latest_blockhash_with_commitment(rpc_client.commitment())
+        .await?;
+    Ok(config.output_format.formatted_string(&CliLatestBlockhash {
+        blockhash: blockhash.to_string(),
+        last_valid_block_height,
+    }))
 }
 
 pub fn parse_show_block_production(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
@@ -2251,6 +2274,14 @@ mod tests {
         assert_eq!(
             parse_command(&test_get_epoch_info, &default_signer, &mut None).unwrap(),
             CliCommandInfo::without_signers(CliCommand::GetEpochInfo)
+        );
+
+        let test_get_latest_blockhash = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "blockhash"]);
+        assert_eq!(
+            parse_command(&test_get_latest_blockhash, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::GetLatestBlockhash)
         );
 
         let test_leader_schedule = test_commands

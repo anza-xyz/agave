@@ -91,6 +91,7 @@ pub enum CliCommand {
     GetGenesisHash,
     GetSlot,
     GetBlockHeight,
+    GetLatestBlockhash,
     GetTransactionCount,
     LargestAccounts {
         filter: Option<RpcLargestAccountsFilter>,
@@ -656,6 +657,7 @@ pub fn parse_command(
             parse_get_recent_prioritization_fees(matches)
         }
         ("block-height", Some(matches)) => parse_get_block_height(matches),
+        ("blockhash", Some(matches)) => parse_get_latest_blockhash(matches),
         ("block-production", Some(matches)) => parse_show_block_production(matches),
         ("block-time", Some(matches)) => parse_get_block_time(matches),
         ("catchup", Some(matches)) => parse_catchup(matches, wallet_manager),
@@ -959,6 +961,7 @@ pub async fn process_command(config: &CliConfig<'_>) -> ProcessResult {
         CliCommand::GetGenesisHash => process_get_genesis_hash(&rpc_client).await,
         CliCommand::GetSlot => process_get_slot(&rpc_client, config).await,
         CliCommand::GetBlockHeight => process_get_block_height(&rpc_client, config).await,
+        CliCommand::GetLatestBlockhash => process_get_latest_blockhash(&rpc_client, config).await,
         CliCommand::LargestAccounts { filter } => {
             process_largest_accounts(&rpc_client, config, filter.clone()).await
         }

@@ -2111,6 +2111,23 @@ impl fmt::Display for CliAgGenesisInfo {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CliLatestBlockhash {
+    pub blockhash: String,
+    pub last_valid_block_height: u64,
+}
+
+impl QuietDisplay for CliLatestBlockhash {}
+impl VerboseDisplay for CliLatestBlockhash {}
+
+impl fmt::Display for CliLatestBlockhash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Only the blockhash, so the output can be passed to `--blockhash`.
+        write!(f, "{}", self.blockhash)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliBlockTime {
     pub slot: Slot,
     pub timestamp: UnixTimestamp,

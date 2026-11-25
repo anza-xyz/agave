@@ -55,6 +55,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* Added `solana blockhash`, which prints the latest blockhash at the configured commitment so it can be passed to `--blockhash` when signing offline. `--output json` also returns the last valid block height.
+
 ### solana-client
 
 #### Breaking
