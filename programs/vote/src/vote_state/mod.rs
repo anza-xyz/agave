@@ -788,7 +788,7 @@ mod tests {
 
         // Simulate an account.
         vote_state.set_root_slot(Some(103));
-        vote_state.set_latest_vote(136);
+        vote_state.set_latest_vote_slot(136);
 
         // Create an initial vote account that is sized for the 1_14_11 version of vote state, and has only the
         // required lamports for rent exempt minimum at that size
@@ -800,9 +800,9 @@ mod tests {
                     authorized_withdrawer: *vote_state.authorized_withdrawer(),
                     commission: vote_state.commission(),
                     votes: vote_state
-                        .votes()
-                        .iter()
-                        .map(|landed_vote| (*landed_vote).into())
+                        .latest_vote_slot()
+                        .map(Lockout::new)
+                        .into_iter()
                         .collect(),
                     root_slot: vote_state.root_slot(),
                     authorized_voters: vote_state.authorized_voters().clone(),
