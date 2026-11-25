@@ -14,8 +14,9 @@ use {
 /// Parses `--shred-receiver-address` values: each value holds one or more
 /// comma-separated `ip:port` or `host:port` entries. A hostname is resolved
 /// here, at startup, and every IPv4 address it resolves to becomes a destination;
-/// IPv6 and port 0 are errors. Duplicates are dropped. The count is
-/// unbounded; each address costs one extra copy of the leader's shred stream.
+/// IPv6 and port 0 are errors. Duplicates are dropped, and more than
+/// [`solana_turbine::MAX_SHRED_RECEIVER_ADDRESSES`] distinct addresses, counted
+/// after resolution, are an error.
 pub fn parse_shred_receiver_addresses<I: IntoIterator<Item = S>, S: AsRef<str>>(
     values: I,
 ) -> Result<ShredReceiverAddresses, String> {
@@ -96,6 +97,16 @@ mod tests {
     fn test_parse_port_zero_rejected() {
         let err = parse_shred_receiver_addresses(["127.0.0.1:0"]).unwrap_err();
         assert!(err.contains("nonzero port"));
+    }
+
+    #[test]
+    fn test_parse_too_many_rejected() {
+        let values: Vec<_> = (1..=solana_turbine::MAX_SHRED_RECEIVER_ADDRESSES + 1)
+            .map(|i| format!("127.0.0.1:{}", 9000 + i))
+            .collect();
+        let err = parse_shred_receiver_addresses(&values).unwrap_err();
+        assert!(err.contains("too many shred receiver addresses"));
+        assert!(parse_shred_receiver_addresses(&values[1..]).is_ok());
     }
 
     #[test]

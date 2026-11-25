@@ -12,7 +12,9 @@ mod shred_receiver_addresses;
 pub mod sigverify_shreds;
 
 pub use {
-    shred_receiver_addresses::{ShredReceiverAddressError, ShredReceiverAddresses},
+    shred_receiver_addresses::{
+        MAX_SHRED_RECEIVER_ADDRESSES, ShredReceiverAddressError, ShredReceiverAddresses,
+    },
     solana_net_utils::PinnedXdpSender as XdpSender,
 };
 

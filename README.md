@@ -76,8 +76,8 @@ shred this validator broadcasts as leader to each listed destination, after the 
 $ agave-validator ... --shred-receiver-address 192.0.2.10:8001
 ```
 
-Each address is one more full copy of the leader's shred stream, with no built-in limit, so size
-the uplink for it. The copies take the path of the turbine packets: with XDP they leave through
+At most 8 distinct addresses are accepted. Each is one more full copy of the leader's shred
+stream, so size the uplink for it. The copies take the path of the turbine packets: with XDP they leave through
 the XDP interface, so every receiver must be reachable through it, and without XDP they leave
 through the broadcast socket on `--bind-address`.
 

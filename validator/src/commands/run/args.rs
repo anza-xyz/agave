@@ -636,10 +636,10 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help(
                 "Send a copy of every shred this validator broadcasts as leader to HOST:PORT, \
                  after the turbine packets. Repeat the flag or comma-separate entries; a hostname \
-                 is resolved at startup to its IPv4 addresses (IPv6 is not supported). Each \
-                 address is one more full copy of the leader's shred stream, with no built-in \
-                 limit. Copies take the turbine packets' path: the XDP interface with XDP, the \
-                 broadcast socket on --bind-address without it.",
+                 is resolved at startup to its IPv4 addresses (IPv6 is not supported). At most 8 \
+                 distinct addresses; each is one more full copy of the leader's shred stream. \
+                 Copies take the turbine packets' path: the XDP interface with XDP, the broadcast \
+                 socket on --bind-address without it.",
             ),
     )
     .arg(

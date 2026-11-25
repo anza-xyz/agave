@@ -3,10 +3,16 @@
 //!
 //! The list is validated once, here, so the broadcast path can trust it:
 //! every address is IPv4 (turbine sends over IPv4), every
-//! port is nonzero, and there are no duplicates. There is no maximum count;
-//! each address costs one extra copy of the leader's shred stream.
+//! port is nonzero, there are no duplicates, and there are at most
+//! [`MAX_SHRED_RECEIVER_ADDRESSES`]. Each address costs one extra copy of the
+//! leader's shred stream, in the transmit queue the turbine packets use.
 
 use std::{collections::HashSet, net::SocketAddr, ops::Deref};
+
+/// The most receivers a leader sends copies to. During a burst of shreds the
+/// copies sit in the transmit queue ahead of the next turbine packets, so the
+/// count is bounded.
+pub const MAX_SHRED_RECEIVER_ADDRESSES: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ShredReceiverAddressError {
@@ -14,6 +20,10 @@ pub enum ShredReceiverAddressError {
     Ipv6(SocketAddr),
     #[error("shred receiver address needs a nonzero port: {0}")]
     ZeroPort(SocketAddr),
+    #[error(
+        "too many shred receiver addresses: {0}, the maximum is {MAX_SHRED_RECEIVER_ADDRESSES}"
+    )]
+    TooMany(usize),
 }
 
 /// Validated, deduplicated IPv4 destinations in configured order.
@@ -38,6 +48,9 @@ impl ShredReceiverAddresses {
             if seen.insert(addr) {
                 unique.push(addr);
             }
+        }
+        if unique.len() > MAX_SHRED_RECEIVER_ADDRESSES {
+            return Err(ShredReceiverAddressError::TooMany(unique.len()));
         }
         Ok(Self(unique))
     }
@@ -96,8 +109,16 @@ mod tests {
     }
 
     #[test]
-    fn test_no_cap() {
-        let addrs = ShredReceiverAddresses::new((1..=1000).map(v4)).unwrap();
-        assert_eq!(addrs.len(), 1000);
+    fn test_cap_counts_distinct_addresses() {
+        let max = MAX_SHRED_RECEIVER_ADDRESSES as u16;
+        // Duplicates do not count toward the cap.
+        let addrs = ShredReceiverAddresses::new((1..=max).chain(1..=max).map(v4)).unwrap();
+        assert_eq!(addrs.len(), MAX_SHRED_RECEIVER_ADDRESSES);
+        assert_eq!(
+            ShredReceiverAddresses::new((1..=max + 1).map(v4)),
+            Err(ShredReceiverAddressError::TooMany(
+                MAX_SHRED_RECEIVER_ADDRESSES + 1
+            ))
+        );
     }
 }
