@@ -19,6 +19,8 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* The `/v0/circulating-supply` endpoint has been removed.
+
 #### Changes
 
 ### Validator
