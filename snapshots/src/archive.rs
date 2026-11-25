@@ -1,7 +1,10 @@
 use {
     crate::{
-        ArchiveFormat, Result, SnapshotArchiveKind, error::ArchiveSnapshotPackageError,
-        multiframe::MultiFrameZstdWriter, paths, snapshot_archive_info::SnapshotArchiveInfo,
+        ArchiveFormat, Result, SnapshotArchiveKind,
+        error::ArchiveSnapshotPackageError,
+        multiframe::{MultiFrameZstdWriter, ZSTD_FRAME_SIZE},
+        paths,
+        snapshot_archive_info::SnapshotArchiveInfo,
         snapshot_hash::SnapshotHash,
     },
     agave_fs::{
@@ -41,10 +44,6 @@ const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 const STORAGE_FILE_OPEN_CHUNK_SIZE: usize = 25
     * (INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO.0
         + INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO.1);
-
-// Uncompressed bytes per zstd frame. 32 MiB keeps compression loss below ~0.02
-// while giving parallel decompressors enough chunk size.
-const ZSTD_FRAME_SIZE: u32 = 32 * 1024 * 1024;
 
 /// Archives a snapshot into `archive_path`
 pub fn archive_snapshot(

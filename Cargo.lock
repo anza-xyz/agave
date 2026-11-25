@@ -413,6 +413,7 @@ dependencies = [
  "agave-fs",
  "agave-logger",
  "agave-snapshots",
+ "agave-worker-pool",
  "bzip2",
  "crossbeam-channel",
  "log",
