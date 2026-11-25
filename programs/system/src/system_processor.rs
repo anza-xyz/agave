@@ -1546,7 +1546,7 @@ mod tests {
                     } else if sysvar::rent::check_id(&meta.pubkey) {
                         create_sysvar_account(&Rent::free())
                     } else {
-                        AccountSharedData::new(0, 0, &Pubkey::new_unique())
+                        AccountSharedData::empty(0, &Pubkey::new_unique())
                     },
                 )
             })

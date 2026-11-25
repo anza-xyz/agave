@@ -904,19 +904,10 @@ mod tests {
         let key0 = keypair.pubkey();
         let key1 = Pubkey::from([5u8; 32]);
 
-        let account = AccountSharedData::from(Account {
-            lamports: 1,
-            rent_epoch: 1,
-            ..Account::default()
-        });
+        let account = AccountSharedData::empty(1, &Pubkey::default());
         accounts.push((key0, account));
 
-        let account = AccountSharedData::from(Account {
-            lamports: 2,
-            data: vec![0; 1],
-            rent_epoch: 1,
-            ..Account::default()
-        });
+        let account = AccountSharedData::new_with_data(2, vec![0; 1], &Pubkey::default());
         accounts.push((key1, account));
 
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
@@ -1034,11 +1025,7 @@ mod tests {
         let key1 = bpf_loader_upgradeable::id();
         let key2 = Pubkey::from([6u8; 32]);
 
-        let account = AccountSharedData::from(Account {
-            lamports: 1,
-            rent_epoch: 1,
-            ..Account::default()
-        });
+        let account = AccountSharedData::empty(1, &Pubkey::default());
         accounts.push((key0, account));
 
         let account = AccountSharedData::from(Account {
@@ -1046,7 +1033,7 @@ mod tests {
             data: vec![0; 1],
             owner: native_loader::id(),
             executable: true,
-            rent_epoch: 1,
+            ..Account::default()
         });
         accounts.push((key1, account));
 
@@ -1055,7 +1042,7 @@ mod tests {
             data: vec![0; 1],
             owner: key1,
             executable: true,
-            rent_epoch: 1,
+            ..Account::default()
         });
         accounts.push((key2, account));
 

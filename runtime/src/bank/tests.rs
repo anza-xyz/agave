@@ -59,8 +59,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH,
-        MAX_RECENT_BLOCKHASHES, Slot, UnixTimestamp,
+        DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_RECENT_BLOCKHASHES, Slot,
+        UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
@@ -10389,13 +10389,7 @@ fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
                 let balance = rent_exempt_minimum - 1;
                 genesis_config.accounts.insert(
                     deleted_account.pubkey(),
-                    Account {
-                        lamports: balance,
-                        data: vec![0; account_data_size],
-                        owner: mock_program_id,
-                        executable: false,
-                        rent_epoch: INITIAL_RENT_EPOCH + 1,
-                    },
+                    Account::new_with_data(balance, vec![0; account_data_size], &mock_program_id),
                 );
                 balance
             }
@@ -10479,13 +10473,11 @@ fn test_invalid_rent_state_changes_existing_accounts() {
     let rent_exempt_account = Keypair::new();
     genesis_config.accounts.insert(
         rent_exempt_account.pubkey(),
-        Account {
-            lamports: rent_exempt_minimum,
-            data: vec![0; account_data_size],
-            owner: mock_program_id,
-            executable: false,
-            rent_epoch: INITIAL_RENT_EPOCH + 1,
-        },
+        Account::new_with_data(
+            rent_exempt_minimum,
+            vec![0; account_data_size],
+            &mock_program_id,
+        ),
     );
 
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
@@ -11077,13 +11069,11 @@ fn test_resize_and_rent() {
     );
 
     let test_pubkey = solana_pubkey::new_rand();
-    let rent_paying_account = AccountSharedData::from(Account {
-        lamports: rent_exempt_minimum_small,
-        data: vec![0; account_data_size_small],
-        owner: mock_program_id,
-        executable: false,
-        rent_epoch: 1,
-    });
+    let rent_paying_account = AccountSharedData::new_with_data(
+        rent_exempt_minimum_small,
+        vec![0; account_data_size_small],
+        &mock_program_id,
+    );
 
     // restore program-owned account
     bank.store_account(&test_pubkey, &rent_paying_account);

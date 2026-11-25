@@ -112,7 +112,7 @@ impl MockBankCallback {
             data: name.as_bytes().to_vec(),
             owner: solana_sdk_ids::native_loader::id(),
             executable: true,
-            rent_epoch: 0,
+            ..Account::default()
         });
 
         self.account_shared_data
