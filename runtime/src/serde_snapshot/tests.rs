@@ -80,8 +80,7 @@ mod serde_snapshot_tests {
         let (accounts_db, _) = reconstruct_accountsdb_from_fields(
             snapshot_accounts_db_fields,
             accounts_db,
-            None,
-            false,
+            snapshot_bank_utils::index_generator(None, false),
         )?;
         Ok(accounts_db)
     }
