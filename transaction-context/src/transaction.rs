@@ -1977,9 +1977,9 @@ mod access_violation_handler_tests {
         crate::MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION,
         solana_sbpf::{
             ebpf::MM_INPUT_START,
-            memory_region::{MemoryMapping, map_with_access_violation_handler},
+            memory_region::MemoryMapping,
             program::SBPFVersion,
-            vm::Config,
+            vm::{Config, ContextObject},
         },
         std::ptr::NonNull,
         test_case::test_case,
@@ -2093,13 +2093,10 @@ mod access_violation_handler_tests {
 
         /// A store of `len` bytes at offset `offset` of the account, as done by a program.
         fn store(&mut self, offset: usize, len: u64) -> bool {
-            let result: Result<_, _> = map_with_access_violation_handler(
-                &mut self.vm,
-                AccessType::Store,
-                VADDR + offset as u64,
-                len,
-            )
-            .into();
+            let memory_mapping = unsafe { self.vm.active_mapping_ptr().as_mut() };
+            let result: Result<_, _> = memory_mapping
+                .map_with_access_violation_handler(AccessType::Store, VADDR + offset as u64, len)
+                .into();
             self.assert_region_matches_account();
             result.is_ok()
         }
