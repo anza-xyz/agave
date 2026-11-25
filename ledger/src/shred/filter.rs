@@ -1009,7 +1009,7 @@ mod tests {
                 &mut recovered_shreds,
                 &mut recovered_data_shreds,
             ),
-            Err(Error::TooManyErasures)
+            Err(Error::TooFewDataShards)
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());

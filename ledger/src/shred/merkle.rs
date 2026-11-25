@@ -594,6 +594,7 @@ impl ShredMask {
         self.0[i / SHRED_MASK_WORD_SIZE] |= 1 << (i % SHRED_MASK_WORD_SIZE);
     }
 
+    #[cfg(test)]
     pub(crate) fn count_ones(&self) -> usize {
         self.0.iter().map(|w| w.count_ones() as usize).sum()
     }
@@ -930,11 +931,6 @@ pub(super) fn rebuild_erasure_batch(
         nodes[shard_index] = Some(shred.merkle_node()?);
         mask.insert(shard_index);
         batch[shard_index] = Some(shred);
-    }
-
-    let num_erasures = SHREDS_PER_FEC_BLOCK - mask.count_ones();
-    if num_erasures > CODING_SHREDS_PER_FEC_BLOCK {
-        return Err(Error::TooManyErasures);
     }
 
     let ReferenceHeaders {
