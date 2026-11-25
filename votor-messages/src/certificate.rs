@@ -6,6 +6,17 @@ use {
     solana_clock::Slot,
 };
 
+/// Threshold for building a finalize cert
+pub const FINALIZE_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+/// Threshold for building a skip cert
+pub const SKIP_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+/// Threshold for building a notar cert
+pub const NOTAR_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+/// Threshold for building a notar fallback cert
+pub const NOTAR_FALLBACK_CERT_THRESHOLD: Fraction = Fraction::from_percentage(60);
+/// Threshold for building a fast finalize cert
+pub const FAST_FINALIZE_CERT_THRESHOLD: Fraction = Fraction::from_percentage(80);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A cert signature
 pub struct CertSignature {
@@ -110,11 +121,11 @@ impl CertificateType {
     /// Returns the threshold needed to complete the cert of this type.
     pub const fn threshold(&self) -> Fraction {
         match self {
-            Self::Finalize(_) => Fraction::from_percentage(60),
-            Self::Skip(_) => Fraction::from_percentage(60),
-            Self::Notarize(_) => Fraction::from_percentage(60),
-            Self::NotarizeFallback(_) => Fraction::from_percentage(60),
-            Self::FinalizeFast(_) => Fraction::from_percentage(80),
+            Self::Finalize(_) => FINALIZE_CERT_THRESHOLD,
+            Self::Skip(_) => SKIP_CERT_THRESHOLD,
+            Self::Notarize(_) => NOTAR_CERT_THRESHOLD,
+            Self::NotarizeFallback(_) => NOTAR_FALLBACK_CERT_THRESHOLD,
+            Self::FinalizeFast(_) => FAST_FINALIZE_CERT_THRESHOLD,
             Self::Genesis(_) => GENESIS_VOTE_THRESHOLD,
         }
     }

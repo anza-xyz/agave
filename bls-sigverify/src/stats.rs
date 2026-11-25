@@ -189,8 +189,6 @@ pub(super) struct SigVerifyCertStats {
     /// Number of certs skipped because another cert of the same `CertificateType` was verified in
     /// the same batch.
     pub(super) redundant_certs_skipped: Saturating<u64>,
-    /// Number of times we are banning a validator.
-    pub(super) banning_validator: Saturating<u64>,
 
     /// Number of times cert verification failed.
     pub(super) certificate_verification_failed: Saturating<u64>,
@@ -208,7 +206,6 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            banning_validator,
             certificate_verification_failed,
             pool_sender,
             fn_verify_and_send_certs_stats,
@@ -217,7 +214,6 @@ impl SigVerifyCertStats {
         self.sig_verified_certs += sig_verified_certs;
         self.unnecessary_certs_verified += unnecessary_certs_verified;
         self.redundant_certs_skipped += redundant_certs_skipped;
-        self.banning_validator += banning_validator;
         self.certificate_verification_failed += certificate_verification_failed;
         self.pool_sender.merge(pool_sender);
         self.fn_verify_and_send_certs_stats
@@ -230,7 +226,6 @@ impl SigVerifyCertStats {
             sig_verified_certs,
             unnecessary_certs_verified,
             redundant_certs_skipped,
-            banning_validator,
             certificate_verification_failed,
             pool_sender,
             fn_verify_and_send_certs_stats,
@@ -247,7 +242,6 @@ impl SigVerifyCertStats {
                 i64
             ),
             ("redundant_certs_skipped", redundant_certs_skipped.0, i64),
-            ("banning_validator", banning_validator.0, i64),
             (
                 "certificate_verification_failed",
                 certificate_verification_failed.0,
@@ -274,7 +268,6 @@ impl Default for SigVerifyCertStats {
             sig_verified_certs: Saturating(0),
             unnecessary_certs_verified: Saturating(0),
             redundant_certs_skipped: Saturating(0),
-            banning_validator: Saturating(0),
             certificate_verification_failed: Saturating(0),
             pool_sender: new_cert_stats_pool_sender_stats(),
             fn_verify_and_send_certs_stats: WelfordStats::default(),
@@ -293,8 +286,6 @@ pub(super) struct VoteVerificationStats {
     pub(super) optimistic_batch: WelfordStats,
     /// Number of votes that were individually verified.
     pub(super) num_individual_verified: Saturating<usize>,
-    /// Number of times we are banning a validator.
-    pub(super) banning_validator: Saturating<u64>,
     /// Stats for [`verify_votes_optimistic`].
     pub(super) fn_verify_votes_optimistic_stats: WelfordStats,
     /// Stats for [`verify_individual_votes`].
@@ -308,7 +299,6 @@ impl VoteVerificationStats {
             optimistic_verification_failed,
             optimistic_batch,
             num_individual_verified,
-            banning_validator,
             fn_verify_votes_optimistic_stats,
             fn_verify_individual_votes_stats,
         } = other;
@@ -316,7 +306,6 @@ impl VoteVerificationStats {
         self.optimistic_verification_failed += optimistic_verification_failed;
         self.optimistic_batch.merge(optimistic_batch);
         self.num_individual_verified += num_individual_verified;
-        self.banning_validator += banning_validator;
         self.fn_verify_votes_optimistic_stats
             .merge(fn_verify_votes_optimistic_stats);
         self.fn_verify_individual_votes_stats
@@ -329,7 +318,6 @@ impl VoteVerificationStats {
             optimistic_verification_failed,
             optimistic_batch,
             num_individual_verified,
-            banning_validator,
             fn_verify_votes_optimistic_stats,
             fn_verify_individual_votes_stats,
         } = self;
@@ -357,7 +345,6 @@ impl VoteVerificationStats {
                 i64
             ),
             ("num_individual_verified", num_individual_verified.0, i64),
-            ("banning_validator", banning_validator.0, i64),
             (
                 "fn_verify_votes_optimistic_count",
                 fn_verify_votes_optimistic_stats.count(),
