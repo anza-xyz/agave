@@ -39,6 +39,10 @@ Release channels have their own copy of this changelog:
 #### Changes
 
 * Changed the default account storage file format to SplitFile.
+* Added `--shred-receiver-address`: send a copy of every shred this validator broadcasts as leader
+  to extra IPv4 `host:port` destinations (compatible with the Jito-Agave flag). Each address costs
+  one more copy of the leader's shred stream; there is no built-in limit. Reported as
+  `mirrored_packets` / `dropped_packets_mirrored` in `broadcast-transmit-shreds-stats`.
 
 ### CLI
 

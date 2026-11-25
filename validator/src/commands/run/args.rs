@@ -3,6 +3,7 @@ use {
         bootstrap::RpcBootstrapConfig,
         cli::{DefaultArgs, hash_validator, port_range_validator, port_validator},
         commands::{FromClapArgMatches, Result},
+        shred_receiver_addresses::parse_shred_receiver_addresses,
     },
     clap::{App, Arg, ArgMatches, values_t},
     solana_clap_utils::{
@@ -22,6 +23,7 @@ use {
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
+    solana_turbine::ShredReceiverAddresses,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{collections::HashSet, net::SocketAddr, path::PathBuf},
 };
@@ -55,6 +57,7 @@ pub struct RunArgs {
     pub pub_sub_config: PubSubConfig,
     pub send_transaction_service_config: SendTransactionServiceConfig,
     pub filter_keys: HashSet<Pubkey>,
+    pub shred_receiver_addresses: ShredReceiverAddresses,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -106,6 +109,18 @@ impl FromClapArgMatches for RunArgs {
 
         let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
 
+        let shred_receiver_addresses = parse_shred_receiver_addresses(
+            matches
+                .values_of("shred_receiver_address")
+                .into_iter()
+                .flatten(),
+        )
+        .map_err(|err| {
+            crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
+                "failed to parse --shred-receiver-address: {err}"
+            )))
+        })?;
+
         Ok(RunArgs {
             identity_keypair,
             ledger_path,
@@ -127,6 +142,7 @@ impl FromClapArgMatches for RunArgs {
             } else {
                 HashSet::new()
             },
+            shred_receiver_addresses,
         })
     }
 }
@@ -610,6 +626,23 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("IP address to bind the validator ports to"),
     )
     .arg(
+        Arg::with_name("shred_receiver_address")
+            .long("shred-receiver-address")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .multiple(true)
+            .number_of_values(1)
+            .validator(|value| parse_shred_receiver_addresses([value]).map(|_| ()))
+            .help(
+                "Send a copy of every shred this validator broadcasts as leader to HOST:PORT, \
+                 after the turbine packets. Repeat the flag or comma-separate entries; a hostname \
+                 is resolved at startup to its IPv4 addresses (IPv6 is not supported). Each \
+                 address is one more full copy of the leader's shred stream, with no built-in \
+                 limit. Copies leave through a UDP socket of their own, with or without XDP, and \
+                 follow the kernel routing table rather than --bind-address.",
+            ),
+    )
+    .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
             .value_name("HOST")
@@ -859,6 +892,7 @@ mod tests {
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
                 filter_keys: HashSet::new(),
+                shred_receiver_addresses: ShredReceiverAddresses::default(),
             }
         }
     }
@@ -878,6 +912,7 @@ mod tests {
                 pub_sub_config: self.pub_sub_config.clone(),
                 send_transaction_service_config: self.send_transaction_service_config.clone(),
                 filter_keys: self.filter_keys.clone(),
+                shred_receiver_addresses: self.shred_receiver_addresses.clone(),
             }
         }
     }
@@ -1067,6 +1102,41 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_shred_receiver_addresses() {
+        // repeated flag + comma-separated entries + a duplicate, deduped in order
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            shred_receiver_addresses: ShredReceiverAddresses::new([
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9002),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9003),
+            ])
+            .unwrap(),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--shred-receiver-address",
+                "127.0.0.1:9001,127.0.0.1:9002",
+                "--shred-receiver-address",
+                "127.0.0.1:9003",
+                "--shred-receiver-address",
+                "127.0.0.1:9001",
+            ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_shred_receiver_address_ipv6_is_error() {
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            RunArgs::default(),
+            vec!["--shred-receiver-address", "[::1]:9001"],
+        );
     }
 
     #[test]
