@@ -5,8 +5,8 @@ use {
         cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
-        rpc_cache::{LargestAccountsCache, RankMapCache},
+        rpc::{rpc_accounts::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
+        rpc_cache::RankMapCache,
         rpc_health::*,
     },
     agave_snapshots::{
@@ -68,7 +68,6 @@ use {
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
-const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 /// Default minimum snapshot download speed is 10 MB/s
 /// Full snapshots are ~90 GB, incremental are ~1 GB today but both will increase over time
 /// Full: 120 GB / 10 MB/s = 12,000 seconds -> ~30k slots
@@ -598,10 +597,6 @@ impl JsonRpcService {
             override_health_check,
         ));
 
-        let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
-            LARGEST_ACCOUNTS_CACHE_DURATION,
-        )));
-
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
         let (bigtable_ledger_storage, _bigtable_ledger_upload_service) =
@@ -669,7 +664,6 @@ impl JsonRpcService {
             genesis_hash,
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
-            largest_accounts_cache,
             Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots,
             leader_schedule_cache,
@@ -704,7 +698,6 @@ impl JsonRpcService {
                 if full_api {
                     io.extend_with(rpc_bank::BankDataImpl.to_delegate());
                     io.extend_with(rpc_accounts::AccountsDataImpl.to_delegate());
-                    io.extend_with(rpc_accounts_scan::AccountsScanImpl.to_delegate());
                     io.extend_with(rpc_full::FullImpl.to_delegate());
                 }
 
