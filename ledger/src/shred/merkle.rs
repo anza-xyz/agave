@@ -573,7 +573,7 @@ pub(super) fn recover(
 ) -> Result<impl Iterator<Item = Result<Shred, Error>> + use<>, Error> {
     // Test shreds carry a single leader signature, so keep the stricter
     // pre-SIMD-0504 check.
-    let must_match_signatures = true;
+    let must_match_signatures = |_| true;
     let batch = rebuild_erasure_batch(shreds, must_match_signatures)?;
     Ok(batch.into_recovered().map(Ok))
 }
@@ -772,14 +772,17 @@ struct ReferenceHeaders {
 /// Extracts the headers we expect to see for shreds in this FEC set
 ///
 /// Works irrespective of whether shreds are sorted by their erasure shard index.
-fn get_reference_headers(shreds: &[Shred]) -> Result<ReferenceHeaders, Error> {
+fn get_reference_headers<'a>(
+    shreds: impl IntoIterator<Item = &'a Shred>,
+) -> Result<ReferenceHeaders, Error> {
     // Prefer a coding shred. It determines the index of the first coding shred.
-    let Some(shred) = shreds
-        .iter()
-        .find(|shred| matches!(shred, Shred::ShredCode(_)))
-        .or_else(|| shreds.first())
-    else {
-        return Err(Error::TooFewDataShards);
+    let mut shreds = shreds.into_iter();
+    let first = shreds.next().ok_or(Error::TooFewDataShards)?;
+    let shred = match first {
+        Shred::ShredCode(_) => first,
+        Shred::ShredData(_) => shreds
+            .find(|shred| matches!(shred, Shred::ShredCode(_)))
+            .unwrap_or(first),
     };
     let index = match shred {
         // Derive the index of the first coding shred from the last coding
@@ -845,23 +848,9 @@ fn set_bits(mut m: u64) -> impl Iterator<Item = usize> {
 /// root are allowed. The Merkle root check ties the leaves together, and the
 /// Merkle proofs of received shreds are checked against the rebuilt tree.
 pub(super) fn rebuild_erasure_batch(
-    shreds: Vec<Shred>,
-    must_match_signatures: bool,
+    shreds: impl IntoIterator<Item = Shred>,
+    must_match_signatures: impl FnOnce(Slot) -> bool,
 ) -> Result<ErasureBatch, Error> {
-    let ReferenceHeaders {
-        common_header,
-        merkle_root,
-        chained_merkle_root,
-        shard_len,
-    } = get_reference_headers(&shreds)?;
-    debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
-    // Headers of the received shreds are not checked for consistency here,
-    // see ErasureBatch::check_fec_set.
-    // Identify which shreds are missing and create stub shreds in their place.
-    let make_stub_shred = |erasure_shard_index| {
-        make_stub_shred(erasure_shard_index, &common_header, &chained_merkle_root)
-    };
-
     // Allocate the uninitialized storage for the resulting batch on the heap to avoid memory copy
     // later when the elements are unwrapped and returned in a heap array.
     let mut batch: Vec<Option<Shred>> = std::iter::repeat_with(|| None)
@@ -873,21 +862,54 @@ pub(super) fn rebuild_erasure_batch(
     let mut mask: u64 = 0;
     let mut coding_matches_data = true;
 
+    // Move each shred from the iterator into its slot.
+    for shred in shreds {
+        let shard_index = shred.erasure_shard_index()?;
+        if shard_index >= SHREDS_PER_FEC_BLOCK || mask & (1 << shard_index) != 0 {
+            return Err(Error::InvalidIndex);
+        }
+        mask |= 1 << shard_index;
+        batch[shard_index] = Some(shred);
+    }
+
+    let num_erasures = mask.count_zeros() as usize;
+    if num_erasures > CODING_SHREDS_PER_FEC_BLOCK {
+        return Err(Error::TooManyErasures);
+    }
+
+    let ReferenceHeaders {
+        common_header,
+        merkle_root,
+        chained_merkle_root,
+        shard_len,
+    } = get_reference_headers(batch.iter().flatten())?;
+    debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
+    let must_match_signatures = must_match_signatures(common_header.slot);
+    // Headers of the received shreds are not checked for consistency here,
+    // see ErasureBatch::check_fec_set.
+    // Identify which shreds are missing and create stub shreds in their place.
+    let make_stub_shred = |erasure_shard_index| {
+        make_stub_shred(erasure_shard_index, &common_header, &chained_merkle_root)
+    };
+
+    // Recover from the lowest-indexed DATA_SHREDS_PER_FEC_BLOCK received shards, with data shards
+    // counted first and then the parity, and use the remaining received shards to check the result.
+    let basis_mask: u64 = set_bits(mask)
+        .take(DATA_SHREDS_PER_FEC_BLOCK)
+        .fold(0, |m, i| m | (1 << i));
+    let check_mask = mask & !basis_mask;
+    let erased_mask = !mask | check_mask;
+
     let recovered = RS_RECEIVED.with_borrow_mut(|mut rec| {
         rec.resize(SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
 
-        for shred in shreds {
+        for i in set_bits(mask) {
+            let shred = batch[i].as_ref().expect("received shred");
             if must_match_signatures && shred.signature() != &common_header.signature {
                 return Err(Error::InvalidMerkleRoot);
             }
 
             let shard_index = shred.erasure_shard_index()?;
-
-            // Check for duplicates.
-            if mask & (1 << shard_index) != 0 {
-                return Err(Error::InvalidIndex);
-            }
-
             let merkle_node = shred.merkle_node()?;
             nodes[shard_index] = Some(merkle_node);
 
@@ -899,29 +921,13 @@ pub(super) fn rebuild_erasure_batch(
                 )
             };
             rec[shard_index * shard_len..(shard_index + 1) * shard_len].copy_from_slice(src);
-            mask |= 1 << shard_index;
-            batch[shard_index] = Some(shred);
         }
-
-        let num_erasures = mask.count_zeros() as usize;
-        if num_erasures > CODING_SHREDS_PER_FEC_BLOCK {
-            return Err(Error::TooManyErasures);
-        }
-
-        // Recover from the lowest-indexed DATA_SHREDS_PER_FEC_BLOCK received shards, with data
-        // shards counted first and then the parity, and use the remaining received shards to check
-        // the result.
-        let basis_mask: u64 = set_bits(mask)
-            .take(DATA_SHREDS_PER_FEC_BLOCK)
-            .fold(0, |m, i| m | (1 << i));
-        let check_mask = mask & !basis_mask;
 
         // Clobber recovery overwrites every slot, so keep the shards being checked.
         let checked: Vec<Gf2p8_11d> = set_bits(check_mask)
             .flat_map(|i| rec[i * shard_len..(i + 1) * shard_len].iter().copied())
             .collect();
 
-        let erased_mask = !mask | check_mask;
         for i in set_bits(erased_mask) {
             rec[i * shard_len..(i + 1) * shard_len].fill(Gf2p8_11d(0));
         }
@@ -1667,7 +1673,8 @@ mod test {
     /// Rebuilds the erasure batch requiring the same signature on all shreds,
     /// as before SIMD-0504.
     fn rebuild_erasure_batch(shreds: Vec<Shred>) -> Result<ErasureBatch, Error> {
-        super::rebuild_erasure_batch(shreds, true)
+        let must_match_signatures = |_| true;
+        super::rebuild_erasure_batch(shreds, must_match_signatures)
     }
 
     // Total size of a data shred including headers and merkle proof.
@@ -2021,12 +2028,12 @@ mod test {
         let merkle_root = subset[0].merkle_root().unwrap();
         subset[0].set_signature(Keypair::new().sign_message(merkle_root.as_ref()));
 
-        let must_match_signatures = true;
+        let must_match_signatures = |_| true;
         assert_matches!(
             super::rebuild_erasure_batch(subset.clone(), must_match_signatures).err(),
             Some(Error::InvalidMerkleRoot)
         );
-        let must_match_signatures = false;
+        let must_match_signatures = |_| false;
         let ErasureBatch { shreds, .. } =
             super::rebuild_erasure_batch(subset.clone(), must_match_signatures).unwrap();
         assert_eq!(shreds[0], subset[0]);
@@ -2061,7 +2068,7 @@ mod test {
         );
 
         // Assume we are operating post-SIMD-0504 activation
-        let must_match_signatures = false;
+        let must_match_signatures = |_| false;
         let data_shreds = batch_a[..DATA_SHREDS_PER_FEC_BLOCK].to_vec();
         assert!(
             super::rebuild_erasure_batch(data_shreds.clone(), must_match_signatures).is_ok(),
