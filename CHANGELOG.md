@@ -39,6 +39,7 @@ Release channels have their own copy of this changelog:
 #### Changes
 
 * Changed the default account storage file format to SplitFile.
+* Added `--shred-receiver-address` to send copies of leader shreds to up to 32 extra IPv4 destinations.
 
 ### CLI
 

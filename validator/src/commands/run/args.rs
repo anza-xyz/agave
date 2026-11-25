@@ -15,6 +15,7 @@ use {
         keypair::SKIP_SEED_PHRASE_VALIDATION_ARG,
     },
     solana_core::validator::{BlockProductionMethod, BlockVerificationMethod},
+    solana_gossip::contact_info::ContactInfo,
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_net_utils::SocketAddrSpace,
@@ -22,6 +23,7 @@ use {
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_signer::Signer,
+    solana_turbine::broadcast_stage::MAX_SHRED_RECEIVER_ADDRESSES,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{collections::HashSet, net::SocketAddr, path::PathBuf},
 };
@@ -55,6 +57,7 @@ pub struct RunArgs {
     pub pub_sub_config: PubSubConfig,
     pub send_transaction_service_config: SendTransactionServiceConfig,
     pub filter_keys: HashSet<Pubkey>,
+    pub shred_receiver_addresses: Vec<SocketAddr>,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -106,6 +109,18 @@ impl FromClapArgMatches for RunArgs {
 
         let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
 
+        let shred_receiver_addresses = parse_shred_receiver_addresses(
+            matches
+                .values_of("shred_receiver_address")
+                .into_iter()
+                .flatten(),
+        )
+        .map_err(|err| {
+            crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
+                "failed to parse --shred-receiver-address: {err}"
+            )))
+        })?;
+
         Ok(RunArgs {
             identity_keypair,
             ledger_path,
@@ -127,8 +142,41 @@ impl FromClapArgMatches for RunArgs {
             } else {
                 HashSet::new()
             },
+            shred_receiver_addresses,
         })
     }
+}
+
+fn parse_shred_receiver_addresses(
+    values: impl IntoIterator<Item = impl AsRef<str>>,
+) -> std::result::Result<Vec<SocketAddr>, String> {
+    let mut addrs = Vec::new();
+    for value in values {
+        for addr in value
+            .as_ref()
+            .split(',')
+            .map(str::trim)
+            .filter(|addr| !addr.is_empty())
+        {
+            let addr = solana_net_utils::parse_host_port(addr)?;
+            if !ContactInfo::is_valid_address(&addr, &SocketAddrSpace::Unspecified) {
+                return Err(format!("invalid shred receiver address: {addr}"));
+            }
+            if !addrs.contains(&addr) {
+                if addrs.len() == MAX_SHRED_RECEIVER_ADDRESSES {
+                    return Err(format!(
+                        "at most {MAX_SHRED_RECEIVER_ADDRESSES} shred receiver addresses are \
+                         supported"
+                    ));
+                }
+                if addrs.is_empty() {
+                    addrs.reserve_exact(MAX_SHRED_RECEIVER_ADDRESSES);
+                }
+                addrs.push(addr);
+            }
+        }
+    }
+    Ok(addrs)
 }
 
 pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 'a> {
@@ -610,6 +658,21 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("IP address to bind the validator ports to"),
     )
     .arg(
+        Arg::with_name("shred_receiver_address")
+            .long("shred-receiver-address")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .multiple(true)
+            .number_of_values(1)
+            .help(
+                "Send a copy of every shred this validator broadcasts as leader to HOST:PORT, \
+                 after the turbine packets. Repeat the flag or comma-separate entries; a hostname \
+                 is resolved once at startup to its first IPv4 address. At most 32 unique IPv4 \
+                 destinations with nonzero ports. Copies use the Turbine UDP socket or XDP \
+                 interface and share its transmit capacity. Startup only.",
+            ),
+    )
+    .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
             .value_name("HOST")
@@ -859,6 +922,7 @@ mod tests {
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
                 filter_keys: HashSet::new(),
+                shred_receiver_addresses: Vec::new(),
             }
         }
     }
@@ -878,6 +942,7 @@ mod tests {
                 pub_sub_config: self.pub_sub_config.clone(),
                 send_transaction_service_config: self.send_transaction_service_config.clone(),
                 filter_keys: self.filter_keys.clone(),
+                shred_receiver_addresses: self.shred_receiver_addresses.clone(),
             }
         }
     }
@@ -1066,6 +1131,90 @@ mod tests {
                 vec!["--log", "custom_log.log"],
                 expected_args,
             );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_shred_receiver_addresses() {
+        // repeated flag + comma-separated entries + a duplicate, deduped in order
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            shred_receiver_addresses: vec![
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9002),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9003),
+            ],
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--shred-receiver-address",
+                "127.0.0.1:9001,127.0.0.1:9002",
+                "--shred-receiver-address",
+                "127.0.0.1:9003",
+                "--shred-receiver-address",
+                "127.0.0.1:9001",
+            ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn test_parse_shred_receiver_addresses() {
+        let addrs = parse_shred_receiver_addresses(["localhost:9001"]).unwrap();
+        assert_eq!(addrs.len(), 1);
+        assert!(
+            addrs
+                .iter()
+                .all(|addr| addr.is_ipv4() && addr.port() == 9001)
+        );
+        assert!(
+            parse_shred_receiver_addresses(["", " "])
+                .unwrap()
+                .is_empty()
+        );
+        let mut values = Vec::new();
+        for port in 1..=MAX_SHRED_RECEIVER_ADDRESSES {
+            values.push(format!("127.0.0.1:{port}"));
+        }
+        values.push(values[0].clone());
+        assert_eq!(parse_shred_receiver_addresses(&values).unwrap().len(), 32);
+        values.push("127.0.0.1:9001".to_owned());
+        assert!(parse_shred_receiver_addresses(&values).is_err());
+        for invalid in [
+            "[::1]:9001",
+            "127.0.0.1:0",
+            "0.0.0.0:9001",
+            "224.0.0.1:9001",
+            "invalid-address",
+        ] {
+            assert!(parse_shred_receiver_addresses([invalid]).is_err());
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_invalid_shred_receiver_addresses() {
+        let default_args = DefaultArgs::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let identity = temp_dir.path().join("id.json");
+        solana_keypair::write_keypair_file(&Keypair::new(), &identity).unwrap();
+        let too_many: Vec<_> = (1..=33).map(|port| format!("127.0.0.1:{port}")).collect();
+        for entries in [
+            vec!["[::1]:9001".to_owned()],
+            vec!["127.0.0.1:0".to_owned()],
+            vec!["0.0.0.0:9001".to_owned()],
+            vec!["224.0.0.1:9001".to_owned()],
+            too_many,
+        ] {
+            let app = add_args(App::new("run_command"), &default_args)
+                .args(&thread_args(&default_args.thread_args));
+            let mut args = vec!["run_command", "--identity", identity.to_str().unwrap()];
+            for entry in &entries {
+                args.extend(["--shred-receiver-address", entry]);
+            }
+            let matches = app.get_matches_from_safe(args).unwrap();
+            assert!(RunArgs::from_clap_arg_match(&matches).is_err());
         }
     }
 

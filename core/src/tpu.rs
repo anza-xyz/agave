@@ -49,7 +49,7 @@ use {
     },
     std::{
         collections::{HashMap, HashSet},
-        net::{Ipv4Addr, UdpSocket},
+        net::{Ipv4Addr, SocketAddr, UdpSocket},
         num::NonZeroUsize,
         path::PathBuf,
         sync::{Arc, RwLock, atomic::AtomicBool},
@@ -109,6 +109,7 @@ impl Tpu {
         leader_schedule_cache: Arc<solana_ledger::leader_schedule_cache::LeaderScheduleCache>,
         turbine_xdp_sender: Option<TurbineXdpSender>,
         quic_xdp_sender: Option<(XdpSender, Ipv4Addr)>,
+        shred_receivers: Vec<SocketAddr>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -293,6 +294,7 @@ impl Tpu {
             shred_version,
             turbine_xdp_sender,
             votor_event_sender,
+            shred_receivers,
         );
 
         let mut key_notifiers = key_notifiers.write().unwrap();
