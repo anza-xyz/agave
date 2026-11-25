@@ -638,8 +638,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  after the turbine packets. Repeat the flag or comma-separate entries; a hostname \
                  is resolved at startup to its IPv4 addresses (IPv6 is not supported). Each \
                  address is one more full copy of the leader's shred stream, with no built-in \
-                 limit. Copies leave through a UDP socket of their own, with or without XDP, and \
-                 follow the kernel routing table rather than --bind-address.",
+                 limit. Copies take the turbine packets' path: the XDP interface with XDP, the \
+                 broadcast socket on --bind-address without it.",
             ),
     )
     .arg(

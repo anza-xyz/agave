@@ -2,7 +2,7 @@
 //! (`--shred-receiver-address`).
 //!
 //! The list is validated once, here, so the broadcast path can trust it:
-//! every address is IPv4 (the copies leave through an IPv4 socket), every
+//! every address is IPv4 (turbine sends over IPv4), every
 //! port is nonzero, and there are no duplicates. There is no maximum count;
 //! each address costs one extra copy of the leader's shred stream.
 

@@ -77,10 +77,9 @@ $ agave-validator ... --shred-receiver-address 192.0.2.10:8001
 ```
 
 Each address is one more full copy of the leader's shred stream, with no built-in limit, so size
-the uplink for it. The copies leave through a UDP socket of their own, with or without XDP
-transmit, so the kernel routing table picks the interface for each receiver and the copies never
-wait in an XDP transmit queue. Sending them is work for the broadcast thread: one more packet per
-shred and address in a `sendmmsg` call after the turbine packets.
+the uplink for it. The copies take the path of the turbine packets: with XDP they leave through
+the XDP interface, so every receiver must be reachable through it, and without XDP they leave
+through the broadcast socket on `--bind-address`.
 
 # Testing
 

@@ -30,7 +30,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
-    solana_net_utils::{SocketAddrSpace, bind_to_unspecified},
+    solana_net_utils::SocketAddrSpace,
     solana_poh::poh_recorder::WorkingBankMessage,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::MAX_LEADER_SCHEDULE_STAKES, bank_forks::BankForks},
@@ -430,32 +430,18 @@ pub enum BroadcastSocket<'a> {
 
 /// Extra destinations for this node's own leader shreds
 /// (`--shred-receiver-address`): a copy of every shred goes to each address,
-/// after the turbine packets.
+/// after the turbine packets and through the same socket or XDP sender.
 #[derive(Clone)]
 pub struct ShredReceivers {
-    addrs: Arc<ShredReceiverAddresses>,
-    /// Bound to the unspecified address and an ephemeral port rather than
-    /// `--bind-address`, so the kernel routing table picks the outbound
-    /// interface per receiver.
-    socket: Arc<UdpSocket>,
+    addrs: Arc<[SocketAddr]>,
 }
 
 impl ShredReceivers {
-    /// `None` when no address is configured: nothing is bound and
-    /// `broadcast_shreds` sends nothing extra.
+    /// `None` when no address is configured: `broadcast_shreds` then sends
+    /// nothing extra.
     pub fn new(addrs: ShredReceiverAddresses) -> Option<Self> {
-        if addrs.is_empty() {
-            return None;
-        }
-        let socket = bind_to_unspecified().expect("bind the shred receiver socket");
-        // Let copies to a multicast group cross routers, like the other
-        // clients with this flag.
-        socket
-            .set_multicast_ttl_v4(64)
-            .expect("set the multicast TTL of the shred receiver socket");
-        Some(Self {
-            addrs: Arc::new(addrs),
-            socket: Arc::new(socket),
+        (!addrs.is_empty()).then(|| Self {
+            addrs: Arc::from(&addrs[..]),
         })
     }
 }
@@ -478,11 +464,10 @@ fn next_broadcast_leader_pubkey(
 /// turbine retransmit tree for each shred, then sends one copy of every
 /// shred to each configured `shred_receivers` address.
 ///
-/// The turbine packets leave through `socket`. The copies leave through the
-/// receivers' own socket on both arms, so with XDP they never wait in a
-/// transmit queue with the turbine packets. The copies are counted apart
-/// from the turbine packets, and a receiver that cannot be reached never
-/// fails the turbine broadcast.
+/// The copies take the same path as the turbine packets: the XDP sender when
+/// there is one, the broadcast socket otherwise. They are counted apart from
+/// the turbine packets, and a copy that cannot be sent is counted as dropped
+/// and never fails the turbine broadcast.
 #[allow(clippy::too_many_arguments)]
 pub fn broadcast_shreds(
     socket: BroadcastSocket,
@@ -561,23 +546,33 @@ pub fn broadcast_shreds(
             }
         }
     }
-    // One copy of every shred per configured receiver, after the turbine
-    // packets.
     if let Some(receivers) = shred_receivers {
-        let mut mirrored = Vec::with_capacity(receivers.addrs.len() * shreds.len());
-        mirrored.extend(
-            receivers
-                .addrs
-                .iter()
-                .flat_map(|addr| shreds.iter().map(move |shred| (shred.payload(), *addr))),
-        );
-        let mirrored_len = mirrored.len();
-        transmit_stats.mirrored_packets += mirrored_len;
-        match batch_send(&receivers.socket, mirrored) {
-            Ok(num_sent) => transmit_stats.dropped_packets_mirrored += mirrored_len - num_sent,
-            Err(SendPktsError::IoError(ioerr)) => {
-                log::warn!("shred receiver send failed: {ioerr:?}");
-                transmit_stats.dropped_packets_mirrored += mirrored_len;
+        let num_receivers = receivers.addrs.len();
+        transmit_stats.mirrored_packets += num_receivers * shreds.len();
+        match socket {
+            BroadcastSocket::Udp(s) => {
+                let mirrored: Vec<_> = receivers
+                    .addrs
+                    .iter()
+                    .flat_map(|addr| shreds.iter().map(move |shred| (shred.payload(), *addr)))
+                    .collect();
+                let mirrored_len = mirrored.len();
+                let num_sent = batch_send(s, mirrored).unwrap_or(0);
+                transmit_stats.dropped_packets_mirrored += mirrored_len - num_sent;
+            }
+            BroadcastSocket::Xdp(s) => {
+                // One item per shred carries every receiver address.
+                for (idx, shred) in shreds.iter().enumerate() {
+                    if s.try_send(
+                        num_packets + idx,
+                        receivers.addrs.clone(),
+                        shred.payload().bytes.clone(),
+                    )
+                    .is_err()
+                    {
+                        transmit_stats.dropped_packets_mirrored += num_receivers;
+                    }
+                }
             }
         }
     }
@@ -835,9 +830,9 @@ pub mod test {
             .iter()
             .map(|shred| shred.payload().to_vec())
             .collect();
-        // The socket is bound to the unspecified address, so the kernel picks
-        // the source IP; the port identifies it.
-        let source_port = receivers.socket.local_addr().unwrap().port();
+        // The copies leave through the broadcast socket, like the turbine
+        // packets.
+        let source_port = turbine_socket.local_addr().unwrap().port();
         for receiver in &receiver_sockets {
             let mut buf = [0u8; 2048];
             let mut got = HashSet::new();
