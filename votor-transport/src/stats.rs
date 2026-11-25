@@ -14,6 +14,8 @@ pub struct ClientStats {
     pub(crate) peak_connections: AtomicU64,
     /// Datagrams successfully handed to quinn for transmission.
     pub(crate) datagrams_sent: AtomicU64,
+    /// Unicast datagrams dropped because the peer had no live connection.
+    pub(crate) unicast_dropped_no_connection: AtomicU64,
     /// A connection ended through an expected teardown path.
     pub(crate) connection_lost: AtomicU64,
     /// A connection failed abnormally: connect setup error, protocol-level
@@ -165,6 +167,7 @@ impl ClientStats {
         // so we do not end up with huge values here when operator changes log level.
         let connections_peak = take_peak(&self.peak_connections, live_connections);
         let datagrams_sent = swap(&self.datagrams_sent);
+        let unicast_dropped_no_connection = swap(&self.unicast_dropped_no_connection);
         let connect_failed = swap(&self.connect_failed);
         let connect_failed_no_address = swap(&self.connect_failed_no_address);
         let peer_config_error = swap(&self.peer_config_error);
@@ -176,6 +179,11 @@ impl ClientStats {
             "votor_datagram_client",
             ("connections_peak", connections_peak, i64),
             ("datagrams_sent", datagrams_sent, i64),
+            (
+                "unicast_dropped_no_connection",
+                unicast_dropped_no_connection,
+                i64
+            ),
             ("connect_failed", connect_failed, i64),
             ("connect_failed_no_address", connect_failed_no_address, i64),
             ("peer_config_error", peer_config_error, i64),
