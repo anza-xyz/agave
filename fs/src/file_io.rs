@@ -269,6 +269,7 @@ pub fn file_creator<'a>(
             let io_uring_creator = IoUringFileCreatorBuilder::new()
                 .use_registered_buffers(io_setup.use_registered_io_uring_buffers)
                 .write_with_direct_io(io_setup.use_direct_io)
+                .huge_pages(io_setup.huge_pages)
                 .shared_sqpoll(io_setup.shared_sqpoll_fd())
                 .build(buf_size, file_complete)?;
             return Ok(Box::new(io_uring_creator));
