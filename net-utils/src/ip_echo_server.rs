@@ -1,12 +1,12 @@
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
-    crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, bind_to_unspecified},
+    crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH, sockets::bind_to},
     log::*,
     std::{
         collections::HashSet,
         io,
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         num::NonZeroUsize,
         sync::{Arc, Mutex},
         time::Duration,
@@ -149,7 +149,7 @@ async fn process_connection(
     trace!("request: {msg:?}");
 
     // Fire a datagram at each non-zero UDP port
-    match bind_to_unspecified() {
+    match bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0) {
         Ok(udp_socket) => {
             for udp_port in &msg.udp_ports {
                 if *udp_port != 0 {

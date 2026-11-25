@@ -416,8 +416,7 @@ mod tests {
             SocketAddrSpace,
             quic_socket::QuicSocket,
             sockets::{
-                SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
-                unique_port_range_for_tests,
+                SocketConfiguration, bind_to, bind_to_localhost_unique, unique_port_range_for_tests,
             },
             udp_relay::UdpRelay,
         },
@@ -1463,7 +1462,7 @@ mod tests {
     }
 
     /// A server with SO_REUSEPORT inbound sockets must accept packets from all of them.
-    /// On platforms without SO_REUSEPORT, `bind_more_with_config` yields one socket
+    /// On platforms without SO_REUSEPORT, `bind_udp_reuse` yields one socket
     /// and this degrades to a delivery check, but should still pass.
     #[test]
     fn test_server_socket_reuseport_delivers() {
@@ -1472,9 +1471,9 @@ mod tests {
         let rt = make_runtime_for_tests();
 
         let first = bind_to_localhost_unique().expect("bind first inbound socket");
-        let inbound_sockets =
-            bind_more_with_config(first, NUM_SIBLINGS, SocketConfiguration::default())
-                .expect("bind additional reuseport inbound sockets");
+        let inbound_sockets = SocketConfiguration::default()
+            .bind_udp_reuse(first, NUM_SIBLINGS)
+            .expect("bind additional reuseport inbound sockets");
         // The kernel hashes each connection's 4-tuple to a socket, but we do not
         // know which one. So we spawn many connections to make sure we cover
         // multiple Endpoints with high probability.

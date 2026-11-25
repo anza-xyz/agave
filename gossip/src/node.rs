@@ -10,8 +10,7 @@ use {
         find_available_ports_in_range,
         sockets::{
             SocketConfiguration as SocketConfig, UdpSocketBufferLimits,
-            bind_gossip_port_in_range_with_config, bind_in_range_with_config,
-            bind_more_with_config, localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            localhost_port_range_for_tests,
         },
     },
     solana_pubkey::Pubkey,
@@ -147,107 +146,95 @@ impl Node {
             num_quic_endpoints,
             num_votor_quic_endpoints: num_votor_endpoints,
         } = config;
-        let gossip_addr = SocketAddr::new(bind_ip_addr, gossip_port);
-
         let socket_configs = Self::create_socket_configs();
 
-        let (gossip_port, (gossip, ip_echo)) = bind_gossip_port_in_range_with_config(
-            &gossip_addr,
-            port_range,
-            bind_ip_addr,
-            socket_configs.read_write,
-        );
-        let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_read_udp,
-            num_tvu_receive_sockets.get(),
-        )
-        .expect("tvu multi_bind");
-        let (tpu_port_quic, tpu_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
-                .expect("tpu_quic primary bind");
-        let tpu_quic = bind_more_with_config(
-            tpu_quic,
-            num_quic_endpoints.get(),
-            socket_configs.primarily_read_quic,
-        )
-        .expect("tpu_quic multi_bind");
+        let (gossip, ip_echo) = socket_configs
+            .read_write
+            .bind_udp_tcp_to_or_range(bind_ip_addr, gossip_port, port_range)
+            .expect("gossip bind_udp_to_or_range");
+        let gossip_port = gossip.local_addr().unwrap().port();
+        let tvu_sockets = socket_configs
+            .primarily_read_udp
+            .multi_bind_udp_range(bind_ip_addr, port_range, num_tvu_receive_sockets.get())
+            .expect("tvu multi_bind");
+        let tvu_port = tvu_sockets.first().unwrap().local_addr().unwrap().port();
+        let tpu_quic = socket_configs
+            .primarily_read_quic
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("tpu_quic primary bind");
+        let tpu_port_quic = tpu_quic.local_addr().unwrap().port();
+        let tpu_quic = socket_configs
+            .primarily_read_quic
+            .bind_udp_reuse(tpu_quic, num_quic_endpoints.get())
+            .expect("tpu_quic multi_bind");
 
-        let (tpu_forwards_quic_port, tpu_forwards_quic) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
-                .expect("tpu_forwards_quic primary bind");
-        let tpu_forwards_quic = bind_more_with_config(
-            tpu_forwards_quic,
-            num_quic_endpoints.get(),
-            socket_configs.primarily_read_quic,
-        )
-        .expect("tpu_forwards_quic multi_bind");
+        let tpu_forwards_quic = socket_configs
+            .primarily_read_quic
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("tpu_forwards_quic primary bind");
+        let tpu_forwards_quic_port = tpu_forwards_quic.local_addr().unwrap().port();
+        let tpu_forwards_quic = socket_configs
+            .primarily_read_quic
+            .bind_udp_reuse(tpu_forwards_quic, num_quic_endpoints.get())
+            .expect("tpu_forwards_quic multi_bind");
 
-        let (_, retransmit_sockets) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_write_udp,
-            num_tvu_retransmit_sockets.get(),
-        )
-        .expect("tvu retransmit multi_bind");
-        let (_, repair) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("repair bind");
+        let retransmit_sockets = socket_configs
+            .primarily_write_udp
+            .multi_bind_udp_range(bind_ip_addr, port_range, num_tvu_retransmit_sockets.get())
+            .expect("tvu retransmit multi_bind");
+        let repair = socket_configs
+            .read_write
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("repair bind");
 
-        let (serve_repair_port, serve_repair) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("serve_repair");
+        let serve_repair = socket_configs
+            .read_write
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("serve_repair");
+        let serve_repair_port = serve_repair.local_addr().unwrap().port();
 
-        let (_, broadcast) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_write_udp,
-            2,
-        )
-        .expect("broadcast multi_bind");
+        let broadcast = socket_configs
+            .primarily_write_udp
+            .multi_bind_udp_range(bind_ip_addr, port_range, 2)
+            .expect("broadcast multi_bind");
 
-        let (votor_server_port, votor_server_primary) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
-                .expect("Votor server port bind should succeed");
-        let votor_server = bind_more_with_config(
-            votor_server_primary,
-            num_votor_endpoints.get(),
-            socket_configs.primarily_read_quic,
-        )
-        .expect("Votor server SO_REUSEPORT bind should succeed");
+        let votor_server_primary = socket_configs
+            .primarily_read_quic
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("Votor server port bind should succeed");
+        let votor_server_port = votor_server_primary.local_addr().unwrap().port();
+        let votor_server = socket_configs
+            .primarily_read_quic
+            .bind_udp_reuse(votor_server_primary, num_votor_endpoints.get())
+            .expect("Votor server SO_REUSEPORT bind should succeed");
 
-        let (_, block_id_repair) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("Block ID repair port bind should succeed");
+        let block_id_repair = socket_configs
+            .read_write
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("Block ID repair port bind should succeed");
 
         // These are "client" sockets, so they could use ephemeral ports, but we
         // force them into the provided port_range to simplify the operations.
 
-        let (_, tpu_vote_forwarding_client) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_write_udp)
-                .unwrap();
+        let tpu_vote_forwarding_client = socket_configs
+            .primarily_write_udp
+            .bind_udp_range(bind_ip_addr, port_range)
+            .unwrap();
 
-        let (_, tpu_transaction_forwarding_client) = bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_write_quic,
-        )
-        .expect("TPU transaction forwarding client bind should succeed");
+        let tpu_transaction_forwarding_client = socket_configs
+            .primarily_write_quic
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("TPU transaction forwarding client bind should succeed");
 
-        let (_, quic_votor_client) = bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_write_quic,
-        )
-        .expect("Votor client socket bind should succeed");
+        let quic_votor_client = socket_configs
+            .primarily_write_quic
+            .bind_udp_range(bind_ip_addr, port_range)
+            .expect("Votor client socket bind should succeed");
 
-        let (_, rpc_sts_client) = bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_configs.primarily_write_quic,
-        )
-        .unwrap();
+        let rpc_sts_client = socket_configs
+            .primarily_write_quic
+            .bind_udp_range(bind_ip_addr, port_range)
+            .unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,

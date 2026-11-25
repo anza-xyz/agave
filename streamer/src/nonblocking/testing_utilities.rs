@@ -18,8 +18,7 @@ use {
     solana_net_utils::{
         quic_socket::QuicSocket,
         sockets::{
-            SocketConfiguration as SocketConfig, bind_to_with_config,
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            SocketConfiguration as SocketConfig, localhost_port_range_for_tests,
             unique_port_range_for_tests,
         },
     },
@@ -103,17 +102,12 @@ pub fn create_quic_server_sockets() -> Vec<QuicSocket> {
         1
     };
     let port_range = localhost_port_range_for_tests();
-    multi_bind_in_range_with_config(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port_range,
-        SocketConfig::default(),
-        num,
-    )
-    .expect("bind operation for quic server sockets should succeed")
-    .1
-    .into_iter()
-    .map(QuicSocket::from)
-    .collect()
+    SocketConfig::default()
+        .multi_bind_udp_range(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range, num)
+        .expect("bind operation for quic server sockets should succeed")
+        .into_iter()
+        .map(QuicSocket::from)
+        .collect()
 }
 
 pub fn setup_quic_server(
@@ -187,12 +181,10 @@ pub async fn make_client_endpoint_with_local_addr(
     local_addr: SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Result<Connection, quinn::ConnectionError> {
-    let client_socket = bind_to_with_config(
-        local_addr.ip(),
-        local_addr.port(),
-        SocketConfig::default().set_non_blocking(true),
-    )
-    .expect("should bind client socket with local addr");
+    let client_socket = SocketConfig::default()
+        .set_non_blocking(true)
+        .bind_udp_to(local_addr.ip(), local_addr.port())
+        .expect("should bind client socket with local addr");
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,

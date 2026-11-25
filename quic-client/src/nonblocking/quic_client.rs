@@ -17,7 +17,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_net_utils::sockets,
+    solana_net_utils::{VALIDATOR_PORT_RANGE, sockets::SocketConfiguration},
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
     solana_streamer::{nonblocking::quic::ALPN_TPU_PROTOCOL_ID, quic::QUIC_MAX_TIMEOUT},
     solana_tls_utils::{
@@ -26,7 +26,7 @@ use {
     },
     solana_transaction_error::TransportResult,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{Arc, atomic::Ordering},
         thread,
         time::Duration,
@@ -85,13 +85,9 @@ impl QuicLazyInitializedEndpoint {
         } else {
             // This will bind to random ports, but VALIDATOR_PORT_RANGE is outside
             // of the range for CI tests when this is running in CI
-            let client_socket = sockets::bind_in_range_with_config(
-                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-                solana_net_utils::VALIDATOR_PORT_RANGE,
-                sockets::SocketConfiguration::default(),
-            )
-            .expect("QuicLazyInitializedEndpoint::create_endpoint bind_in_range")
-            .1;
+            let client_socket = SocketConfiguration::default()
+                .bind_udp_range(IpAddr::V4(Ipv4Addr::UNSPECIFIED), VALIDATOR_PORT_RANGE)
+                .expect("QuicLazyInitializedEndpoint::create_endpoint bind_udp_range");
             info!("Local endpoint is : {client_socket:?}");
 
             QuicNewConnection::create_endpoint(EndpointConfig::default(), client_socket)

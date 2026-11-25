@@ -47,7 +47,7 @@ use {
         state::UpgradeableLoaderState,
     },
     solana_message::VersionedMessage,
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
         deploy::morph_into_deployment_environment, execution_budget::SVMTransactionExecutionBudget,
@@ -86,6 +86,7 @@ use {
         fs::File,
         io::{Read, Write},
         mem::size_of,
+        net::{IpAddr, Ipv4Addr},
         num::{NonZeroUsize, Saturating},
         path::PathBuf,
         rc::Rc,
@@ -3328,7 +3329,7 @@ async fn send_deploy_messages(
                 )
                 .await?;
 
-                let bind_socket = bind_to_unspecified()?;
+                let bind_socket = bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)?;
 
                 let (transaction_sender, client) = ClientBuilder::new(Box::new(provider))
                     .cancel_token(cancel_token.clone())
