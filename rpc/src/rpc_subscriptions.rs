@@ -707,12 +707,8 @@ fn initial_last_notified_slot(
     optimistically_confirmed_bank: &RwLock<OptimisticallyConfirmedBank>,
 ) -> Option<Slot> {
     match params {
-        SubscriptionParams::Program(_) | SubscriptionParams::Logs(_) => {
-            let commitment = match params {
-                SubscriptionParams::Program(params) => params.commitment,
-                SubscriptionParams::Logs(params) => params.commitment,
-                _ => unreachable!(),
-            };
+        SubscriptionParams::Program(ProgramSubscriptionParams { commitment, .. })
+        | SubscriptionParams::Logs(LogsSubscriptionParams { commitment, .. }) => {
             Some(if commitment.is_finalized() {
                 block_commitment_cache
                     .read()
@@ -1534,6 +1530,78 @@ pub(crate) mod tests {
         solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
         std::{collections::HashSet, sync::atomic::AtomicU64},
     };
+
+    #[test]
+    fn test_notification_entry_debug_slots() {
+        let bank = NotificationEntry::Bank(
+            CommitmentSlots {
+                slot: 7,
+                ..CommitmentSlots::default()
+            },
+            NotificationBankChain::default(),
+            NotificationBankChain::default(),
+        );
+        assert_eq!(format!("{bank:?}"), "Bank({slot: 7})");
+        let gossip = NotificationEntry::Gossip(11, NotificationBankChain::default());
+        assert_eq!(format!("{gossip:?}"), "Gossip(11)");
+    }
+
+    #[test]
+    fn test_disabled_notifications_do_not_lock_banks() {
+        let genesis = create_genesis_config(1_000_000).genesis_config;
+        let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis));
+        let ledger = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger.path()).unwrap());
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let subscriptions = Arc::new(RpcSubscriptions::new_with_config(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::default()),
+            Arc::new(AtomicU64::default()),
+            blockstore,
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::default())),
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
+            &PubSubConfig {
+                notification_threads: None,
+                ..PubSubConfig::default_for_tests()
+            },
+            RpcNotificationConfig {
+                channel: Some((sender, receiver.clone())),
+                ..RpcNotificationConfig::default()
+            },
+        ));
+        let _token = subscriptions
+            .control()
+            .subscribe(SubscriptionParams::Logs(LogsSubscriptionParams {
+                kind: LogsSubscriptionKind::All,
+                commitment: CommitmentConfig::processed(),
+            }))
+            .unwrap();
+        assert!(subscriptions.control().has_delta_subscriptions());
+        assert!(matches!(
+            receiver.try_recv().unwrap().entry,
+            NotificationEntry::Subscribed(..)
+        ));
+
+        // Disabled notifications must return even while bank state is locked.
+        let banks_guard = subscriptions.notification_banks.lock().unwrap();
+        let forks_guard = bank_forks.write().unwrap();
+        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+        let worker = std::thread::spawn({
+            let subscriptions = subscriptions.clone();
+            move || {
+                subscriptions.notify_subscribers(CommitmentSlots::default());
+                subscriptions.notify_gossip_subscribers(0);
+                done_sender.send(()).unwrap();
+            }
+        });
+        let completed_without_locks = done_receiver.recv_timeout(Duration::from_secs(5));
+        drop(forks_guard);
+        drop(banks_guard);
+        worker.join().unwrap();
+        assert!(completed_without_locks.is_ok());
+        assert!(receiver.is_empty());
+    }
 
     #[test]
     fn test_bank_delta_history_gaps_report_lag() {
