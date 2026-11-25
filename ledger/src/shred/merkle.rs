@@ -751,10 +751,12 @@ impl ErasureBatch {
 
     /// Returns the shreds which were reconstructed, i.e. not given as input.
     pub(crate) fn into_recovered(self) -> impl Iterator<Item = Shred> {
-        self.shreds
+        // Box<[Shred; _]> has no iterator and so Box<[Shred; _]>::into_iter() copies all the shreds
+        // into an array iterator. To avoid memcpy and iterate in-place, convert through Vec.
+        Vec::from(self.shreds as Box<[Shred]>)
             .into_iter()
             .enumerate()
-            .filter_map(move |(i, shred)| (self.received & (1u64 << i) == 0).then_some(shred))
+            .filter_map(move |(i, shred)| (self.received & (1 << i) == 0).then_some(shred))
     }
 }
 
@@ -872,7 +874,7 @@ pub(super) fn rebuild_erasure_batch(
     let mut coding_matches_data = true;
 
     let recovered = RS_RECEIVED.with_borrow_mut(|mut rec| {
-        rec.resize(SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
+        rec.resize(SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
 
         for shred in shreds {
             if must_match_signatures && shred.signature() != &common_header.signature {
@@ -889,6 +891,7 @@ pub(super) fn rebuild_erasure_batch(
             let merkle_node = shred.merkle_node()?;
             nodes[shard_index] = Some(merkle_node);
 
+            // SAFETY: Gf2p8_11d is a transparent u8 and shard_len is given in the common shred header.
             let src: &[Gf2p8_11d] = unsafe {
                 std::slice::from_raw_parts(
                     shred.erasure_shard()?.as_ptr() as *const Gf2p8_11d,
@@ -920,7 +923,7 @@ pub(super) fn rebuild_erasure_batch(
 
         let erased_mask = !mask | check_mask;
         for i in set_bits(erased_mask) {
-            rec[i * shard_len..(i + 1) * shard_len].fill(0u8.into());
+            rec[i * shard_len..(i + 1) * shard_len].fill(Gf2p8_11d(0));
         }
         let erasure_positions: Vec<u8> = set_bits(erased_mask).map(|i| i as u8).collect();
 
@@ -947,6 +950,7 @@ pub(super) fn rebuild_erasure_batch(
         let mut recovered = Vec::with_capacity(CODING_SHREDS_PER_FEC_BLOCK);
         for shard_index in set_bits(!mask) {
             let mut shred = make_stub_shred(shard_index)?;
+            // SAFETY: Gf2p8_11d is a transparent u8 and shard_len is given in the common shred header.
             let src: &[u8] = unsafe {
                 std::slice::from_raw_parts(
                     rec[shard_index * shard_len..(shard_index + 1) * shard_len].as_ptr()
@@ -1336,7 +1340,7 @@ fn finish_erasure_batch(
     shreds.iter_mut().try_for_each(write_headers)?;
     let shard_len = shreds[0].erasure_shard()?.len();
     RS_MESSAGE.with_borrow_mut(|msg| {
-        msg.resize(DATA_SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
+        msg.resize(DATA_SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
 
         for (i, shred) in shreds
             .iter_mut()
@@ -1344,6 +1348,7 @@ fn finish_erasure_batch(
             .enumerate()
         {
             let shard = shred.erasure_shard_mut()?;
+            // SAFETY: Gf2p8_11d is a transparent u8 and shard_len is given in the common shred header.
             let src: &[Gf2p8_11d] = unsafe {
                 std::slice::from_raw_parts(shard.as_ptr() as *const Gf2p8_11d, shard_len)
             };
@@ -1351,10 +1356,10 @@ fn finish_erasure_batch(
         }
 
         RS_PARITY.with_borrow_mut(|mut par| {
-            par.resize(CODING_SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
+            par.resize(CODING_SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
 
             RS_ENCODE_WORKSPACE.with_borrow_mut(|mut ws| {
-                ws.resize(CODING_SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
+                ws.resize(CODING_SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
                 let rs = RsStandard::<SHREDS_PER_FEC_BLOCK, CODING_SHREDS_PER_FEC_BLOCK>::new();
                 rs.encode_systematic_sharded(&msg, &mut par, &mut ws, shard_len);
             });
@@ -1363,6 +1368,7 @@ fn finish_erasure_batch(
             // existing Agave convention, parity shards are appended after the message shards.
             for i in 0..CODING_SHREDS_PER_FEC_BLOCK {
                 let shard = &par[i * shard_len..(i + 1) * shard_len];
+                // SAFETY: Gf2p8_11d is a transparent u8 and shard_len is given in the common shred header.
                 let src: &[u8] =
                     unsafe { std::slice::from_raw_parts(shard.as_ptr() as *const u8, shard_len) };
                 let mut dst = shreds[DATA_SHREDS_PER_FEC_BLOCK + i].erasure_shard_mut()?;
@@ -1819,13 +1825,13 @@ mod test {
             message.extend_from_slice(src);
         }
         // Zero any remaining message shards.
-        message.resize(DATA_SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
+        message.resize(DATA_SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
 
-        let mut parity = vec![0u8.into(); CODING_SHREDS_PER_FEC_BLOCK * shard_len];
+        let mut parity = vec![Gf2p8_11d(0); CODING_SHREDS_PER_FEC_BLOCK * shard_len];
 
         RS_ENCODE_WORKSPACE.with_borrow_mut(|mut ws| {
             let rs = RsStandard::<SHREDS_PER_FEC_BLOCK, CODING_SHREDS_PER_FEC_BLOCK>::new();
-            ws.resize(CODING_SHREDS_PER_FEC_BLOCK * shard_len, 0u8.into());
+            ws.resize(CODING_SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
             rs.encode_systematic_sharded(&message, &mut parity, &mut ws, shard_len);
         });
 
