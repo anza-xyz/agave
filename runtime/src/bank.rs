@@ -69,10 +69,6 @@ use {
         slot_params::{SlotParams, SlotParamsArchive},
         stake_account::StakeAccount,
         stake_history::StakeHistory as CowStakeHistory,
-        stake_weighted_timestamp::{
-            MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
-            MaxAllowableDrift, calculate_stake_weighted_timestamp,
-        },
         stakes::{
             DelegatedStakes, EpochBoundaryStakes, SerdeStakesToStakeFormat, Stakes, StakesCache,
         },
@@ -226,7 +222,7 @@ use {
                 Ordering::{AcqRel, Acquire, Relaxed, Release},
             },
         },
-        time::{Duration, Instant},
+        time::Instant,
     },
     thiserror::Error,
     wincode::{SchemaRead, SchemaWrite},
@@ -1353,7 +1349,17 @@ impl Bank {
             }
             bank.update_stake_history(None);
         }
-        bank.update_clock(None);
+        // Genesis has no block footer, so initialize its clock explicitly.
+        let clock = sysvar::clock::Clock {
+            slot: bank.slot(),
+            epoch_start_timestamp: genesis_config.creation_time,
+            epoch: bank.epoch(),
+            leader_schedule_epoch: bank.get_leader_schedule_epoch(bank.slot()),
+            unix_timestamp: genesis_config.creation_time,
+        };
+        bank.update_sysvar_account(&sysvar::clock::id(), |account| {
+            create_account(&clock, bank.inherit_lamports(account))
+        });
         bank.update_rent();
         bank.update_epoch_schedule();
         bank.update_recent_blockhashes();
@@ -2079,16 +2085,9 @@ impl Bank {
             self.update_slot_hashes();
             self.update_stake_history(Some(parent_epoch));
 
-            if self.is_alpenglow() {
-                // Alpenglow banks have the timestamp populated via the footer
-                // We only populate the slot here
-                self.update_clock_slot_for_alpenglow();
-            } else {
-                // PoH banks have the timestamp and slot populated at the beginning
-                // Note: The first alpenglow bank will have the timestamp populated
-                // here at the beginning as well as at the end via the footer - this is intentional.
-                self.update_clock(Some(parent_epoch));
-            }
+            // Alpenglow banks have the timestamp populated via the footer
+            // We only populate the slot here
+            self.update_clock_slot_for_alpenglow();
             self.update_last_restart_slot()
         });
 
@@ -2545,62 +2544,6 @@ impl Bank {
     pub fn clock(&self) -> sysvar::clock::Clock {
         from_account(&self.get_account(&sysvar::clock::id()).unwrap_or_default())
             .unwrap_or_default()
-    }
-
-    fn update_clock(&self, parent_epoch: Option<Epoch>) {
-        let mut unix_timestamp = self.clock().unix_timestamp;
-        // set epoch_start_timestamp to None to warp timestamp
-        let epoch_start_timestamp = {
-            let epoch = if let Some(epoch) = parent_epoch {
-                epoch
-            } else {
-                self.epoch()
-            };
-            let first_slot_in_epoch = self.epoch_schedule().get_first_slot_in_epoch(epoch);
-            Some((first_slot_in_epoch, self.clock().epoch_start_timestamp))
-        };
-        let max_allowable_drift = MaxAllowableDrift {
-            fast: MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST,
-            slow: MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
-        };
-
-        let ancestor_timestamp = self.clock().unix_timestamp;
-        if let Some(timestamp_estimate) =
-            self.get_timestamp_estimate(max_allowable_drift, epoch_start_timestamp)
-        {
-            unix_timestamp = timestamp_estimate;
-            if timestamp_estimate < ancestor_timestamp {
-                unix_timestamp = ancestor_timestamp;
-            }
-        }
-        datapoint_info!(
-            "bank-timestamp-correction",
-            ("slot", self.slot(), i64),
-            ("from_genesis", self.unix_timestamp_from_genesis(), i64),
-            ("corrected", unix_timestamp, i64),
-            ("ancestor_timestamp", ancestor_timestamp, i64),
-        );
-        let mut epoch_start_timestamp =
-            // On epoch boundaries, update epoch_start_timestamp
-            if parent_epoch.is_some() && parent_epoch.unwrap() != self.epoch() {
-                unix_timestamp
-            } else {
-                self.clock().epoch_start_timestamp
-            };
-        if self.slot == 0 {
-            unix_timestamp = self.unix_timestamp_from_genesis();
-            epoch_start_timestamp = self.unix_timestamp_from_genesis();
-        }
-        let clock = sysvar::clock::Clock {
-            slot: self.slot,
-            epoch_start_timestamp,
-            epoch: self.epoch_schedule().get_epoch(self.slot),
-            leader_schedule_epoch: self.epoch_schedule().get_leader_schedule_epoch(self.slot),
-            unix_timestamp,
-        };
-        self.update_sysvar_account(&sysvar::clock::id(), |account| {
-            create_account(&clock, self.inherit_lamports(account))
-        });
     }
 
     /// In Alpenglow the clock sysvar's timestamp is populated from the block footer.
@@ -3195,52 +3138,6 @@ impl Bank {
         self.update_recent_blockhashes_locked(&blockhash_queue);
     }
 
-    fn get_timestamp_estimate(
-        &self,
-        max_allowable_drift: MaxAllowableDrift,
-        epoch_start_timestamp: Option<(Slot, UnixTimestamp)>,
-    ) -> Option<UnixTimestamp> {
-        let mut get_timestamp_estimate_time = Measure::start("get_timestamp_estimate");
-        let slots_per_epoch = self.epoch_schedule().slots_per_epoch;
-        let vote_accounts = self.vote_accounts();
-        let recent_timestamps = vote_accounts.iter().filter_map(|(pubkey, (_, account))| {
-            let vote_state = account.vote_state_view();
-            let last_timestamp = vote_state.last_timestamp();
-            let slot_delta = self.slot().checked_sub(last_timestamp.slot)?;
-            (slot_delta <= slots_per_epoch)
-                .then_some((*pubkey, (last_timestamp.slot, last_timestamp.timestamp)))
-        });
-        let elapsed_slot_duration = |from_slot: Slot, to_slot: Slot| {
-            if from_slot >= to_slot {
-                Duration::ZERO
-            } else {
-                Duration::from_nanos_u128(
-                    self.slot_range_duration_nanos(from_slot.saturating_add(1), to_slot),
-                )
-            }
-        };
-        let epoch = self.epoch_schedule().get_epoch(self.slot());
-        let stakes = self.epoch_vote_accounts(epoch)?;
-        let stake_weighted_timestamp = calculate_stake_weighted_timestamp(
-            recent_timestamps,
-            stakes,
-            self.slot(),
-            elapsed_slot_duration,
-            epoch_start_timestamp,
-            max_allowable_drift,
-        );
-        get_timestamp_estimate_time.stop();
-        datapoint_info!(
-            "bank-timestamp",
-            (
-                "get_timestamp_estimate_us",
-                get_timestamp_estimate_time.as_us(),
-                i64
-            ),
-        );
-        stake_weighted_timestamp
-    }
-
     /// Recalculates the bank hash
     ///
     /// This is used by ledger-tool when creating a snapshot, which
@@ -3649,9 +3546,8 @@ impl Bank {
 
         // On epoch boundaries, update epoch_start_timestamp
         //
-        // Note: the genesis block's bank is created via new_from_genesis, which calls update_clock
-        // unconditionally. In update_clock, we have a check for whether slot == 0, and if that's
-        // the case, the clock is set to self.unix_timestamp_from_genesis().
+        // Note: new_from_genesis initializes the genesis clock explicitly with the genesis
+        // creation time.
         //
         // As a result, we don't actually need the (0, _) case below, since it's never invoked.
         // However, include this for completeness in the match statement.
@@ -7355,12 +7251,10 @@ pub mod test_utils {
     use {
         super::Bank,
         crate::installed_scheduler_pool::BankWithScheduler,
-        solana_account::{ReadableAccount, WritableAccount, state_traits::StateMutWincode as _},
+        solana_account::{ReadableAccount, WritableAccount},
         solana_instruction_error::LamportsError,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hashv,
-        solana_vote_interface::state::VoteStateV4,
-        solana_vote_program::vote_state::{BlockTimestamp, VoteStateVersions},
         std::sync::Arc,
     };
     pub fn goto_end_of_slot(bank: Arc<Bank>) {
@@ -7377,21 +7271,6 @@ pub mod test_utils {
                 return;
             }
         }
-    }
-
-    pub fn update_vote_account_timestamp(
-        timestamp: BlockTimestamp,
-        bank: &Bank,
-        vote_pubkey: &Pubkey,
-    ) {
-        let mut vote_account = bank.get_account(vote_pubkey).unwrap_or_default();
-        let mut vote_state = VoteStateV4::deserialize(vote_account.data(), vote_pubkey)
-            .ok()
-            .unwrap_or_default();
-        vote_state.last_timestamp = timestamp;
-        let versioned = VoteStateVersions::new_v4(vote_state);
-        vote_account.set_state(&versioned).unwrap();
-        bank.store_account(vote_pubkey, &vote_account);
     }
 
     pub fn deposit(

@@ -15,7 +15,8 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_sysvar_cache_initialization() {
-        let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
+        genesis_config.creation_time = 1_234_567_890;
         let (bank0, bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
 
@@ -25,6 +26,16 @@ mod tests {
         let bank0_cached_rent = bank0_sysvar_cache.get_rent();
 
         assert!(bank0_cached_clock.is_ok());
+        assert_eq!(
+            *bank0_cached_clock.as_ref().unwrap().as_ref(),
+            solana_clock::Clock {
+                slot: 0,
+                epoch_start_timestamp: genesis_config.creation_time,
+                epoch: 0,
+                leader_schedule_epoch: bank0.get_leader_schedule_epoch(0),
+                unix_timestamp: genesis_config.creation_time,
+            }
+        );
         assert!(bank0_cached_epoch_schedule.is_ok());
         assert!(bank0_cached_rent.is_ok());
         assert!(bank0_sysvar_cache.get_slot_hashes().is_err());
@@ -44,6 +55,12 @@ mod tests {
         let bank1_cached_rent = bank1_sysvar_cache.get_rent();
 
         assert!(bank1_cached_clock.is_ok());
+        let bank1_clock = bank1_cached_clock.as_ref().unwrap();
+        assert_eq!(bank1_clock.unix_timestamp, genesis_config.creation_time);
+        assert_eq!(
+            bank1_clock.epoch_start_timestamp,
+            genesis_config.creation_time
+        );
         assert!(bank1_cached_epoch_schedule.is_ok());
         assert!(bank1_cached_rent.is_ok());
         assert!(bank1_sysvar_cache.get_slot_hashes().is_ok());
