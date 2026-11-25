@@ -629,17 +629,15 @@ impl TestValidatorGenesis {
     ) -> &mut Self {
         self.add_account(
             address,
-            AccountSharedData::from(Account {
+            AccountSharedData::new_with_data(
                 lamports,
-                data: solana_program_test::read_file(
+                solana_program_test::read_file(
                     solana_program_test::find_file(filename).unwrap_or_else(|| {
                         panic!("Unable to locate {filename}");
                     }),
                 ),
-                owner,
-                executable: false,
-                rent_epoch: 0,
-            }),
+                &owner,
+            ),
         )
     }
 
@@ -654,15 +652,13 @@ impl TestValidatorGenesis {
     ) -> &mut Self {
         self.add_account(
             address,
-            AccountSharedData::from(Account {
+            AccountSharedData::new_with_data(
                 lamports,
-                data: BASE64_STANDARD
+                BASE64_STANDARD
                     .decode(data_base64)
                     .unwrap_or_else(|err| panic!("Failed to base64 decode: {err}")),
-                owner,
-                executable: false,
-                rent_epoch: 0,
-            }),
+                &owner,
+            ),
         )
     }
 
@@ -941,13 +937,11 @@ impl TestValidator {
             program_data.extend_from_slice(&data);
             accounts.insert(
                 programdata_address,
-                AccountSharedData::from(Account {
-                    lamports: Rent::default().minimum_balance(program_data.len()).max(1),
-                    data: program_data,
-                    owner: upgradeable_program.loader,
-                    executable: false,
-                    rent_epoch: 0,
-                }),
+                AccountSharedData::new_with_data(
+                    Rent::default().minimum_balance(program_data.len()).max(1),
+                    program_data,
+                    &upgradeable_program.loader,
+                ),
             );
 
             let data = wincode::serialize(&UpgradeableLoaderState::Program {
@@ -961,7 +955,7 @@ impl TestValidator {
                     data,
                     owner: upgradeable_program.loader,
                     executable: true,
-                    rent_epoch: 0,
+                    ..Account::default()
                 }),
             );
         }
