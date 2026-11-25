@@ -22,15 +22,8 @@ pub fn rewards_wants_vote(
     root_slot: Slot,
     vote: &Vote,
 ) -> bool {
-    match vote {
-        Vote::Finalize(_)
-        | Vote::NotarizeFallback(_)
-        | Vote::SkipFallback(_)
-        | Vote::Genesis(_) => return false,
-        Vote::Notarize(_) | Vote::Skip(_) => (),
-    }
-    let vote_slot = vote.slot();
-    vote_is_relevant_for_rewards(my_pubkey, leader_schedule, root_slot, vote_slot)
+    vote.counts_for_rewards()
+        && vote_is_relevant_for_rewards(my_pubkey, leader_schedule, root_slot, vote.slot())
 }
 
 #[must_use]

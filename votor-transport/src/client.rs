@@ -2,12 +2,11 @@
 use {
     crate::{
         METRICS_INTERVAL, PeerListReceiver, close_codes,
-        endpoint::KeyUpdateListener,
+        endpoint::{EgressMessage, KeyUpdateListener},
         error::Error,
         stats::{self, ClientStats, record_client_error},
         transport::new_client_config,
     },
-    bytes::Bytes,
     log::{debug, error, info, warn},
     quinn::{Connection, Endpoint, SendDatagramError},
     solana_keypair::{Keypair, Signer},
@@ -98,8 +97,8 @@ async fn connect(
 pub(crate) struct OutboundLoop {
     endpoint: Endpoint,
     local_pubkey: Pubkey,
-    /// Channel for outbound messages to be broadcast
-    egress_receiver: mpsc::Receiver<Bytes>,
+    /// Channel for outbound messages
+    egress_receiver: mpsc::Receiver<EgressMessage>,
     key_updates: KeyUpdateListener,
     peer_list_receiver: PeerListReceiver,
     /// Per-peer send-only connection state.
@@ -116,7 +115,7 @@ impl OutboundLoop {
     pub(crate) fn new(
         endpoint: Endpoint,
         local_pubkey: Pubkey,
-        egress_receiver: mpsc::Receiver<Bytes>,
+        egress_receiver: mpsc::Receiver<EgressMessage>,
         key_updates: KeyUpdateListener,
         peer_list_receiver: PeerListReceiver,
         cancel: CancellationToken,
@@ -189,7 +188,7 @@ impl OutboundLoop {
                         error!("OutboundLoop: egress channel closed, exiting.");
                         break;
                     };
-                    self.perform_broadcast(message);
+                    self.handle_egress_message(message);
                 }
                 // Periodic reconcile: connect to missing peers, drop departed peers.
                 _ = reconcile_timer.tick() => self.reconcile(),
@@ -336,12 +335,33 @@ impl OutboundLoop {
         }
     }
 
-    /// Broadcast one message to every live connection. Broken connections are
-    /// dropped from the table so the next reconcile remakes them.
-    fn perform_broadcast(&mut self, message: Bytes) {
+    /// Send one message to every live connection (broadcast) or to a single peer
+    /// (unicast). Unicast never triggers a connect: without a live connection the
+    /// message is dropped. Broken connections are dropped from the table so the
+    /// next reconcile remakes them.
+    fn handle_egress_message(&mut self, egress_message: EgressMessage) {
+        // Both arms build the same chain type, with one side always empty.
+        let (message, targets) = match egress_message {
+            EgressMessage::Broadcast(message) => {
+                let targets = Some(self.peer_state.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(None);
+                (message, targets)
+            }
+            EgressMessage::Unicast { peer, message } => {
+                let target = self.peer_state.get_key_value(&peer);
+                if !matches!(target, Some((_, PeerState::Established { .. }))) {
+                    self.stats
+                        .unicast_dropped_no_connection
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                (message, None.into_iter().flatten().chain(target))
+            }
+        };
         let mut sent = 0u64;
         let mut dead_peers = Vec::new();
-        for (peer, state) in self.peer_state.iter() {
+        for (peer, state) in targets {
             let PeerState::Established { connection, .. } = state else {
                 continue;
             };
@@ -414,6 +434,7 @@ mod tests {
     use {
         super::*,
         crate::PeerList,
+        bytes::Bytes,
         solana_net_utils::sockets::unique_port_range_for_tests,
         std::net::Ipv4Addr,
         tokio::{sync::watch, time::sleep},

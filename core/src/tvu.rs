@@ -623,6 +623,7 @@ impl Tvu {
             bls_receiver,
             cluster_info.clone(),
             votor_egress,
+            leader_schedule_cache.clone(),
             highest_finalized,
         );
 
