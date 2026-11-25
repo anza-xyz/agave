@@ -273,6 +273,12 @@ mod tests {
 
         assert_eq!(cache.slot(), 7);
         assert_eq!(cache.bank_id(), bank_id);
+        assert!(format!("{cache:?}").contains("Bank({current_slot: 7, bank_id: BankId(42)})"));
+
+        let replacement_id = BankId::new(43);
+        cache.set_slot(7, replacement_id);
+        assert_eq!(cache.bank_id(), replacement_id);
+        assert!(format!("{cache:?}").contains("Bank({current_slot: 7, bank_id: BankId(43)})"));
     }
 
     #[test]

@@ -9157,6 +9157,26 @@ pub mod tests {
     }
 
     #[test]
+    fn test_bank_in_ancestry_requires_frozen_matching_slot() {
+        let genesis = create_genesis_config(TEST_MINT_LAMPORTS);
+        let root = Arc::new(Bank::new_for_tests(&genesis.genesis_config));
+        let bank = Arc::new(Bank::new_from_parent(root.clone(), *root.leader(), 2));
+
+        assert!(JsonRpcRequestProcessor::bank_in_ancestry(&bank, 2).is_none());
+        bank.freeze();
+        for (slot, expected) in [(0, &root), (2, &bank)] {
+            let actual = JsonRpcRequestProcessor::bank_in_ancestry(&bank, slot).unwrap();
+            assert!(Arc::ptr_eq(&actual, expected));
+        }
+        // Neither a skipped slot nor a future slot has metadata on this chain.
+        for slot in [1, 3] {
+            assert!(JsonRpcRequestProcessor::bank_in_ancestry(&bank, slot).is_none());
+        }
+        bank.squash();
+        assert!(JsonRpcRequestProcessor::bank_in_ancestry(&bank, 0).is_none());
+    }
+
+    #[test]
     fn test_confirmed_history_metadata_uses_selected_bank_ancestry() {
         let rpc = RpcHandler::start();
         rpc.create_test_transactions_and_populate_blockstore();

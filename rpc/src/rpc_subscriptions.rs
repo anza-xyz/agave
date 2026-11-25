@@ -1674,26 +1674,32 @@ pub(crate) mod tests {
                 ..CommitmentSlots::default()
             };
             notify(&current);
-            let mut methods = Vec::new();
+            let mut notifications = Vec::new();
             while let Ok(notification) = receiver.try_recv() {
                 let value: serde_json::Value =
                     serde_json::from_str(&notification.json.upgrade().unwrap()).unwrap();
                 assert_eq!(value["params"]["result"]["context"]["slot"], 1);
-                match value["method"].as_str().unwrap() {
-                    "programNotification" => assert_eq!(
-                        value["params"]["result"]["value"]["account"]["lamports"],
-                        lamports
-                    ),
-                    "logsNotification" => assert_eq!(
-                        value["params"]["result"]["value"]["signature"],
-                        tx.signatures[0].to_string()
-                    ),
-                    method => panic!("unexpected notification {method}"),
-                }
-                methods.push(value["method"].as_str().unwrap().to_owned());
+                notifications.push(value);
             }
-            methods.sort();
-            assert_eq!(methods, ["logsNotification", "programNotification"]);
+            notifications.sort_by(|a, b| {
+                a["method"]
+                    .as_str()
+                    .unwrap()
+                    .cmp(b["method"].as_str().unwrap())
+            });
+            assert_eq!(notifications.len(), 2);
+            let logs = &notifications[0];
+            let program = &notifications[1];
+            assert_eq!(logs["method"], "logsNotification");
+            assert_eq!(program["method"], "programNotification");
+            assert_eq!(
+                logs["params"]["result"]["value"]["signature"],
+                tx.signatures[0].to_string()
+            );
+            assert_eq!(
+                program["params"]["result"]["value"]["account"]["lamports"],
+                lamports
+            );
             notify(&current);
             assert!(
                 receiver.try_recv().is_err(),
