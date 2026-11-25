@@ -197,6 +197,7 @@ relating to Loader V4 functionality are disqualified from reports and bounties.
 * Issues affecting the virtual machine interpreter. The interpreter performance is not
 presently suitable for production environments, so it is safe to address any security
 vulnerabilies or inconsistencies with jit behavior in public issues
+* Issues affecting Tower consensus and the Tower to Alpenglow migration
 
 ### Eligibility:
 * Vulnerabilities must have been committed to the master branch for at least
