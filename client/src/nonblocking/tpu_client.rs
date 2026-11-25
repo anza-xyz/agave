@@ -1,136 +1,149 @@
-pub use solana_tpu_client::nonblocking::tpu_client::{LeaderTpuService, TpuSenderError};
+pub use solana_tpu_client_next::node_address_service::LeaderTpuCacheServiceConfig;
 use {
-    solana_connection_cache::connection_cache::{
-        ConnectionCache as BackendConnectionCache, ConnectionManager, ConnectionPool,
-        NewConnectionConfig,
-    },
-    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
+    solana_keypair::Keypair,
+    solana_net_utils::bind_to_unspecified,
+    solana_pubsub_client::nonblocking::pubsub_client::PubsubClientError,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_tpu_client::{
-        nonblocking::tpu_client::{Result, TpuClient as BackendTpuClient},
-        tpu_client::TpuClientConfig,
+    solana_rpc_client_api::client_error::Error as ClientError,
+    solana_signer::SignerError,
+    solana_tpu_client_next::{
+        Client, ClientBuilder, TransactionSender,
+        connection_workers_scheduler::NonblockingBroadcaster,
+        websocket_node_address_service::{self, WebsocketNodeAddressService},
     },
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
-    solana_transaction_error::TransportResult,
     std::sync::Arc,
+    thiserror::Error,
+    tokio_util::sync::{CancellationToken, DropGuard},
 };
 
-/// Client which sends transactions directly to the current leader's TPU port over QUIC.
-/// The client uses RPC to determine the current leader and fetch node contact info
-pub struct TpuClient<
-    P, // ConnectionPool
-    M, // ConnectionManager
-    C, // NewConnectionConfig
-> {
-    tpu_client: BackendTpuClient<P, M, C>,
+#[derive(Error, Debug)]
+pub enum TpuSenderError {
+    #[error("Pubsub error: {0:?}")]
+    PubsubError(#[from] PubsubClientError),
+    #[error("RPC error: {0:?}")]
+    RpcError(#[from] ClientError),
+    #[error("IO error: {0:?}")]
+    IoError(#[from] std::io::Error),
+    #[error("Signer error: {0:?}")]
+    SignerError(#[from] SignerError),
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
-impl<P, M, C> TpuClient<P, M, C>
-where
-    P: ConnectionPool<NewConnectionConfig = C>,
-    M: ConnectionManager<ConnectionPool = P, NewConnectionConfig = C>,
-    C: NewConnectionConfig,
-{
-    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// size
-    pub async fn send_transaction(&self, transaction: &Transaction) -> bool {
-        self.tpu_client.send_transaction(transaction).await
-    }
+pub type Result<T> = std::result::Result<T, TpuSenderError>;
 
-    /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
-    pub async fn send_wire_transaction(&self, wire_transaction: Vec<u8>) -> bool {
-        self.tpu_client
-            .send_wire_transaction(wire_transaction)
-            .await
-    }
-
-    /// Serialize and send transaction to the current and upcoming leader TPUs according to fanout
-    /// size
-    /// Returns the last error if all sends fail
-    pub async fn try_send_transaction(
-        &self,
-        transaction: &VersionedTransaction,
-    ) -> TransportResult<()> {
-        self.tpu_client.try_send_transaction(transaction).await
-    }
-
-    /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
-    /// Returns the last error if all sends fail
-    pub async fn try_send_wire_transaction(
-        &self,
-        wire_transaction: Vec<u8>,
-    ) -> TransportResult<()> {
-        self.tpu_client
-            .try_send_wire_transaction(wire_transaction)
-            .await
-    }
-
-    /// Send a batch of wire transactions to the current and upcoming leader TPUs according to
-    /// fanout size
-    /// Returns the last error if all sends fail
-    pub async fn try_send_wire_transaction_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-    ) -> TransportResult<()> {
-        self.tpu_client
-            .try_send_wire_transaction_batch(wire_transactions)
-            .await
+impl From<websocket_node_address_service::Error> for TpuSenderError {
+    fn from(err: websocket_node_address_service::Error) -> Self {
+        match err {
+            websocket_node_address_service::Error::RpcError(err) => Self::RpcError(err),
+            websocket_node_address_service::Error::PubsubError(err) => Self::PubsubError(err),
+            err => Self::Custom(err.to_string()),
+        }
     }
 }
 
-impl TpuClient<QuicPool, QuicConnectionManager, QuicConfig> {
-    /// Create a new client that disconnects when dropped
+impl From<solana_tpu_client_next::ClientError> for TpuSenderError {
+    fn from(err: solana_tpu_client_next::ClientError) -> Self {
+        Self::Custom(err.to_string())
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TpuClientConfig {
+    /// Number of upcoming leaders each transaction is sent to. `None` keeps the
+    /// tpu-client-next default.
+    pub leader_send_fanout: Option<usize>,
+    /// Configuration of the leader schedule / TPU address tracking.
+    pub leader_cache: LeaderTpuCacheServiceConfig,
+}
+
+/// Client which sends transactions directly to the upcoming leaders' TPU over QUIC.
+///
+/// Leaders are tracked through RPC and websocket slot updates. Sending is
+/// fire-and-forget: use [`send_and_confirm_transactions_in_parallel_v3`] with
+/// `SendTransport::Tpu(tpu_client.transaction_sender())` to confirm landing.
+///
+/// Call [`TpuClient::shutdown`] for an orderly shutdown; dropping the client
+/// cancels all background tasks.
+///
+/// [`send_and_confirm_transactions_in_parallel_v3`]: crate::send_and_confirm_transactions_in_parallel::send_and_confirm_transactions_in_parallel_v3
+pub struct TpuClient {
+    sender: TransactionSender,
+    client: Client,
+    node_address_service: WebsocketNodeAddressService,
+    _cancel_on_drop: DropGuard,
+}
+
+impl TpuClient {
+    /// Creates a new client. Must be called within a tokio runtime.
     pub async fn new(
-        name: &'static str,
         rpc_client: Arc<RpcClient>,
-        websocket_url: &str,
+        websocket_url: String,
         config: TpuClientConfig,
     ) -> Result<Self> {
-        let connection_manager = QuicConnectionManager::new_with_connection_config(
-            QuicConfig::new().expect("QUIC client config must be constructible"),
-        );
-        Ok(Self {
-            tpu_client: BackendTpuClient::new(
-                name,
-                rpc_client,
-                websocket_url,
-                config,
-                connection_manager,
-            )
-            .await?,
-        })
-    }
-}
+        let cancel = CancellationToken::new();
+        let (provider, node_address_service) = WebsocketNodeAddressService::run(
+            rpc_client,
+            websocket_url,
+            config.leader_cache,
+            cancel.child_token(),
+        )
+        .await?;
 
-impl<P, M, C> TpuClient<P, M, C>
-where
-    P: ConnectionPool<NewConnectionConfig = C>,
-    M: ConnectionManager<ConnectionPool = P, NewConnectionConfig = C>,
-    C: NewConnectionConfig,
-{
-    /// Create a new client that disconnects when dropped
-    pub async fn new_with_connection_cache(
-        rpc_client: Arc<RpcClient>,
-        websocket_url: &str,
-        config: TpuClientConfig,
-        connection_cache: Arc<BackendConnectionCache<P, M, C>>,
-    ) -> Result<Self> {
+        let mut builder = ClientBuilder::new(Box::new(provider))
+            .cancel_token(cancel.clone())
+            .bind_socket(bind_to_unspecified()?)
+            .broadcaster(NonblockingBroadcaster);
+        if let Some(fanout) = config.leader_send_fanout {
+            builder = builder.leader_send_fanout(fanout);
+        }
+        let (sender, client) = builder
+            .build()
+            .map_err(|err| TpuSenderError::Custom(err.to_string()))?;
+
         Ok(Self {
-            tpu_client: BackendTpuClient::new_with_connection_cache(
-                rpc_client,
-                websocket_url,
-                config,
-                connection_cache,
-            )
-            .await?,
+            sender,
+            client,
+            node_address_service,
+            _cancel_on_drop: cancel.drop_guard(),
         })
     }
 
-    pub fn rpc_client(&self) -> &RpcClient {
-        self.tpu_client.rpc_client()
+    /// Returns a handle for enqueueing transactions, e.g. for
+    /// `SendTransport::Tpu`. It stops accepting transactions once the client is
+    /// shut down or dropped.
+    pub fn transaction_sender(&self) -> TransactionSender {
+        self.sender.clone()
     }
 
-    pub async fn shutdown(&mut self) {
-        self.tpu_client.shutdown().await
+    /// Enqueues a serialized transaction for sending to the upcoming leaders.
+    ///
+    /// Waits for channel capacity. Success means the transaction was enqueued,
+    /// not that it was delivered.
+    pub async fn send_wire_transaction(&self, wire_transaction: Vec<u8>) -> Result<()> {
+        self.sender.send_transaction(wire_transaction).await?;
+        Ok(())
+    }
+
+    /// Updates the identity used for QUIC connections, e.g. to get stake-weighted QoS.
+    pub fn update_identity(&self, identity: &Keypair) -> Result<()> {
+        self.client.update_identity(identity)?;
+        Ok(())
+    }
+
+    /// Shuts down the client and its background tasks in an orderly manner.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self {
+            sender,
+            client,
+            node_address_service,
+            _cancel_on_drop,
+        } = self;
+        drop(sender);
+        let client_result = client.shutdown().await;
+        let service_result = node_address_service.shutdown().await;
+        client_result?;
+        service_result?;
+        Ok(())
     }
 }

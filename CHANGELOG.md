@@ -53,6 +53,11 @@ Release channels have their own copy of this changelog:
 * All mechanisms for sending transactions via UDP have been removed since Alpenglow nodes do not have any open UDP ports for transactions.
 * `solana-udp-client` crate has been removed.
 * `ConnectionCache::Udp`, `BlockingClientConnection::Udp`, `NonblockingClientConnection::Udp` variants and `ConnectionCache::protocol()`/`use_quic()` methods have been removed; `Protocol` is no longer re-exported from `solana_client::connection_cache`.
+* `ConnectionCache` has been removed; transactions are sent to the TPU via `solana-tpu-client-next`. `solana-client` no longer depends on `solana-connection-cache`, `solana-quic-client` or `solana-tpu-client`.
+  * The `connection_cache` and (blocking) `tpu_client` modules have been removed.
+  * `nonblocking::tpu_client::TpuClient` is now a thin wrapper over `solana-tpu-client-next` that tracks leaders via RPC and websocket. The generic `TpuClient<P, M, C>`, `new_with_connection_cache()` and the `LeaderTpuService` re-export have been removed.
+  * `send_and_confirm_transactions_in_parallel_v2()`, `send_and_confirm_transactions_in_parallel_blocking_v2()` and `SendAndConfirmConfigV2` have been removed; use `send_and_confirm_transactions_in_parallel_v3()`.
+  * `TpuSenderError` and `Result` are now defined in `solana_client::nonblocking::tpu_client`.
 
 ### solana-tpu-client
 

@@ -73,7 +73,6 @@ solana-keypair = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["wincode"] }
 solana-message = { workspace = true }
 solana-native-token = { workspace = true }
-solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-offchain-message = { workspace = true, features = ["verify"] }
 solana-packet = { workspace = true }
@@ -96,8 +95,6 @@ solana-stake-history = { workspace = true, features = ["wincode"] }
 solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-syscalls = { workspace = true }
 solana-system-interface = { workspace = true }
-solana-tpu-client = { workspace = true, features = ["default"] }
-solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
@@ -106,7 +103,6 @@ solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]

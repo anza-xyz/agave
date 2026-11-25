@@ -34,8 +34,11 @@ use {
         CliUpgradeableProgramClosed, CliUpgradeableProgramExtended, CliUpgradeablePrograms,
         ReturnSignersConfig, return_signers_with_config,
     },
-    solana_client::send_and_confirm_transactions_in_parallel::{
-        SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
+    solana_client::{
+        nonblocking::tpu_client::{TpuClient, TpuClientConfig},
+        send_and_confirm_transactions_in_parallel::{
+            SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
+        },
     },
     solana_commitment_config::CommitmentConfig,
     solana_instruction::Instruction,
@@ -47,7 +50,6 @@ use {
         state::UpgradeableLoaderState,
     },
     solana_message::VersionedMessage,
-    solana_net_utils::bind_to_unspecified,
     solana_packet::PACKET_DATA_SIZE,
     solana_program_runtime::{
         deploy::morph_into_deployment_environment, execution_budget::SVMTransactionExecutionBudget,
@@ -75,11 +77,6 @@ use {
     solana_signer::Signer,
     solana_syscalls::create_program_runtime_environment,
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, error::SystemError},
-    solana_tpu_client_next::{
-        ClientBuilder, connection_workers_scheduler::NonblockingBroadcaster,
-        node_address_service::LeaderTpuCacheServiceConfig,
-        websocket_node_address_service::WebsocketNodeAddressService,
-    },
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_error::TransactionError,
     std::{
@@ -93,7 +90,6 @@ use {
         sync::Arc,
         time::Duration,
     },
-    tokio_util::sync::CancellationToken,
 };
 
 pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recreated at the same \
@@ -3311,35 +3307,19 @@ async fn send_deploy_messages(
                 }
             }
 
-            let cancel_token = CancellationToken::new();
             // Keep background TPU client tasks alive for the duration of the send.
-            let (transport, node_address_service, _tpu_client) = if use_rpc {
-                (
-                    SendTransport::Rpc(config.send_transaction_config),
-                    None,
-                    None,
-                )
+            let (transport, tpu_client) = if use_rpc {
+                (SendTransport::Rpc(config.send_transaction_config), None)
             } else {
-                let (provider, service) = WebsocketNodeAddressService::run(
+                let tpu_client = TpuClient::new(
                     rpc_client.clone(),
                     config.websocket_url.clone(),
-                    LeaderTpuCacheServiceConfig::default(),
-                    cancel_token.child_token(),
+                    TpuClientConfig::default(),
                 )
                 .await?;
-
-                let bind_socket = bind_to_unspecified()?;
-
-                let (transaction_sender, client) = ClientBuilder::new(Box::new(provider))
-                    .cancel_token(cancel_token.clone())
-                    .bind_socket(bind_socket)
-                    .broadcaster(NonblockingBroadcaster)
-                    .build()
-                    .expect("Failed to build TPU client");
                 (
-                    SendTransport::Tpu(transaction_sender),
-                    Some(service),
-                    Some(client),
+                    SendTransport::Tpu(tpu_client.transaction_sender()),
+                    Some(tpu_client),
                 )
             };
 
@@ -3359,11 +3339,10 @@ async fn send_deploy_messages(
             .await
             .map_err(|err| format!("Data writes to account failed: {err}"));
 
-            cancel_token.cancel();
-            if let Some(node_address_service) = node_address_service
-                && let Err(err) = node_address_service.shutdown().await
+            if let Some(tpu_client) = tpu_client
+                && let Err(err) = tpu_client.shutdown().await
             {
-                error!("Failed to shut down WebSocket node address service: {err}");
+                error!("Failed to shut down TPU client: {err}");
             }
 
             let transaction_errors = transaction_errors_result?
