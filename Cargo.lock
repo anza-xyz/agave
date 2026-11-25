@@ -11433,6 +11433,7 @@ dependencies = [
  "agave-votor",
  "agave-votor-messages",
  "agave-worker-pool",
+ "agave-xdp",
  "bencher",
  "bs58",
  "bytes",

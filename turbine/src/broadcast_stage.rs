@@ -172,21 +172,34 @@ impl BroadcastStageType {
         shred_receivers: Option<ShredReceivers>,
     ) -> BroadcastStage {
         match self {
-            BroadcastStageType::Standard => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                StandardBroadcastRun::new(
-                    shred_version,
-                    votor_event_sender,
-                    leader_schedule_cache,
-                    shred_receivers,
-                ),
-                xdp_sender,
-            ),
+            BroadcastStageType::Standard => {
+                // Without XDP the copies leave on these sockets. Give copies to
+                // a multicast group the TTL the XDP path uses, so they can
+                // cross routers.
+                if shred_receivers.is_some() && xdp_sender.is_none() {
+                    for socket in &sock {
+                        if let Err(err) = socket.set_multicast_ttl_v4(SHRED_RECEIVER_MULTICAST_TTL)
+                        {
+                            log::warn!("failed to set the shred receiver multicast TTL: {err}");
+                        }
+                    }
+                }
+                BroadcastStage::new(
+                    sock,
+                    cluster_info,
+                    receiver,
+                    exit_sender,
+                    blockstore,
+                    bank_forks,
+                    StandardBroadcastRun::new(
+                        shred_version,
+                        votor_event_sender,
+                        leader_schedule_cache,
+                        shred_receivers,
+                    ),
+                    xdp_sender,
+                )
+            }
 
             BroadcastStageType::BroadcastDuplicates(config) => BroadcastStage::new(
                 sock,
@@ -427,6 +440,10 @@ pub enum BroadcastSocket<'a> {
     Udp(&'a UdpSocket),
     Xdp(&'a XdpSender),
 }
+
+/// Multicast TTL of the shred receiver copies sent through a socket, the TTL
+/// the XDP path gives every packet.
+const SHRED_RECEIVER_MULTICAST_TTL: u32 = 64;
 
 /// Extra destinations for this node's own leader shreds
 /// (`--shred-receiver-address`): a copy of every shred goes to each address,
@@ -752,28 +769,14 @@ pub mod test {
         assert!(ShredReceivers::new(ShredReceiverAddresses::default()).is_none());
     }
 
-    #[test]
-    fn test_shred_receiver_addresses_get_every_shred_once() {
-        let bind_receiver = || {
-            let socket = bind_to_localhost_unique().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_millis(200)))
-                .unwrap();
-            socket
-        };
-        let receiver_sockets = [bind_receiver(), bind_receiver()];
-        let receivers = ShredReceivers::new(
-            ShredReceiverAddresses::new(
-                receiver_sockets
-                    .iter()
-                    .map(|socket| socket.local_addr().unwrap()),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let turbine_socket = bind_to_localhost_unique().unwrap();
-
-        // Only this node is in the cluster, so turbine has no destinations.
+    /// A leader alone in its cluster, so turbine has no destination: every
+    /// packet `broadcast_shreds` sends is a shred receiver copy. Returns a
+    /// function that broadcasts the same 8 shreds through `socket`, and their
+    /// payloads.
+    fn leader_broadcast() -> (
+        impl Fn(BroadcastSocket, &ShredReceivers) -> Result<TransmitShredsStats>,
+        HashSet<Vec<u8>>,
+    ) {
         let leader_keypair = Arc::new(Keypair::new());
         let leader_info = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
         let cluster_info = ClusterInfo::new(
@@ -802,49 +805,126 @@ pub mod test {
         );
         assert!(shreds.len() > 8);
         // Keep the copies well inside a default socket receive buffer, so the
-        // test does not depend on the host's rmem_default.
+        // tests do not depend on the host's rmem_default.
         shreds.truncate(8);
-
-        let mut transmit_stats = TransmitShredsStats::default();
-        broadcast_shreds(
-            BroadcastSocket::Udp(&turbine_socket),
-            &shreds,
-            &cluster_nodes_cache,
-            &AtomicInterval::default(),
-            &mut transmit_stats,
-            &cluster_info,
-            &bank_forks,
-            &leader_schedule_cache,
-            &SocketAddrSpace::Unspecified,
-            Some(&receivers),
-        )
-        .unwrap();
-        assert_eq!(transmit_stats.total_packets, 0);
-        assert_eq!(
-            transmit_stats.mirrored_packets,
-            shreds.len() * receiver_sockets.len()
-        );
-        assert_eq!(transmit_stats.dropped_packets_mirrored, 0);
-
-        let expected: HashSet<Vec<u8>> = shreds
+        let payloads = shreds
             .iter()
             .map(|shred| shred.payload().to_vec())
             .collect();
+
+        let broadcast = move |socket: BroadcastSocket, receivers: &ShredReceivers| {
+            let mut transmit_stats = TransmitShredsStats::default();
+            broadcast_shreds(
+                socket,
+                &shreds,
+                &cluster_nodes_cache,
+                &AtomicInterval::default(),
+                &mut transmit_stats,
+                &cluster_info,
+                &bank_forks,
+                &leader_schedule_cache,
+                &SocketAddrSpace::Unspecified,
+                Some(receivers),
+            )
+            .map(|()| transmit_stats)
+        };
+        (broadcast, payloads)
+    }
+
+    #[test]
+    fn test_shred_receiver_addresses_get_every_shred_once() {
+        let bind_receiver = || {
+            let socket = bind_to_localhost_unique().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            socket
+        };
+        let receiver_sockets = [bind_receiver(), bind_receiver()];
+        let receivers = ShredReceivers::new(
+            ShredReceiverAddresses::new(
+                receiver_sockets
+                    .iter()
+                    .map(|socket| socket.local_addr().unwrap()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let turbine_socket = bind_to_localhost_unique().unwrap();
+        let (broadcast, payloads) = leader_broadcast();
+
+        let transmit_stats = broadcast(BroadcastSocket::Udp(&turbine_socket), &receivers).unwrap();
+        assert_eq!(transmit_stats.total_packets, 0);
+        assert_eq!(
+            transmit_stats.mirrored_packets,
+            payloads.len() * receiver_sockets.len()
+        );
+        assert_eq!(transmit_stats.dropped_packets_mirrored, 0);
+
         // The copies leave through the broadcast socket, like the turbine
         // packets.
         let source_port = turbine_socket.local_addr().unwrap().port();
         for receiver in &receiver_sockets {
             let mut buf = [0u8; 2048];
             let mut got = HashSet::new();
-            for _ in 0..shreds.len() {
+            for _ in 0..payloads.len() {
                 let (len, from) = receiver.recv_from(&mut buf).unwrap();
                 assert_eq!(from.port(), source_port);
                 assert!(got.insert(buf[..len].to_vec()));
             }
-            assert_eq!(got, expected);
+            assert_eq!(got, payloads);
             // Exactly once: nothing more arrives.
             assert!(receiver.recv_from(&mut buf).is_err());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_shred_receiver_copies_go_through_the_xdp_sender() {
+        use {
+            agave_xdp::{
+                transmitter::XdpSender as QueuesSender,
+                tx_loop::{Receiver as _, TxPacket as _},
+            },
+            std::net::{Ipv4Addr, SocketAddrV4},
+        };
+        const QUEUES: usize = 2;
+        let receiver_addrs: Vec<_> = (9001..9004)
+            .map(|port| SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+            .collect();
+        let receivers =
+            ShredReceivers::new(ShredReceiverAddresses::new(receiver_addrs.clone()).unwrap())
+                .unwrap();
+        let (broadcast, payloads) = leader_broadcast();
+        // The channels hold one call's copies and no more.
+        let (queues_sender, queues) =
+            QueuesSender::new_with_channels(QUEUES, payloads.len() / QUEUES);
+        let sender = XdpSender::new(queues_sender, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8001));
+
+        // The second call finds the channels full: its copies are dropped,
+        // counted for every receiver, and the broadcast still succeeds.
+        let copies_per_call = payloads.len() * receiver_addrs.len();
+        for dropped in [0, copies_per_call] {
+            let transmit_stats = broadcast(BroadcastSocket::Xdp(&sender), &receivers).unwrap();
+            assert_eq!(transmit_stats.total_packets, 0);
+            assert_eq!(transmit_stats.dropped_packets_xdp, 0);
+            assert_eq!(transmit_stats.mirrored_packets, copies_per_call);
+            assert_eq!(transmit_stats.dropped_packets_mirrored, dropped);
+        }
+
+        // The first call's copies: one item per shred, carrying every
+        // receiver address, spread over the queues.
+        let mut sent = HashSet::new();
+        for queue in &queues {
+            let mut items = 0;
+            while let Ok(packet) = queue.try_recv() {
+                assert_eq!(packet.dst_addrs().as_ref(), receiver_addrs.as_slice());
+                assert!(sent.insert(packet.payload().to_vec()));
+                items += 1;
+            }
+            assert_eq!(items, payloads.len() / QUEUES);
+        }
+        assert_eq!(sent, payloads);
     }
 
     #[test]
