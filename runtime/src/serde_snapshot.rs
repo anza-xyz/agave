@@ -602,10 +602,12 @@ where
         genesis_config,
         runtime_config,
         accounts_db,
+        crate::snapshot_bank_utils::index_generator(
+            limit_load_slot_count_from_snapshot,
+            verify_index,
+        ),
         debug_keys,
         None, // leader_for_tests
-        limit_load_slot_count_from_snapshot,
-        verify_index,
     )?;
     Ok((
         bank,
@@ -743,10 +745,9 @@ pub(crate) fn reconstruct_bank_from_fields(
     genesis_config: &GenesisConfig,
     runtime_config: &RuntimeConfig,
     accounts_db: AccountsDb,
+    generate_index: impl FnOnce(&AccountsDb) -> IndexGenerationInfo,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     leader_for_tests: Option<SlotLeader>,
-    limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
 ) -> Result<(Bank, ReconstructedBankInfo), SnapshotError> {
     let mut bank_fields = bank_fields.collapse_into();
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
@@ -762,8 +763,7 @@ pub(crate) fn reconstruct_bank_from_fields(
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
         accounts_db,
-        limit_load_slot_count_from_snapshot,
-        verify_index,
+        generate_index,
     )?;
     bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
@@ -892,8 +892,7 @@ pub struct ReconstructedAccountsDbInfo {
 fn reconstruct_accountsdb_from_fields(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields,
     accounts_db: AccountsDb,
-    limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
+    generate_index: impl FnOnce(&AccountsDb) -> IndexGenerationInfo,
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), SnapshotError> {
     let snapshot_bank_hash_info = snapshot_accounts_db_fields.into_bank_hash_info();
 
@@ -910,17 +909,7 @@ fn reconstruct_accountsdb_from_fields(
         calculated_accounts_lt_hash,
         calculated_capitalization,
         pubkeys_by_owner,
-    } = rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("rayonGenIndex{i:02}"))
-        .build()
-        .expect("new rayon threadpool")
-        .install(|| {
-            accounts_db.generate_index(
-                limit_load_slot_count_from_snapshot,
-                verify_index,
-                &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
-            )
-        });
+    } = generate_index(&accounts_db);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     Ok((

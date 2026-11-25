@@ -145,7 +145,7 @@ dependencies = [
  "agave-event-system-derive",
  "getrandom 0.4.3",
  "libc",
- "nix",
+ "nix 0.31.3",
  "shaq",
  "thiserror 2.0.21",
  "wincode",
@@ -244,7 +244,7 @@ dependencies = [
  "ctrlc",
  "dirs-next",
  "indicatif",
- "nix",
+ "nix 0.32.0",
  "reqwest 0.12.28",
  "scopeguard",
  "semver 1.0.28",
@@ -374,7 +374,7 @@ checksum = "f33728ce84847c70d8d3b765ccb4ac1080692c15ada2c49305b1442e047825a3"
 dependencies = [
  "agave-scheduler-bindings",
  "libc",
- "nix",
+ "nix 0.31.3",
  "rts-alloc",
  "shaq",
  "thiserror 2.0.21",
@@ -701,7 +701,7 @@ dependencies = [
  "crossbeam-queue",
  "libc",
  "log",
- "nix",
+ "nix 0.32.0",
  "thiserror 2.0.21",
 ]
 
@@ -1228,7 +1228,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "libc",
  "log",
- "nix",
+ "nix 0.31.3",
  "object",
  "once_cell",
  "scopeguard",
@@ -1775,9 +1775,9 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "cfg_eval"
@@ -2310,7 +2310,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
 dependencies = [
  "dispatch2",
- "nix",
+ "nix 0.31.3",
  "windows-sys 0.61.0",
 ]
 
@@ -4330,9 +4330,9 @@ dependencies = [
 
 [[package]]
 name = "libloading"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
 dependencies = [
  "cfg-if 1.0.5",
  "windows-link",
@@ -4744,6 +4744,19 @@ name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if 1.0.5",
+ "cfg_aliases",
+ "libc",
+ "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77730ed34f01f4990cb2ea67fec715ecebc6fab9a6396cf83c5529b13f581bdc"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if 1.0.5",
@@ -9116,6 +9129,7 @@ version = "5.0.0-alpha.1"
 dependencies = [
  "agave-feature-set",
  "agave-logger",
+ "agave-shred-wire-format",
  "agave-snapshots",
  "agave-votor",
  "agave-votor-messages",
@@ -9253,7 +9267,7 @@ dependencies = [
  "dashmap",
  "itertools 0.15.0",
  "log",
- "nix",
+ "nix 0.32.0",
  "rand 0.9.4",
  "shuttle",
  "socket2 0.6.5",
@@ -9362,7 +9376,7 @@ dependencies = [
  "caps",
  "libc",
  "log",
- "nix",
+ "nix 0.32.0",
  "num_cpus",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -10699,7 +10713,6 @@ dependencies = [
  "log",
  "prost 0.14.6",
  "prost-types 0.14.6",
- "serde",
  "smpl_jwt",
  "solana-clock",
  "solana-entry",
@@ -10710,7 +10723,6 @@ dependencies = [
  "solana-message",
  "solana-metrics",
  "solana-pubkey 4.4.0",
- "solana-serde",
  "solana-signature",
  "solana-storage-proto",
  "solana-system-transaction",
@@ -10771,7 +10783,7 @@ dependencies = [
  "itertools 0.15.0",
  "libc",
  "log",
- "nix",
+ "nix 0.32.0",
  "num_cpus",
  "rand 0.9.4",
  "rustls",
@@ -13529,9 +13541,9 @@ dependencies = [
 
 [[package]]
 name = "xxhash-rust"
-version = "0.8.19"
+version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
+checksum = "40de123dbb523ebcc00d61ec01840ad192578afc378d859f3429caa38308fad5"
 
 [[package]]
 name = "yansi"

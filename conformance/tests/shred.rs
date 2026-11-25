@@ -4,14 +4,13 @@
 
 use {
     agave_conformance::shred::{execute_shred_parse, sol_compat_shred_parse_v1},
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
     prost::Message,
     protosol::protos::{BlockParseResult, ShredParseContext, ShredParseEffects},
     solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_ledger::shred::{
-        DATA_SHREDS_PER_FEC_BLOCK, ProcessShredsStats, Shredder, max_entries_per_n_shred,
-    },
+    solana_ledger::shred::{ProcessShredsStats, Shredder, max_entries_per_n_shred},
     solana_signer::Signer,
     std::{mem::MaybeUninit, sync::Arc},
 };

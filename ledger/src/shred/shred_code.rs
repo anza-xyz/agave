@@ -1,6 +1,9 @@
-use crate::shred::{
-    DATA_SHREDS_PER_FEC_BLOCK, Error, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT,
-    ShredType, traits::ShredCode as ShredCodeTrait,
+use {
+    crate::shred::{
+        Error, MAX_CODE_SHREDS_PER_SLOT, MAX_DATA_SHREDS_PER_SLOT, ShredType,
+        traits::ShredCode as ShredCodeTrait,
+    },
+    agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
 };
 
 #[inline]
