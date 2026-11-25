@@ -5,8 +5,8 @@ use {
         cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
-        rpc_cache::{LargestAccountsCache, RankMapCache},
+        rpc::{rpc_accounts::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
+        rpc_cache::RankMapCache,
         rpc_health::*,
     },
     agave_snapshots::{
@@ -34,8 +34,7 @@ use {
     solana_net_utils::Protocol,
     solana_perf::thread::renice_this_thread,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
-        non_circulating_supply::calculate_non_circulating_supply,
+        bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
         validated_block_finalization::ValidatedBlockFinalizationCert,
     },
@@ -69,7 +68,6 @@ use {
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
-const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
 /// Default minimum snapshot download speed is 10 MB/s
 /// Full snapshots are ~90 GB, incremental are ~1 GB today but both will increase over time
 /// Full: 120 GB / 10 MB/s = 12,000 seconds -> ~30k slots
@@ -428,38 +426,13 @@ impl RequestMiddleware for RpcRequestMiddleware {
 
 fn match_supply_path(path: &str) -> Option<&str> {
     match path {
-        "/v0/circulating-supply" | "/v0/total-supply" => Some(path),
+        "/v0/total-supply" => Some(path),
         _ => None,
     }
 }
 
-#[derive(Debug)]
-pub enum SupplyCalcError {
-    Scan(String),
-}
-
-async fn calculate_circulating_supply_async(bank: &Arc<Bank>) -> Result<u64, SupplyCalcError> {
-    let total_supply = bank.capitalization();
-    let bank = Arc::clone(bank);
-    let non_circulating_supply =
-        tokio::task::spawn_blocking(move || calculate_non_circulating_supply(&bank))
-            .await
-            .expect("Failed to spawn blocking task")
-            .map_err(|e| SupplyCalcError::Scan(e.to_string()))?;
-
-    Ok(total_supply.saturating_sub(non_circulating_supply.lamports))
-}
-
 async fn handle_rest(bank_forks: &RwLock<BankForks>, path: &str) -> Option<String> {
     match path {
-        "/v0/circulating-supply" => {
-            let bank = bank_forks.read().unwrap().root_bank();
-            let supply_result = calculate_circulating_supply_async(&bank).await;
-            match supply_result {
-                Ok(supply) => Some(build_balance_message(supply, false, false)),
-                Err(_) => None,
-            }
-        }
         "/v0/total-supply" => {
             let bank = bank_forks.read().unwrap().root_bank();
             let total_supply = bank.capitalization();
@@ -624,10 +597,6 @@ impl JsonRpcService {
             override_health_check,
         ));
 
-        let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
-            LARGEST_ACCOUNTS_CACHE_DURATION,
-        )));
-
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
         let (bigtable_ledger_storage, _bigtable_ledger_upload_service) =
@@ -695,7 +664,6 @@ impl JsonRpcService {
             genesis_hash,
             bigtable_ledger_storage,
             optimistically_confirmed_bank,
-            largest_accounts_cache,
             Arc::new(RankMapCache::new(RANK_MAP_CACHE_CAPACITY)),
             max_slots,
             leader_schedule_cache,
@@ -730,7 +698,6 @@ impl JsonRpcService {
                 if full_api {
                     io.extend_with(rpc_bank::BankDataImpl.to_delegate());
                     io.extend_with(rpc_accounts::AccountsDataImpl.to_delegate());
-                    io.extend_with(rpc_accounts_scan::AccountsScanImpl.to_delegate());
                     io.extend_with(rpc_full::FullImpl.to_delegate());
                 }
 
@@ -1261,16 +1228,8 @@ mod tests {
                 handle_rest(&bank_forks, "not-a-supported-rest-api").await
             );
 
-            let circulating_supply = handle_rest(&bank_forks, "/v0/circulating-supply").await;
-            assert!(circulating_supply.is_some());
-
             let total_supply = handle_rest(&bank_forks, "/v0/total-supply").await;
             assert!(total_supply.is_some());
-
-            assert_eq!(
-                handle_rest(&bank_forks, "/v0/circulating-supply").await,
-                handle_rest(&bank_forks, "/v0/total-supply").await
-            );
         });
     }
 

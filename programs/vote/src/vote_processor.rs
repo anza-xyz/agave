@@ -27,7 +27,6 @@ fn process_authorize_with_seed_instruction<F>(
     authorization_type: VoteAuthorize,
     current_authority_derived_key_owner: &Pubkey,
     current_authority_derived_key_seed: &str,
-    is_vote_authorize_with_bls_enabled: bool,
     consume_pop_compute_units: F,
 ) -> Result<(), InstructionError>
 where
@@ -55,7 +54,6 @@ where
         authorization_type,
         &expected_authority_keys,
         &clock,
-        is_vote_authorize_with_bls_enabled,
         consume_pop_compute_units,
     )
 }
@@ -65,12 +63,6 @@ fn is_init_account_v2_enabled(invoke_context: &InvokeContext) -> bool {
     feature_set.bls_pubkey_management_in_vote_account
         && feature_set.block_revenue_sharing
         && feature_set.vote_account_initialize_v2
-}
-
-fn is_vote_authorize_with_bls_enabled(invoke_context: &InvokeContext) -> bool {
-    invoke_context
-        .get_feature_set()
-        .bls_pubkey_management_in_vote_account
 }
 
 // Citing `runtime/src/block_cost_limit.rs`, vote has statically defined 2100
@@ -97,7 +89,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
     let signers = instruction_context.get_signers()?;
     let is_init_account_v2_enabled = is_init_account_v2_enabled(invoke_context);
-    let is_vote_authorize_with_bls_enabled = is_vote_authorize_with_bls_enabled(invoke_context);
     let consume_pop_compute_units = || {
         invoke_context
             .consume_checked(BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS)
@@ -127,7 +118,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 vote_authorize,
                 &signers,
                 &clock,
-                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -142,7 +132,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
-                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -161,7 +150,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 args.authorization_type,
                 &args.current_authority_derived_key_owner,
                 args.current_authority_derived_key_seed.as_str(),
-                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -219,7 +207,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
                 vote_authorize,
                 &signers,
                 &clock,
-                is_vote_authorize_with_bls_enabled,
                 consume_pop_compute_units,
             )
         }
@@ -382,7 +369,6 @@ mod tests {
 
     #[derive(Clone, Copy, Default)]
     struct VoteProgramFeatures {
-        bls_pubkey_management_in_vote_account: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
     }
@@ -390,7 +376,6 @@ mod tests {
     impl VoteProgramFeatures {
         fn all_enabled() -> Self {
             Self {
-                bls_pubkey_management_in_vote_account: true,
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
             }
@@ -423,7 +408,6 @@ mod tests {
         expected_cus: u64,
     ) -> Vec<AccountSharedData> {
         let VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
             block_revenue_sharing,
             vote_account_initialize_v2,
         } = features;
@@ -449,7 +433,6 @@ mod tests {
                 *cu_consumed.borrow_mut() -= invoke_context.get_remaining();
             },
             &SVMFeatureSet {
-                bls_pubkey_management_in_vote_account,
                 block_revenue_sharing,
                 vote_account_initialize_v2,
                 ..SVMFeatureSet::all_enabled()
@@ -673,18 +656,23 @@ mod tests {
         )
         .unwrap();
 
-        let node_pubkey = Pubkey::new_unique();
-        let vote_account = vote_state::create_v4_account_with_authorized(
-            &node_pubkey,
-            &authorized_voter,
-            [0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE],
-            &authorized_withdrawer,
-            0,
-            &authorized_withdrawer,
-            0,
-            &node_pubkey,
-            100,
+        let vote_state = VoteStateV4::new_with_defaults(
+            &vote_pubkey,
+            &VoteInit {
+                node_pubkey: Pubkey::new_unique(),
+                authorized_voter,
+                authorized_withdrawer,
+                commission: 0,
+            },
+            &Clock::default(),
         );
+        let vote_account = AccountSharedData::new_data_with_space(
+            100,
+            &VoteStateVersions::V4(Box::new(vote_state)),
+            VoteStateV4::size_of(),
+            &id(),
+        )
+        .unwrap();
 
         VoteAccountTestFixtureWithAuthorities {
             vote_account,
@@ -753,14 +741,9 @@ mod tests {
 
     #[test_matrix(
         [false, true],
-        [false, true],
         [false, true]
     )]
-    fn test_initialize_vote_account(
-        bls_pubkey_management_in_vote_account: bool,
-        block_revenue_sharing: bool,
-        vote_account_initialize_v2: bool,
-    ) {
+    fn test_initialize_vote_account(block_revenue_sharing: bool, vote_account_initialize_v2: bool) {
         let vote_pubkey = solana_pubkey::new_rand();
         let vote_account =
             AccountSharedData::new_with_data(100, vec![0; vote_state_size_of()], &id());
@@ -797,7 +780,6 @@ mod tests {
         ];
 
         let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
             block_revenue_sharing,
             vote_account_initialize_v2,
         };
@@ -864,11 +846,9 @@ mod tests {
 
     #[test_matrix(
         [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_initialize_vote_account_v2(
-        bls_pubkey_management_in_vote_account: bool,
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
     ) {
@@ -924,14 +904,11 @@ mod tests {
         ];
 
         let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
             block_revenue_sharing,
             vote_account_initialize_v2,
         };
 
-        let all_v2_features_enabled = bls_pubkey_management_in_vote_account
-            && block_revenue_sharing
-            && vote_account_initialize_v2;
+        let all_v2_features_enabled = block_revenue_sharing && vote_account_initialize_v2;
 
         // If any v2 feature is disabled, the new instruction should be rejected
         if !all_v2_features_enabled {
@@ -1945,9 +1922,9 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_authorize_voter(bls_pubkey_management_in_vote_account: bool) {
-        let (vote_pubkey, vote_account) = create_test_account();
+    #[test]
+    fn test_authorize_voter() {
+        let (vote_pubkey, vote_account) = create_test_account_no_bls_key();
         let authorized_voter_pubkey = solana_pubkey::new_rand();
         let clock = Clock {
             epoch: 1,
@@ -1979,50 +1956,7 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
-            ..Default::default()
-        };
-
-        // processing incompatible instruction should fail
-        if bls_pubkey_management_in_vote_account {
-            // If both features are enabled, the old instruction should be rejected
-            process_instruction(
-                features,
-                &instruction_data,
-                vec![
-                    (vote_pubkey, vote_account),
-                    (sysvar::clock::id(), clock_account),
-                    (authorized_voter_pubkey, AccountSharedData::default()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-            return;
-        } else {
-            // If either feature is disabled, the new instruction should be rejected
-            let (bls_pubkey, bls_proof_of_possession) =
-                create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-            let bad_instruction_data = wincode::serialize(&VoteInstruction::Authorize(
-                authorized_voter_pubkey,
-                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                    bls_pubkey,
-                    bls_proof_of_possession,
-                }),
-            ))
-            .unwrap();
-            process_instruction(
-                features,
-                &bad_instruction_data,
-                vec![
-                    (vote_pubkey, vote_account),
-                    (sysvar::clock::id(), clock_account),
-                    (authorized_voter_pubkey, AccountSharedData::default()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-        }
+        let features = VoteProgramFeatures::default();
 
         // should fail, unsigned
         instruction_accounts[0].is_signer = false;
@@ -2081,8 +2015,8 @@ mod tests {
         instruction_accounts.pop();
     }
 
-    #[test_matrix([false, true])]
-    fn test_authorize_voter_with_bls(bls_pubkey_management_in_vote_account: bool) {
+    #[test]
+    fn test_authorize_voter_with_bls() {
         agave_logger::setup();
         let (vote_pubkey, vote_account) = create_test_account();
         let authorized_voter_pubkey = solana_pubkey::new_rand();
@@ -2121,100 +2055,68 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::default();
 
-        // processing incompatible instruction should fail
-        if bls_pubkey_management_in_vote_account {
-            // If both features are enabled, the old instruction should be accepted when
-            // the account does not have a BLS key.
-            let (new_vote_pubkey, vote_account_no_bls_key) = create_test_account_no_bls_key();
-            let new_authorized_voter_pubkey = solana_pubkey::new_rand();
-            let old_instruction_data = wincode::serialize(&VoteInstruction::Authorize(
-                new_authorized_voter_pubkey,
-                VoteAuthorize::Voter,
-            ))
-            .unwrap();
-            process_instruction(
-                features,
-                &old_instruction_data,
-                vec![
-                    (new_vote_pubkey, vote_account_no_bls_key),
-                    (sysvar::clock::id(), clock_account.clone()),
-                    (new_authorized_voter_pubkey, AccountSharedData::default()),
-                ],
-                vec![
-                    AccountMeta {
-                        pubkey: new_vote_pubkey,
-                        is_signer: true,
-                        is_writable: true,
-                    },
-                    AccountMeta {
-                        pubkey: sysvar::clock::id(),
-                        is_signer: false,
-                        is_writable: false,
-                    },
-                ],
-                Ok(()),
-            );
-            // However, once the BLS key is set, the old instruction should be rejected
-            let (new_vote_pubkey, vote_account_with_bls_key) = create_test_account();
-            let new_authorized_voter_pubkey = solana_pubkey::new_rand();
-            let old_instruction_data = wincode::serialize(&VoteInstruction::Authorize(
-                new_authorized_voter_pubkey,
-                VoteAuthorize::Voter,
-            ))
-            .unwrap();
-            process_instruction(
-                features,
-                &old_instruction_data,
-                vec![
-                    (new_vote_pubkey, vote_account_with_bls_key),
-                    (sysvar::clock::id(), clock_account),
-                    (new_authorized_voter_pubkey, AccountSharedData::default()),
-                ],
-                vec![
-                    AccountMeta {
-                        pubkey: new_vote_pubkey,
-                        is_signer: true,
-                        is_writable: true,
-                    },
-                    AccountMeta {
-                        pubkey: sysvar::clock::id(),
-                        is_signer: false,
-                        is_writable: false,
-                    },
-                ],
-                Err(InstructionError::InvalidInstructionData),
-            );
-        } else {
-            // If either feature is disabled, the new instruction should be rejected
-            let (bls_pubkey, bls_proof_of_possession) =
-                create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-            let bad_instruction_data = wincode::serialize(&VoteInstruction::Authorize(
-                authorized_voter_pubkey,
-                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                    bls_pubkey,
-                    bls_proof_of_possession,
-                }),
-            ))
-            .unwrap();
-
-            process_instruction(
-                features,
-                &bad_instruction_data,
-                vec![
-                    (vote_pubkey, vote_account),
-                    (sysvar::clock::id(), clock_account),
-                    (authorized_voter_pubkey, AccountSharedData::default()),
-                ],
-                instruction_accounts.clone(),
-                Err(InstructionError::InvalidInstructionData),
-            );
-            return;
-        }
+        // Legacy authorization is accepted when the account has no BLS key.
+        let (new_vote_pubkey, vote_account_no_bls_key) = create_test_account_no_bls_key();
+        let new_authorized_voter_pubkey = solana_pubkey::new_rand();
+        let old_instruction_data = wincode::serialize(&VoteInstruction::Authorize(
+            new_authorized_voter_pubkey,
+            VoteAuthorize::Voter,
+        ))
+        .unwrap();
+        process_instruction(
+            features,
+            &old_instruction_data,
+            vec![
+                (new_vote_pubkey, vote_account_no_bls_key),
+                (sysvar::clock::id(), clock_account.clone()),
+                (new_authorized_voter_pubkey, AccountSharedData::default()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: new_vote_pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            Ok(()),
+        );
+        // However, once the BLS key is set, the old instruction should be rejected
+        let (new_vote_pubkey, vote_account_with_bls_key) = create_test_account();
+        let new_authorized_voter_pubkey = solana_pubkey::new_rand();
+        let old_instruction_data = wincode::serialize(&VoteInstruction::Authorize(
+            new_authorized_voter_pubkey,
+            VoteAuthorize::Voter,
+        ))
+        .unwrap();
+        process_instruction(
+            features,
+            &old_instruction_data,
+            vec![
+                (new_vote_pubkey, vote_account_with_bls_key),
+                (sysvar::clock::id(), clock_account),
+                (new_authorized_voter_pubkey, AccountSharedData::default()),
+            ],
+            vec![
+                AccountMeta {
+                    pubkey: new_vote_pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: sysvar::clock::id(),
+                    is_signer: false,
+                    is_writable: false,
+                },
+            ],
+            Err(InstructionError::InvalidInstructionData),
+        );
 
         // should fail, unsigned
         instruction_accounts[0].is_signer = false;
@@ -2315,10 +2217,7 @@ mod tests {
         ))
         .unwrap();
         process_instruction_with_cu_check(
-            VoteProgramFeatures {
-                bls_pubkey_management_in_vote_account: true,
-                ..Default::default()
-            },
+            VoteProgramFeatures::default(),
             &instruction_data,
             transaction_accounts,
             instruction_accounts,
@@ -2338,10 +2237,7 @@ mod tests {
     // so too are BLS pubkey rotations.
     #[test]
     fn test_bls_pubkey_rotation() {
-        let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account: true,
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::default();
 
         // Start out with no BLS pubkey set.
         // Authorized voter is already set to vote pubkey.
@@ -2456,7 +2352,7 @@ mod tests {
 
     #[test]
     fn test_authorize_withdrawer() {
-        let (vote_pubkey, vote_account) = create_test_account();
+        let (vote_pubkey, vote_account) = create_test_account_no_bls_key();
         let authorized_withdrawer_pubkey = solana_pubkey::new_rand();
         let instruction_data = wincode::serialize(&VoteInstruction::Authorize(
             authorized_withdrawer_pubkey,
@@ -2863,7 +2759,7 @@ mod tests {
             new_vote_init.authorized_withdrawer
         );
         assert_eq!(vote_state.commission(), 10);
-        assert!(vote_state.votes().is_empty());
+        assert!(vote_state.latest_vote_slot().is_none());
         assert!(vote_state.epoch_credits().is_empty());
     }
 
@@ -3069,7 +2965,6 @@ mod tests {
     }
 
     fn perform_authorize_with_seed_test(
-        bls_pubkey_management_in_vote_account: bool,
         authorization_type: VoteAuthorize,
         vote_pubkey: Pubkey,
         vote_account: AccountSharedData,
@@ -3107,10 +3002,7 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::default();
         let expected_cus = if matches!(authorization_type, VoteAuthorize::VoterWithBLS(_)) {
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS
         } else {
@@ -3193,7 +3085,6 @@ mod tests {
     }
 
     fn perform_authorize_checked_with_seed_test(
-        bls_pubkey_management_in_vote_account: bool,
         authorization_type: VoteAuthorize,
         vote_pubkey: Pubkey,
         vote_account: AccountSharedData,
@@ -3237,10 +3128,7 @@ mod tests {
             },
         ];
 
-        let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
-            ..Default::default()
-        };
+        let features = VoteProgramFeatures::default();
         let expected_cus = if matches!(authorization_type, VoteAuthorize::VoterWithBLS(_)) {
             DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS
         } else {
@@ -3337,8 +3225,8 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_voter_base_key_can_authorize_new_voter(bls_pubkey_management_in_vote_account: bool) {
+    #[test]
+    fn test_voter_base_key_can_authorize_new_voter() {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             voter_base_key,
@@ -3350,16 +3238,11 @@ mod tests {
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-        let authorize_type = if bls_pubkey_management_in_vote_account {
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
+        let authorize_type = VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+            bls_pubkey,
+            bls_proof_of_possession,
+        });
         perform_authorize_with_seed_test(
-            bls_pubkey_management_in_vote_account,
             authorize_type,
             vote_pubkey,
             vote_account,
@@ -3370,10 +3253,8 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_withdrawer_base_key_can_authorize_new_voter(
-        bls_pubkey_management_in_vote_account: bool,
-    ) {
+    #[test]
+    fn test_withdrawer_base_key_can_authorize_new_voter() {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             withdrawer_base_key,
@@ -3385,16 +3266,11 @@ mod tests {
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-        let authorize_type = if bls_pubkey_management_in_vote_account {
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
+        let authorize_type = VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+            bls_pubkey,
+            bls_proof_of_possession,
+        });
         perform_authorize_with_seed_test(
-            bls_pubkey_management_in_vote_account,
             authorize_type,
             vote_pubkey,
             vote_account,
@@ -3464,10 +3340,8 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_withdrawer_base_key_can_authorize_new_withdrawer(
-        bls_pubkey_management_in_vote_account: bool,
-    ) {
+    #[test]
+    fn test_withdrawer_base_key_can_authorize_new_withdrawer() {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             withdrawer_base_key,
@@ -3478,7 +3352,6 @@ mod tests {
         } = create_test_account_with_authorized_from_seed();
         let new_withdrawer_pubkey = Pubkey::new_unique();
         perform_authorize_with_seed_test(
-            bls_pubkey_management_in_vote_account,
             VoteAuthorize::Withdrawer,
             vote_pubkey,
             vote_account,
@@ -3489,10 +3362,8 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_voter_base_key_can_authorize_new_voter_checked(
-        bls_pubkey_management_in_vote_account: bool,
-    ) {
+    #[test]
+    fn test_voter_base_key_can_authorize_new_voter_checked() {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             voter_base_key,
@@ -3504,16 +3375,11 @@ mod tests {
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-        let authorize_type = if bls_pubkey_management_in_vote_account {
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
+        let authorize_type = VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+            bls_pubkey,
+            bls_proof_of_possession,
+        });
         perform_authorize_checked_with_seed_test(
-            bls_pubkey_management_in_vote_account,
             authorize_type,
             vote_pubkey,
             vote_account,
@@ -3524,10 +3390,8 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_withdrawer_base_key_can_authorize_new_voter_checked(
-        bls_pubkey_management_in_vote_account: bool,
-    ) {
+    #[test]
+    fn test_withdrawer_base_key_can_authorize_new_voter_checked() {
         let VoteAccountTestFixtureWithAuthorities {
             vote_pubkey,
             withdrawer_base_key,
@@ -3539,16 +3403,11 @@ mod tests {
         let new_voter_pubkey = Pubkey::new_unique();
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-        let authorize_type = if bls_pubkey_management_in_vote_account {
-            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                bls_pubkey,
-                bls_proof_of_possession,
-            })
-        } else {
-            VoteAuthorize::Voter
-        };
+        let authorize_type = VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+            bls_pubkey,
+            bls_proof_of_possession,
+        });
         perform_authorize_checked_with_seed_test(
-            bls_pubkey_management_in_vote_account,
             authorize_type,
             vote_pubkey,
             vote_account,
@@ -3635,7 +3494,6 @@ mod tests {
         } = create_test_account_with_authorized_from_seed();
         let new_withdrawer_pubkey = Pubkey::new_unique();
         perform_authorize_checked_with_seed_test(
-            false,
             VoteAuthorize::Withdrawer,
             vote_pubkey,
             vote_account,
@@ -3907,38 +3765,25 @@ mod tests {
         );
     }
 
-    #[test_matrix([false, true])]
-    fn test_vote_authorize_checked(bls_pubkey_management_in_vote_account: bool) {
+    #[test]
+    fn test_vote_authorize_checked() {
         let vote_pubkey = Pubkey::new_unique();
         let authorized_pubkey = Pubkey::new_unique();
         let new_authorized_pubkey = Pubkey::new_unique();
 
-        let features = VoteProgramFeatures {
-            bls_pubkey_management_in_vote_account,
-            ..Default::default()
-        };
-
+        let features = VoteProgramFeatures::default();
         // Test with vanilla authorize accounts
         let (bls_pubkey, bls_proof_of_possession) =
             create_bls_pubkey_and_proof_of_possession(&vote_pubkey);
-        let mut instruction = if bls_pubkey_management_in_vote_account {
-            authorize_checked(
-                &vote_pubkey,
-                &authorized_pubkey,
-                &new_authorized_pubkey,
-                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                    bls_pubkey,
-                    bls_proof_of_possession,
-                }),
-            )
-        } else {
-            authorize_checked(
-                &vote_pubkey,
-                &authorized_pubkey,
-                &new_authorized_pubkey,
-                VoteAuthorize::Voter,
-            )
-        };
+        let mut instruction = authorize_checked(
+            &vote_pubkey,
+            &authorized_pubkey,
+            &new_authorized_pubkey,
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            }),
+        );
         instruction.accounts = instruction.accounts[0..2].to_vec();
         process_instruction_as_one_arg(
             features,
@@ -3960,24 +3805,15 @@ mod tests {
         );
 
         // Test with non-signing new_authorized_pubkey
-        let mut instruction = if bls_pubkey_management_in_vote_account {
-            authorize_checked(
-                &vote_pubkey,
-                &authorized_pubkey,
-                &new_authorized_pubkey,
-                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                    bls_pubkey,
-                    bls_proof_of_possession,
-                }),
-            )
-        } else {
-            authorize_checked(
-                &vote_pubkey,
-                &authorized_pubkey,
-                &new_authorized_pubkey,
-                VoteAuthorize::Voter,
-            )
-        };
+        let mut instruction = authorize_checked(
+            &vote_pubkey,
+            &authorized_pubkey,
+            &new_authorized_pubkey,
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            }),
+        );
         instruction.accounts[3] = AccountMeta::new_readonly(new_authorized_pubkey, false);
         process_instruction_as_one_arg(
             features,
@@ -4000,10 +3836,23 @@ mod tests {
 
         // Test with new_authorized_pubkey signer
         let default_authorized_pubkey = Pubkey::default();
-        let vote_account = create_test_account_with_provided_authorized(
-            &default_authorized_pubkey,
-            &default_authorized_pubkey,
+        let vote_state = VoteStateV4::new_with_defaults(
+            &vote_pubkey,
+            &VoteInit {
+                node_pubkey: Pubkey::new_unique(),
+                authorized_voter: default_authorized_pubkey,
+                authorized_withdrawer: default_authorized_pubkey,
+                commission: 0,
+            },
+            &Clock::default(),
         );
+        let vote_account = AccountSharedData::new_data_with_space(
+            100,
+            &VoteStateVersions::V4(Box::new(vote_state)),
+            VoteStateV4::size_of(),
+            &id(),
+        )
+        .unwrap();
         let clock_address = sysvar::clock::id();
         let clock_account = create_sysvar_account(&Clock::default());
         let authorized_account = create_default_account();
@@ -4036,17 +3885,13 @@ mod tests {
                 is_writable: false,
             },
         ];
-        let (authorize_type, expected_cus) = if bls_pubkey_management_in_vote_account {
-            (
-                VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
-                    bls_pubkey,
-                    bls_proof_of_possession,
-                }),
-                DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
-            )
-        } else {
-            (VoteAuthorize::Voter, DEFAULT_COMPUTE_UNITS)
-        };
+        let (authorize_type, expected_cus) = (
+            VoteAuthorize::VoterWithBLS(VoterWithBLSArgs {
+                bls_pubkey,
+                bls_proof_of_possession,
+            }),
+            DEFAULT_COMPUTE_UNITS + BLS_PROOF_OF_POSSESSION_VERIFICATION_COMPUTE_UNITS,
+        );
         process_instruction_with_cu_check(
             features,
             &wincode::serialize(&VoteInstruction::AuthorizeChecked(authorize_type)).unwrap(),

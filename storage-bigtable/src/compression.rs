@@ -7,10 +7,10 @@ use {
 
 #[cfg_attr(
     feature = "stable-abi",
-    derive(StableAbi, StableAbiSample, PartialEq, serde::Serialize, serde::Deserialize),
+    derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "6Mqz7t1A92unKc6Ngs1p2GhiRUdWwVSNLSifDDh4KcXv",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]

@@ -6,8 +6,10 @@ use {
         loader_v3_allow_prefunded_programdata, loader_v3_remove_extend_program,
         loader_v3_set_program_data_to_elf_length,
     },
+    async_trait::async_trait,
     serde_json::Value,
     solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
+    solana_account_decoder::{UiAccountEncoding, encode_ui_account},
     solana_cli::{
         cli::{CliCommand, CliConfig, process_command},
         program::{CLOSE_PROGRAM_WARNING, ProgramCliCommand},
@@ -32,26 +34,35 @@ use {
     solana_net_utils::SocketAddrSpace,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_rpc::rpc::JsonRpcConfig,
+    solana_rpc::{filter::filter_allows, rpc::JsonRpcConfig},
     solana_rpc_client::{
-        nonblocking::rpc_client::RpcClient, rpc_client::GetConfirmedSignaturesForAddress2Config,
+        http_sender::HttpSender,
+        nonblocking::rpc_client::RpcClient,
+        rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClientConfig},
+        rpc_sender::{RpcSender, RpcTransportStats},
     },
-    solana_rpc_client_api::config::RpcTransactionConfig,
+    solana_rpc_client_api::{
+        client_error::Result as RpcClientResult,
+        config::{RpcProgramAccountsConfig, RpcTransactionConfig},
+        request::RpcRequest,
+        response::RpcKeyedAccount,
+    },
     solana_rpc_client_nonce_utils::nonblocking::blockhash_query::BlockhashQuery,
+    solana_runtime::bank_forks::BankForks,
     solana_sdk_ids::{bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
     solana_signer::{Signer, null_signer::NullSigner},
     solana_system_interface::{MAX_PERMITTED_DATA_LENGTH, program as system_program},
     solana_test_validator::{TestValidator, TestValidatorGenesis},
     solana_transaction::versioned::VersionedTransaction,
-    solana_transaction_status::UiTransactionEncoding,
+    solana_transaction_status_client_types::UiTransactionEncoding,
     std::{
         env,
         fs::File,
         io::{Read, Seek, SeekFrom},
         path::{Path, PathBuf},
         str::FromStr,
-        sync::Arc,
+        sync::{Arc, RwLock},
     },
     test_case::test_case,
 };
@@ -60,6 +71,65 @@ pub struct LoaderV3Features {
     pub set_programdata_to_elf_length: bool,
     pub remove_extend_program: bool,
     pub allow_prefunded_programdata: bool,
+}
+
+struct ProgramAccountsRpcSender {
+    bank_forks: Arc<RwLock<BankForks>>,
+    http_sender: HttpSender,
+}
+
+#[async_trait]
+impl RpcSender for ProgramAccountsRpcSender {
+    async fn send(&self, request: RpcRequest, params: Value) -> RpcClientResult<Value> {
+        if request != RpcRequest::GetProgramAccounts {
+            return self.http_sender.send(request, params).await;
+        }
+
+        let program_id: Pubkey = params[0].as_str().unwrap().parse().unwrap();
+        let config: RpcProgramAccountsConfig = serde_json::from_value(params[1].clone()).unwrap();
+        let bank = self.bank_forks.read().unwrap().working_bank();
+        let filters = config.filters.unwrap_or_default();
+        let encoding = config
+            .account_config
+            .encoding
+            .unwrap_or(UiAccountEncoding::Binary);
+        let mut accounts = Vec::new();
+        bank.scan_all_accounts(|account| {
+            if let Some((pubkey, account, _)) = account
+                && account.lamports() != 0
+                && account.owner() == &program_id
+                && filters.iter().all(|filter| filter_allows(filter, &account))
+            {
+                accounts.push(RpcKeyedAccount {
+                    pubkey: pubkey.to_string(),
+                    account: encode_ui_account(
+                        pubkey,
+                        &account,
+                        encoding,
+                        None,
+                        config.account_config.data_slice,
+                    ),
+                });
+            }
+        })
+        .unwrap();
+        if config.sort_results.unwrap_or(false) {
+            accounts.sort_unstable_by_key(|account| account.pubkey.parse::<Pubkey>().unwrap());
+        }
+        Ok(if config.with_context.unwrap_or(false) {
+            serde_json::json!({"context": {"slot": bank.slot()}, "value": accounts})
+        } else {
+            serde_json::to_value(accounts).unwrap()
+        })
+    }
+
+    fn get_transport_stats(&self) -> RpcTransportStats {
+        self.http_sender.get_transport_stats()
+    }
+
+    fn url(&self) -> String {
+        self.http_sender.url()
+    }
 }
 
 fn test_validator_genesis(
@@ -3424,6 +3494,16 @@ async fn test_cli_program_show() {
     assert_eq!(max_len, data_len as usize);
 
     // Verify show --buffers
+    config.rpc_client = Some(Arc::new(RpcClient::new_sender(
+        ProgramAccountsRpcSender {
+            bank_forks: test_validator.bank_forks(),
+            http_sender: HttpSender::new_with_timeout(test_validator.rpc_url(), config.rpc_timeout),
+        },
+        RpcClientConfig {
+            commitment_config: config.commitment,
+            confirm_transaction_initial_timeout: Some(config.confirm_transaction_initial_timeout),
+        },
+    )));
     config.command = CliCommand::Program(ProgramCliCommand::Show {
         account_pubkey: None,
         authority_pubkey: authority_keypair.pubkey(),

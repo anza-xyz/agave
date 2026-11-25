@@ -46,9 +46,7 @@ use {
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_native_token::LAMPORTS_PER_SOL,
-    solana_net_utils::{
-        PortRange, SocketAddrSpace, find_available_ports_in_range, multihomed_sockets::BindIpAddrs,
-    },
+    solana_net_utils::{PortRange, SocketAddrSpace, find_available_ports_in_range},
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
     },
@@ -631,17 +629,15 @@ impl TestValidatorGenesis {
     ) -> &mut Self {
         self.add_account(
             address,
-            AccountSharedData::from(Account {
+            AccountSharedData::new_with_data(
                 lamports,
-                data: solana_program_test::read_file(
+                solana_program_test::read_file(
                     solana_program_test::find_file(filename).unwrap_or_else(|| {
                         panic!("Unable to locate {filename}");
                     }),
                 ),
-                owner,
-                executable: false,
-                rent_epoch: 0,
-            }),
+                &owner,
+            ),
         )
     }
 
@@ -656,15 +652,13 @@ impl TestValidatorGenesis {
     ) -> &mut Self {
         self.add_account(
             address,
-            AccountSharedData::from(Account {
+            AccountSharedData::new_with_data(
                 lamports,
-                data: BASE64_STANDARD
+                BASE64_STANDARD
                     .decode(data_base64)
                     .unwrap_or_else(|err| panic!("Failed to base64 decode: {err}")),
-                owner,
-                executable: false,
-                rent_epoch: 0,
-            }),
+                &owner,
+            ),
         )
     }
 
@@ -943,13 +937,11 @@ impl TestValidator {
             program_data.extend_from_slice(&data);
             accounts.insert(
                 programdata_address,
-                AccountSharedData::from(Account {
-                    lamports: Rent::default().minimum_balance(program_data.len()).max(1),
-                    data: program_data,
-                    owner: upgradeable_program.loader,
-                    executable: false,
-                    rent_epoch: 0,
-                }),
+                AccountSharedData::new_with_data(
+                    Rent::default().minimum_balance(program_data.len()).max(1),
+                    program_data,
+                    &upgradeable_program.loader,
+                ),
             );
 
             let data = wincode::serialize(&UpgradeableLoaderState::Program {
@@ -963,7 +955,7 @@ impl TestValidator {
                     data,
                     owner: upgradeable_program.loader,
                     executable: true,
-                    rent_epoch: 0,
+                    ..Account::default()
                 }),
             );
         }
@@ -1075,7 +1067,7 @@ impl TestValidator {
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                bind_ip_addr,
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,

@@ -125,12 +125,12 @@ impl From<TxnEffects> for ProtoTxnResult {
         let modified_accounts = value
             .resulting_accounts
             .into_iter()
-            .map(|(pubkey, account)| account_to_proto((pubkey, account)))
+            .map(|(pubkey, account)| account_to_proto(&pubkey, &account))
             .collect();
         let rollback_accounts = value
             .rollback_accounts
             .into_iter()
-            .map(|(pubkey, account)| account_to_proto((pubkey, account)))
+            .map(|(pubkey, account)| account_to_proto(&pubkey, &account))
             .collect();
 
         Self {

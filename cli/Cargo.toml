@@ -52,7 +52,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
 solana-account-decoder-client-types = { workspace = true }
-solana-address-lookup-table-interface = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true, features = ["bytemuck", "wincode"] }
 solana-bls-signatures = { workspace = true }
 solana-borsh = { workspace = true }
 solana-clap-utils = { workspace = true }
@@ -100,7 +100,7 @@ solana-tpu-client = { workspace = true, features = ["default"] }
 solana-tpu-client-next = { workspace = true, features = ["websocket-node-address-service"] }
 solana-transaction = { workspace = true, features = ["wincode"] }
 solana-transaction-error = { workspace = true }
-solana-transaction-status = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-memo-interface = { workspace = true }
@@ -112,6 +112,7 @@ wincode = { workspace = true }
 [dev-dependencies]
 base64 = { workspace = true }
 solana-account = { workspace = true, features = ["wincode"] }
+solana-account-decoder = { path = "../account-decoder", features = ["agave-unstable-api"] }
 solana-client = { path = "../client", features = ["dev-context-only-utils"] }
 solana-faucet = { path = "../faucet", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-fee-calculator = { workspace = true }
@@ -121,6 +122,7 @@ solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-presigner = { workspace = true }
 solana-rpc = { path = "../rpc", features = ["agave-unstable-api"] }
+solana-runtime = { path = "../runtime", features = ["agave-unstable-api"] }
 solana-sha256-hasher = { workspace = true }
 solana-test-validator = { path = "../test-validator", features = ["agave-unstable-api", "dev-context-only-utils"] }
 tempfile = { workspace = true }

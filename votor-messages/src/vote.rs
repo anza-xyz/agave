@@ -105,6 +105,18 @@ impl Vote {
         matches!(self, Self::Genesis(_))
     }
 
+    /// Whether the vote counts towards the reward certificate
+    pub fn counts_for_rewards(&self) -> bool {
+        // explicitly list all variants so if new is added this gets updated
+        match self {
+            Self::Notarize(_) | Self::Skip(_) => true,
+            Self::Finalize(_)
+            | Self::NotarizeFallback(_)
+            | Self::SkipFallback(_)
+            | Self::Genesis(_) => false,
+        }
+    }
+
     #[cfg(feature = "dev-context-only-utils")]
     /// Returns a notar vote with the given slot and unique block id for test purposes
     pub fn new_unique_notar(slot: Slot) -> Vote {

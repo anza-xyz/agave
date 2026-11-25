@@ -15,9 +15,6 @@ pub mod crds_gossip_pull;
 pub mod crds_gossip_push;
 pub mod crds_shards;
 pub mod crds_value;
-pub mod duplicate_shred;
-pub mod duplicate_shred_handler;
-pub mod duplicate_shred_listener;
 pub mod epoch_specs;
 pub mod gossip_error;
 pub mod gossip_service;
@@ -28,7 +25,6 @@ pub mod ping_pong;
 mod protocol;
 mod push_active_set;
 mod received_cache;
-pub mod restart_crds_values;
 mod sigverify_cache;
 pub mod weighted_shuffle;
 
@@ -40,5 +36,3 @@ extern crate solana_metrics;
 
 #[cfg(feature = "dev-context-only-utils")]
 pub use protocol::{Ping, Protocol, PruneData, deserialize_protocol};
-
-mod wire_format_tests;

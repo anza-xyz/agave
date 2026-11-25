@@ -2,7 +2,6 @@ use {
     super::*,
     crate::{broadcast_stage::broadcast_utils::BroadcastItem, cluster_nodes::ClusterNodesCache},
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::{block_component::BlockComponent, entry::Entry},
@@ -58,7 +57,6 @@ pub(super) struct BroadcastDuplicatesRun {
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     original_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<DuplicateShredKey>>>,
-    migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
 }
 
@@ -66,7 +64,6 @@ impl BroadcastDuplicatesRun {
     pub(super) fn new(
         shred_version: u16,
         config: BroadcastDuplicatesConfig,
-        migration_status: Arc<MigrationStatus>,
         votor_event_sender: VotorEventSender,
     ) -> Self {
         let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
@@ -87,7 +84,6 @@ impl BroadcastDuplicatesRun {
             cluster_nodes_cache,
             original_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
             partition_last_data_shreds: Arc::<Mutex<HashSet<DuplicateShredKey>>>::default(),
-            migration_status,
             votor_event_sender,
         }
     }
@@ -332,7 +328,6 @@ impl BroadcastRun for BroadcastDuplicatesRun {
 
         if last_tick_height == bank.max_tick_height() {
             broadcast_utils::set_block_id_and_send(
-                &self.migration_status,
                 &self.votor_event_sender,
                 bank,
                 self.chained_merkle_root,

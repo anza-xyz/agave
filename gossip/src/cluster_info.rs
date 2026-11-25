@@ -17,7 +17,7 @@ use {
     crate::{
         cluster_info_metrics::{Counter, GossipStats, ScopedTimer, TimedGuard},
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
-        crds::{Crds, Cursor, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
+        crds::{Crds, GossipRoute, LOCK_CHUNK_SIZE, NodesCursor, VersionedCrdsValue},
         crds_data::{CrdsData, SnapshotHashes},
         crds_filter::should_retain_crds_value,
         crds_gossip::CrdsGossip,
@@ -27,20 +27,18 @@ use {
             CrdsTimeouts, ProcessPullStats, PullRequest, get_max_bloom_filter_bytes,
         },
         crds_value::{CrdsValue, CrdsValueLabel},
-        duplicate_shred::DuplicateShred,
         epoch_specs::EpochSpecs,
         gossip_error::GossipError,
         ping_pong::Pong,
         protocol::{
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, GossipProtocolWincodeConfig,
-            MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MAX_PAYLOAD_SIZE,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache,
-            Protocol, PruneData, deserialize_protocol, split_gossip_messages,
+            GossipProtocolWincodeConfig, MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES,
+            PULL_RESPONSE_MAX_PAYLOAD_SIZE, PULL_RESPONSE_MIN_SERIALIZED_SIZE,
+            PUSH_MESSAGE_MAX_PAYLOAD_SIZE, Ping, PingCache, Protocol, PruneData,
+            deserialize_protocol, split_gossip_messages,
         },
         sigverify_cache::SigVerifyCache,
         weighted_shuffle::WeightedShuffle,
     },
-    agave_votor_messages::migration::MigrationStatus,
     arc_swap::ArcSwap,
     arrayvec::ArrayVec,
     crossbeam_channel::{Receiver, TrySendError},
@@ -52,10 +50,8 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
-    solana_ledger::shred::Shred,
     solana_net_utils::{
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
-        multihomed_sockets::BindIpAddrs,
         sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
         token_bucket::{KeyedRateLimiter, TokenBucket},
     },
@@ -209,10 +205,7 @@ pub struct ClusterInfo {
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
-    bind_ip_addrs: Arc<BindIpAddrs>,
     sigverify_cache: SigVerifyCache,
-    /// Alpenglow migration status
-    migration_status: OnceLock<Arc<MigrationStatus>>,
 }
 
 impl ClusterInfo {
@@ -249,25 +242,10 @@ impl ClusterInfo {
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
             socket_addr_space,
-            bind_ip_addrs: Arc::new(BindIpAddrs::default()),
             sigverify_cache: SigVerifyCache::new(),
-            migration_status: OnceLock::new(),
         };
         me.refresh_my_gossip_contact_info();
         me
-    }
-
-    /// Wires in the Alpenglow MigrationStatus.
-    pub fn set_migration_status(&self, migration_status: Arc<MigrationStatus>) {
-        let _ = self.migration_status.set(migration_status);
-    }
-
-    /// Returns `true` iff the migration status has been wired AND the cluster
-    /// has completed the full Alpenglow epoch transition.
-    fn is_full_alpenglow_epoch(&self) -> bool {
-        self.migration_status
-            .get()
-            .is_some_and(|m| m.is_full_alpenglow_epoch())
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
@@ -276,14 +254,6 @@ impl ClusterInfo {
 
     pub fn socket_addr_space(&self) -> &SocketAddrSpace {
         &self.socket_addr_space
-    }
-
-    pub fn set_bind_ip_addrs(&mut self, ip_addrs: Arc<BindIpAddrs>) {
-        self.bind_ip_addrs = ip_addrs;
-    }
-
-    pub fn bind_ip_addrs(&self) -> Arc<BindIpAddrs> {
-        self.bind_ip_addrs.clone()
     }
 
     fn refresh_push_active_set(
@@ -485,12 +455,6 @@ impl ClusterInfo {
         self.keypair.store(new_keypair);
         self.my_contact_info.write().hot_swap_pubkey(id);
         self.refresh_my_gossip_contact_info();
-    }
-
-    pub fn set_gossip_socket(&self, gossip_addr: SocketAddr) -> Result<(), ContactInfoError> {
-        self.my_contact_info.write().set_gossip(gossip_addr)?;
-        self.refresh_my_gossip_contact_info();
-        Ok(())
     }
 
     pub fn set_tvu_socket(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
@@ -814,44 +778,12 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn push_duplicate_shred(
-        &self,
-        shred: &Shred,
-        other_payload: &[u8],
-    ) -> Result<(), GossipError> {
-        if self.is_full_alpenglow_epoch() {
-            // Alpenglow does not propagate duplicate-shred proofs via gossip.
-            return Ok(());
-        }
-        self.gossip.push_duplicate_shred(
-            &self.keypair(),
-            shred,
-            other_payload,
-            None::<fn(Slot) -> Option<Pubkey>>, // Leader schedule
-            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            self.my_shred_version(),
-        )?;
-        Ok(())
-    }
-
     pub fn get_snapshot_hashes_for_node(&self, pubkey: &Pubkey) -> Option<SnapshotHashes> {
         self.gossip
             .crds
             .read()
             .get::<&SnapshotHashes>(*pubkey)
             .cloned()
-    }
-
-    /// Returns duplicate-shreds inserted since the given cursor.
-    pub(crate) fn get_duplicate_shreds(&self, cursor: &mut Cursor) -> Vec<DuplicateShred> {
-        let gossip_crds = self.gossip.crds.read();
-        gossip_crds
-            .get_duplicate_shreds(cursor)
-            .map(|entry| match entry.value.data() {
-                CrdsData::DuplicateShred(_, dup) => dup.clone(),
-                _ => panic!("this should not happen!"),
-            })
-            .collect()
     }
 
     pub fn get_node_version(&self, pubkey: &Pubkey) -> Option<solana_version::Version> {
@@ -2184,7 +2116,7 @@ impl ClusterInfo {
 
 #[derive(Debug)]
 pub struct Sockets {
-    pub gossip: Arc<[UdpSocket]>,     // udp read/write
+    pub gossip: UdpSocket,            // udp read/write
     pub ip_echo: Option<TcpListener>, // read/write (tcp)
     pub tvu: Vec<UdpSocket>,          // udp read only
     pub tpu_vote: Vec<UdpSocket>,     // udp read only
@@ -2208,7 +2140,7 @@ pub struct Sockets {
     /// Client-side socket for ForwardingStage vote transactions
     pub tpu_vote_forwarding_client: UdpSocket, // udp write only
     /// Client-side socket for ForwardingStage non-vote transactions
-    pub tpu_transaction_forwarding_clients: Box<[UdpSocket]>, // quic write only
+    pub tpu_transaction_forwarding_client: UdpSocket, // quic write only
     /// UDP sockets for the alpenglow votor QUIC server endpoints.
     pub votor_server: Vec<UdpSocket>, // quic read only
     /// Client-side socket for the alpenglow votor QUIC endpoint.
@@ -2223,8 +2155,8 @@ pub struct NodeConfig {
     /// The gossip port advertised to the cluster
     pub gossip_port: u16,
     pub port_range: PortRange,
-    /// Multihoming: The IP addresses the node can bind to
-    pub bind_ip_addrs: BindIpAddrs,
+    /// The IP address to bind the validator ports to
+    pub bind_ip_addr: IpAddr,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
     pub public_tvu_addr: Option<SocketAddr>,
@@ -2378,14 +2310,12 @@ mod tests {
         crate::{
             crds_gossip_pull::tests::MIN_NUM_BLOOM_FILTERS,
             crds_value::{CrdsValue, CrdsValueLabel},
-            duplicate_shred::tests::new_rand_shred,
             node::Node,
             protocol::{MAX_CRDS_VALUES_PER_PACKET, tests::new_rand_remote_node},
             socketaddr,
         },
         itertools::{Itertools, izip},
         solana_keypair::Keypair,
-        solana_ledger::shred::Shredder,
         solana_net_utils::sockets::localhost_port_range_for_tests,
         solana_signer::Signer,
         solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
@@ -2794,7 +2724,7 @@ mod tests {
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
         check_socket(&node.sockets.repair, ip, range);
         check_sockets(&node.sockets.votor_server, ip, range);
-        check_sockets(&node.sockets.gossip, ip, range);
+        check_socket(&node.sockets.gossip, ip, range);
         check_sockets(&node.sockets.tvu, ip, range);
         check_sockets(&node.sockets.tpu_quic, ip, range);
     }
@@ -2807,7 +2737,7 @@ mod tests {
             advertised_ip: IpAddr::V4(ip),
             gossip_port: 0,
             port_range,
-            bind_ip_addrs: BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap(),
+            bind_ip_addr: IpAddr::V4(ip),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             public_tvu_addr: None,
@@ -2833,7 +2763,7 @@ mod tests {
             advertised_ip: ip,
             gossip_port: port,
             port_range,
-            bind_ip_addrs: BindIpAddrs::new(vec![ip]).unwrap(),
+            bind_ip_addr: ip,
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             public_tvu_addr: None,
@@ -2846,7 +2776,7 @@ mod tests {
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
 
         check_node_sockets(&node, ip, port_range);
-        check_sockets(&node.sockets.gossip, ip, port_range);
+        check_socket(&node.sockets.gossip, ip, port_range);
     }
 
     //test that all cluster_info objects only generate signed messages
@@ -3287,61 +3217,6 @@ mod tests {
         assert_eq!(cluster_info.entrypoints.read()[0], gossiped_entrypoint_info,);
         assert!(entrypoints_processed);
         assert_eq!(cluster_info.my_shred_version(), 2); // <--- No change to shred version
-    }
-
-    #[test]
-    fn test_get_duplicate_shreds() {
-        let host1_key = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&host1_key.pubkey());
-        let cluster_info = Arc::new(ClusterInfo::new(
-            node.info,
-            host1_key.clone(),
-            SocketAddrSpace::Unspecified,
-        ));
-        let mut cursor = Cursor::default();
-        assert!(cluster_info.get_duplicate_shreds(&mut cursor).is_empty());
-
-        let mut rng = rand::rng();
-        let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 352;
-        let leader = Arc::new(Keypair::new());
-        let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let shred2 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(
-            cluster_info
-                .push_duplicate_shred(&shred1, shred2.payload())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        let entries = cluster_info.get_duplicate_shreds(&mut cursor);
-        // One duplicate shred proof is split into 3 chunks.
-        assert_eq!(3, entries.len());
-        for (i, shred_data) in entries.iter().enumerate() {
-            assert_eq!(shred_data.from, host1_key.pubkey());
-            assert_eq!(shred_data.slot, 53084024);
-            assert_eq!(shred_data.chunk_index() as usize, i);
-        }
-
-        let slot = 53084025;
-        let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
-        let next_shred_index = 384;
-        let shred3 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        let shred4 = new_rand_shred(&mut rng, next_shred_index, &shredder, &leader);
-        assert!(
-            cluster_info
-                .push_duplicate_shred(&shred3, shred4.payload())
-                .is_ok()
-        );
-        cluster_info.flush_push_queue();
-        let entries1 = cluster_info.get_duplicate_shreds(&mut cursor);
-        // One duplicate shred proof is split into 3 chunks.
-        assert_eq!(3, entries1.len());
-        for (i, shred_data) in entries1.iter().enumerate() {
-            assert_eq!(shred_data.from, host1_key.pubkey());
-            assert_eq!(shred_data.slot, 53084025);
-            assert_eq!(shred_data.chunk_index() as usize, i);
-        }
     }
 
     #[test]

@@ -1,12 +1,15 @@
 use {
     agave_votor_messages::{
         certificate::Certificate, consensus_message::VoteMessage,
-        wire::VersionedWireConsensusMessage,
+        reward_certificate::NUM_SLOTS_FOR_REWARD, vote::Vote, wire::VersionedWireConsensusMessage,
     },
+    agave_votor_transport::endpoint::EgressMessage,
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_ledger::leader_schedule_cache::LeaderScheduleCache,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         slot_params::slot_time_feature_gates,
         validated_block_finalization::ValidatedBlockFinalizationCert,
@@ -64,6 +67,107 @@ pub fn votor_rate_limit_pps() -> usize {
 
 /// How often we should refresh messages from the standstill queue
 const STANDSTILL_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Delays, relative to the broadcast, of the extra copies of reward votes
+/// (Notarize or Skip) sent to the leader that builds its reward certificate.
+///
+/// These were picked mostly empirically, based on measurements.
+const REWARD_VOTE_COPY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(400), // do not retry immediately, let congestion dissipate
+    Duration::from_millis(800),
+    Duration::from_millis(1200), // 1600 ms is cutoff for when reward leader is making its block
+];
+
+/// Cap on pending reward vote copies (not votes). Bounds the cost of scanning
+/// `pending` during e.g. replay/catchup, where many votes may be cast in a short burst.
+const MAX_PENDING_REWARD_VOTE_COPIES: usize = 128;
+
+/// A pending copy of one of our reward votes.
+struct RewardVoteCopy {
+    due: Instant,
+    /// Leader of the slot that builds the reward certificate for the vote.
+    reward_leader: Pubkey,
+    message: Bytes,
+}
+
+/// Copies of our own reward votes waiting to be sent to their reward leaders.
+///
+/// Holds at most `REWARD_VOTE_COPY_DELAYS.len()` entries per vote cast.
+#[derive(Default)]
+struct RewardVoteCopies {
+    pending: Vec<RewardVoteCopy>,
+}
+
+impl RewardVoteCopies {
+    /// Schedule copies of `message` for the leader that builds the reward certificate
+    /// for `vote`, if `vote` counts towards rewards and that leader is not us.
+    fn schedule(
+        &mut self,
+        vote: &Vote,
+        message: &Bytes,
+        my_pubkey: Pubkey,
+        leader_schedule_cache: &LeaderScheduleCache,
+    ) {
+        if !vote.counts_for_rewards() {
+            return;
+        }
+        let reward_slot = vote.slot().saturating_add(NUM_SLOTS_FOR_REWARD);
+        let Some(reward_leader) = leader_schedule_cache.slot_leader_at(reward_slot, None) else {
+            return;
+        };
+        // Our own votes do not get lost
+        if reward_leader.id == my_pubkey {
+            return;
+        }
+        if self
+            .pending
+            .len()
+            .saturating_add(REWARD_VOTE_COPY_DELAYS.len())
+            > MAX_PENDING_REWARD_VOTE_COPIES
+        {
+            return;
+        }
+        let now = Instant::now();
+        self.pending
+            .extend(REWARD_VOTE_COPY_DELAYS.iter().map(|delay| {
+                RewardVoteCopy {
+                    due: now
+                        .checked_add(*delay)
+                        .expect("copy delays are sub-second and cannot overflow Instant"),
+                    reward_leader: reward_leader.id,
+                    message: message.clone(),
+                }
+            }));
+    }
+
+    /// Send every copy that is due. In standstill all pending copies are dropped
+    /// to stay within the rate budget.
+    fn send_due(&mut self, in_standstill: bool, egress: &mpsc::Sender<EgressMessage>) {
+        if in_standstill {
+            self.pending.clear();
+            return;
+        }
+        let now = Instant::now();
+        self.pending.retain(|copy| {
+            if copy.due > now {
+                return true;
+            }
+            VotingService::send_to_egress(
+                EgressMessage::Unicast {
+                    peer: copy.reward_leader,
+                    message: copy.message.clone(),
+                },
+                egress,
+            );
+            false
+        });
+    }
+
+    /// When the next copy is due, if any are pending.
+    fn next_due(&self) -> Option<Instant> {
+        self.pending.iter().map(|copy| copy.due).min()
+    }
+}
 
 #[derive(Debug)]
 pub enum BLSOp {
@@ -203,10 +307,12 @@ impl VotingService {
     pub fn new(
         bls_receiver: Receiver<BLSOp>,
         cluster_info: Arc<ClusterInfo>,
-        egress: mpsc::Sender<Bytes>,
+        egress: mpsc::Sender<EgressMessage>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
         highest_finalized: Arc<RwLock<Option<ValidatedBlockFinalizationCert>>>,
     ) -> Self {
         let mut standstill_queue = StandstillRefreshQueue::default();
+        let mut reward_vote_copies = RewardVoteCopies::default();
         let thread_hdl = Builder::new()
             .name("solVotorVoteSvc".to_string())
             .spawn(move || {
@@ -218,13 +324,30 @@ impl VotingService {
                         &cluster_info,
                         &egress,
                     );
+                    // The standstill queue is only populated while in standstill.
+                    let in_standstill = !standstill_queue.is_empty();
+                    reward_vote_copies.send_due(in_standstill, &egress);
 
-                    let bls_op = match bls_receiver.recv_timeout(STANDSTILL_REFRESH_INTERVAL) {
+                    let timeout =
+                        reward_vote_copies
+                            .next_due()
+                            .map_or(STANDSTILL_REFRESH_INTERVAL, |due| {
+                                due.saturating_duration_since(Instant::now())
+                                    .min(STANDSTILL_REFRESH_INTERVAL)
+                            });
+                    let bls_op = match bls_receiver.recv_timeout(timeout) {
                         Ok(bls_op) => bls_op,
                         Err(RecvTimeoutError::Disconnected) => break,
                         Err(RecvTimeoutError::Timeout) => continue,
                     };
-                    Self::handle_bls_op(&cluster_info, bls_op, &egress, &mut standstill_queue);
+                    Self::handle_bls_op(
+                        &cluster_info,
+                        bls_op,
+                        &egress,
+                        &mut standstill_queue,
+                        &mut reward_vote_copies,
+                        &leader_schedule_cache,
+                    );
                 }
                 info!("AlpenglowVotingService has stopped");
             })
@@ -237,7 +360,7 @@ impl VotingService {
         standstill_queue: &mut StandstillRefreshQueue,
         highest_finalized: &RwLock<Option<ValidatedBlockFinalizationCert>>,
         cluster_info: &ClusterInfo,
-        egress: &mpsc::Sender<Bytes>,
+        egress: &mpsc::Sender<EgressMessage>,
     ) {
         if !standstill_queue.should_refresh() {
             return;
@@ -282,21 +405,27 @@ impl VotingService {
 
     /// Serialize a consensus message and hand it to the endpoint. The
     /// endpoint fans it out to every connected peer.
+    /// Returns the serialized message, or `None` if serialization failed.
     fn broadcast_consensus_message(
         message: &VersionedWireConsensusMessage,
-        egress: &mpsc::Sender<Bytes>,
-    ) {
+        egress: &mpsc::Sender<EgressMessage>,
+    ) -> Option<Bytes> {
         let buf = match wincode::serialize(message) {
             Ok(buf) => Bytes::from(buf),
             Err(err) => {
                 error!("Failed to serialize alpenglow message: {err:?}");
-                return;
+                return None;
             }
         };
 
+        Self::send_to_egress(EgressMessage::Broadcast(buf.clone()), egress);
+        Some(buf)
+    }
+
+    fn send_to_egress(message: EgressMessage, egress: &mpsc::Sender<EgressMessage>) {
         // Drop on full / closed channel: votor consensus tolerates loss, we
         // never want to backpressure into consensus, but will shout loudly.
-        match egress.try_send(buf) {
+        match egress.try_send(message) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 error!("alpenglow transport egress channel full; dropping votes/certs!");
@@ -311,16 +440,26 @@ impl VotingService {
     fn handle_bls_op(
         cluster_info: &ClusterInfo,
         bls_op: BLSOp,
-        egress: &mpsc::Sender<Bytes>,
+        egress: &mpsc::Sender<EgressMessage>,
         standstill_queue: &mut StandstillRefreshQueue,
+        reward_vote_copies: &mut RewardVoteCopies,
+        leader_schedule_cache: &LeaderScheduleCache,
     ) {
         match bls_op {
             BLSOp::PushVote { vote } => {
+                let vote_kind = vote.vote;
                 let msg = VersionedWireConsensusMessage::new_from_vote(
                     Arc::unwrap_or_clone(vote),
                     cluster_info.my_shred_version(),
                 );
-                Self::broadcast_consensus_message(&msg, egress);
+                if let Some(buf) = Self::broadcast_consensus_message(&msg, egress) {
+                    reward_vote_copies.schedule(
+                        &vote_kind,
+                        &buf,
+                        cluster_info.id(),
+                        leader_schedule_cache,
+                    );
+                }
             }
             BLSOp::PushCertificates { certificates } => {
                 for certificate in certificates {
@@ -551,7 +690,7 @@ mod tests {
         peer_list_receiver: PeerListReceiver,
     ) -> (
         QuicDatagramEndpoint,
-        mpsc::Sender<Bytes>,
+        mpsc::Sender<EgressMessage>,
         Receiver<Datagram>,
         SocketAddr,
         Runtime,
@@ -584,7 +723,7 @@ mod tests {
     fn create_voting_service(
         bls_receiver: Receiver<BLSOp>,
         spy_listener: (Pubkey, SocketAddr),
-        egress: mpsc::Sender<Bytes>,
+        egress: mpsc::Sender<EgressMessage>,
         peer_list: PeerListSender,
     ) -> (
         VotingService,
@@ -601,6 +740,7 @@ mod tests {
             vec![100; validator_keypairs.len()],
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank0));
         let bank_forks = BankForks::new_rw_arc(bank0);
         // The sending node must itself be staked, otherwise the peer_list
         // refresh publishes an empty set and never connects to the listener.
@@ -627,6 +767,7 @@ mod tests {
                 bls_receiver,
                 cluster_info.clone(),
                 egress,
+                leader_schedule_cache,
                 Arc::new(RwLock::new(None)),
             ),
             peer_list_service,
@@ -696,7 +837,7 @@ mod tests {
         let warmup = Bytes::from_static(b"warmup");
         let warmup_deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = egress.try_send(warmup.clone());
+            let _ = egress.try_send(warmup.clone().into());
             if ingress_rx.recv_timeout(Duration::from_millis(50)).is_ok() {
                 break;
             }

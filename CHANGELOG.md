@@ -19,12 +19,22 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 
+* The `/v0/circulating-supply` endpoint has been removed.
+* The `rpc_accounts_scan` RPC methods have been removed.
+  * `getProgramAccounts`
+  * `getLargestAccounts`
+  * `getSupply`
+  * `getTokenLargestAccounts`
+  * `getTokenAccountsByOwner`
+  * `getTokenAccountsByDelegate`
+
 #### Changes
 
 ### Validator
 
 #### Breaking
 
+* Multihoming support has been removed. `--bind-address` accepts a single IP address, and the `selectActiveInterface` admin RPC method has been removed.
 * The following TowerBFT/PoH related flags have been removed `--tower`, `--no-poh-speed-test`,
   `--no-wait-for-vote-to-start-leader`, `--poh-pinned-cpu-core`, and `--poh-hashes-per-batch`
 * Removed deprecated arguments
@@ -45,6 +55,23 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 
+* `solana-keygen verify` now returns an error instead of panicking when the public key isn't
+  valid base58
+
+### solana-client
+
+#### Breaking
+
+* All mechanisms for sending transactions via UDP have been removed since Alpenglow nodes do not have any open UDP ports for transactions.
+* `solana-udp-client` crate has been removed.
+* `ConnectionCache::Udp`, `BlockingClientConnection::Udp`, `NonblockingClientConnection::Udp` variants and `ConnectionCache::protocol()`/`use_quic()` methods have been removed; `Protocol` is no longer re-exported from `solana_client::connection_cache`.
+
+### solana-tpu-client
+
+#### Breaking
+
+* UDP TPU support has been removed; leaders are always reached via their QUIC TPU address. `LeaderTpuService::new()` no longer takes a `protocol` argument.
+
 ## 4.5.0
 
 ### RPC
@@ -54,6 +81,17 @@ Release channels have their own copy of this changelog:
 * `getBlockTime` now requires `--enable-rpc-transaction-history` to serve results. Previously, RPC
   nodes without the flag could serve `getBlockTime` for blocks newer than the latest finalized
   block.
+
+#### Deprecations
+
+* The `rpc_accounts_scan` RPC methods are deprecated.
+  * `getProgramAccounts`
+  * `getLargestAccounts`
+  * `getSupply`
+  * `getTokenLargestAccounts`
+  * `getTokenAccountsByOwner`
+  * `getTokenAccountsByDelegate`
+* The `/v0/circulating-supply` endpoint is deprecated.
 
 #### Changes
 
@@ -172,6 +210,14 @@ Release channels have their own copy of this changelog:
   Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
   can fill the shared channel and cause updates to be dropped for all subscribed plugins.
   Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
+## 4.4.2
+
+### RPC
+
+#### Breaking
+
+* The `/v0/circulating-supply` endpoint now requires `--full-rpc-api`.
 
 ## 4.4.0
 

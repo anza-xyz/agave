@@ -83,6 +83,7 @@ tokio-util = { workspace = true }
 wincode = { workspace = true }
 
 [dev-dependencies]
+agave-shred-wire-format = { path = "../shred/wire-format", features = ["agave-unstable-api"] }
 serial_test = { workspace = true }
 solana-core = { path = "../core", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-download-utils = { path = "../download-utils", features = ["agave-unstable-api"] }

@@ -59,8 +59,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, INITIAL_RENT_EPOCH,
-        MAX_RECENT_BLOCKHASHES, Slot, UnixTimestamp,
+        DEFAULT_NS_PER_TICK_400_MS, DEFAULT_TICKS_PER_SLOT, Epoch, MAX_RECENT_BLOCKHASHES, Slot,
+        UnixTimestamp,
     },
     solana_cluster_type::ClusterType,
     solana_compute_budget::{
@@ -117,7 +117,6 @@ use {
         account_loader::{
             FeesOnlyTransaction, LoadedTransaction, NoOpTransaction, TRANSACTION_ACCOUNT_BASE_SIZE,
         },
-        rent_calculator::RENT_EXEMPT_RENT_EPOCH,
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::{AccountsDeltas, ExecutedTransaction},
@@ -167,6 +166,8 @@ use {
     test_case::{test_case, test_matrix},
     wincode::{SchemaRead, SchemaWrite},
 };
+
+const RENT_EXEMPT_RENT_EPOCH: Epoch = Epoch::MAX;
 
 fn create_genesis_config_no_tx_fee_no_rent(lamports: u64) -> (GenesisConfig, Keypair) {
     // genesis_util creates config with no tx fee and no rent
@@ -5984,7 +5985,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "EZPqueG9qihQs5Ws2Fo2yUjg6BvQWcC2ZE4JBZ3dDtPq",
+        "6YG3ttHjaxksbXMRy1qHJH7H9wnzoPzkxAyAzSNAE6AT",
     );
 }
 
@@ -8900,7 +8901,7 @@ fn test_vote_epoch_panic() {
 }
 
 #[test]
-fn test_collect_transaction_logs_ignores_vote_classification() {
+fn test_collect_transaction_logs() {
     let sender = Keypair::new();
     let recipient = Pubkey::new_unique();
     let execution_details = TransactionExecutionDetails {
@@ -8915,39 +8916,32 @@ fn test_collect_transaction_logs_ignores_vote_classification() {
         }),
     };
 
-    for is_simple_vote in [false, true] {
-        let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
-            system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
-            solana_transaction::sanitized::MessageHash::Compute,
-            Some(is_simple_vote),
-            solana_message::SimpleAddressLoader::Disabled,
-            &HashSet::new(),
-        )
-        .unwrap();
-        let mut config = TransactionLogCollectorConfig {
-            filter: TransactionLogCollectorFilter::All,
-            mentioned_addresses: HashSet::new(),
-        };
-        let (logs, mentions) =
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
-        assert_eq!(logs.signature, *transaction.signature());
-        assert_eq!(logs.log_messages, vec!["transaction log"]);
-        assert!(mentions.is_empty());
+    let transaction = RuntimeTransaction::<SanitizedTransaction>::try_create(
+        system_transaction::transfer(&sender, &recipient, 1, Hash::new_unique()).into(),
+        solana_transaction::sanitized::MessageHash::Compute,
+        solana_message::SimpleAddressLoader::Disabled,
+        &HashSet::new(),
+    )
+    .unwrap();
+    let mut config = TransactionLogCollectorConfig {
+        filter: TransactionLogCollectorFilter::All,
+        mentioned_addresses: HashSet::new(),
+    };
+    let (logs, mentions) =
+        Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+    assert_eq!(logs.signature, *transaction.signature());
+    assert_eq!(logs.log_messages, vec!["transaction log"]);
+    assert!(mentions.is_empty());
 
-        config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
-        assert!(
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
-        );
-        config.mentioned_addresses.insert(recipient);
-        let (_, mentions) =
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
-        assert_eq!(mentions, vec![recipient]);
+    config.filter = TransactionLogCollectorFilter::OnlyMentionedAddresses;
+    assert!(Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none());
+    config.mentioned_addresses.insert(recipient);
+    let (_, mentions) =
+        Bank::collect_transaction_logs(&config, &transaction, &execution_details).unwrap();
+    assert_eq!(mentions, vec![recipient]);
 
-        config.filter = TransactionLogCollectorFilter::None;
-        assert!(
-            Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none()
-        );
-    }
+    config.filter = TransactionLogCollectorFilter::None;
+    assert!(Bank::collect_transaction_logs(&config, &transaction, &execution_details).is_none());
 }
 
 #[test]
@@ -10395,13 +10389,7 @@ fn test_accounts_data_size_delta_on_chain_with_deleted_account_transaction() {
                 let balance = rent_exempt_minimum - 1;
                 genesis_config.accounts.insert(
                     deleted_account.pubkey(),
-                    Account {
-                        lamports: balance,
-                        data: vec![0; account_data_size],
-                        owner: mock_program_id,
-                        executable: false,
-                        rent_epoch: INITIAL_RENT_EPOCH + 1,
-                    },
+                    Account::new_with_data(balance, vec![0; account_data_size], &mock_program_id),
                 );
                 balance
             }
@@ -10485,13 +10473,11 @@ fn test_invalid_rent_state_changes_existing_accounts() {
     let rent_exempt_account = Keypair::new();
     genesis_config.accounts.insert(
         rent_exempt_account.pubkey(),
-        Account {
-            lamports: rent_exempt_minimum,
-            data: vec![0; account_data_size],
-            owner: mock_program_id,
-            executable: false,
-            rent_epoch: INITIAL_RENT_EPOCH + 1,
-        },
+        Account::new_with_data(
+            rent_exempt_minimum,
+            vec![0; account_data_size],
+            &mock_program_id,
+        ),
     );
 
     let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
@@ -11083,13 +11069,11 @@ fn test_resize_and_rent() {
     );
 
     let test_pubkey = solana_pubkey::new_rand();
-    let rent_paying_account = AccountSharedData::from(Account {
-        lamports: rent_exempt_minimum_small,
-        data: vec![0; account_data_size_small],
-        owner: mock_program_id,
-        executable: false,
-        rent_epoch: 1,
-    });
+    let rent_paying_account = AccountSharedData::new_with_data(
+        rent_exempt_minimum_small,
+        vec![0; account_data_size_small],
+        &mock_program_id,
+    );
 
     // restore program-owned account
     bank.store_account(&test_pubkey, &rent_paying_account);

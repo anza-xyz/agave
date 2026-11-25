@@ -1,16 +1,10 @@
 use {
     lru::LruCache,
-    solana_accounts_db::{ancestors::Ancestors, bank_id::BankId},
     solana_clock::Epoch,
-    solana_rpc_client_api::{
-        config::RpcLargestAccountsFilter,
-        response::{RpcAccountBalance, RpcVatActiveSetRankMap},
-    },
+    solana_rpc_client_api::response::RpcVatActiveSetRankMap,
     std::{
-        collections::HashMap,
         num::NonZeroUsize,
         sync::{Arc, Mutex},
-        time::{Duration, SystemTime},
     },
     tokio::sync::OnceCell,
 };
@@ -43,66 +37,9 @@ impl RankMapCache {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LargestAccountsCache {
-    duration: u64,
-    cache: HashMap<Option<RpcLargestAccountsFilter>, LargestAccountsCacheValue>,
-}
-
-#[derive(Debug, Clone)]
-struct LargestAccountsCacheValue {
-    accounts: Vec<RpcAccountBalance>,
-    slot: u64,
-    bank_id: BankId,
-    cached_time: SystemTime,
-}
-
-impl LargestAccountsCache {
-    pub(crate) fn new(duration: u64) -> Self {
-        Self {
-            duration,
-            cache: HashMap::new(),
-        }
-    }
-
-    pub(crate) fn get_largest_accounts(
-        &self,
-        filter: &Option<RpcLargestAccountsFilter>,
-        ancestors: &Ancestors,
-    ) -> Option<(u64, Vec<RpcAccountBalance>)> {
-        self.cache.get(filter).and_then(|value| {
-            if let Ok(elapsed) = value.cached_time.elapsed()
-                && elapsed < Duration::from_secs(self.duration)
-                && ancestors.bank_id(value.slot) == Some(value.bank_id)
-            {
-                return Some((value.slot, value.accounts.clone()));
-            }
-            None
-        })
-    }
-
-    pub(crate) fn set_largest_accounts(
-        &mut self,
-        filter: &Option<RpcLargestAccountsFilter>,
-        slot: u64,
-        bank_id: BankId,
-        accounts: &[RpcAccountBalance],
-    ) {
-        self.cache.insert(
-            filter.clone(),
-            LargestAccountsCacheValue {
-                accounts: accounts.to_owned(),
-                slot,
-                bank_id,
-                cached_time: SystemTime::now(),
-            },
-        );
-    }
-}
-
 #[cfg(test)]
 pub mod test {
-    use super::*;
+    use {super::*, std::time::Duration};
 
     #[test]
     fn test_rank_map_cache_epochs_and_eviction() {
@@ -208,55 +145,5 @@ pub mod test {
             .await
             .unwrap();
         assert_eq!(response.epoch, 0);
-    }
-
-    #[test]
-    fn test_largest_accounts_cache_bank_identity() {
-        let mut cache = LargestAccountsCache::new(30);
-        let id = BankId::new(42);
-        let accounts = vec![RpcAccountBalance {
-            address: "account".into(),
-            lamports: 100,
-        }];
-        cache.set_largest_accounts(&None, 10, id, &accounts);
-        // A descendant can reuse the response while it retains the original bank's identity.
-        for ancestors in [
-            Ancestors::from(vec![(10, id)]),
-            Ancestors::from(vec![(10, id), (11, BankId::new(43))]),
-        ] {
-            assert_eq!(
-                cache.get_largest_accounts(&None, &ancestors),
-                Some((10, accounts.clone()))
-            );
-            assert_eq!(
-                cache
-                    .get_largest_accounts(&Some(RpcLargestAccountsFilter::Circulating), &ancestors),
-                None
-            );
-        }
-        // Same-slot replacements, forks and pruned ancestry must trigger a new scan.
-        for ancestors in [
-            Ancestors::from(vec![(10, BankId::new(44))]),
-            Ancestors::from(vec![(9, BankId::new(41)), (11, BankId::new(43))]),
-            Ancestors::from(vec![(11, BankId::new(43))]),
-        ] {
-            assert_eq!(cache.get_largest_accounts(&None, &ancestors), None);
-        }
-    }
-
-    #[test]
-    fn test_old_entries_expire() {
-        let mut cache = LargestAccountsCache::new(1);
-
-        let filter = Some(RpcLargestAccountsFilter::Circulating);
-
-        let accounts: Vec<RpcAccountBalance> = Vec::new();
-
-        cache.set_largest_accounts(&filter, 1000, BankId::new(42), &accounts);
-        std::thread::sleep(Duration::from_secs(1));
-        assert_eq!(
-            cache.get_largest_accounts(&filter, &Ancestors::from(vec![(1000, BankId::new(42))])),
-            None
-        );
     }
 }

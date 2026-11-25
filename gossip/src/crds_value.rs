@@ -3,10 +3,7 @@ use qualifier_attr::qualifiers;
 #[cfg(feature = "stable-abi")]
 use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
-    crate::{
-        contact_info::ContactInfo, crds_data::CrdsData, duplicate_shred::DuplicateShredIndex,
-        sigverify_cache::SigVerifyCache,
-    },
+    crate::{contact_info::ContactInfo, crds_data::CrdsData, sigverify_cache::SigVerifyCache},
     rand::Rng,
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
@@ -27,7 +24,7 @@ use {
     feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
-        abi_digest = "AW5V9VcRtaNs8r6SCFp9p83SLAtiLBnagoiwricBJN51",
+        abi_digest = "9UXaxWSXS3bfMbPFpX3suTzA86enEdesxBhrjNXenHuD",
         abi_serializer = ["wincode"],
         // `hash` is recomputed from [signature, data] on deserialize, so it can't
         // match an independently-sampled value; verify the wire round-trip only.
@@ -83,21 +80,15 @@ impl Signable for CrdsValue {
 /// These are labels for values in a record that is associated with `Pubkey`
 #[derive(PartialEq, Hash, Eq, Clone, Debug)]
 pub enum CrdsValueLabel {
-    DuplicateShred(DuplicateShredIndex, Pubkey),
     SnapshotHashes(Pubkey),
     ContactInfo(Pubkey),
-    RestartLastVotedForkSlots(Pubkey),
-    RestartHeaviestFork(Pubkey),
 }
 
 impl CrdsValueLabel {
     pub fn pubkey(&self) -> Pubkey {
         match self {
-            CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::SnapshotHashes(p) => *p,
             CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
-            CrdsValueLabel::RestartLastVotedForkSlots(p) => *p,
-            CrdsValueLabel::RestartHeaviestFork(p) => *p,
         }
     }
 }
@@ -203,13 +194,8 @@ impl CrdsValue {
     pub fn label(&self) -> CrdsValueLabel {
         let pubkey = self.data.pubkey();
         match self.data {
-            CrdsData::DuplicateShred(ix, _) => CrdsValueLabel::DuplicateShred(ix, pubkey),
             CrdsData::SnapshotHashes(_) => CrdsValueLabel::SnapshotHashes(pubkey),
             CrdsData::ContactInfo(_) => CrdsValueLabel::ContactInfo(pubkey),
-            CrdsData::RestartLastVotedForkSlots(_) => {
-                CrdsValueLabel::RestartLastVotedForkSlots(pubkey)
-            }
-            CrdsData::RestartHeaviestFork(_) => CrdsValueLabel::RestartHeaviestFork(pubkey),
             // Deprecated: sanitize() rejects these before any caller reaches here.
             CrdsData::LegacyContactInfo(_)
             | CrdsData::Vote(_)
@@ -219,6 +205,9 @@ impl CrdsValue {
             | CrdsData::AccountsHashes(_)
             | CrdsData::LegacyVersion(_)
             | CrdsData::Version(_)
+            | CrdsData::DuplicateShred(_)
+            | CrdsData::RestartLastVotedForkSlots(_)
+            | CrdsData::RestartHeaviestFork(_)
             | CrdsData::NodeInstance(_) => unreachable!("deprecated CrdsData variant"),
         }
     }

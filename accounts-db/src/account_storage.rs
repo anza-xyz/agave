@@ -455,7 +455,7 @@ impl<'a> AccountStoragesConcurrentConsumer<'a> {
         if position < self.orderer.entries_len() {
             // SAFETY: We have ensured `position` is in range.
             let original_index = self.orderer.original_index(position);
-            let storage = &self.orderer[position];
+            let storage = &self.orderer.storages[original_index];
             Some(NextItem {
                 position,
                 original_index,
@@ -490,7 +490,7 @@ pub struct NextItem<'a> {
     /// The index into the original storages slice at this position
     pub original_index: usize,
     /// The storage itself
-    pub storage: &'a AccountStorageEntry,
+    pub storage: &'a Arc<AccountStorageEntry>,
 }
 
 /// Select the `nth` (`0 <= nth < range.len()`) value from a `range`, choosing values alternately

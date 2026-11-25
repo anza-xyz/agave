@@ -60,7 +60,7 @@ impl Default for TpuClientConfig {
     }
 }
 
-/// Client which sends transactions directly to the current leader's TPU port over UDP.
+/// Client which sends transactions directly to the current leader's TPU port over QUIC.
 /// The client uses RPC to determine the current leader and fetch node contact info
 pub struct TpuClient<
     P, // ConnectionPool

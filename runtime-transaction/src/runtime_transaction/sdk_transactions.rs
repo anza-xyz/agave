@@ -12,7 +12,6 @@ use {
     solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
-        simple_vote_transaction_checker::is_simple_vote_transaction,
         versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     solana_transaction_error::TransactionResult as Result,
@@ -21,11 +20,7 @@ use {
 
 impl RuntimeTransaction<SanitizedVersionedTransaction> {
     /// Validate limits, sanitize, and load static metadata from a versioned transaction.
-    pub fn try_from(
-        transaction: VersionedTransaction,
-        message_hash: MessageHash,
-        is_simple_vote_tx: Option<bool>,
-    ) -> Result<Self> {
+    pub fn try_from(transaction: VersionedTransaction, message_hash: MessageHash) -> Result<Self> {
         let serialized_size = wincode::serialized_size(&transaction)
             .map_err(|_| solana_transaction_error::TransactionError::SanitizeFailure)?;
         let sanitized_versioned_tx = SanitizedVersionedTransaction::try_from(transaction)?;
@@ -43,9 +38,6 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             MessageHash::Precomputed(hash) => hash,
             MessageHash::Compute => sanitized_versioned_tx.get_message().message.hash(),
         };
-        let is_simple_vote_tx = is_simple_vote_tx
-            .unwrap_or_else(|| is_simple_vote_transaction(&sanitized_versioned_tx));
-
         let InstructionMeta {
             precompile_signature_details,
             instruction_data_len,
@@ -78,7 +70,6 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             transaction: sanitized_versioned_tx,
             meta: CachedTransactionMeta {
                 message_hash,
-                is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 versioned_transaction_config,
                 instruction_data_len,
@@ -93,7 +84,6 @@ impl RuntimeTransaction<SanitizedTransaction> {
     pub fn try_create(
         tx: VersionedTransaction,
         message_hash: MessageHash,
-        is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
@@ -110,11 +100,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         }
 
         let statically_loaded_runtime_tx =
-            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
-                tx,
-                message_hash,
-                is_simple_vote_tx,
-            )?;
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(tx, message_hash)?;
         Self::try_from(
             statically_loaded_runtime_tx,
             address_loader,
@@ -131,11 +117,10 @@ impl RuntimeTransaction<SanitizedTransaction> {
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
         let hash = *statically_loaded_runtime_tx.message_hash();
-        let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_transaction();
         let sanitized_transaction = SanitizedTransaction::try_new(
             statically_loaded_runtime_tx.transaction,
             hash,
-            is_simple_vote_tx,
+            false,
             address_loader,
             reserved_account_keys,
         )?;
@@ -186,7 +171,6 @@ impl RuntimeTransaction<SanitizedTransaction> {
             implicit_read_locks: Vec::new(),
             meta: CachedTransactionMeta {
                 message_hash: *transaction.message_hash(),
-                is_simple_vote_transaction: transaction.is_simple_vote_transaction(),
                 signature_details: transaction.message().get_signature_details(),
                 versioned_transaction_config:
                     VersionedTransactionConfiguration::try_from_sanitized_message(
@@ -210,45 +194,23 @@ mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
-        solana_instruction::{AccountMeta, Instruction},
+        solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_message::{
             Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
             compiled_instruction::CompiledInstruction,
         },
-        solana_sdk_ids::vote,
         solana_signature::Signature,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, versioned::VersionedTransaction},
     };
 
-    fn vote_versioned_transaction() -> VersionedTransaction {
-        let block_hash = Hash::new_unique();
-        let vote_keypair = Keypair::new();
-        let node_keypair = Keypair::new();
-        let auth_keypair = Keypair::new();
-        let vote_ix = Instruction::new_with_bytes(
-            vote::id(),
-            &[],
-            vec![
-                AccountMeta::new(vote_keypair.pubkey(), false),
-                AccountMeta::new_readonly(auth_keypair.pubkey(), true),
-            ],
-        );
-        let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&node_keypair.pubkey()));
-        vote_tx.partial_sign(&[&node_keypair], block_hash);
-        vote_tx.partial_sign(&[&auth_keypair], block_hash);
-
-        VersionedTransaction::from(vote_tx)
-    }
-
     fn non_vote_versioned_transaction() -> VersionedTransaction {
         TestTransaction::new().to_versioned_transaction()
     }
 
-    // Simple transfer transaction for testing, it does not support vote instruction
-    // because simple vote transaction will not request limits
+    // Simple transfer transaction for testing.
     struct TestTransaction {
         from_keypair: Keypair,
         hash: Hash,
@@ -310,43 +272,11 @@ mod tests {
                 RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                     transaction,
                     MessageHash::Compute,
-                    None,
                 )
                 .unwrap_err(),
                 solana_transaction_error::TransactionError::SanitizeFailure,
             );
         }
-    }
-
-    #[test]
-    fn test_runtime_transaction_is_vote_meta() {
-        fn get_is_simple_vote(
-            transaction: VersionedTransaction,
-            is_simple_vote: Option<bool>,
-        ) -> bool {
-            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
-                transaction,
-                MessageHash::Compute,
-                is_simple_vote,
-            )
-            .unwrap()
-            .meta
-            .is_simple_vote_transaction
-        }
-
-        assert!(!get_is_simple_vote(non_vote_versioned_transaction(), None));
-
-        assert!(get_is_simple_vote(
-            non_vote_versioned_transaction(),
-            Some(true), // override
-        ));
-
-        assert!(get_is_simple_vote(vote_versioned_transaction(), None));
-
-        assert!(!get_is_simple_vote(
-            vote_versioned_transaction(),
-            Some(false), // override
-        ));
     }
 
     #[test]
@@ -357,12 +287,10 @@ mod tests {
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 non_vote_versioned_transaction(),
                 MessageHash::Precomputed(hash),
-                None,
             )
             .unwrap();
 
         assert_eq!(hash, *statically_loaded_transaction.message_hash());
-        assert!(!statically_loaded_transaction.is_simple_vote_transaction());
 
         let dynamically_loaded_transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
             statically_loaded_transaction,
@@ -373,7 +301,6 @@ mod tests {
             dynamically_loaded_transaction.expect("created from statically loaded tx");
 
         assert_eq!(hash, *dynamically_loaded_transaction.message_hash());
-        assert!(!dynamically_loaded_transaction.is_simple_vote_transaction());
     }
 
     #[test]
@@ -392,12 +319,10 @@ mod tests {
                     .add_loaded_accounts_bytes(loaded_accounts_bytes)
                     .to_versioned_transaction(),
                 MessageHash::Precomputed(hash),
-                None,
             )
             .unwrap();
 
         assert_eq!(&hash, runtime_transaction_static.message_hash());
-        assert!(!runtime_transaction_static.is_simple_vote_transaction());
 
         let signature_details = &runtime_transaction_static.meta.signature_details;
         assert_eq!(1, signature_details.num_transaction_signatures());
@@ -429,7 +354,6 @@ mod tests {
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 non_vote_versioned_transaction(),
                 MessageHash::Compute,
-                None,
             )
             .unwrap(),
             SimpleAddressLoader::Disabled,
@@ -471,7 +395,6 @@ mod tests {
         let result = RuntimeTransaction::<SanitizedTransaction>::try_create(
             transaction,
             MessageHash::Compute,
-            None,
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
         );
@@ -492,7 +415,6 @@ mod tests {
         let result = RuntimeTransaction::<SanitizedTransaction>::try_create(
             transaction,
             MessageHash::Compute,
-            None,
             solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
         );

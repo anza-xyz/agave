@@ -36,12 +36,11 @@ use {
 /// Repair response nonce, appended after the shred.
 pub type Nonce = u32;
 
-/// Number of data shreds, and of code shreds, in every FEC set (fixed 32:32).
-pub const DATA_SHREDS_PER_FEC_BLOCK: u32 = 32;
-pub const DATA_SHREDS: usize = DATA_SHREDS_PER_FEC_BLOCK as usize;
-pub const CODE_SHREDS: usize = DATA_SHREDS;
-/// Shards per erasure batch, also the number of Merkle tree leaves.
-pub const SHARDS: usize = DATA_SHREDS + CODE_SHREDS;
+/// Number of data shreds, and of coding shreds, in every FEC set (fixed 32:32).
+pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
+pub const CODING_SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK;
+/// Shreds per erasure batch, also the number of Merkle tree leaves.
+pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHREDS_PER_FEC_BLOCK;
 
 /// One Merkle proof entry: a hash truncated to 20 bytes.
 pub type MerkleProofEntry = [u8; 20];
@@ -64,8 +63,8 @@ pub const SIZE_OF_COMMON_HEADER: usize = serialized_size_of::<CommonHeader>();
 pub const SIZE_OF_DATA_HEADER: usize = serialized_size_of::<DataHeader>();
 pub const SIZE_OF_CODE_HEADER: usize = serialized_size_of::<CodeHeader>();
 pub const SIZE_OF_MERKLE_ROOT: usize = serialized_size_of::<Hash>();
-/// Merkle proof depth for a tree of [`SHARDS`] leaves.
-pub const MERKLE_PROOF_ENTRIES: usize = SHARDS.next_power_of_two().ilog2() as usize;
+/// Merkle proof depth for a tree of [`SHREDS_PER_FEC_BLOCK`] leaves.
+pub const MERKLE_PROOF_ENTRIES: usize = SHREDS_PER_FEC_BLOCK.next_power_of_two().ilog2() as usize;
 pub const SIZE_OF_MERKLE_PROOF: usize = MERKLE_PROOF_ENTRIES * SIZE_OF_MERKLE_PROOF_ENTRY;
 /// Everything after the body: chained Merkle root and proof.
 pub const SIZE_OF_TRAILER: usize = SIZE_OF_MERKLE_ROOT + SIZE_OF_MERKLE_PROOF;
