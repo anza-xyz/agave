@@ -67,7 +67,7 @@ fn test_pending_result_must_cover_task_data() {
         erasure_set: missing.erasure_set(),
         just_inserted_shreds: data,
         stored_shred_ids,
-        merkle_root: missing.merkle_root().unwrap(),
+        merkle_root_meta: MerkleRootMeta::from_shred(&missing, None),
         validation_mode: FecValidationMode::Enforce,
         recovery_work: Some(Arc::new(())),
     };
@@ -76,7 +76,7 @@ fn test_pending_result_must_cover_task_data() {
         erasure_set: task.erasure_set,
         retransmit_shreds: Vec::new(),
         data_shreds: vec![missing.clone()],
-        merkle_root: Some(task.merkle_root),
+        merkle_root_meta: Some(task.merkle_root_meta),
         fec_set_check: Some(FecSetCheckResult::Passed),
         validation_mode: FecValidationMode::Enforce,
         recovery_work: task.recovery_work.clone(),
@@ -99,7 +99,10 @@ fn test_pending_result_must_cover_task_data() {
         assert!(!result.satisfies_task(&task));
     }
     result.fec_set_check = Some(FecSetCheckResult::Passed);
-    result.merkle_root = Some(Hash::new_unique());
+    result.merkle_root_meta = Some(MerkleRootMeta::from_shred(
+        &task.just_inserted_shreds[0],
+        Some(Hash::new_unique()),
+    ));
     assert!(!result.satisfies_task(&task));
 }
 
@@ -691,6 +694,37 @@ fn test_passed_observe_result_satisfies_current_validation_requirement() {
     assert!(blockstore.meta(SLOT).unwrap().unwrap().is_full());
     assert!(!blockstore.is_dead(SLOT));
     assert_eq!(pending_count(&blockstore), 0);
+}
+
+// A same-root replacement can have a different first received shred. Conflict
+// proofs must use that current record, not the metadata carried by an old result.
+#[test]
+fn test_same_root_replacement_uses_current_conflict_metadata() {
+    let path = get_tmp_ledger_path_auto_delete!();
+    let blockstore = Blockstore::open(path.path()).unwrap();
+    let (mut data, _) = fec(entries(), 0, true);
+    let mut inserted = blockstore
+        .insert_enforced_shreds_for_tests(data.clone(), &mut [])
+        .unwrap();
+    let old_result = recover(&blockstore, inserted.recovery_tasks.pop().unwrap());
+    blockstore.clear_unconfirmed_slot(SLOT);
+    // The old record refers to shred 0. Only shred 1 is available as the
+    // replacement's first received shred, despite both records having the same root.
+    data.remove(0);
+    blockstore
+        .insert_enforced_shreds_for_tests(data, &mut [])
+        .unwrap();
+    let (conflicting, _) = fec(entries(), 0, true);
+    let result = blockstore
+        .insert_enforced_shreds_for_tests(vec![conflicting[0].clone()], &mut [old_result])
+        .unwrap();
+    assert!(
+        result
+            .duplicate_shreds
+            .iter()
+            .any(|shred| matches!(shred, PossibleDuplicateShred::MerkleRootConflict(..)))
+    );
+    assert!(blockstore.get_data_shred(SLOT, 0).unwrap().is_none());
 }
 
 // A recovery-only result has no FEC check. After a same-root purge and activation,

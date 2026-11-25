@@ -348,6 +348,8 @@ pub(crate) struct ShredInsertionState {
     deferred_shreds: DeferredDataShreds,
     // One reference belongs to this map. Tasks and unapplied results own the others.
     // A slot is idle when only the map reference remains. No worker lock is needed.
+    // Purges and block switches remove the entry. A matching reference lets
+    // insertion reuse immutable root metadata carried by a recovery result.
     recovery_work: BTreeMap<Slot, Arc<()>>,
     // A rejected shred arrived while this slot had recovery or validation work.
     // Wait for all current work to finish before deciding whether to mark it dead.
@@ -412,7 +414,9 @@ pub struct ShredRecoveryTask {
     just_inserted_shreds: Vec<Shred>,
     /// IDs of shreds already in blockstore for the recovery thread to load.
     stored_shred_ids: Vec<ShredId>,
-    merkle_root: Hash,
+    // Root metadata is immutable until the slot is purged or its block is switched.
+    // Carry the full record so result insertion can reuse it under the same work identity.
+    merkle_root_meta: MerkleRootMeta,
     validation_mode: FecValidationMode,
     // Move this reference into the result. Dropping either retires the work.
     recovery_work: Option<Arc<()>>,
@@ -434,7 +438,7 @@ impl ShredRecoveryTask {
 
     /// Keep any stronger check that an older task requested for the same Merkle root.
     pub fn merge_check_requirement(&mut self, other: &Self) {
-        if self.merkle_root == other.merkle_root {
+        if self.merkle_root_meta.merkle_root() == other.merkle_root_meta.merkle_root() {
             self.validation_mode = self.validation_mode.max(other.validation_mode);
         }
     }
@@ -459,7 +463,7 @@ pub struct RecoveredShredBatch {
     retransmit_shreds: Vec<Payload>,
     /// Reconstructed data shreds to insert into blockstore.
     data_shreds: Vec<Shred>,
-    merkle_root: Option<Hash>,
+    merkle_root_meta: Option<MerkleRootMeta>,
     fec_set_check: Option<FecSetCheckResult>,
     validation_mode: FecValidationMode,
     // Keep this reference until insertion commits or discards the result.
@@ -467,6 +471,12 @@ pub struct RecoveredShredBatch {
 }
 
 impl RecoveredShredBatch {
+    fn merkle_root(&self) -> Option<Hash> {
+        self.merkle_root_meta
+            .as_ref()
+            .and_then(MerkleRootMeta::merkle_root)
+    }
+
     pub fn requires_validation(&self) -> bool {
         self.validation_mode == FecValidationMode::Enforce
     }
@@ -488,7 +498,7 @@ impl RecoveredShredBatch {
         if !matches!(self.fec_set_check, Some(FecSetCheckResult::Passed))
             || self.validation_mode < task.validation_mode
             || self.erasure_set != task.erasure_set
-            || self.merkle_root != Some(task.merkle_root)
+            || self.merkle_root() != task.merkle_root_meta.merkle_root()
         {
             return false;
         }
@@ -512,7 +522,7 @@ impl RecoveredShredBatch {
     #[cfg(test)]
     fn has_validation_verdict(&self) -> bool {
         self.validation_mode == FecValidationMode::Enforce
-            && self.merkle_root.is_some()
+            && self.merkle_root_meta.is_some()
             && self.fec_set_check.is_some()
     }
 
@@ -524,7 +534,7 @@ impl RecoveredShredBatch {
     fn clear(&mut self) {
         self.retransmit_shreds.clear();
         self.data_shreds.clear();
-        self.merkle_root = None;
+        self.merkle_root_meta = None;
         self.fec_set_check = None;
         self.recovery_work = None;
     }
@@ -1798,10 +1808,11 @@ impl Blockstore {
             erasure_set,
             mut just_inserted_shreds,
             stored_shred_ids,
-            merkle_root,
+            merkle_root_meta,
             mut validation_mode,
             recovery_work,
         } = task;
+        let merkle_root = merkle_root_meta.merkle_root()?;
         // Task and worker bank snapshots can differ near feature activation.
         // Use required rules for both reconstruction and the returned verdict.
         if validation_mode == FecValidationMode::Enforce {
@@ -1847,7 +1858,7 @@ impl Blockstore {
             erasure_set,
             retransmit_shreds: Vec::new(),
             data_shreds: Vec::new(),
-            merkle_root: Some(merkle_root),
+            merkle_root_meta: Some(merkle_root_meta),
             fec_set_check: None,
             validation_mode,
             recovery_work,
@@ -2278,11 +2289,11 @@ impl Blockstore {
                 {
                     return None;
                 }
-                let merkle_root = tracker
+                let merkle_root_meta = *tracker
                     .merkle_root_metas
                     .get(&(BlockLocation::Original, erasure_set))?
-                    .as_ref()
-                    .merkle_root()?;
+                    .as_ref();
+                merkle_root_meta.merkle_root()?;
                 let mut just_inserted_shreds =
                     Vec::with_capacity(num_inserted + usize::from(deferred.is_some()));
                 let mut stored_shred_ids =
@@ -2323,7 +2334,7 @@ impl Blockstore {
                     erasure_set,
                     just_inserted_shreds,
                     stored_shred_ids,
-                    merkle_root,
+                    merkle_root_meta,
                     recovery_work: None,
                     validation_mode: if enforce_fec_checks {
                         FecValidationMode::Enforce
@@ -2859,11 +2870,24 @@ impl Blockstore {
                 .get(&(BlockLocation::Original, batch.erasure_set))
             {
                 Some(meta) => Some(*meta.as_ref()),
+                None if batch.recovery_work.as_ref().is_some_and(|work| {
+                    recovery_work
+                        .get(&batch.erasure_set.slot())
+                        .is_some_and(|current| Arc::ptr_eq(work, current))
+                }) =>
+                {
+                    // The task was sent after its metadata was committed. That record
+                    // does not change within a block. Purges and block switches remove
+                    // the work identity under this lock, so a match permits reuse.
+                    batch.merkle_root_meta
+                }
                 None => {
+                    // The slot may have been replaced, even with the same root.
+                    // Read its current record before accepting the old result.
                     self.merkle_root_meta_from_location(batch.erasure_set, BlockLocation::Original)?
                 }
             };
-            let recovered_root = batch.merkle_root;
+            let recovered_root = batch.merkle_root();
             let is_current = matches!(
                 (current_meta.and_then(|meta| meta.merkle_root()), recovered_root),
                 (Some(current), Some(recovered)) if current == recovered
@@ -2891,7 +2915,7 @@ impl Blockstore {
         if shreds.len() == 0
             && recovered_batches
                 .iter()
-                .all(|batch| batch.merkle_root.is_none())
+                .all(|batch| batch.merkle_root_meta.is_none())
         {
             return Ok(InsertResults {
                 completed_data_set_infos: Vec::new(),
@@ -2955,7 +2979,7 @@ impl Blockstore {
                 && let Some(pending) = shred_insertion_tracker.deferred_shreds.as_deref_mut()
                 && pending
                     .get(&batch.erasure_set)
-                    .is_some_and(|held| held.shred.merkle_root().ok() == batch.merkle_root)
+                    .is_some_and(|held| held.shred.merkle_root().ok() == batch.merkle_root())
                 && let Some(held) = pending.remove(&batch.erasure_set)
             {
                 let shred = held.shred;
@@ -2974,7 +2998,7 @@ impl Blockstore {
                     is_trusted,
                     true, // publish a held shred
                     source,
-                    batch.merkle_root,
+                    batch.merkle_root(),
                     pinnable_slice,
                 );
                 let parent_expired = match &result {
@@ -3048,7 +3072,7 @@ impl Blockstore {
                 });
             let check_applied = recovered_batches.iter().any(|batch| {
                 batch.erasure_set == task.erasure_set
-                    && batch.merkle_root == Some(task.merkle_root)
+                    && batch.merkle_root() == task.merkle_root_meta.merkle_root()
                     && batch.fec_set_check.is_some()
             });
             !complete || (task.must_check_completed_set() && !check_applied)

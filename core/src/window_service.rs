@@ -45,9 +45,14 @@ use {
 };
 
 // Each channel message contains one recovered FEC set.
-// The channel capacity does not include validation results kept in pending_results.
+// The channel capacity does not include validation results kept in pending_results
+// or the worker's current group of at most RECOVERY_PUBLICATION_BATCH_SIZE results.
 const RECOVERED_CHANNEL_CAPACITY: usize = 1024;
-const MAX_RECOVERED_BATCHES_PER_INSERT: usize = 64;
+// Bound incoming work so queued results can reach blockstore during a shred burst.
+const MAX_SHREDS_PER_INSERT: usize = 2048;
+const MAX_RECOVERED_BATCHES_PER_INSERT: usize = 256;
+// Publish small groups promptly, independently of how many results insertion can drain.
+const RECOVERY_PUBLICATION_BATCH_SIZE: usize = 64;
 
 #[derive(Default)]
 struct WindowServiceMetrics {
@@ -214,6 +219,8 @@ fn run_check_duplicate(
 #[allow(clippy::too_many_arguments)]
 fn run_insert<'db, F>(
     verified_receiver: &Receiver<Vec<VerifiedShred>>,
+    pending_shreds: &mut std::vec::IntoIter<VerifiedShred>,
+    shreds: &mut Vec<VerifiedShred>,
     recovery_sender: &Sender<Vec<ShredRecoveryTask>>,
     recovered_receiver: &Receiver<RecoveredShredBatch>,
     recovered_batches: &mut Vec<RecoveredShredBatch>,
@@ -233,25 +240,42 @@ where
 {
     const RECV_TIMEOUT: Duration = Duration::from_millis(200);
     let mut shred_receiver_elapsed = Measure::start("shred_receiver_elapsed");
-    let mut shreds = Vec::new();
-    // Recovery must make progress even when no further network shreds arrive.
-    select! {
-        recv(verified_receiver) -> batch => {
-            shreds = batch.map_err(|_| RecvTimeoutError::Disconnected)?;
-        }
-        recv(recovered_receiver) -> batch => {
-            recovered_batches.push(batch.map_err(|_| RecvTimeoutError::Disconnected)?);
-        }
-        default(RECV_TIMEOUT) => {
-            // A dropped recovery task produces no result to wake this thread.
-            // Recheck conflicts waiting for that work before returning to sleep.
-            blockstore.process_pending_recovery_conflicts()?;
-            if pending_tasks.is_empty() {
-                return Err(RecvTimeoutError::Timeout.into());
+    debug_assert!(shreds.is_empty());
+    if pending_shreds.len() == 0 {
+        // Recovery must make progress even when no further network shreds arrive.
+        select! {
+            recv(verified_receiver) -> batch => {
+                *pending_shreds = batch.map_err(|_| RecvTimeoutError::Disconnected)?.into_iter();
             }
-        },
+            recv(recovered_receiver) -> batch => {
+                recovered_batches.push(batch.map_err(|_| RecvTimeoutError::Disconnected)?);
+            }
+            default(RECV_TIMEOUT) => {
+                // A dropped recovery task produces no result to wake this thread.
+                // Recheck conflicts waiting for that work before returning to sleep.
+                blockstore.process_pending_recovery_conflicts()?;
+                if pending_tasks.is_empty() {
+                    return Err(RecvTimeoutError::Timeout.into());
+                }
+            },
+        }
     }
-    shreds.extend(verified_receiver.try_iter().flatten());
+    // Fill the reusable buffer from the current message before receiving another.
+    // Keep an oversized message's tail in its iterator, without moving or cloning it.
+    loop {
+        shreds.extend(
+            pending_shreds
+                .by_ref()
+                .take(MAX_SHREDS_PER_INSERT - shreds.len()),
+        );
+        if shreds.len() == MAX_SHREDS_PER_INSERT {
+            break;
+        }
+        let Ok(batch) = verified_receiver.try_recv() else {
+            break;
+        };
+        *pending_shreds = batch.into_iter();
+    }
     recovered_batches.extend(
         recovered_receiver
             .try_iter()
@@ -266,7 +290,7 @@ where
         .count();
     ws_metrics.num_shreds_received += shreds.len();
     let result = blockstore.insert_shreds_with_recovered(
-        shreds.into_iter().map(
+        shreds.drain(..).map(
             |VerifiedShred {
                  shred,
                  is_repaired,
@@ -342,10 +366,12 @@ fn dedup_recovery_tasks(recovery_tasks: &mut Vec<ShredRecoveryTask>) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_recovery<'db>(
     recovery_receiver: &Receiver<Vec<ShredRecoveryTask>>,
     recovered_sender: &Sender<RecoveredShredBatch>,
     pending_results: &mut BTreeMap<ErasureSetId, RecoveredShredBatch>,
+    ready_results: &mut Vec<RecoveredShredBatch>,
     blockstore: &'db Blockstore,
     shred_recovery_context: &mut ShredRecoveryContext,
     pinnable_slice: &mut DBPinnableSlice<'db>,
@@ -380,55 +406,68 @@ fn run_recovery<'db>(
     if queue_depth > 0 {
         dedup_recovery_tasks(&mut recovery_tasks);
     }
-    for task in recovery_tasks {
-        let erasure_set = task.erasure_set();
-        // A full result channel can leave a completed check here while repair
-        // or new shreds send another task. Reuse its result if it also supplies
-        // all data that the new task needs. Do not repeat reads or reconstruction.
-        if pending_results
-            .get(&erasure_set)
-            .is_some_and(|batch| batch.satisfies_task(&task))
+    let mut recovery_tasks = recovery_tasks.into_iter();
+    // Finish a bounded group of tasks already received, then publish its results together.
+    // This lets insertion apply several results in one write batch. Do not wait for new tasks.
+    // Skipped and failed tasks count toward the group limit.
+    while !recovery_tasks.as_slice().is_empty() {
+        for task in recovery_tasks
+            .by_ref()
+            .take(RECOVERY_PUBLICATION_BATCH_SIZE)
         {
-            continue;
-        }
-        // Required checks hold back completion until insertion applies the verdict.
-        // Skip queued duplicates after that point. Observe checks must still run
-        // when network shreds completed the set before the first check.
-        if task.requires_validation() || !task.must_check_completed_set() {
-            match blockstore.is_erasure_set_complete(erasure_set, pinnable_slice) {
-                Ok(true) => continue,
-                Ok(false) => {}
-                Err(err) => {
-                    // Continue so later tasks in this batch can complete required SIMD-0504
-                    // validation.
-                    warn!("Unable to check recovery task {erasure_set:?}: {err}");
-                    recovery_metrics.num_recovery_tasks_failed += 1;
-                    continue;
+            let erasure_set = task.erasure_set();
+            // A full result channel can leave a completed check here while repair
+            // or new shreds send another task. Reuse its result if it also supplies
+            // all data that the new task needs. Do not repeat reads or reconstruction.
+            if pending_results
+                .get(&erasure_set)
+                .is_some_and(|batch| batch.satisfies_task(&task))
+            {
+                continue;
+            }
+            // Required checks hold back completion until insertion applies the verdict.
+            // Skip queued duplicates after that point. Observe checks must still run
+            // when network shreds completed the set before the first check.
+            if task.requires_validation() || !task.must_check_completed_set() {
+                match blockstore.is_erasure_set_complete(erasure_set, pinnable_slice) {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(err) => {
+                        // Continue so later tasks in this batch can complete required SIMD-0504
+                        // validation.
+                        warn!("Unable to check recovery task {erasure_set:?}: {err}");
+                        recovery_metrics.num_recovery_tasks_failed += 1;
+                        continue;
+                    }
                 }
             }
-        }
-        let now = Instant::now();
-        let recovered = blockstore.recover_shreds_from_task(task, shred_recovery_context);
-        recovery_metrics.shred_recovery_elapsed_us += now.elapsed().as_micros() as u64;
-        let Some(batch) = recovered else {
-            recovery_metrics.num_recovery_tasks_failed += 1;
-            // Discard the task if its inputs cannot be loaded. Repair can fetch missing shreds.
-            continue;
-        };
-        recovery_metrics.num_recovered_batches += 1;
+            let now = Instant::now();
+            let recovered = blockstore.recover_shreds_from_task(task, shred_recovery_context);
+            recovery_metrics.shred_recovery_elapsed_us += now.elapsed().as_micros() as u64;
+            let Some(batch) = recovered else {
+                recovery_metrics.num_recovery_tasks_failed += 1;
+                // Discard the task if its inputs cannot be loaded. Repair can fetch missing shreds.
+                continue;
+            };
+            recovery_metrics.num_recovered_batches += 1;
 
-        match recovered_sender.try_send(batch) {
-            Ok(()) => {}
-            Err(TrySendError::Full(batch)) => {
-                if batch.requires_validation() {
-                    // Keep this result until insertion can write the held data.
-                    // If validation failed, insertion must mark the slot dead in the same batch.
-                    pending_results.insert(batch.erasure_set(), batch);
-                } else {
-                    recovery_metrics.num_recovered_batches_dropped += 1;
+            ready_results.push(batch);
+        }
+
+        for batch in ready_results.drain(..) {
+            match recovered_sender.try_send(batch) {
+                Ok(()) => {}
+                Err(TrySendError::Full(batch)) => {
+                    if batch.requires_validation() {
+                        // Keep this result until insertion can write the held data.
+                        // If validation failed, insertion must mark the slot dead in the same batch.
+                        pending_results.insert(batch.erasure_set(), batch);
+                    } else {
+                        recovery_metrics.num_recovered_batches_dropped += 1;
+                    }
                 }
+                Err(TrySendError::Disconnected(_)) => return Err(Error::Send),
             }
-            Err(TrySendError::Disconnected(_)) => return Err(Error::Send),
         }
     }
     Ok(())
@@ -599,6 +638,9 @@ impl WindowService {
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
                 let mut write_batch = blockstore.get_write_batch();
                 let mut recovered_batches = Vec::new();
+                let mut pending_shreds = Vec::new().into_iter();
+                // Drain this buffer into blockstore and reuse its allocation each iteration.
+                let mut shreds = Vec::with_capacity(MAX_SHREDS_PER_INSERT);
                 // Keep SIMD-0504 validation tasks here if the channel is full.
                 // The held completion shred prevents replay until validation finishes.
                 // If we discard these tasks, replay can remain blocked.
@@ -613,6 +655,8 @@ impl WindowService {
                     ws_metrics.record_pending_work(pending_tasks.len());
                     if let Err(e) = run_insert(
                         &verified_receiver,
+                        &mut pending_shreds,
+                        &mut shreds,
                         &recovery_sender,
                         &recovered_receiver,
                         &mut recovered_batches,
@@ -669,6 +713,8 @@ impl WindowService {
                 // If the backlog keeps growing, check the insertion thread's processing rate.
                 // The channel capacity does not limit this buffer.
                 let mut pending_results = BTreeMap::new();
+                // Reuse storage for one group of results between recovery iterations.
+                let mut ready_results = Vec::with_capacity(RECOVERY_PUBLICATION_BATCH_SIZE);
                 let mut last_print = Instant::now();
                 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -679,6 +725,7 @@ impl WindowService {
                         &recovery_receiver,
                         &recovered_sender,
                         &mut pending_results,
+                        &mut ready_results,
                         &blockstore,
                         &mut shred_recovery_context,
                         &mut pinnable_slice,
@@ -767,6 +814,65 @@ mod test {
         data_shreds
     }
 
+    // One verified message can exceed the insertion budget. Its tail must survive
+    // the first insertion and make progress without another channel message.
+    #[test]
+    fn test_insert_retains_oversized_message() {
+        let path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(path.path()).unwrap();
+        let (verified_sender, verified_receiver) = bounded(1);
+        let (recovery_sender, _recovery_receiver) = bounded(2);
+        let (_recovered_sender, recovered_receiver) = bounded(1);
+        let retransmit_sender = new_dummy_retransmit_sender();
+        let shreds =
+            local_entries_to_shred(&create_ticks(1, 0, Hash::default()), 1, 0, &Keypair::new());
+        let tail_len = shreds.len() - 1;
+        // Duplicate copies fill the first insertion. Only the retained tail can
+        // complete the slot, so losing that tail cannot pass the final assertion.
+        let message = std::iter::repeat_n(shreds[0].clone(), MAX_SHREDS_PER_INSERT)
+            .chain(shreds.into_iter().skip(1))
+            .map(|shred| VerifiedShred {
+                merkle_root: shred.merkle_root().unwrap(),
+                shred,
+                is_repaired: false,
+                location: BlockLocation::Original,
+            })
+            .collect();
+        verified_sender.send(message).unwrap();
+        let mut pending_shreds = Vec::new().into_iter();
+        let mut input_buffer = Vec::with_capacity(MAX_SHREDS_PER_INSERT);
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        let mut ws_metrics = WindowServiceMetrics::default();
+        for expected_received in [MAX_SHREDS_PER_INSERT, MAX_SHREDS_PER_INSERT + tail_len] {
+            run_insert(
+                &verified_receiver,
+                &mut pending_shreds,
+                &mut input_buffer,
+                &recovery_sender,
+                &recovered_receiver,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &retransmit_sender,
+                None,
+                &blockstore,
+                &mut blockstore.new_pinnable_slice(),
+                &mut blockstore.get_write_batch(),
+                |_| panic!("identical shreds are not a duplicate proof"),
+                &mut metrics,
+                &mut ws_metrics,
+                None,
+            )
+            .unwrap();
+            assert!(verified_receiver.is_empty());
+            assert_eq!(ws_metrics.num_shreds_received, expected_received);
+            assert_eq!(
+                blockstore.meta(1).unwrap().unwrap().is_full(),
+                expected_received > MAX_SHREDS_PER_INSERT,
+            );
+        }
+        assert_eq!(pending_shreds.len(), 0);
+    }
+
     #[test]
     fn test_process_shred() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -846,6 +952,8 @@ mod test {
             assert!(matches!(
                 run_insert(
                     &verified_receiver,
+                    &mut Vec::new().into_iter(),
+                    &mut Vec::new(),
                     &recovery_sender,
                     &recovered_receiver,
                     &mut Vec::new(),
@@ -948,6 +1056,7 @@ mod test {
         let (verified_sender, verified_receiver) = bounded(4);
         let mut pending_tasks = Vec::new();
         let mut pending_results = BTreeMap::new();
+        let mut ready_results = Vec::new();
         let (recovery_sender, recovery_receiver) = bounded(4);
         let (completed_sender, completed_receiver) = bounded(4);
         let mut ws_metrics = WindowServiceMetrics::default();
@@ -962,6 +1071,7 @@ mod test {
                 &receiver,
                 &recovered_sender,
                 &mut pending_results,
+                &mut ready_results,
                 &blockstore,
                 &mut context,
                 &mut pinnable_slice,
@@ -989,6 +1099,8 @@ mod test {
                 }
                 run_insert(
                     &verified_receiver,
+                    &mut Vec::new().into_iter(),
+                    &mut Vec::new(),
                     &recovery_sender,
                     &recovered_receiver,
                     &mut recovered_batches,
@@ -1057,6 +1169,7 @@ mod test {
         let (verified_sender, verified_receiver) = bounded(4);
         let mut pending_tasks = Vec::new();
         let mut pending_results = BTreeMap::new();
+        let mut ready_results = Vec::new();
         let (recovery_sender, recovery_receiver) = bounded(1);
         let (recovered_sender, recovered_receiver) = bounded(if full_results { 1 } else { 2 });
         let retransmit_sender = new_dummy_retransmit_sender();
@@ -1077,6 +1190,8 @@ mod test {
                 }
                 run_insert(
                     &verified_receiver,
+                    &mut Vec::new().into_iter(),
+                    &mut Vec::new(),
                     &recovery_sender,
                     &recovered_receiver,
                     &mut scratch,
@@ -1099,6 +1214,7 @@ mod test {
                     &recovery_receiver,
                     &recovered_sender,
                     &mut pending_results,
+                    &mut ready_results,
                     &blockstore,
                     &mut context,
                     &mut blockstore.new_pinnable_slice(),
