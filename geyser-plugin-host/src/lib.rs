@@ -605,29 +605,21 @@ mod tests {
         ));
     }
 
-    /// Cargo's build layout puts `target/<profile>/` five directories above the test executable.
-    const MAX_PLUGIN_DEPTH: usize = 5;
-
-    /// Cargo builds a dev-dependency's library in `build/<crate>/<hash>/out/`, beside the test's
-    /// own `build/<crate>/<hash>/out/`.
-    const PLUGIN_CRATE: &str = "agave-geyser-plugin-host-test-plugin";
-
     #[test]
     fn test_load_shared_library_and_unload_plugin() {
-        let library_name = libloading::library_filename("agave_geyser_plugin_host_test_plugin");
-        let library = std::env::current_exe()
-            .unwrap()
+        const PLUGIN_CRATE: &str = "agave-geyser-plugin-host-test-plugin";
+        let library_name = libloading::library_filename(PLUGIN_CRATE.replace('-', "_"));
+        // Cargo 1.99 builds the library next to the test executable, and cargo 1.100 in
+        // `build/<crate>/<hash>/out/`, beside the test's own unit directory.
+        let exe = std::env::current_exe().unwrap();
+        let library = exe
             .ancestors()
-            .skip(1)
-            .take(MAX_PLUGIN_DEPTH)
-            .flat_map(|dir| {
-                let built = std::fs::read_dir(dir.join(PLUGIN_CRATE))
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .map(|unit| unit.path().join("out"));
-                std::iter::once(dir.to_path_buf()).chain(built)
-            })
+            .find(|dir| dir.ends_with("build"))
+            .and_then(|build_dir| std::fs::read_dir(build_dir.join(PLUGIN_CRATE)).ok())
+            .into_iter()
+            .flat_map(Iterator::flatten)
+            .map(|unit| unit.path().join("out"))
+            .chain([exe.parent().unwrap().into()])
             .map(|dir| dir.join(&library_name))
             .filter(|path| path.is_file())
             .max_by_key(|path| path.metadata().and_then(|meta| meta.modified()).ok())
