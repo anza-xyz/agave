@@ -72,7 +72,6 @@ fn test_bank_load_program() {
     )
     .unwrap();
     program_account.executable = true;
-    program_account.rent_epoch = 1;
     let program_account = AccountSharedData::from(program_account);
     let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
     let mut programdata_account = Account::new_data_with_space(
@@ -86,7 +85,6 @@ fn test_bank_load_program() {
     )
     .unwrap();
     programdata_account.data[programdata_data_offset..].copy_from_slice(&elf);
-    programdata_account.rent_epoch = 1;
     let programdata_account = AccountSharedData::from(programdata_account);
     bank.store_account(&program_key, &program_account);
     bank.store_account(&programdata_key, &programdata_account);
@@ -131,7 +129,7 @@ fn test_ebpp_feature_activation() {
         data: program_data.to_vec(),
         owner: bpf_loader::id(),
         executable: true,
-        rent_epoch: 0,
+        ..Account::default()
     });
     root_bank.store_account(&program_keypair.pubkey(), &program_account);
 
@@ -280,7 +278,7 @@ fn test_ebpp_epoch_transition(single_program_runtime_environment: bool) {
         data: program_data.to_vec(),
         owner: bpf_loader::id(),
         executable: true,
-        rent_epoch: 0,
+        ..Account::default()
     });
     root_bank.store_account(&program_keypair.pubkey(), &program_account);
 
@@ -441,7 +439,7 @@ fn test_ebpp_late_activation() {
         data: program_data.to_vec(),
         owner: bpf_loader::id(),
         executable: true,
-        rent_epoch: 0,
+        ..Account::default()
     });
     root_bank.store_account(&program_keypair.pubkey(), &program_account);
 
@@ -619,7 +617,7 @@ fn test_ebpp_revoked_activation() {
         data: program_data.to_vec(),
         owner: bpf_loader::id(),
         executable: true,
-        rent_epoch: 0,
+        ..Account::default()
     });
     root_bank.store_account(&program_keypair.pubkey(), &program_account);
 

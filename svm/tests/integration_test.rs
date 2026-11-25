@@ -8,8 +8,7 @@ use {
         program_data_size, register_builtins,
     },
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, WritableAccount,
-        state_traits::StateMutWincode as _,
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
     },
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
@@ -429,8 +428,7 @@ impl SvmTestEntry {
     }
 
     // add a new rent-exempt account that exists before the batch
-    // inserts it into both account maps, assuming it lives unchanged (except for svm fixing rent epoch)
-    // rent-paying accounts must be added by hand because svm will not set rent epoch to u64::MAX
+    // inserts it into both account maps, assuming it lives unchanged
     pub fn add_initial_account(&mut self, pubkey: Pubkey, account: &AccountSharedData) {
         assert!(
             self.initial_accounts
@@ -874,23 +872,14 @@ fn program_medley(drop_on_failure: bool) -> Vec<SvmTestEntry> {
         let mut fee_payer_data = AccountSharedData::default();
         fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
         test_entry.add_initial_account(fee_payer, &fee_payer_data);
-        if drop_on_failure {
-            test_entry.final_accounts.insert(fee_payer, fee_payer_data);
-        }
 
         let mut sender_data = AccountSharedData::default();
         sender_data.set_lamports(base_amount);
         test_entry.add_initial_account(sender, &sender_data);
-        if drop_on_failure {
-            test_entry.final_accounts.insert(sender, sender_data);
-        }
 
         let mut recipient_data = AccountSharedData::default();
         recipient_data.set_lamports(base_amount);
         test_entry.add_initial_account(recipient, &recipient_data);
-        if drop_on_failure {
-            test_entry.final_accounts.insert(recipient, recipient_data);
-        }
 
         let instruction = Instruction::new_with_bytes(
             program_id,
@@ -1014,9 +1003,6 @@ fn simple_transfer(
 
         source_data.set_lamports(transfer_amount - 1);
         test_entry.add_initial_account(source, &source_data);
-        if drop_on_failure {
-            test_entry.final_accounts.insert(source, source_data);
-        }
 
         test_entry.push_transaction_with_status(
             system_transaction::transfer(
@@ -1069,10 +1055,7 @@ fn simple_transfer(
         let mut source_data = AccountSharedData::default();
 
         source_data.set_lamports(transfer_amount * 10);
-        test_entry
-            .initial_accounts
-            .insert(source, source_data.clone());
-        test_entry.final_accounts.insert(source, source_data);
+        test_entry.add_initial_account(source, &source_data);
 
         let mut instruction =
             system_instruction::transfer(&source, &Pubkey::new_unique(), transfer_amount);
@@ -2237,11 +2220,8 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
         let dealloc_fee_payer_keypair = Keypair::new();
         let dealloc_fee_payer = dealloc_fee_payer_keypair.pubkey();
 
-        let dealloc_fee_payer_data = AccountSharedData::from(Account {
-            lamports: LAMPORTS_PER_SIGNATURE,
-            rent_epoch: u64::MAX - 1,
-            ..Account::default()
-        });
+        let dealloc_fee_payer_data =
+            AccountSharedData::empty(LAMPORTS_PER_SIGNATURE, &Pubkey::default());
         test_entry.add_initial_account(dealloc_fee_payer, &dealloc_fee_payer_data);
 
         let stable_fee_payer_keypair = Keypair::new();
@@ -2584,11 +2564,7 @@ fn all_or_nothing(abort: AbortReason) -> Vec<SvmTestEntry> {
 
                 ExecutionStatus::Succeeded
             }
-            AbortReason::Unprocessable | AbortReason::DropOnFailure => {
-                test_entry.final_accounts.insert(source, source_data);
-
-                ExecutionStatus::Discarded
-            }
+            AbortReason::Unprocessable | AbortReason::DropOnFailure => ExecutionStatus::Discarded,
         };
 
         test_entry.push_transaction_with_status(
@@ -2611,7 +2587,6 @@ fn all_or_nothing(abort: AbortReason) -> Vec<SvmTestEntry> {
 
         source_data.set_lamports(transfer_amount - 1);
         test_entry.add_initial_account(source, &source_data);
-        test_entry.final_accounts.insert(source, source_data);
 
         test_entry.push_transaction_with_status(
             system_transaction::transfer(

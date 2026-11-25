@@ -448,7 +448,7 @@ impl TestSetup {
             (nonce_address, nonce_account),
             (
                 recipient_address,
-                AccountSharedData::new(0, 0, &recipient_address),
+                AccountSharedData::empty(0, &recipient_address),
             ),
             (
                 blockhash_id,
