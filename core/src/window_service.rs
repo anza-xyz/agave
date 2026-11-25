@@ -303,6 +303,26 @@ impl WindowService {
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
                 let mut write_batch = blockstore.get_write_batch();
 
+                // Erasure sets inserted before a restart might not have been
+                // checked, so `consumed` would never advance over them.
+                match blockstore.fec_sets_pending_checks().and_then(|fec_sets| {
+                    blockstore.check_fec_sets_handle_duplicate(
+                        fec_sets,
+                        &mut shred_recovery_context,
+                        &mut pinnable_slice,
+                        &mut write_batch,
+                        &handle_duplicate,
+                        &mut metrics,
+                    )
+                }) {
+                    Ok(completed_data_sets) => {
+                        if let Some(sender) = &completed_data_sets_sender {
+                            let _ = sender.try_send(completed_data_sets);
+                        }
+                    }
+                    Err(err) => error!("failed to check FEC sets pending since startup: {err}"),
+                }
+
                 while !exit.load(Ordering::Relaxed) {
                     shred_recovery_context.maybe_update(sharable_banks.root());
 
