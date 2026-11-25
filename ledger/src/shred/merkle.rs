@@ -1400,7 +1400,7 @@ fn sign_erasure_batch(keypair: &Keypair, batch: &mut [Shred]) {
     }
 }
 
-// As a byzantine leader could: fills the coding shreds at `coding_positions`
+// Mimics a byzantine leader: fills the coding shreds at `coding_positions`
 // with garbage instead of the Reed-Solomon parity of the data shreds, but
 // builds and signs the Merkle tree over the erasure batch, ordered by erasure
 // shard index, as usual.
@@ -1462,8 +1462,8 @@ pub(crate) fn sign_with_duplicate_coding_index_for_tests(keypair: &Keypair, batc
     sign_erasure_batch(keypair, batch);
 }
 
-// As a byzantine leader could: flips the resigned bit in the shred variant of
-// the data shred at `index` of the erasure batch, keeping its data, and builds
+// Mimics a byzantine leader: flips the resigned bit in the shred variant of
+// the shred at `index` of the erasure batch, keeping its data, and builds
 // and signs the Merkle tree over the mixed-variant shreds.
 #[cfg(test)]
 pub(crate) fn sign_with_flipped_resigned_for_tests(
@@ -1471,40 +1471,52 @@ pub(crate) fn sign_with_flipped_resigned_for_tests(
     batch: &mut [Shred],
     index: usize,
 ) {
-    let Shred::ShredData(shred) = &mut batch[index] else {
-        panic!("expected a data shred at index {index}");
-    };
-    let ShredVariant::MerkleData {
-        proof_size,
-        resigned,
-    } = shred.common_header.shred_variant
-    else {
-        panic!("expected a Merkle data shred variant");
-    };
-    let data = shred
-        .data()
-        .expect("data shred should be sanitized")
-        .to_vec();
+    let shred = &mut batch[index];
     let chained_merkle_root = shred
         .chained_merkle_root()
-        .expect("data shred should be chained");
-    let resigned = !resigned;
-    assert!(
-        data.len() <= ShredData::capacity(proof_size, resigned).unwrap(),
-        "data should fit the flipped shred variant"
-    );
-    shred.common_header.shred_variant = ShredVariant::MerkleData {
-        proof_size,
-        resigned,
-    };
-    let mut payload = vec![0u8; ShredData::SIZE_OF_PAYLOAD];
-    wincode::serialize_into(
-        &mut payload[..],
-        &(&shred.common_header, &shred.data_header),
-    )
-    .expect("headers should fit the payload");
-    payload[ShredData::SIZE_OF_HEADERS..][..data.len()].copy_from_slice(&data);
-    shred.payload = Payload::from(payload);
+        .expect("shred should be chained");
+    match &mut *shred {
+        Shred::ShredCode(shred) => {
+            let ShredVariant::MerkleCode { resigned, .. } = &mut shred.common_header.shred_variant
+            else {
+                unreachable!("expected a Merkle coding shred variant");
+            };
+            *resigned = !*resigned;
+            let mut dst = &mut shred.payload.as_mut()[..];
+            wincode::serialize_into(&mut dst, &(&shred.common_header, &shred.coding_header))
+                .expect("headers should fit the payload");
+        }
+        Shred::ShredData(shred) => {
+            let ShredVariant::MerkleData {
+                proof_size,
+                resigned,
+            } = shred.common_header.shred_variant
+            else {
+                unreachable!("expected a Merkle data shred variant");
+            };
+            let data = shred
+                .data()
+                .expect("data shred should be sanitized")
+                .to_vec();
+            let resigned = !resigned;
+            assert!(
+                data.len() <= ShredData::capacity(proof_size, resigned).unwrap(),
+                "data should fit the flipped shred variant"
+            );
+            shred.common_header.shred_variant = ShredVariant::MerkleData {
+                proof_size,
+                resigned,
+            };
+            let mut payload = vec![0u8; ShredData::SIZE_OF_PAYLOAD];
+            wincode::serialize_into(
+                &mut payload[..],
+                &(&shred.common_header, &shred.data_header),
+            )
+            .expect("headers should fit the payload");
+            payload[ShredData::SIZE_OF_HEADERS..][..data.len()].copy_from_slice(&data);
+            shred.payload = Payload::from(payload);
+        }
+    }
     shred
         .set_chained_merkle_root(&chained_merkle_root)
         .expect("chained Merkle root should fit the flipped shred variant");

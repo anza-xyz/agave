@@ -5484,15 +5484,17 @@ fn test_fec_set_check_invalid_parity_does_not_block_recovery(slot: Slot, gate_ac
     assert_eq!(blockstore.is_dead(slot), gate_active);
 }
 
-/// A leader-signed erasure batch in which one data shred has the resigned bit flipped.
-/// Each shred passes the per-shred checks and is inserted, but the flipped shred's
-/// erasure shard has a different size, so the batch fails to rebuild. Before SIMD-0504
+/// A leader-signed erasure batch in which one data or coding shred has the resigned bit
+/// flipped. Each shred passes the per-shred checks and is inserted, but the flipped shred's
+/// erasure shard has a different size, so the batch fails the FEC set checks. Before SIMD-0504
 /// is effective for the slot, failed FEC set checks are only counted, so the slot is
 /// not marked dead and remains replayable. After, the slot is marked dead. The test
 /// genesis activates all features at slot 0, which are effective from epoch 1 on.
-#[test_case(1, false; "before activation")]
-#[test_case(100, true; "after activation")]
-fn test_fec_set_rebuild_failure_mixed_resigned(slot: Slot, gate_active: bool) {
+#[test_case(1, false, false; "data shred before activation")]
+#[test_case(100, true, false; "data shred after activation")]
+#[test_case(1, false, true; "coding shred before activation")]
+#[test_case(100, true, true; "coding shred after activation")]
+fn test_fec_set_rebuild_failure_mixed_resigned(slot: Slot, gate_active: bool, flip_coding: bool) {
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
     assert_eq!(
@@ -5515,12 +5517,22 @@ fn test_fec_set_rebuild_failure_mixed_resigned(slot: Slot, gate_active: bool) {
         batch[flipped].data().unwrap().is_empty(),
         "a single entry should leave the tail of the erasure batch empty"
     );
+    // A flipped coding shred is received with the whole batch, which then rebuilds
+    // and fails the FEC set checks on the shred variant instead.
+    let (flipped, num_shreds) = if flip_coding {
+        (DATA_SHREDS_PER_FEC_BLOCK, batch.len())
+    } else {
+        (flipped, DATA_SHREDS_PER_FEC_BLOCK)
+    };
     sign_with_flipped_resigned_for_tests(&Keypair::new(), &mut batch, flipped);
-    batch.truncate(DATA_SHREDS_PER_FEC_BLOCK);
+    batch.truncate(num_shreds);
 
     let metrics = blockstore.insert(batch, BlockLocation::Original);
-    assert_eq!(metrics.num_inserted, DATA_SHREDS_PER_FEC_BLOCK as u64);
-    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 1);
+    assert_eq!(metrics.num_inserted, num_shreds as u64);
+    assert_eq!(
+        metrics.num_fec_set_checks_rebuild_failed,
+        usize::from(!flip_coding)
+    );
     assert_eq!(metrics.num_fec_set_checks_failed, 1);
     assert_eq!(metrics.num_fec_set_checks_passed, 0);
     assert_eq!(blockstore.is_dead(slot), gate_active);
