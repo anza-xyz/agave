@@ -608,6 +608,10 @@ mod tests {
     /// Cargo's build layout puts `target/<profile>/` five directories above the test executable.
     const MAX_PLUGIN_DEPTH: usize = 5;
 
+    /// Cargo builds a dev-dependency's library in `build/<crate>/<hash>/out/`, beside the test's
+    /// own `build/<crate>/<hash>/out/`.
+    const PLUGIN_CRATE: &str = "agave-geyser-plugin-host-test-plugin";
+
     #[test]
     fn test_load_shared_library_and_unload_plugin() {
         let library_name = libloading::library_filename("agave_geyser_plugin_host_test_plugin");
@@ -616,8 +620,17 @@ mod tests {
             .ancestors()
             .skip(1)
             .take(MAX_PLUGIN_DEPTH)
+            .flat_map(|dir| {
+                let built = std::fs::read_dir(dir.join(PLUGIN_CRATE))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|unit| unit.path().join("out"));
+                std::iter::once(dir.to_path_buf()).chain(built)
+            })
             .map(|dir| dir.join(&library_name))
-            .find(|path| path.is_file())
+            .filter(|path| path.is_file())
+            .max_by_key(|path| path.metadata().and_then(|meta| meta.modified()).ok())
             .expect("missing test plugin");
 
         for relative in [false, true] {
