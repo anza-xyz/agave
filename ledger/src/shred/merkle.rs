@@ -30,7 +30,7 @@ use {
         cell::RefCell,
         debug_assert_matches,
         io::{Cursor, Write},
-        ops::Range,
+        ops::{BitAnd, BitOr, Not, Range},
         time::Instant,
     },
 };
@@ -578,12 +578,82 @@ pub(super) fn recover(
     Ok(batch.into_recovered().map(Ok))
 }
 
+const SHRED_MASK_WORD_SIZE: usize = 64;
+const SHRED_MASK_WORDS: usize = SHREDS_PER_FEC_BLOCK.div_ceil(SHRED_MASK_WORD_SIZE);
+
+/// Set of erasure shard indices each represented by a bit in 0..SHREDS_PER_FEC_BLOCK.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ShredMask([u64; SHRED_MASK_WORDS]);
+
+impl ShredMask {
+    pub(crate) fn contains(&self, i: usize) -> bool {
+        self.0[i / SHRED_MASK_WORD_SIZE] & (1 << (i % SHRED_MASK_WORD_SIZE)) != 0
+    }
+
+    pub(crate) fn insert(&mut self, i: usize) {
+        self.0[i / SHRED_MASK_WORD_SIZE] |= 1 << (i % SHRED_MASK_WORD_SIZE);
+    }
+
+    pub(crate) fn count_ones(&self) -> usize {
+        self.0.iter().map(|w| w.count_ones() as usize).sum()
+    }
+
+    /// Indices of the set bits in increasing order.
+    pub(crate) fn iter_ones(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().enumerate().flat_map(|(k, &w)| {
+            let mut w = w;
+            std::iter::from_fn(move || {
+                (w != 0).then(|| {
+                    let i = w.trailing_zeros() as usize;
+                    w &= w - 1;
+                    k * SHRED_MASK_WORD_SIZE + i
+                })
+            })
+        })
+    }
+}
+
+impl FromIterator<usize> for ShredMask {
+    fn from_iter<I: IntoIterator<Item = usize>>(iter: I) -> Self {
+        let mut mask = Self::default();
+        iter.into_iter().for_each(|i| mask.insert(i));
+        mask
+    }
+}
+
+impl Not for ShredMask {
+    type Output = Self;
+    fn not(self) -> Self {
+        let mut out = Self(self.0.map(|w| !w));
+        let tail = SHREDS_PER_FEC_BLOCK % SHRED_MASK_WORD_SIZE;
+        // Keep the invariant that bits at unused positions are always 0.
+        if tail != 0 {
+            out.0[SHRED_MASK_WORDS - 1] &= (1 << tail) - 1;
+        }
+        out
+    }
+}
+
+impl BitOr for ShredMask {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        Self(std::array::from_fn(|k| self.0[k] | rhs.0[k]))
+    }
+}
+
+impl BitAnd for ShredMask {
+    type Output = Self;
+    fn bitand(self, rhs: Self) -> Self {
+        Self(std::array::from_fn(|k| self.0[k] & rhs.0[k]))
+    }
+}
+
 /// All shreds of an erasure batch, ordered by their erasure shard index.
 pub(crate) struct ErasureBatch {
     shreds: Box<[Shred; SHREDS_PER_FEC_BLOCK]>,
     /// Whether the shred at the same bit position was given as input, as opposed
     /// to being reconstructed.
-    received: u64,
+    received: ShredMask,
     /// Whether the received coding shreds match the Reed-Solomon parity of the
     /// data shreds, see [`reconstruct_and_check_parity`].
     coding_matches_data: bool,
@@ -756,7 +826,7 @@ impl ErasureBatch {
         Vec::from(self.shreds as Box<[Shred]>)
             .into_iter()
             .enumerate()
-            .filter_map(move |(i, shred)| (self.received & (1 << i) == 0).then_some(shred))
+            .filter_map(move |(i, shred)| (!self.received.contains(i)).then_some(shred))
     }
 }
 
@@ -826,17 +896,6 @@ fn get_reference_headers<'a>(
     })
 }
 
-/// Indices of the set bits of `m`, ascending.
-fn set_bits(mut m: u64) -> impl Iterator<Item = usize> {
-    std::iter::from_fn(move || {
-        (m != 0).then(|| {
-            let i = m.trailing_zeros() as usize;
-            m &= m - 1; // clear the lowest set bit
-            i
-        })
-    })
-}
-
 /// Rebuilds the whole erasure batch from a subset of its shreds, and verifies
 /// that the rebuilt Merkle tree matches the signed Merkle root.
 ///
@@ -859,20 +918,21 @@ pub(super) fn rebuild_erasure_batch(
     // Merkle tree nodes.
     let mut nodes: [Option<Hash>; SHREDS_PER_FEC_BLOCK] = std::array::from_fn(|_| None);
     // Ones for the given shreds and zeros for erasures.
-    let mut mask: u64 = 0;
+    let mut mask = ShredMask::default();
     let mut coding_matches_data = true;
 
     // Move each shred from the iterator into its slot.
     for shred in shreds {
         let shard_index = shred.erasure_shard_index()?;
-        if shard_index >= SHREDS_PER_FEC_BLOCK || mask & (1 << shard_index) != 0 {
+        if shard_index >= SHREDS_PER_FEC_BLOCK || mask.contains(shard_index) {
             return Err(Error::InvalidIndex);
         }
-        mask |= 1 << shard_index;
+        nodes[shard_index] = Some(shred.merkle_node()?);
+        mask.insert(shard_index);
         batch[shard_index] = Some(shred);
     }
 
-    let num_erasures = mask.count_zeros() as usize;
+    let num_erasures = SHREDS_PER_FEC_BLOCK - mask.count_ones();
     if num_erasures > CODING_SHREDS_PER_FEC_BLOCK {
         return Err(Error::TooManyErasures);
     }
@@ -894,24 +954,18 @@ pub(super) fn rebuild_erasure_batch(
 
     // Recover from the lowest-indexed DATA_SHREDS_PER_FEC_BLOCK received shards, with data shards
     // counted first and then the parity, and use the remaining received shards to check the result.
-    let basis_mask: u64 = set_bits(mask)
-        .take(DATA_SHREDS_PER_FEC_BLOCK)
-        .fold(0, |m, i| m | (1 << i));
+    let basis_mask: ShredMask = mask.iter_ones().take(DATA_SHREDS_PER_FEC_BLOCK).collect();
     let check_mask = mask & !basis_mask;
     let erased_mask = !mask | check_mask;
 
     let recovered = RS_RECEIVED.with_borrow_mut(|mut rec| {
         rec.resize(SHREDS_PER_FEC_BLOCK * shard_len, Gf2p8_11d(0));
 
-        for i in set_bits(mask) {
+        for i in mask.iter_ones() {
             let shred = batch[i].as_ref().expect("received shred");
             if must_match_signatures && shred.signature() != &common_header.signature {
                 return Err(Error::InvalidMerkleRoot);
             }
-
-            let shard_index = shred.erasure_shard_index()?;
-            let merkle_node = shred.merkle_node()?;
-            nodes[shard_index] = Some(merkle_node);
 
             // SAFETY: Gf2p8_11d is a transparent u8 and shard_len is given in the common shred header.
             let src: &[Gf2p8_11d] = unsafe {
@@ -920,18 +974,19 @@ pub(super) fn rebuild_erasure_batch(
                     shard_len,
                 )
             };
-            rec[shard_index * shard_len..(shard_index + 1) * shard_len].copy_from_slice(src);
+            rec[i * shard_len..(i + 1) * shard_len].copy_from_slice(src);
         }
 
         // Clobber recovery overwrites every slot, so keep the shards being checked.
-        let checked: Vec<Gf2p8_11d> = set_bits(check_mask)
+        let checked: Vec<Gf2p8_11d> = check_mask
+            .iter_ones()
             .flat_map(|i| rec[i * shard_len..(i + 1) * shard_len].iter().copied())
             .collect();
 
-        for i in set_bits(erased_mask) {
+        for i in erased_mask.iter_ones() {
             rec[i * shard_len..(i + 1) * shard_len].fill(Gf2p8_11d(0));
         }
-        let erasure_positions: Vec<u8> = set_bits(erased_mask).map(|i| i as u8).collect();
+        let erasure_positions: Vec<u8> = erased_mask.iter_ones().map(|i| i as u8).collect();
 
         if !erasure_positions.is_empty() {
             let rs = RsStandard::<SHREDS_PER_FEC_BLOCK, CODING_SHREDS_PER_FEC_BLOCK>::new();
@@ -940,7 +995,7 @@ pub(super) fn rebuild_erasure_batch(
             }
 
             // The checked shards must be recovered exactly as received.
-            for (k, i) in set_bits(check_mask).enumerate() {
+            for (k, i) in check_mask.iter_ones().enumerate() {
                 if rec[i * shard_len..(i + 1) * shard_len]
                     != checked[k * shard_len..(k + 1) * shard_len]
                 {
@@ -954,7 +1009,7 @@ pub(super) fn rebuild_erasure_batch(
         // Collect, verify and sanitize the recovered shreds. Re-compute the Merkle tree and set the
         // Merkle proof on the recovered shreds.
         let mut recovered = Vec::with_capacity(CODING_SHREDS_PER_FEC_BLOCK);
-        for shard_index in set_bits(!mask) {
+        for shard_index in (!mask).iter_ones() {
             let mut shred = make_stub_shred(shard_index)?;
             // SAFETY: Gf2p8_11d is a transparent u8 and shard_len is given in the common shred header.
             let src: &[u8] = unsafe {
@@ -1998,7 +2053,7 @@ mod test {
                 shreds, received, ..
             } = rebuild_erasure_batch(data_shreds).unwrap();
             assert_eq!(shreds[..], batch);
-            const DATA_MASK: u64 = 0x0000_0000_ffff_ffff;
+            const DATA_MASK: ShredMask = ShredMask([0x0000_0000_ffff_ffff]);
             assert_eq!(received, DATA_MASK);
             // Random subsets of the erasure batch.
             for size in DATA_SHREDS_PER_FEC_BLOCK..=SHREDS_PER_FEC_BLOCK {
