@@ -138,7 +138,10 @@ impl Config {
             .set_scheme(if is_secure { "wss" } else { "ws" })
             .expect("unable to set scheme");
         if let Some(port) = json_rpc_url.port() {
-            let port = port.checked_add(1).expect("port out of range");
+            let Some(port) = port.checked_add(1) else {
+                // Same "cannot compute" signal as an unparseable URL.
+                return String::new();
+            };
             ws_url.set_port(Some(port)).expect("unable to set port");
         }
         ws_url.to_string()
@@ -193,5 +196,10 @@ mod test {
         );
 
         assert_eq!(Config::compute_websocket_url("garbage"), String::new());
+        // Port 65535 cannot be incremented within u16; return empty instead of panic.
+        assert_eq!(
+            Config::compute_websocket_url("http://example.com:65535"),
+            String::new()
+        );
     }
 }
