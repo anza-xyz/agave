@@ -61,10 +61,6 @@ solana-system-transaction = { workspace = true }
 jemallocator = { workspace = true }
 
 [[bench]]
-name = "poh"
-harness = false
-
-[[bench]]
 name = "poh_verify"
 harness = false
 
