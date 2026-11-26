@@ -5766,6 +5766,102 @@ fn test_fec_sets_pending_checks_after_restart() {
     );
 }
 
+/// Returns the shreds of the first erasure set of a new block, split into data and coding.
+fn first_fec_set_of_new_block(slot: Slot) -> (Vec<Shred>, Vec<Shred>) {
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
+    let first_fec_set = |shreds: Vec<Shred>| -> Vec<Shred> {
+        shreds
+            .into_iter()
+            .filter(|shred| shred.fec_set_index() == 0)
+            .collect()
+    };
+    (first_fec_set(data_shreds), first_fec_set(coding_shreds))
+}
+
+/// If the slot is purged and an erasure set inserted again from another block while the set
+/// is checked, the verdict on the old block applies to neither the shreds nor the slot of the
+/// new block, which is checked on its own.
+#[test]
+fn test_stale_fec_set_verdict_after_block_replacement() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
+    let slot = 100;
+    assert!(
+        blockstore
+            .shred_recovery_context
+            .is_stricter_shred_validation_active(slot)
+    );
+    let erasure_set = ErasureSetId::new(slot, 0);
+
+    // Block A, with one data shred to recover.
+    let (data_a, code_a) = first_fec_set_of_new_block(slot);
+    let (recovered_a, received_a) = data_a.split_last().unwrap();
+    blockstore.insert_without_checks([received_a, &code_a[..1]].concat());
+    let verdict_a = FecSetVerdict {
+        erasure_set,
+        merkle_root: blockstore
+            .merkle_root_meta(erasure_set)
+            .unwrap()
+            .unwrap()
+            .merkle_root(),
+        erasure_meta: blockstore.erasure_meta_cf.get((slot, 0)).unwrap(),
+        rejected: true,
+    };
+
+    // The slot is purged and the erasure set inserted from block B while
+    // the set of block A is checked.
+    blockstore.clear_unconfirmed_slot(slot);
+    let (data_b, code_b) = first_fec_set_of_new_block(slot);
+    let (missing_b, received_b) = data_b.split_last().unwrap();
+    blockstore.insert_without_checks([received_b, &code_b[..1]].concat());
+
+    let mut metrics = BlockstoreInsertionMetrics::default();
+    {
+        let lock = blockstore.insert_shreds_lock.lock().unwrap();
+        blockstore
+            .accept_fec_sets_locked(
+                &lock,
+                vec![verdict_a],
+                vec![recovered_a.clone()],
+                blockstore
+                    .shred_recovery_context
+                    .stricter_shred_validation_from(),
+                &mut blockstore.new_pinnable_slice(),
+                &mut blockstore.get_write_batch(),
+                &mut metrics,
+            )
+            .unwrap();
+    }
+    assert_eq!(metrics.num_fec_set_checks_stale, 1);
+    assert_eq!(metrics.num_recovered_inserted, 0);
+    assert!(
+        !blockstore.is_dead(slot),
+        "the rejection of block A should not mark block B dead"
+    );
+    assert!(
+        blockstore
+            .get_data_shred(slot, u64::from(recovered_a.index()))
+            .unwrap()
+            .is_none(),
+        "the recovered shred of block A should not be inserted into block B"
+    );
+    assert_eq!(blockstore.meta(slot).unwrap().unwrap().consumed, 0);
+
+    let metrics = blockstore.check_pending_fec_sets();
+    assert_eq!(metrics.num_fec_set_checks_passed, 1);
+    assert_eq!(
+        blockstore
+            .get_data_shred(slot, u64::from(missing_b.index()))
+            .unwrap()
+            .as_deref(),
+        Some(missing_b.payload().as_ref()),
+    );
+    assert_eq!(
+        blockstore.meta(slot).unwrap().unwrap().consumed,
+        DATA_SHREDS_PER_FEC_BLOCK as u64
+    );
+}
+
 /// A properly signed erasure set whose coding shreds do not match the data shreds fails
 /// to rebuild when it crosses the threshold. Its data shreds are still inserted once all
 /// of them are received, and the set is not checked for SIMD-0504 again.

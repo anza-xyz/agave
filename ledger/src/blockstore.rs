@@ -562,6 +562,10 @@ enum FecSetStatus {
 /// Result of rebuilding and checking an erasure set, before it is committed.
 struct FecSetVerdict {
     erasure_set: ErasureSetId,
+    /// Merkle root of the erasure set when it was read. The verdict does not
+    /// apply if the slot was purged and the set inserted again from another
+    /// block meanwhile.
+    merkle_root: Option<Hash>,
     erasure_meta: Option<ErasureMeta>,
     /// The set failed the SIMD-0504 checks while they are effective.
     rejected: bool,
@@ -2008,8 +2012,12 @@ impl Blockstore {
             if num_data + num_coding < DATA_SHREDS_PER_FEC_BLOCK {
                 continue;
             }
+            let merkle_root = self
+                .merkle_root_meta_from_location(erasure_set, BlockLocation::Original)?
+                .and_then(|merkle_root_meta| merkle_root_meta.merkle_root());
             let verdict = FecSetVerdict {
                 erasure_set,
+                merkle_root,
                 erasure_meta,
                 rejected: false,
             };
@@ -2112,6 +2120,10 @@ impl Blockstore {
     /// Inserts the recovered data shreds, records the status of the checked
     /// erasure sets, advances `SlotMeta::consumed` over the accepted ones and
     /// marks the slots of the rejected ones dead, all in one write batch.
+    ///
+    /// Verdicts on erasure sets whose Merkle root changed since they were read
+    /// are dropped with their recovered shreds: the slot was purged and the
+    /// set inserted again from another block, which is checked separately.
     #[allow(clippy::too_many_arguments)]
     fn accept_fec_sets_locked<'db>(
         &'db self,
@@ -2129,7 +2141,25 @@ impl Blockstore {
         shred_insertion_tracker.stricter_shred_validation_from = stricter_shred_validation_from;
         shred_insertion_tracker.defer_consumed = true;
 
-        for shred in recovered_data_shreds {
+        let mut current_verdicts = Vec::with_capacity(verdicts.len());
+        for verdict in verdicts {
+            let merkle_root = self
+                .merkle_root_meta_from_location(verdict.erasure_set, location)?
+                .and_then(|merkle_root_meta| merkle_root_meta.merkle_root());
+            if merkle_root == verdict.merkle_root {
+                current_verdicts.push(verdict);
+            } else {
+                metrics.num_fec_set_checks_stale += 1;
+            }
+        }
+        let verdicts = current_verdicts;
+        let current_fec_sets: HashSet<_> =
+            verdicts.iter().map(|verdict| verdict.erasure_set).collect();
+
+        for shred in recovered_data_shreds
+            .into_iter()
+            .filter(|shred| current_fec_sets.contains(&shred.erasure_set()))
+        {
             let slot = shred.slot();
             *match self.check_insert_data_shred(
                 shred,
@@ -2158,6 +2188,7 @@ impl Blockstore {
         let mut rejected_slots = Vec::new();
         for FecSetVerdict {
             erasure_set,
+            merkle_root: _,
             erasure_meta,
             rejected,
         } in verdicts

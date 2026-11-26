@@ -185,6 +185,7 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
+agave-worker-pool = { path = "../worker-pool" }
 bencher = { workspace = true }
 bitvec = { workspace = true }
 criterion = { workspace = true }
@@ -219,6 +220,10 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "sigverify_stage"
+harness = false
+
+[[bench]]
+name = "window_insert_full_load"
 harness = false
 
 [[bench]]
