@@ -2234,6 +2234,37 @@ mod tests {
             }
         );
 
+        let test_create_address_with_seed_invalid = test_commands.clone().get_matches_from(vec![
+            "test",
+            "create-address-with-seed",
+            "seed",
+            "bad-program-id",
+            "--from",
+            &from_str,
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_create_address_with_seed_invalid,
+                &default_signer,
+                &mut None,
+            )
+            .unwrap_err()
+            .to_string(),
+            "Bad parameter: Invalid program id: bad-program-id",
+        );
+
+        let test_find_pda_invalid = test_commands.clone().get_matches_from(vec![
+            "test",
+            "find-program-derived-address",
+            "bad-program-id",
+        ]);
+        assert_eq!(
+            parse_command(&test_find_pda_invalid, &default_signer, &mut None)
+                .unwrap_err()
+                .to_string(),
+            "Bad parameter: Invalid program id: bad-program-id",
+        );
+
         // Test ResolveSigner Subcommand, SignerSource::Filepath
         let test_resolve_signer =
             test_commands
@@ -2997,6 +3028,27 @@ mod tests {
                 },
                 signers: vec![Box::new(read_keypair_file(&default_keypair_file).unwrap()),],
             }
+        );
+
+        let test_transfer_invalid_program_id = test_commands.clone().get_matches_from(vec![
+            "test",
+            "transfer",
+            &to_string,
+            "42",
+            "--derived-address-seed",
+            "seed",
+            "--derived-address-program-id",
+            "bad-program-id",
+        ]);
+        assert_eq!(
+            parse_command(
+                &test_transfer_invalid_program_id,
+                &default_signer,
+                &mut None,
+            )
+            .unwrap_err()
+            .to_string(),
+            "Bad parameter: Invalid program id: bad-program-id",
         );
     }
 

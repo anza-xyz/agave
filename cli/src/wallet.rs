@@ -390,16 +390,23 @@ impl WalletSubCommands for App<'_, '_> {
     }
 }
 
-fn resolve_derived_address_program_id(matches: &ArgMatches<'_>, arg_name: &str) -> Option<Pubkey> {
-    matches.value_of(arg_name).and_then(|v| {
-        let upper = v.to_ascii_uppercase();
-        match upper.as_str() {
-            "NONCE" | "SYSTEM" => Some(system_program::id()),
-            "STAKE" => Some(stake::id()),
-            "VOTE" => Some(solana_vote_program::id()),
-            _ => pubkey_of(matches, arg_name),
-        }
-    })
+fn resolve_derived_address_program_id(
+    matches: &ArgMatches<'_>,
+    arg_name: &str,
+) -> Result<Option<Pubkey>, CliError> {
+    matches
+        .value_of(arg_name)
+        .map(|v| {
+            let upper = v.to_ascii_uppercase();
+            match upper.as_str() {
+                "NONCE" | "SYSTEM" => Ok(system_program::id()),
+                "STAKE" => Ok(stake::id()),
+                "VOTE" => Ok(solana_vote_program::id()),
+                _ => pubkey_of(matches, arg_name)
+                    .ok_or_else(|| CliError::BadParameter(format!("Invalid program id: {v}"))),
+            }
+        })
+        .transpose()
 }
 
 pub fn parse_account(
@@ -486,7 +493,8 @@ pub fn parse_create_address_with_seed(
         vec![default_signer.signer_from_path(matches, wallet_manager)?]
     };
 
-    let program_id = resolve_derived_address_program_id(matches, "program_id").unwrap();
+    let program_id = resolve_derived_address_program_id(matches, "program_id")?
+        .ok_or_else(|| CliError::BadParameter("PROGRAM_ID".to_string()))?;
 
     let seed = matches.value_of("seed").unwrap().to_string();
 
@@ -592,7 +600,7 @@ fn parse_structured_seed(value: &str) -> Result<Vec<u8>, CliError> {
 pub fn parse_find_program_derived_address(
     matches: &ArgMatches<'_>,
 ) -> Result<CliCommandInfo, CliError> {
-    let program_id = resolve_derived_address_program_id(matches, "program_id")
+    let program_id = resolve_derived_address_program_id(matches, "program_id")?
         .ok_or_else(|| CliError::BadParameter("PROGRAM_ID".to_string()))?;
     let seeds = matches
         .values_of("seeds")
@@ -641,7 +649,7 @@ pub fn parse_transfer(
         .value_of("derived_address_seed")
         .map(|s| s.to_string());
     let derived_address_program_id =
-        resolve_derived_address_program_id(matches, "derived_address_program_id");
+        resolve_derived_address_program_id(matches, "derived_address_program_id")?;
 
     Ok(CliCommandInfo {
         command: CliCommand::Transfer {
