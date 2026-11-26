@@ -2,6 +2,7 @@ use {
     super::*,
     crate::consensus::progress_map::DeadSlotReason,
     crossbeam_channel::bounded,
+    solana_account::state_traits::StateMutWincode as _,
     solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
     solana_entry::{
         block_component::{
@@ -12,6 +13,7 @@ use {
     },
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
+    solana_instruction::Instruction,
     solana_instruction_error::InstructionError,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -24,6 +26,7 @@ use {
         get_tmp_ledger_path,
         shred::{ProcessShredsStats, Shred, Shredder},
     },
+    solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
     solana_rpc::{
         rpc::{create_test_transaction_entries, populate_blockstore_for_tests},
         slot_status_notifier::SlotStatusNotifierInterface,
@@ -31,11 +34,16 @@ use {
     solana_runtime::{
         bank::{BankId, BankTestConfig},
         genesis_utils::GenesisConfigInfo,
+        loader_utils::create_program_with_elf,
+        program_cache_utils::{
+            EntryType as CacheEntryType, ExpectedEntry, assert_cache_contents, current_env,
+        },
         transaction_execution::{
             TransactionHistoryPurgeInput, TransactionHistoryPurgeSource, TransactionStatusMessage,
             TransactionStatusSender,
         },
     },
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_sha256_hasher::hash,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -1976,4 +1984,129 @@ fn test_latest_parent_coalesces() {
     );
     assert_eq!(receiver.try_recv().unwrap().start_slot, 20);
     assert!(receiver.try_recv().is_err());
+}
+
+fn store_program_with_bank_slot(bank: &Bank) -> Pubkey {
+    let elf = include_bytes!("../../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
+    let authority = Pubkey::new_unique();
+    let program_id = create_program_with_elf(bank, &bpf_loader_upgradeable::id(), &authority, elf);
+    // `create_program_with_elf` deploys at slot 0.
+    let programdata_address = get_program_data_address(&program_id);
+    let mut programdata = bank.get_account(&programdata_address).unwrap();
+    programdata
+        .set_state(&UpgradeableLoaderState::ProgramData {
+            slot: bank.slot(),
+            upgrade_authority_address: Some(authority),
+        })
+        .unwrap();
+    bank.store_account(&programdata_address, &programdata);
+    program_id
+}
+
+fn invoke_program(bank: &Bank, payer: &Keypair, program_id: &Pubkey) {
+    let instruction = Instruction::new_with_bytes(*program_id, &[], vec![]);
+    let transaction = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&payer.pubkey()),
+        &[payer],
+        bank.last_blockhash(),
+    );
+    assert_eq!(bank.process_transaction(&transaction), Ok(()));
+}
+
+/// Builds `0 - 1 - 2 - 3`, deploying a program in slots 1 and 2. Each program
+/// is invoked in the slot after its deployment, so the cache holds a loaded
+/// entry for both. Returns the program ids alongside their deployment slots.
+fn setup_program_cache_purge_test() -> (Arc<RwLock<BankForks>>, ProgressMap, [(Pubkey, Slot); 2]) {
+    let AlpenglowReplayComponents {
+        bank_forks,
+        progress,
+        mint_keypair,
+        ..
+    } = alpenglow_replay_components(tr(0));
+    let bank0 = bank_forks.read().unwrap().get(0).unwrap();
+
+    // Deploy the first program in 1.
+    let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+    let first_program = store_program_with_bank_slot(&bank1);
+    bank_forks.write().unwrap().insert(bank1);
+
+    // Invoke it in 2, loading it into the cache, and deploy the second program.
+    let bank1 = bank_forks.read().unwrap().get(1).unwrap();
+    let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+    invoke_program(&bank2, &mint_keypair, &first_program);
+    let second_program = store_program_with_bank_slot(&bank2);
+    bank_forks.write().unwrap().insert(bank2);
+
+    // Invoke the second program in 3, loading it into the cache.
+    let bank2 = bank_forks.read().unwrap().get(2).unwrap();
+    let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+    invoke_program(&bank3, &mint_keypair, &second_program);
+    bank_forks.write().unwrap().insert(bank3);
+
+    let deployments = [(first_program, 1), (second_program, 2)];
+    let env = current_env(&bank0);
+    for (program_id, deployment_slot) in deployments {
+        assert_cache_contents(
+            &bank0,
+            &program_id,
+            &[ExpectedEntry {
+                entry_type: CacheEntryType::Loaded,
+                deployment_slot,
+                environment: &env,
+            }],
+        );
+    }
+    (bank_forks, progress, deployments)
+}
+
+#[test]
+fn test_clear_slots_purges_program_cache_for_removed_banks() {
+    // Fork graph created for the test
+    //
+    //     0 - 1 - 2 - 3
+    //         ^   ^
+    //         |   deploys the second program
+    //         deploys the first program
+    //
+    // The banks are removed from the forks before the clear, so the cache
+    // entries must be purged even though their banks are gone.
+    let (bank_forks, mut progress, deployments) = setup_program_cache_purge_test();
+    let bank0 = bank_forks.read().unwrap().root_bank();
+
+    // Drop the banks from the fork graph first.
+    for slot in [3, 2, 1] {
+        drop(bank_forks.write().unwrap().remove(slot).unwrap());
+        assert!(bank_forks.read().unwrap().get(slot).is_none());
+    }
+
+    ReplayStage::clear_slots([1, 2, 3], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
+
+    for (program_id, _) in deployments {
+        assert_cache_contents(&bank0, &program_id, &[]);
+    }
+}
+
+#[test]
+fn test_clear_slots_purges_descendant_program_cache() {
+    // Fork graph created for the test
+    //
+    //     0 - 1 - 2 - 3
+    //         ^   ^
+    //         |   deploys the second program
+    //         deploys the first program, and is cleared
+    //
+    // Clearing a slot takes its descendants with it, including their
+    // deployments.
+    let (bank_forks, mut progress, deployments) = setup_program_cache_purge_test();
+    let bank0 = bank_forks.read().unwrap().root_bank();
+
+    ReplayStage::clear_slots([1], &bank_forks, &mut progress, &mut Vec::new(), None).unwrap();
+
+    for slot in [1, 2, 3] {
+        assert!(bank_forks.read().unwrap().get(slot).is_none());
+    }
+    for (program_id, _) in deployments {
+        assert_cache_contents(&bank0, &program_id, &[]);
+    }
 }
