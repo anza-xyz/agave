@@ -37,7 +37,6 @@ struct CertVerifyOutcome {
 /// Verifies certificates and sends the verified certificates to the consensus pool.
 ///
 /// Additionally inserts valid [`CertificateType`]s into `verified_certs_set`.
-/// Any certificate that fails verification will have its sender banlisted.
 ///
 /// Function expects that the caller has already filtered any certs that appear in the
 /// [`verified_certs_set`] and grouped certs with the same [`CertificateType`]. Each group is
@@ -88,7 +87,7 @@ pub(super) fn verify_and_send_certificates(
 /// Verifies certificates in `cert_groups`, stores a local copy, and prepares them for forwarding.
 ///
 /// The valid certs are inserted into the [`verified_certs_set`].
-/// Invalid cert senders are banlisted.
+///
 /// Returns a list of [`Certificate`]s constructed from the valid certs.
 fn verify_cert_groups(
     cert_groups: HashMap<CertificateType, Vec<CertPayload>>,
@@ -145,6 +144,14 @@ fn verify_cert_group(
     let mut failures = Vec::new();
 
     for cert_payload in certs {
+        // Agave 4.4 can accept a compressed encoding in this uncompressed
+        // Signature field and relay the original certificate bytes. The sender
+        // may therefore be an honest 4.4 relay. Agave 4.5 rejects this encoding,
+        // so reject without banning during rollout. Remove this exception in 5.0.
+        let signature_has_compression_or_sort_flag = cert_payload.cert.signature.0[0] & 0xA0 != 0;
+        if signature_has_compression_or_sort_flag {
+            continue;
+        }
         match verify_cert(cert_payload.cert, root_bank, thread_pool) {
             Ok(cert) => {
                 return CertVerifyOutcome {
