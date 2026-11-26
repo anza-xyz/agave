@@ -1,5 +1,10 @@
 use {
     agave_feature_set::FeatureSet,
+    k256::{
+        FieldBytes, Scalar,
+        ecdsa::{RecoveryId, Signature, VerifyingKey},
+        elliptic_curve::PrimeField,
+    },
     solana_precompile_error::PrecompileError,
     solana_secp256k1_program::{
         HASHED_PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
@@ -62,13 +67,10 @@ pub fn verify(
             return Err(PrecompileError::InvalidSignature);
         }
 
-        let signature = libsecp256k1::Signature::parse_standard_slice(
+        let parsed_signature = ParsedSignature::parse(
             &signature_instruction[sig_start..sig_end],
-        )
-        .map_err(|_| PrecompileError::InvalidSignature)?;
-
-        let recovery_id = libsecp256k1::RecoveryId::parse(signature_instruction[sig_end])
-            .map_err(|_| PrecompileError::InvalidRecoveryId)?;
+            signature_instruction[sig_end],
+        )?;
 
         // Parse out pubkey
         let eth_address_slice = get_data_slice(
@@ -87,19 +89,61 @@ pub fn verify(
         )?;
 
         let message_hash: [u8; 32] = solana_keccak_hasher::hash(message_slice).to_bytes();
-        let pubkey = libsecp256k1::recover(
-            &libsecp256k1::Message::parse_slice(&message_hash).unwrap(),
-            &signature,
-            &recovery_id,
-        )
-        .map_err(|_| PrecompileError::InvalidSignature)?;
-        let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
+        let pubkey = parsed_signature.recover(&message_hash)?;
+        let eth_address = eth_address_from_pubkey(&pubkey);
 
         if eth_address_slice != eth_address {
             return Err(PrecompileError::InvalidSignature);
         }
     }
     Ok(())
+}
+
+/// A signature and recovery id that passed the parse-time checks.
+///
+/// Parsing is kept separate from recovery so that malformed signatures and
+/// recovery ids are reported before the eth address and message offsets are
+/// checked, exactly as the `libsecp256k1` backend this replaced always did.
+struct ParsedSignature {
+    signature: [u8; SIGNATURE_SERIALIZED_SIZE],
+    recovery_id: RecoveryId,
+}
+
+impl ParsedSignature {
+    fn parse(signature: &[u8], recovery_id: u8) -> Result<Self, PrecompileError> {
+        let signature: [u8; SIGNATURE_SERIALIZED_SIZE] = signature
+            .try_into()
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        // `libsecp256k1` rejected `r` or `s` at or above the curve order when
+        // parsing, but only rejected a zero `r` or `s` during recovery. Mirror
+        // that split so errors are reported at the same step.
+        for scalar in [&signature[..32], &signature[32..]] {
+            let repr = FieldBytes::from(<[u8; 32]>::try_from(scalar).unwrap());
+            if bool::from(Scalar::from_repr(repr).is_none()) {
+                return Err(PrecompileError::InvalidSignature);
+            }
+        }
+        let recovery_id =
+            RecoveryId::try_from(recovery_id).map_err(|_| PrecompileError::InvalidRecoveryId)?;
+        Ok(Self {
+            signature,
+            recovery_id,
+        })
+    }
+
+    /// Recovers the public key, accepting high-S (malleable) signatures just
+    /// like `libsecp256k1` did.
+    fn recover(&self, message_hash: &[u8; 32]) -> Result<[u8; 64], PrecompileError> {
+        // Rejects a zero `r` or `s`, like `libsecp256k1::recover`.
+        let signature = Signature::try_from(self.signature.as_slice())
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        // Recovery only: this neither verifies the signature against the
+        // recovered key nor requires a low-S signature.
+        let pubkey = VerifyingKey::recover_from_prehash(message_hash, &signature, self.recovery_id)
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        let encoded = pubkey.to_sec1_point(false);
+        Ok(encoded.as_bytes()[1..65].try_into().unwrap())
+    }
 }
 
 fn get_data_slice<'a>(
@@ -127,12 +171,198 @@ pub mod tests {
     use {
         super::*,
         crate::test_verify_with_alignment,
-        rand::Rng,
+        rand::{Rng, RngCore, SeedableRng, rngs::StdRng},
         solana_keccak_hasher as keccak,
         solana_secp256k1_program::{
             DATA_START, new_secp256k1_instruction_with_signature, sign_message,
         },
     };
+
+    const SECP256K1_ORDER: [u8; SIGNATURE_SERIALIZED_SIZE / 2] = [
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36,
+        0x41, 0x41,
+    ];
+
+    /// Reference recovery with `libsecp256k1`, the backend the precompile
+    /// used before switching to `k256`.
+    fn recover_pubkey_legacy(
+        message_hash: &[u8; 32],
+        recovery_id: u8,
+        signature: &[u8],
+    ) -> Result<[u8; 64], PrecompileError> {
+        let signature = libsecp256k1::Signature::parse_standard_slice(signature)
+            .map_err(|_| PrecompileError::InvalidSignature)?;
+        let recovery_id = libsecp256k1::RecoveryId::parse(recovery_id)
+            .map_err(|_| PrecompileError::InvalidRecoveryId)?;
+        let pubkey = libsecp256k1::recover(
+            &libsecp256k1::Message::parse(message_hash),
+            &signature,
+            &recovery_id,
+        )
+        .map_err(|_| PrecompileError::InvalidSignature)?;
+        Ok(pubkey.serialize()[1..65].try_into().unwrap())
+    }
+
+    fn recover_pubkey_k256(
+        message_hash: &[u8; 32],
+        recovery_id: u8,
+        signature: &[u8],
+    ) -> Result<[u8; 64], PrecompileError> {
+        ParsedSignature::parse(signature, recovery_id)?.recover(message_hash)
+    }
+
+    // The `k256` recovery must agree with the `libsecp256k1` backend it replaced.
+    #[test]
+    fn test_recovery_consistent_with_libsecp256k1() {
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+        let message = b"hello";
+        let message_hash = {
+            let mut hasher = keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
+        let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
+
+        let signature_bytes = signature.serialize();
+        let legacy_pubkey = recover_pubkey_legacy(
+            message_hash.as_bytes(),
+            recovery_id.serialize(),
+            &signature_bytes,
+        );
+        let k256_pubkey = recover_pubkey_k256(
+            message_hash.as_bytes(),
+            recovery_id.serialize(),
+            &signature_bytes,
+        );
+        assert_eq!(legacy_pubkey, k256_pubkey);
+
+        // Flip the S value in the signature to create another valid signature.
+        let mut alt_signature = signature;
+        alt_signature.s = -alt_signature.s;
+        let alt_recovery_id = libsecp256k1::RecoveryId::parse(recovery_id.serialize() ^ 1).unwrap();
+
+        let alt_signature_bytes = alt_signature.serialize();
+        let legacy_pubkey = recover_pubkey_legacy(
+            message_hash.as_bytes(),
+            alt_recovery_id.serialize(),
+            &alt_signature_bytes,
+        );
+        let k256_pubkey = recover_pubkey_k256(
+            message_hash.as_bytes(),
+            alt_recovery_id.serialize(),
+            &alt_signature_bytes,
+        );
+        assert!(legacy_pubkey.is_ok());
+        assert_eq!(legacy_pubkey, k256_pubkey);
+
+        let invalid_recovery_id = 4;
+        assert_eq!(
+            recover_pubkey_legacy(
+                message_hash.as_bytes(),
+                invalid_recovery_id,
+                &signature_bytes
+            ),
+            Err(PrecompileError::InvalidRecoveryId)
+        );
+        assert_eq!(
+            recover_pubkey_k256(
+                message_hash.as_bytes(),
+                invalid_recovery_id,
+                &signature_bytes
+            ),
+            Err(PrecompileError::InvalidRecoveryId)
+        );
+    }
+
+    /// Returns a 32-byte value biased towards the edges of the scalar range.
+    fn edge_biased_bytes(rng: &mut StdRng) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        match rng.random_range(0..10) {
+            0 => {}
+            1 => bytes = [0xff; 32],
+            2 => bytes = SECP256K1_ORDER,
+            3 => {
+                bytes = SECP256K1_ORDER;
+                bytes[31] = bytes[31].checked_sub(1).unwrap();
+            }
+            4 => {
+                bytes = SECP256K1_ORDER;
+                bytes[31] = bytes[31].checked_add(1).unwrap();
+            }
+            // Small enough that adding the curve order stays below the field
+            // modulus, so recovery ids 2 and 3 can succeed.
+            5 => rng.fill_bytes(&mut bytes[16..]),
+            6 => bytes[31] = rng.random_range(1..8),
+            _ => rng.fill_bytes(&mut bytes),
+        }
+        bytes
+    }
+
+    // Differential test against the `libsecp256k1` backend over a fixed-seed
+    // set of valid, malleated and malformed inputs.
+    #[test]
+    fn test_recovery_consistent_with_libsecp256k1_randomized() {
+        let mut rng = StdRng::seed_from_u64(0x5ec9_256b);
+        let mut recovered = 0usize;
+        let mut recovered_x_reduced = 0usize;
+        let mut recovered_high_s = 0usize;
+        let mut rejected = 0usize;
+
+        for i in 0..3_000 {
+            let message_hash = edge_biased_bytes(&mut rng);
+            let mut signature = [0u8; SIGNATURE_SERIALIZED_SIZE];
+            let recovery_id;
+            let mut high_s = false;
+            if i % 3 == 0 {
+                // A genuine signature, sometimes with `s` negated and with or
+                // without the matching recovery id flip.
+                let mut secret_bytes = [0u8; 32];
+                rng.fill_bytes(&mut secret_bytes);
+                let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+                let (mut sig, rec_id) =
+                    libsecp256k1::sign(&libsecp256k1::Message::parse(&message_hash), &secret_key);
+                let mut rec_id = rec_id.serialize();
+                if rng.random() {
+                    sig.s = -sig.s;
+                    high_s = true;
+                    if rng.random() {
+                        rec_id ^= 1;
+                    }
+                }
+                signature = sig.serialize();
+                recovery_id = rec_id;
+            } else {
+                signature[..32].copy_from_slice(&edge_biased_bytes(&mut rng));
+                signature[32..].copy_from_slice(&edge_biased_bytes(&mut rng));
+                recovery_id = rng.random_range(0..6);
+            }
+
+            let legacy = recover_pubkey_legacy(&message_hash, recovery_id, &signature);
+            let k256 = recover_pubkey_k256(&message_hash, recovery_id, &signature);
+            assert_eq!(
+                legacy, k256,
+                "hash {message_hash:?} recovery id {recovery_id} signature {signature:?}",
+            );
+            match legacy {
+                Ok(_) => {
+                    recovered += 1;
+                    recovered_x_reduced += usize::from(recovery_id >= 2);
+                    recovered_high_s += usize::from(high_s);
+                }
+                Err(_) => rejected += 1,
+            }
+        }
+
+        // Make sure the interesting paths were actually exercised.
+        assert!(recovered > 500, "{recovered}");
+        assert!(recovered_x_reduced > 10, "{recovered_x_reduced}");
+        assert!(recovered_high_s > 100, "{recovered_high_s}");
+        assert!(rejected > 500, "{rejected}");
+    }
 
     fn test_case(
         num_signatures: u8,
@@ -407,5 +637,215 @@ pub mod tests {
             &FeatureSet::all_enabled(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn test_high_s_malleability_and_invalid_signatures() {
+        agave_logger::setup();
+
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+        let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
+
+        let message = b"hello";
+        let message_hash = {
+            let mut hasher = keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
+        let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
+
+        let mut alt_signature = signature;
+        alt_signature.s = -alt_signature.s;
+        let alt_recovery_id = libsecp256k1::RecoveryId::parse(recovery_id.serialize() ^ 1).unwrap();
+
+        let valid_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &alt_signature.serialize(),
+            alt_recovery_id.serialize(),
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(&valid_instruction, Ok(()));
+
+        let mut zero_r_signature = signature.serialize();
+        zero_r_signature[..32].fill(0);
+        let zero_r_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &zero_r_signature,
+            recovery_id.serialize(),
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(&zero_r_instruction, Err(PrecompileError::InvalidSignature));
+
+        let mut zero_s_signature = signature.serialize();
+        zero_s_signature[32..].fill(0);
+        let zero_s_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &zero_s_signature,
+            recovery_id.serialize(),
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(&zero_s_instruction, Err(PrecompileError::InvalidSignature));
+
+        let mut overflow_r_signature = signature.serialize();
+        overflow_r_signature[..32].copy_from_slice(&SECP256K1_ORDER);
+        let overflow_r_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &overflow_r_signature,
+            recovery_id.serialize(),
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(
+            &overflow_r_instruction,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let mut overflow_s_signature = signature.serialize();
+        overflow_s_signature[32..].copy_from_slice(&SECP256K1_ORDER);
+        let overflow_s_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &overflow_s_signature,
+            recovery_id.serialize(),
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(
+            &overflow_s_instruction,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let x_reduced_even_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &signature.serialize(),
+            2,
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(
+            &x_reduced_even_instruction,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        let x_reduced_odd_instruction = new_secp256k1_instruction_with_signature(
+            message,
+            &signature.serialize(),
+            3,
+            &eth_address,
+        )
+        .data;
+        assert_verify_result(
+            &x_reduced_odd_instruction,
+            Err(PrecompileError::InvalidSignature),
+        );
+    }
+
+    #[test]
+    fn test_signature_parse_errors_take_priority_over_offset_errors() {
+        let secret_bytes: [u8; 32] = rand::random();
+        let secret_key = libsecp256k1::SecretKey::parse(&secret_bytes).unwrap();
+        let public_key = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&public_key.serialize()[1..].try_into().unwrap());
+
+        let message = b"hello";
+        let message_hash = {
+            let mut hasher = keccak::Hasher::default();
+            hasher.hash(message);
+            hasher.result()
+        };
+        let secp_message = libsecp256k1::Message::parse(message_hash.as_bytes());
+        let (signature, recovery_id) = libsecp256k1::sign(&secp_message, &secret_key);
+
+        // Point the eth address at a non-existent instruction so the offset
+        // check fails whenever it is reached.
+        let with_bad_eth_address_offset = |mut instruction_data: Vec<u8>| {
+            let offsets_end = 1usize
+                .checked_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
+                .unwrap();
+            let mut offsets: SecpSignatureOffsets =
+                wincode::deserialize(&instruction_data[1..offsets_end]).unwrap();
+            offsets.eth_address_instruction_index = 1;
+            wincode::serialize_into(&mut instruction_data[1..], &offsets).unwrap();
+            instruction_data
+        };
+
+        // A well-formed signature reaches the offset check.
+        let valid_instruction = with_bad_eth_address_offset(
+            new_secp256k1_instruction_with_signature(
+                message,
+                &signature.serialize(),
+                recovery_id.serialize(),
+                &eth_address,
+            )
+            .data,
+        );
+        assert_verify_result(&valid_instruction, Err(PrecompileError::InvalidDataOffsets));
+
+        // An out-of-range recovery id is rejected before the offset check.
+        let invalid_recovery_id_instruction = with_bad_eth_address_offset(
+            new_secp256k1_instruction_with_signature(
+                message,
+                &signature.serialize(),
+                4,
+                &eth_address,
+            )
+            .data,
+        );
+        assert_verify_result(
+            &invalid_recovery_id_instruction,
+            Err(PrecompileError::InvalidRecoveryId),
+        );
+
+        // A scalar at or above the curve order is rejected before the offset check.
+        let mut overflow_s_signature = signature.serialize();
+        overflow_s_signature[32..].copy_from_slice(&SECP256K1_ORDER);
+        let overflow_s_instruction = with_bad_eth_address_offset(
+            new_secp256k1_instruction_with_signature(
+                message,
+                &overflow_s_signature,
+                recovery_id.serialize(),
+                &eth_address,
+            )
+            .data,
+        );
+        assert_verify_result(
+            &overflow_s_instruction,
+            Err(PrecompileError::InvalidSignature),
+        );
+
+        // A zero scalar is only rejected during recovery, after the offset check.
+        let mut zero_s_signature = signature.serialize();
+        zero_s_signature[32..].fill(0);
+        let zero_s_instruction = with_bad_eth_address_offset(
+            new_secp256k1_instruction_with_signature(
+                message,
+                &zero_s_signature,
+                recovery_id.serialize(),
+                &eth_address,
+            )
+            .data,
+        );
+        assert_verify_result(
+            &zero_s_instruction,
+            Err(PrecompileError::InvalidDataOffsets),
+        );
+    }
+
+    fn assert_verify_result(instruction_data: &[u8], expected: Result<(), PrecompileError>) {
+        assert_eq!(
+            test_verify_with_alignment(
+                verify,
+                instruction_data,
+                &[instruction_data],
+                &FeatureSet::all_enabled(),
+            ),
+            expected
+        );
     }
 }
