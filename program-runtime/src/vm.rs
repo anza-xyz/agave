@@ -88,17 +88,7 @@ unsafe fn configure_program_regions<C: ContextObject>(
         panic!("the regions vector must have at least three entries")
     };
     *ro_area = executable.get_ro_region();
-    let sbpf_version = executable.get_sbpf_version();
-    let config = executable.get_config();
-    *stack_area = MemoryRegion::new_gapped(
-        stack,
-        MM_STACK_START,
-        if sbpf_version.stack_frame_gaps() && config.enable_stack_frame_gaps {
-            config.stack_frame_size as u64
-        } else {
-            0
-        },
-    );
+    *stack_area = MemoryRegion::new(stack, MM_STACK_START);
     *heap_area = MemoryRegion::new(heap, MM_HEAP_START);
     mapping
         .initialize()
