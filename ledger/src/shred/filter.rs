@@ -260,6 +260,12 @@ impl ShredFilterContext {
             .is_some_and(|first_slot| slot >= first_slot)
     }
 
+    /// Returns the first slot for which SIMD-0504 `stricter_shred_validation`
+    /// is effective.
+    pub fn stricter_shred_validation_from(&self) -> Option<Slot> {
+        self.stricter_shred_validation_from
+    }
+
     fn shred_limits(&self, slot: Slot) -> ShredLimits {
         self.shred_limit_context.shred_limits(slot)
     }
@@ -597,7 +603,7 @@ impl ShredRecoveryContext {
     /// Returns the first slot for which SIMD-0504 `stricter_shred_validation`
     /// is effective.
     pub(crate) fn stricter_shred_validation_from(&self) -> Option<Slot> {
-        self.shred_filter_ctx.stricter_shred_validation_from
+        self.shred_filter_ctx.stricter_shred_validation_from()
     }
 
     /// Submit stats at most every two seconds

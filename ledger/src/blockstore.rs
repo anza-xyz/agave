@@ -2553,18 +2553,9 @@ impl Blockstore {
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
         let mut total_start = Measure::start("Total elapsed");
-        write_batch.clear();
-
-        // Acquire the insertion lock
-        let mut start = Measure::start("Blockstore lock");
-        let lock = self.insert_shreds_lock.lock().unwrap();
-        start.stop();
-        metrics.insert_lock_elapsed_us += start.as_us();
-
         // With a recovery context, `SlotMeta::consumed` only advances over
         // erasure sets which passed `check_fec_sets`.
-        let result = self.do_insert_shreds_locked(
-            &lock,
+        let result = self.insert_shreds_under_lock(
             shreds,
             is_trusted,
             shred_recovery_context
@@ -2575,9 +2566,6 @@ impl Blockstore {
             write_batch,
             metrics,
         );
-        drop(lock);
-        write_batch.clear();
-
         let result = match (result, shred_recovery_context) {
             (Ok(mut results), Some(shred_recovery_context)) => {
                 let fec_sets = std::mem::take(&mut results.fec_sets_to_check);
@@ -2600,6 +2588,46 @@ impl Blockstore {
         total_start.stop();
         metrics.total_elapsed_us += total_start.as_us();
 
+        result
+    }
+
+    /// Takes `insert_shreds_lock` and runs [`Self::do_insert_shreds_locked`].
+    #[allow(clippy::too_many_arguments)]
+    fn insert_shreds_under_lock<'db>(
+        &'db self,
+        shreds: impl IntoIterator<
+            Item = (
+                Shred,
+                /*is_repaired:*/ bool,
+                BlockLocation,
+                /*precomputed_merkle_root:*/ Option<Hash>,
+            ),
+            IntoIter: ExactSizeIterator,
+        >,
+        is_trusted: bool,
+        stricter_shred_validation_from: Option<Slot>,
+        defer_consumed: bool,
+        pinnable_slice: &mut DBPinnableSlice<'db>,
+        write_batch: &mut WriteBatch,
+        metrics: &mut BlockstoreInsertionMetrics,
+    ) -> Result<InsertResults> {
+        write_batch.clear();
+        let mut start = Measure::start("Blockstore lock");
+        let lock = self.insert_shreds_lock.lock().unwrap();
+        start.stop();
+        metrics.insert_lock_elapsed_us += start.as_us();
+        let result = self.do_insert_shreds_locked(
+            &lock,
+            shreds,
+            is_trusted,
+            stricter_shred_validation_from,
+            defer_consumed,
+            pinnable_slice,
+            write_batch,
+            metrics,
+        );
+        drop(lock);
+        write_batch.clear();
         result
     }
 
@@ -2745,30 +2773,33 @@ impl Blockstore {
         Ok(completed_data_set_infos)
     }
 
-    /// Inserts `shreds` into the column specified by  the `BlockLocation`.
+    /// Inserts `shreds` into the column specified by  the `BlockLocation`,
+    /// identifying and handling duplicate shreds.
     ///
-    /// Additionally attempts to recover and retransmit recovered shreds (also identifying
-    /// and handling duplicate shreds). Broadcast stage should instead call
-    /// Blockstore::insert_shreds when inserting own shreds during leader slots.
+    /// Does not advance `SlotMeta::consumed` over the inserted shreds of the
+    /// Original column. Instead, returns the erasure sets which received shreds
+    /// and can be rebuilt; [`Self::check_fec_sets_handle_duplicate`] recovers
+    /// and checks them, and advances `consumed` over the accepted ones.
+    /// Broadcast stage should instead call Blockstore::insert_shreds when
+    /// inserting own shreds during leader slots.
     /// The pinnable slice and write batch can be reused across calls.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_shreds_at_location_handle_duplicate<'db, F>(
         &'db self,
         shreds: impl IntoIterator<Item = VerifiedShred, IntoIter: ExactSizeIterator>,
         is_trusted: bool,
-        shred_recovery_context: &mut ShredRecoveryContext,
+        stricter_shred_validation_from: Option<Slot>,
         pinnable_slice: &mut DBPinnableSlice<'db>,
         write_batch: &mut WriteBatch,
         handle_duplicate: &F,
         metrics: &mut BlockstoreInsertionMetrics,
-    ) -> Result<Vec<CompletedDataSetInfo>>
+    ) -> Result<(Vec<CompletedDataSetInfo>, Vec<ErasureSetId>)>
     where
         F: Fn(PossibleDuplicateShred),
     {
-        let InsertResults {
-            completed_data_set_infos,
-            duplicate_shreds,
-            ..
-        } = self.do_insert_shreds(
+        let mut total_start = Measure::start("Total elapsed");
+        let defer_consumed = true;
+        let result = self.insert_shreds_under_lock(
             shreds.into_iter().map(
                 |VerifiedShred {
                      shred,
@@ -2778,22 +2809,31 @@ impl Blockstore {
                  }| (shred, is_repaired, location, Some(merkle_root)),
             ),
             is_trusted,
-            Some(shred_recovery_context),
+            stricter_shred_validation_from,
+            defer_consumed,
             pinnable_slice,
             write_batch,
             metrics,
-        )?;
+        );
+        total_start.stop();
+        metrics.total_elapsed_us += total_start.as_us();
+        let InsertResults {
+            completed_data_set_infos,
+            duplicate_shreds,
+            fec_sets_to_check,
+        } = result?;
 
         for shred in duplicate_shreds {
             handle_duplicate(shred);
         }
 
-        Ok(completed_data_set_infos)
+        Ok((completed_data_set_infos, fec_sets_to_check))
     }
 
-    /// Checks the given erasure sets as [`Self::check_fec_sets`] does on
-    /// insert, e.g. the ones returned by [`Self::fec_sets_pending_checks`],
-    /// and handles the duplicate shreds found while inserting the recovered
+    /// Recovers and checks the given erasure sets, e.g. the ones returned by
+    /// [`Self::insert_shreds_at_location_handle_duplicate`] or
+    /// [`Self::fec_sets_pending_checks`], see [`Self::check_fec_sets`], and
+    /// handles the duplicate shreds found while inserting the recovered
     /// shreds.
     pub fn check_fec_sets_handle_duplicate<'db, F>(
         &'db self,
@@ -2807,17 +2847,21 @@ impl Blockstore {
     where
         F: Fn(PossibleDuplicateShred),
     {
-        let InsertResults {
-            completed_data_set_infos,
-            duplicate_shreds,
-            ..
-        } = self.check_fec_sets(
+        let mut total_start = Measure::start("Total elapsed");
+        let result = self.check_fec_sets(
             fec_sets,
             shred_recovery_context,
             pinnable_slice,
             write_batch,
             metrics,
-        )?;
+        );
+        total_start.stop();
+        metrics.total_elapsed_us += total_start.as_us();
+        let InsertResults {
+            completed_data_set_infos,
+            duplicate_shreds,
+            ..
+        } = result?;
         for shred in duplicate_shreds {
             handle_duplicate(shred);
         }
