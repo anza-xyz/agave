@@ -4,6 +4,7 @@ use {
     solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_client_traits::{Client, SyncClient},
     solana_clock::Clock,
+    solana_hash::Hash,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_leader_schedule::SlotLeader,
@@ -16,6 +17,7 @@ use {
     solana_rent::Rent,
     solana_sdk_ids::bpf_loader_upgradeable,
     solana_signer::Signer,
+    solana_transaction::Transaction,
     std::{
         env,
         fs::File,
@@ -242,6 +244,29 @@ pub fn load_upgradeable_program_and_advance_slot(
         .expect("Failed to advance the slot");
 
     (bank, program_id)
+}
+
+pub fn deploy_transaction(
+    payer: &Keypair,
+    program: &Keypair,
+    buffer: &Pubkey,
+    rent: &Rent,
+    blockhash: Hash,
+) -> Transaction {
+    let instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
+        &payer.pubkey(),
+        &program.pubkey(),
+        buffer,
+        &payer.pubkey(),
+        rent.minimum_balance(UpgradeableLoaderState::size_of_program()),
+        UpgradeableLoaderState::size_of_programdata(64 * 1024),
+    )
+    .unwrap();
+    Transaction::new(
+        &[payer, program],
+        Message::new(&instructions, Some(&payer.pubkey())),
+        blockhash,
+    )
 }
 
 pub fn upgrade_program<T: Client>(

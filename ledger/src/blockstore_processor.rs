@@ -2512,7 +2512,7 @@ pub mod tests {
         },
         crossbeam_channel::bounded,
         rand::{Rng, rng},
-        solana_account::{AccountSharedData, WritableAccount},
+        solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_entry::{
             block_component::{
@@ -2527,6 +2527,8 @@ pub mod tests {
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_loader_v3_interface::state::UpgradeableLoaderState,
+        solana_message::Message,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::{
             declare_process_instruction, solana_sbpf::program::BuiltinFunctionDefinition,
@@ -2539,9 +2541,14 @@ pub mod tests {
                 InstalledSchedulerPool, MockInstalledScheduler, MockUninstalledScheduler,
                 SchedulerAborted, SchedulingContext,
             },
+            loader_utils::deploy_transaction,
+            program_cache_utils::{
+                EntryType as CacheEntryType, ExpectedEntry, assert_cache_contents, current_env,
+            },
             transaction_execution::TransactionStatusMessage,
         },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_sdk_ids::bpf_loader_upgradeable,
         solana_signer::Signer,
         solana_system_interface::error::SystemError,
         solana_system_transaction as system_transaction,
@@ -5999,5 +6006,283 @@ pub mod tests {
             ),
             Err(TransactionError::TooManyAccountLocks)
         );
+    }
+
+    fn create_genesis_config_with_buffers(buffers: &[Pubkey]) -> GenesisConfigInfo {
+        let elf = include_bytes!("../../programs/bpf_loader/test_elfs/out/sbpfv3_return_ok.so");
+        let mut info = create_genesis_config_with_tower_leader(
+            1_000_000 * LAMPORTS_PER_SOL,
+            &Pubkey::new_unique(),
+            50,
+        );
+        info.genesis_config.rent = GenesisConfig::default().rent;
+        let space = UpgradeableLoaderState::size_of_buffer(elf.len());
+        for buffer in buffers {
+            let mut account = AccountSharedData::new_data_with_space(
+                info.genesis_config.rent.minimum_balance(space),
+                &UpgradeableLoaderState::Buffer {
+                    authority_address: Some(info.mint_keypair.pubkey()),
+                },
+                space,
+                &bpf_loader_upgradeable::id(),
+            )
+            .unwrap();
+            account.data_as_mut_slice()[UpgradeableLoaderState::size_of_buffer_metadata()..]
+                .copy_from_slice(elf);
+            info.genesis_config.add_account(*buffer, account);
+        }
+        info
+    }
+
+    fn invoke_transaction(payer: &Keypair, program: &Pubkey, blockhash: Hash) -> Transaction {
+        let instruction = Instruction::new_with_bytes(*program, &[], vec![]);
+        Transaction::new(
+            &[payer],
+            Message::new(&[instruction], Some(&payer.pubkey())),
+            blockhash,
+        )
+    }
+
+    // Like `fill_blockstore_slot_with_ticks`, but the slot leads with
+    // `transactions`.
+    fn fill_blockstore_slot_with_transactions(
+        blockstore: &Blockstore,
+        genesis_config: &GenesisConfig,
+        slot: Slot,
+        parent_slot: Slot,
+        mut last_entry_hash: Hash,
+        transactions: Vec<Transaction>,
+    ) -> Hash {
+        let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
+        let mut entries: Vec<_> = transactions
+            .into_iter()
+            .map(|tx| next_entry_mut(&mut last_entry_hash, 1, vec![tx]))
+            .collect();
+        let remaining_hashes = hashes_per_tick.saturating_sub(entries.len() as u64);
+        entries.push(next_entry_mut(
+            &mut last_entry_hash,
+            remaining_hashes,
+            vec![],
+        ));
+        let num_ticks = (slot - parent_slot) * genesis_config.ticks_per_slot;
+        entries.extend(create_ticks(
+            num_ticks - 1,
+            hashes_per_tick,
+            last_entry_hash,
+        ));
+        let last_entry_hash = entries.last().unwrap().hash;
+        blockstore
+            .write_entries(
+                slot,
+                0,
+                0,
+                genesis_config.ticks_per_slot,
+                Some(parent_slot),
+                true,
+                &Arc::new(Keypair::new()),
+                entries,
+                0,
+            )
+            .unwrap();
+        last_entry_hash
+    }
+
+    #[test]
+    fn test_startup_replay_retains_rooted_deployment() {
+        // Fork graph created for the test
+        //
+        //     0 - 1 - 2
+        //         ^   ^
+        //         |   invokes the program
+        //         deploys the program
+        //
+        // The deployment is on the rooted chain, so replaying up to root 2
+        // leaves it loaded in the cache.
+        agave_logger::setup();
+
+        let buffer = Pubkey::new_unique();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair: payer,
+            ..
+        } = create_genesis_config_with_buffers(&[buffer]);
+        let (ledger_path, last_entry_hash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let blockhash = genesis_config.hash();
+
+        let program = Keypair::new();
+        let last_entry_hash = fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            1,
+            0,
+            last_entry_hash,
+            vec![deploy_transaction(
+                &payer,
+                &program,
+                &buffer,
+                &genesis_config.rent,
+                blockhash,
+            )],
+        );
+        fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            2,
+            1,
+            last_entry_hash,
+            vec![invoke_transaction(&payer, &program.pubkey(), blockhash)],
+        );
+        blockstore.set_roots([0, 1, 2].iter()).unwrap();
+
+        let opts = ProcessOptions {
+            run_verification: true,
+            ..ProcessOptions::default()
+        };
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
+        let bank_forks = bank_forks.read().unwrap();
+
+        assert_eq!(bank_forks.root(), 2);
+        let root_bank = bank_forks.root_bank();
+        assert_cache_contents(
+            &root_bank,
+            &program.pubkey(),
+            &[ExpectedEntry {
+                entry_type: CacheEntryType::Loaded,
+                deployment_slot: 1,
+                environment: &current_env(&root_bank),
+            }],
+        );
+    }
+
+    #[test]
+    fn test_startup_replay_prunes_abandoned_fork_deployment() {
+        // Fork graph created for the test
+        //
+        //     0 - 1 - 4 - 5    <- rooted
+        //          \
+        //           2 - 3      <- abandoned
+        //
+        // Each program is deployed in one slot and invoked in a child slot,
+        // which loads it into the cache. `rooted` and `winning` live on the
+        // rooted chain, `abandoned` on the fork that loses.
+        agave_logger::setup();
+
+        let buffers = [
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair: payer,
+            ..
+        } = create_genesis_config_with_buffers(&buffers);
+        let (ledger_path, last_entry_hash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let blockhash = genesis_config.hash();
+
+        let rooted = Keypair::new();
+        let abandoned = Keypair::new();
+        let winning = Keypair::new();
+
+        // Slot 1: deploy `rooted`.
+        let after_1 = fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            1,
+            0,
+            last_entry_hash,
+            vec![deploy_transaction(
+                &payer,
+                &rooted,
+                &buffers[0],
+                &genesis_config.rent,
+                blockhash,
+            )],
+        );
+        // Slot 2: fork off 1 and deploy `abandoned`.
+        let after_2 = fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            2,
+            1,
+            after_1,
+            vec![deploy_transaction(
+                &payer,
+                &abandoned,
+                &buffers[1],
+                &genesis_config.rent,
+                blockhash,
+            )],
+        );
+        // Slot 3: invoke `abandoned`, loading it at deployment slot 2.
+        fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            3,
+            2,
+            after_2,
+            vec![invoke_transaction(&payer, &abandoned.pubkey(), blockhash)],
+        );
+        // Slot 4: back on 1, invoke `rooted` and deploy `winning`.
+        let after_4 = fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            4,
+            1,
+            after_1,
+            vec![
+                invoke_transaction(&payer, &rooted.pubkey(), blockhash),
+                deploy_transaction(
+                    &payer,
+                    &winning,
+                    &buffers[2],
+                    &genesis_config.rent,
+                    blockhash,
+                ),
+            ],
+        );
+        // Slot 5: invoke `winning`.
+        fill_blockstore_slot_with_transactions(
+            &blockstore,
+            &genesis_config,
+            5,
+            4,
+            after_4,
+            vec![invoke_transaction(&payer, &winning.pubkey(), blockhash)],
+        );
+        blockstore.set_roots([0, 1, 4, 5].iter()).unwrap();
+
+        // Startup replays the lowest pending slot first. After root 1, slots 2
+        // and 3 replay before 4, so `abandoned` is loaded into the cache by the
+        // time 4 becomes the root. Rooting 4 drops the 2 - 3 fork and prunes
+        // its deployment from the cache.
+        let opts = ProcessOptions {
+            run_verification: true,
+            ..ProcessOptions::default()
+        };
+        let (bank_forks, ..) = test_process_blockstore(&genesis_config, &blockstore, &opts);
+        let bank_forks = bank_forks.read().unwrap();
+
+        assert_eq!(bank_forks.root(), 5);
+        let root_bank = bank_forks.root_bank();
+        let env = current_env(&root_bank);
+
+        // The deployments on the rooted chain are still loaded.
+        for (program, deployment_slot) in [(&rooted, 1), (&winning, 4)] {
+            assert_cache_contents(
+                &root_bank,
+                &program.pubkey(),
+                &[ExpectedEntry {
+                    entry_type: CacheEntryType::Loaded,
+                    deployment_slot,
+                    environment: &env,
+                }],
+            );
+        }
+
+        // The deployment on the abandoned fork is gone.
+        assert_cache_contents(&root_bank, &abandoned.pubkey(), &[]);
     }
 }
