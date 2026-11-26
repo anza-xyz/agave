@@ -424,33 +424,6 @@ impl Display for BlockLocation {
     }
 }
 
-#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
-pub enum FrozenHashVersioned {
-    Current(FrozenHashStatus),
-}
-
-impl FrozenHashVersioned {
-    pub fn frozen_hash(&self) -> Hash {
-        match self {
-            FrozenHashVersioned::Current(frozen_hash_status) => frozen_hash_status.frozen_hash,
-        }
-    }
-
-    pub fn is_duplicate_confirmed(&self) -> bool {
-        match self {
-            FrozenHashVersioned::Current(frozen_hash_status) => {
-                frozen_hash_status.is_duplicate_confirmed
-            }
-        }
-    }
-}
-
-#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
-pub struct FrozenHashStatus {
-    pub frozen_hash: Hash,
-    pub is_duplicate_confirmed: bool,
-}
-
 impl Index {
     pub(crate) fn new(slot: Slot) -> Self {
         Self {

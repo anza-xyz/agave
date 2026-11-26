@@ -3,8 +3,9 @@ use {
     crate::{
         blockstore::{
             column::{
-                Column, ColumnName, DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
-                DEPRECATED_TRANSACTION_STATUS_INDEX_NAME, ProtobufColumn, TypedColumn, columns,
+                Column, ColumnName, DEPRECATED_BANK_HASH_COLUMN_NAME,
+                DEPRECATED_PROGRAM_COSTS_COLUMN_NAME, DEPRECATED_TRANSACTION_STATUS_INDEX_NAME,
+                ProtobufColumn, TypedColumn, columns,
             },
             error::{BlockstoreError, Result},
         },
@@ -143,6 +144,10 @@ impl Rocks {
         {
             db.drop_cf(DEPRECATED_TRANSACTION_STATUS_INDEX_NAME)?;
         }
+        // Delete the now unused bank hash column if it is present
+        if db.cf_handle(DEPRECATED_BANK_HASH_COLUMN_NAME).is_some() {
+            db.drop_cf(DEPRECATED_BANK_HASH_COLUMN_NAME)?;
+        }
 
         let rocks = Rocks {
             db,
@@ -177,7 +182,6 @@ impl Rocks {
             new_cf_descriptor::<columns::DuplicateSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::ErasureMeta>(options, oldest_slot),
             new_cf_descriptor::<columns::Orphans>(options, oldest_slot),
-            new_cf_descriptor::<columns::BankHash>(options, oldest_slot),
             new_cf_descriptor::<columns::Root>(options, oldest_slot),
             new_cf_descriptor::<columns::Index>(options, oldest_slot),
             new_cf_descriptor::<columns::ShredData>(options, oldest_slot),
@@ -240,14 +244,13 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 24] {
+    const fn columns() -> [&'static str; 23] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
             columns::DuplicateSlots::NAME,
             columns::Index::NAME,
             columns::Orphans::NAME,
-            columns::BankHash::NAME,
             columns::Root::NAME,
             columns::SlotMeta::NAME,
             columns::ShredData::NAME,

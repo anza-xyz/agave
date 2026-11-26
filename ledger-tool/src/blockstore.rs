@@ -116,7 +116,6 @@ fn analyze_storage(blockstore: &Blockstore) -> Result<()> {
     analyze_column(blockstore, DeadSlots::NAME)?;
     analyze_column(blockstore, DuplicateSlots::NAME)?;
     analyze_column(blockstore, ErasureMeta::NAME)?;
-    analyze_column(blockstore, BankHash::NAME)?;
     analyze_column(blockstore, Root::NAME)?;
     analyze_column(blockstore, Index::NAME)?;
     analyze_column(blockstore, ShredData::NAME)?;
@@ -139,7 +138,6 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
         cf::DeadSlots::NAME => Some(cf::DeadSlots::slot(cf::DeadSlots::index(key))),
         cf::DuplicateSlots::NAME => Some(cf::DuplicateSlots::slot(cf::DuplicateSlots::index(key))),
         cf::ErasureMeta::NAME => Some(cf::ErasureMeta::slot(cf::ErasureMeta::index(key))),
-        cf::BankHash::NAME => Some(cf::BankHash::slot(cf::BankHash::index(key))),
         cf::Root::NAME => Some(cf::Root::slot(cf::Root::index(key))),
         cf::Index::NAME => Some(cf::Index::slot(cf::Index::index(key))),
         cf::ShredData::NAME => Some(cf::ShredData::slot(cf::ShredData::index(key))),
