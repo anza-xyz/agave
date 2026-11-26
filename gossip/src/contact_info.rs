@@ -39,15 +39,15 @@ const SOCKET_TAG_GOSSIP: u8 = 0;
 const SOCKET_TAG_RPC: u8 = 2;
 const SOCKET_TAG_RPC_PUBSUB: u8 = 3;
 const SOCKET_TAG_SERVE_REPAIR: u8 = 4;
-const SOCKET_TAG_SERVE_REPAIR_QUIC: u8 = 1;
+const SOCKET_TAG_SERVE_REPAIR_QUIC: u8 = 1; // not in use
 const SOCKET_TAG_TPU: u8 = 5; // not in use
 const SOCKET_TAG_TPU_FORWARDS: u8 = 6; // not in use
 const SOCKET_TAG_TPU_FORWARDS_QUIC: u8 = 7;
 const SOCKET_TAG_TPU_QUIC: u8 = 8;
-const SOCKET_TAG_TPU_VOTE: u8 = 9;
-const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12; // not advertised by agave
+const SOCKET_TAG_TPU_VOTE: u8 = 9; // not in use
+const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12; // not in use
 const SOCKET_TAG_TVU: u8 = 10;
-const SOCKET_TAG_TVU_QUIC: u8 = 11;
+const SOCKET_TAG_TVU_QUIC: u8 = 11; // not in use
 const SOCKET_TAG_ALPENGLOW: u8 = 13;
 const_assert_eq!(SOCKET_CACHE_SIZE, 14);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
@@ -329,7 +329,6 @@ impl ContactInfo {
         SOCKET_TAG_SERVE_REPAIR,
         SOCKET_TAG_SERVE_REPAIR_QUIC
     );
-    set_socket!(set_tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     set_socket!(set_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
     set_socket!(set_alpenglow, SOCKET_TAG_ALPENGLOW);
 
@@ -484,9 +483,6 @@ impl ContactInfo {
         node.set_tpu(QUIC, (Ipv4Addr::LOCALHOST, 8009)).unwrap();
         node.set_tpu_forwards(QUIC, (Ipv4Addr::LOCALHOST, 8010))
             .unwrap();
-        node.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 8005)).unwrap();
-        node.set_tpu_vote(QUIC, (Ipv4Addr::LOCALHOST, 8007))
-            .unwrap();
         node.set_rpc((Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT))
             .unwrap();
         node.set_rpc_pubsub((Ipv4Addr::LOCALHOST, DEFAULT_RPC_PUBSUB_PORT))
@@ -513,8 +509,6 @@ impl ContactInfo {
         node.set_tvu(QUIC, (addr, port + 3)).unwrap();
         node.set_tpu(QUIC, (addr, port + 6)).unwrap();
         node.set_tpu_forwards(QUIC, (addr, port + 11)).unwrap();
-        node.set_tpu_vote(UDP, (addr, port + 7)).unwrap();
-        node.set_tpu_vote(QUIC, (addr, port + 9)).unwrap();
         node.set_rpc((addr, DEFAULT_RPC_PORT)).unwrap();
         node.set_rpc_pubsub((addr, DEFAULT_RPC_PUBSUB_PORT))
             .unwrap();

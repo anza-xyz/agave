@@ -484,18 +484,6 @@ impl ClusterInfo {
         Ok(())
     }
 
-    pub fn set_tpu_vote(
-        &self,
-        protocol: contact_info::Protocol,
-        tpu_vote_addr: SocketAddr,
-    ) -> Result<(), ContactInfoError> {
-        self.my_contact_info
-            .write()
-            .set_tpu_vote(protocol, tpu_vote_addr)?;
-        self.refresh_my_gossip_contact_info();
-        Ok(())
-    }
-
     pub fn lookup_contact_info<R>(
         &self,
         id: &Pubkey,
@@ -2119,7 +2107,6 @@ pub struct Sockets {
     pub gossip: UdpSocket,            // udp read/write
     pub ip_echo: Option<TcpListener>, // read/write (tcp)
     pub tvu: Vec<UdpSocket>,          // udp read only
-    pub tpu_vote: Vec<UdpSocket>,     // udp read only
     pub broadcast: Vec<UdpSocket>,    // udp write only
     // Socket sending out local repair requests,
     // and receiving repair responses from the cluster.
@@ -2127,12 +2114,9 @@ pub struct Sockets {
     pub retransmit_sockets: Vec<UdpSocket>, // udp write only
     // Socket receiving remote repair requests from the cluster,
     // and sending back repair responses.
-    pub serve_repair: UdpSocket, // udp read/write
-    // Socket sending out local RepairProtocol::AncestorHashes,
-    // and receiving AncestorHashesResponse from the cluster.
-    pub ancestor_hashes_requests: UdpSocket, // udp read/write
-    pub tpu_quic: Vec<UdpSocket>,            // quic read only
-    pub tpu_forwards_quic: Vec<UdpSocket>,   // quic read only
+    pub serve_repair: UdpSocket,           // udp read/write
+    pub tpu_quic: Vec<UdpSocket>,          // quic read only
+    pub tpu_forwards_quic: Vec<UdpSocket>, // quic read only
     // Socket sending out BlockIdRepairType requests,
     // and receiving BlockIdRepairResponse from the cluster.
     pub block_id_repair: UdpSocket,
