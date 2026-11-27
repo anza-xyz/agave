@@ -713,9 +713,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "anza-quinn"
-version = "0.11.12-issue2860.1"
+version = "0.11.12-agave4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd524576ab56786d8241905b12498e8ec6b9a09a58bfe8ef9e9dfcf511aeecf4"
+checksum = "f25081b3a7eac200b72bd5c263506a8180160a1fd8eacfd5b7d1bb62c9e7d8a5"
 dependencies = [
  "anza-quinn-proto",
  "bytes",
@@ -733,9 +733,9 @@ dependencies = [
 
 [[package]]
 name = "anza-quinn-proto"
-version = "0.11.18-issue2860.1"
+version = "0.11.18-agave4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9dfece0ce5ffc483085c0112b8499dabab137e2eb028f1ff3a28d5b24d6d477"
+checksum = "313cd21620afb2a4fc3269b68c28b98da38fdcee943b2771b922524627b2019d"
 dependencies = [
  "bytes",
  "fastbloom",
