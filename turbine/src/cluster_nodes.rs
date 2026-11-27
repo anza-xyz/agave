@@ -92,6 +92,9 @@ pub struct ClusterNodes<T> {
 // on the entire cache.
 type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
 
+/// A cache entry: when it was built and the nodes built for the local identity.
+type CacheEntry<T> = Arc<OnceLock<(Instant, Arc<ClusterNodes<T>>)>>;
+
 pub struct ClusterNodesCache<T> {
     cache: LruCacheOnce<Epoch, (/*as of:*/ Instant, Arc<ClusterNodes<T>>)>,
     ttl: Duration, // Time to live.
@@ -525,15 +528,19 @@ impl<T: 'static> ClusterNodesCache<T> {
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
     ) -> Arc<ClusterNodes<T>> {
+        // The identity may change at runtime (set-identity), so entries built
+        // for another identity must not be reused. The entry's retransmit
+        // tree position and broadcast root peer are derived from it.
+        let self_pubkey = cluster_info.id();
         // Returns the cached entry for the epoch if it is either uninitialized
-        // or not expired yet. Discards the entry if it is already initialized
-        // but also expired.
+        // or not expired yet and was built for the current identity. Discards
+        // the entry if it is already initialized but expired or stale.
         let get_epoch_entry = |cache: &LruCache<Epoch, _>, epoch, ttl| {
-            let entry: &Arc<OnceLock<(Instant, _)>> = cache.get(&epoch)?;
-            let Some((asof, _)) = entry.get() else {
+            let entry: &CacheEntry<T> = cache.get(&epoch)?;
+            let Some((asof, nodes)) = entry.get() else {
                 return Some(entry.clone()); // not initialized yet
             };
-            (asof.elapsed() < ttl).then(|| entry.clone())
+            (asof.elapsed() < ttl && nodes.pubkey == self_pubkey).then(|| entry.clone())
         };
         let epoch_schedule = root_bank.epoch_schedule();
         let epoch = epoch_schedule.get_epoch(shred_slot);
@@ -675,7 +682,10 @@ mod tests {
         itertools::Itertools,
         rand::prelude::IndexedRandom as _,
         solana_hash::Hash as SolanaHash,
-        solana_ledger::shred::{ProcessShredsStats, Shredder},
+        solana_ledger::{
+            genesis_utils::create_genesis_config,
+            shred::{ProcessShredsStats, Shredder},
+        },
         std::{assert_matches, collections::VecDeque, fmt::Debug, hash::Hash},
         test_case::test_case,
     };
@@ -803,6 +813,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A cached entry must not outlive a change of the local identity: the
+    /// retransmit tree position and the broadcast root peer both derive from it.
+    fn check_cluster_nodes_cache_identity_change<T: 'static>() {
+        let mut rng = rand::rng();
+        let (_nodes, _stakes, cluster_info) = make_test_cluster(&mut rng, 10, None);
+        let bank = Bank::new_for_tests(&create_genesis_config(10).genesis_config);
+        // Long TTL, so only an identity change can invalidate the entry.
+        let cache = ClusterNodesCache::<T>::new(/*cap:*/ 8, Duration::from_secs(3600));
+        let get = || cache.get(/*shred_slot:*/ 0, &bank, &bank, &cluster_info);
+
+        let old_id = cluster_info.id();
+        let first = get();
+        assert_eq!(
+            first.pubkey, old_id,
+            "entry must be built for the current identity"
+        );
+        assert!(
+            Arc::ptr_eq(&first, &get()),
+            "control: unchanged identity must reuse the cached entry"
+        );
+
+        let new_keypair = Arc::new(Keypair::new());
+        let new_id = new_keypair.pubkey();
+        cluster_info.set_keypair(new_keypair);
+        let rebuilt = get();
+        assert_eq!(
+            rebuilt.pubkey, new_id,
+            "entry must be rebuilt for the new identity after set_keypair"
+        );
+        assert!(
+            !Arc::ptr_eq(&first, &rebuilt),
+            "the stale entry must not be reused after an identity change"
+        );
+        assert!(
+            Arc::ptr_eq(&rebuilt, &get()),
+            "the rebuilt entry must be cached again"
+        );
+    }
+
+    #[test]
+    fn test_cluster_nodes_cache_identity_change_retransmit() {
+        check_cluster_nodes_cache_identity_change::<RetransmitStage>();
+    }
+
+    #[test]
+    fn test_cluster_nodes_cache_identity_change_broadcast() {
+        check_cluster_nodes_cache_identity_change::<BroadcastStage>();
     }
 
     #[test]
