@@ -1334,7 +1334,7 @@ impl Blockstore {
         write_batch: &mut WriteBatch,
     ) -> Result<()> {
         let slot = shred.slot();
-        let previous_parent_info = ParentInfo::from_slot_meta(slot_meta);
+        let mut previous_parent_info = ParentInfo::from_slot_meta(slot_meta);
 
         let new_parent_info = if shred.index() == 0 {
             ParentInfo::maybe_parse_block_header(shred)
@@ -1348,6 +1348,28 @@ impl Blockstore {
         let Some(new_parent_info) = new_parent_info else {
             return Ok(());
         };
+
+        // A block header that names the genesis block has an all-zero parent
+        // block id, which is indistinguishable in SlotMeta from "no header
+        // recorded" (SlotMeta also carries the shred-header parent slot, and for
+        // a genesis child that is slot 0 with a default block id). So when an
+        // UpdateParent arrives and SlotMeta shows no recorded parent info, read
+        // shred 0 directly: if it holds a block header, validate the UpdateParent
+        // against it. Without this, an UpdateParent naming the same genesis
+        // parent as the header is compared only in the arrival order where the
+        // UpdateParent lands first (visible through has_update_parent); in the
+        // other order the verdict silently differs. A genuinely headerless block
+        // (no header in shred 0) is unaffected, so it stays reparentable.
+        if previous_parent_info.is_none() && new_parent_info.has_update_parent() {
+            previous_parent_info = self
+                .get_shred_from_just_inserted_or_db(
+                    just_inserted_shreds,
+                    ShredId::new(slot, 0, ShredType::Data),
+                    location,
+                )
+                .and_then(|payload| Shred::new_from_serialized_shred(payload).ok())
+                .and_then(|shred_zero| ParentInfo::maybe_parse_block_header(&shred_zero));
+        }
 
         if let Err(err) = new_parent_info.validate_update_parent_slot(slot) {
             self.mark_invalid_parent_info_dead(write_batch, new_parent_info, slot, location, &err)?;

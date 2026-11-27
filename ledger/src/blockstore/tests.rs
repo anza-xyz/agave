@@ -7328,6 +7328,89 @@ fn test_invalid_parent_info_marks_dead(block_header_first: bool, case: (u64, u64
     );
 }
 
+/// A block built on the genesis block names a parent whose block id is all
+/// zeros. Whether an UpdateParent is compared with such a block header must not
+/// depend on which of the two arrives first.
+#[test_case(BlockId::default(), true; "update parent names the block header parent")]
+#[test_case(BlockId::new_unique(), false; "update parent names another block id")]
+fn test_zero_parent_block_id_update_parent_arrival_order(
+    update_parent_block_id: BlockId,
+    expect_dead: bool,
+) {
+    // First slot of a leader window, so that an UpdateParent is allowed.
+    let slot = 4;
+    let parent_slot = 0;
+    let block_header = data_shreds(create_block_header_shreds(
+        slot,
+        parent_slot,
+        BlockId::default(),
+    ));
+    let update_parent = data_shreds(create_update_parent_shreds_with_shred_parent(
+        slot,
+        parent_slot,
+        parent_slot,
+        update_parent_block_id,
+        32,
+        false,
+    ));
+    let block_footer = data_shreds(create_block_footer_shreds(slot, parent_slot, 64));
+    let one_batch =
+        |first: &[Shred], second: &[Shred]| vec![[first, second, &block_footer].concat()];
+
+    let arrival_orders = [
+        (
+            "block header, then update parent",
+            vec![
+                block_header.clone(),
+                update_parent.clone(),
+                block_footer.clone(),
+            ],
+        ),
+        (
+            "update parent, then block header",
+            vec![
+                update_parent.clone(),
+                block_header.clone(),
+                block_footer.clone(),
+            ],
+        ),
+        (
+            "block footer, update parent, then block header",
+            vec![
+                block_footer.clone(),
+                update_parent.clone(),
+                block_header.clone(),
+            ],
+        ),
+        (
+            "one batch, block header first",
+            one_batch(&block_header, &update_parent),
+        ),
+        (
+            "one batch, update parent first",
+            one_batch(&update_parent, &block_header),
+        ),
+    ];
+
+    for (arrival_order, batches) in arrival_orders {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        for batch in batches {
+            blockstore.insert_shreds(batch, false).unwrap();
+        }
+        assert_eq!(blockstore.is_dead(slot), expect_dead, "{arrival_order}");
+        assert_eq!(blockstore.is_full(slot), !expect_dead, "{arrival_order}");
+        if !expect_dead {
+            let parent_info = blockstore
+                .get_parent_info(slot, BlockLocation::Original)
+                .unwrap()
+                .unwrap();
+            assert_eq!(parent_info.parent_block.block_id, update_parent_block_id);
+            assert_eq!(parent_info.replay_fec_set_index, 32, "{arrival_order}");
+        }
+    }
+}
+
 #[test]
 fn test_invalid_block_header_parent_info_marks_dead() {
     let slot = 1000;
