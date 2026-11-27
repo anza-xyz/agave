@@ -89,21 +89,21 @@ pub fn spawn_worker(
     max_reconnect_attempts: usize,
     handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
-    cancel: CancellationToken,
+    cancel: &CancellationToken,
 ) -> WorkerInfo {
     let (transaction_sender, transaction_receiver) = mpsc::channel(worker_channel_size);
     let endpoint = endpoint.clone();
     let peer = *peer;
     let cancel = cancel.child_token();
 
-    let (mut worker, cancel) = ConnectionWorker::new(
+    let mut worker = ConnectionWorker::new(
         endpoint,
         peer,
         transaction_receiver,
         max_reconnect_attempts,
         stats,
         handshake_timeout,
-        cancel,
+        cancel.clone(),
     );
     let handle = tracker.spawn(async move {
         worker.run().await;
@@ -191,6 +191,8 @@ impl WorkersCache {
         handshake_timeout: Duration,
         stats: Arc<SendTransactionStats>,
     ) -> Option<ShutdownWorker> {
+        // Worker tokens are children of `self.cancel`, so after cancellation
+        // every worker reports inactive; don't spawn replacements.
         if self.cancel.is_cancelled() {
             return None;
         }
@@ -211,7 +213,7 @@ impl WorkersCache {
             max_reconnect_attempts,
             handshake_timeout,
             stats,
-            self.cancel.clone(),
+            &self.cancel,
         );
 
         self.push(peer, worker)
@@ -384,14 +386,14 @@ mod tests {
             net::{Ipv4Addr, SocketAddr},
             num::NonZeroUsize,
             pin::pin,
-            sync::{
-                Arc,
-                atomic::{AtomicBool, Ordering},
-            },
+            sync::Arc,
             time::Duration,
         },
         tokio::{
-            sync::{Notify, mpsc},
+            sync::{
+                mpsc,
+                oneshot::{self, error::TryRecvError},
+            },
             time::{Instant, sleep, timeout},
         },
         tokio_util::{sync::CancellationToken, task::TaskTracker},
@@ -424,7 +426,7 @@ mod tests {
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
-            CancellationToken::new(),
+            &CancellationToken::new(),
         );
 
         timeout(TEST_MAX_TIME, worker_info.handle)
@@ -458,7 +460,7 @@ mod tests {
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
-            CancellationToken::new(),
+            &CancellationToken::new(),
         );
 
         timeout(TEST_MAX_TIME, worker_info.shutdown())
@@ -490,7 +492,7 @@ mod tests {
             max_reconnect_attempts,
             DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
-            cancel.clone(),
+            &cancel,
         );
         assert!(cache.push(peer, worker).is_none());
 
@@ -532,52 +534,48 @@ mod tests {
     // evicted from the cache and whose shutdown is still in progress.
     #[tokio::test]
     async fn test_shutdown_waits_for_evicted_workers() {
-        let endpoint = create_test_endpoint();
-
         let cancel = CancellationToken::new();
         let mut cache = WorkersCache::new(NonZeroUsize::new(1).unwrap(), cancel.clone());
 
-        let port_range = unique_port_range_for_tests(2);
-        let peer1: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start);
-        let peer2: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port_range.start + 1);
+        let peer1: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 8000);
+        let peer2: SocketAddr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 8001);
 
         let (tx1, _rx1) = mpsc::channel(1);
         let worker1_cancel = cancel.child_token();
-        let worker1_cancelled = Arc::new(Notify::new());
-        let worker1_release = Arc::new(Notify::new());
-        let evicted_worker_finished = Arc::new(AtomicBool::new(false));
+        let (cancelled_tx, cancelled_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let (finished_tx, mut finished_rx) = oneshot::channel();
 
-        let worker1_cancel_clone = worker1_cancel.clone();
-        let worker1_cancelled_clone = worker1_cancelled.clone();
-        let worker1_release_clone = worker1_release.clone();
-        let evicted_worker_finished_clone = evicted_worker_finished.clone();
-        let handle1 = cache.tracker.spawn(async move {
-            worker1_cancel_clone.cancelled().await;
-            worker1_cancelled_clone.notify_one();
-            worker1_release_clone.notified().await;
-            evicted_worker_finished_clone.store(true, Ordering::SeqCst);
+        let handle1 = tokio::spawn({
+            let worker1_cancel = worker1_cancel.clone();
+            async move {
+                worker1_cancel.cancelled().await;
+                let _ = cancelled_tx.send(());
+                let _ = release_rx.await;
+                let _ = finished_tx.send(());
+            }
         });
         let worker1 = WorkerInfo::new(tx1, handle1, worker1_cancel);
         assert!(cache.push(peer1, worker1).is_none());
 
-        let worker_channel_size = 1;
-        let max_reconnect_attempts = 0;
-        let stats = Arc::new(SendTransactionStats::default());
+        let (tx2, _rx2) = mpsc::channel(1);
+        let worker2_cancel = cancel.child_token();
+        let handle2 = tokio::spawn({
+            let worker2_cancel = worker2_cancel.clone();
+            async move {
+                worker2_cancel.cancelled().await;
+            }
+        });
+        let worker2 = WorkerInfo::new(tx2, handle2, worker2_cancel);
         let evicted = cache
-            .ensure_worker(
-                peer2,
-                &endpoint,
-                worker_channel_size,
-                max_reconnect_attempts,
-                DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
-                stats,
-            )
+            .push(peer2, worker2)
             .expect("first worker should be evicted");
         shutdown_worker(evicted);
 
-        timeout(TEST_MAX_TIME, worker1_cancelled.notified())
+        timeout(TEST_MAX_TIME, cancelled_rx)
             .await
-            .unwrap_or_else(|_| panic!("Evicted worker was not cancelled in {TEST_MAX_TIME:?}."));
+            .unwrap_or_else(|_| panic!("Evicted worker was not cancelled in {TEST_MAX_TIME:?}."))
+            .expect("worker should signal cancellation");
 
         {
             let mut shutdown_fut = pin!(cache.shutdown());
@@ -587,16 +585,18 @@ mod tests {
                     .is_err(),
                 "shutdown should wait for evicted worker to finish"
             );
-            assert!(!evicted_worker_finished.load(Ordering::SeqCst));
+            assert_eq!(finished_rx.try_recv(), Err(TryRecvError::Empty));
 
-            worker1_release.notify_one();
+            release_tx
+                .send(())
+                .expect("worker should be waiting for release");
 
             timeout(TEST_MAX_TIME, shutdown_fut)
                 .await
                 .unwrap_or_else(|_| panic!("Should stop in less than {TEST_MAX_TIME:?}."));
         }
 
-        assert!(evicted_worker_finished.load(Ordering::SeqCst));
+        assert_eq!(finished_rx.try_recv(), Ok(()));
         assert!(cache.tracker.is_empty());
         assert!(cache.tracker.is_closed());
     }
