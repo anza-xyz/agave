@@ -425,7 +425,7 @@ pub fn process_blockstore_from_root(
     entry_notification_sender: Option<&EntryNotifierSender>,
     snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(), BlockstoreProcessorError> {
-    let (start_slot, start_slot_hash) = {
+    let start_slot = {
         // Starting slot must be a root, and thus has no parents
         assert_eq!(bank_forks.read().unwrap().banks().len(), 1);
         let bank = bank_forks.read().unwrap().root_bank();
@@ -434,7 +434,7 @@ pub fn process_blockstore_from_root(
             bank.write_cost_tracker().unwrap().set_limits_max();
         }
         assert!(bank.parent().is_none());
-        (bank.slot(), bank.hash())
+        bank.slot()
     };
 
     info!("Processing ledger from slot {start_slot}...");
@@ -444,10 +444,7 @@ pub fn process_blockstore_from_root(
     // qualifying children are marked as connected
     if blockstore.is_primary_access() {
         blockstore
-            .mark_slots_as_if_rooted_normally_at_startup(
-                vec![(start_slot, Some(start_slot_hash))],
-                true,
-            )
+            .set_roots(std::iter::once(&start_slot))
             .expect("Couldn't mark start_slot as root in startup");
         blockstore
             .set_and_chain_connected_on_root_and_next_slots(start_slot)
@@ -1747,9 +1744,6 @@ fn process_bank_0(
             .expect("block id for a full slot must exist"),
     )));
     bank0.freeze();
-    if blockstore.is_primary_access() {
-        blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
-    }
 
     if let Some(transaction_status_sender) = transaction_status_sender {
         transaction_status_sender.send_transaction_status_freeze_message(bank0);
@@ -2130,7 +2124,8 @@ fn load_frozen_forks(
                         bank.total_epoch_stake(),
                         &bank.vote_accounts(),
                         &migration_status,
-                    ).and_then(|supermajority_root| {
+                    )
+                    .and_then(|supermajority_root| {
                         if supermajority_root > root {
                             // If there's a cluster confirmed root greater than our last
                             // replayed root, then because the cluster confirmed root should
@@ -2141,18 +2136,22 @@ fn load_frozen_forks(
                             // is drastically wrong
                             assert!(cluster_root_bank.ancestors.contains_key(&root));
                             info!(
-                                "blockstore processor found new cluster confirmed root: {}, observed in bank: {}",
-                                cluster_root_bank.slot(), bank.slot()
+                                "blockstore processor found new cluster confirmed root: {}, \
+                                 observed in bank: {}",
+                                cluster_root_bank.slot(),
+                                bank.slot()
                             );
 
                             // Ensure cluster-confirmed root and parents are set as root in blockstore
                             let mut rooted_slots = vec![];
                             let mut new_root_bank = cluster_root_bank.clone_without_scheduler();
                             loop {
-                                if new_root_bank.slot() == root { break; } // Found the last root in the chain, yay!
+                                if new_root_bank.slot() == root {
+                                    break;
+                                } // Found the last root in the chain, yay!
                                 assert!(new_root_bank.slot() > root);
 
-                                rooted_slots.push((new_root_bank.slot(), Some(new_root_bank.hash())));
+                                rooted_slots.push(new_root_bank.slot());
                                 // As noted, the cluster confirmed root should be descended from
                                 // our last root; therefore parent should be set
                                 new_root_bank = new_root_bank.parent().unwrap();
@@ -2160,8 +2159,8 @@ fn load_frozen_forks(
                             total_rooted_slots += rooted_slots.len();
                             if blockstore.is_primary_access() {
                                 blockstore
-                                    .mark_slots_as_if_rooted_normally_at_startup(rooted_slots, true)
-                                    .expect("Blockstore::mark_slots_as_if_rooted_normally_at_startup() should succeed");
+                                    .set_roots(rooted_slots.iter())
+                                    .expect("Blockstore::set_roots() should succeed");
                             }
                             Some(cluster_root_bank)
                         } else {
@@ -2173,7 +2172,8 @@ fn load_frozen_forks(
                 } else {
                     None
                 }
-            }.filter(|new_root_bank| {
+            }
+            .filter(|new_root_bank| {
                 // In the case that we've restarted while the migrationary period is going on but before alpenglow
                 // is enabled, don't root blocks past the migration slot
                 migration_status.should_root_during_startup(new_root_bank.slot())
@@ -2449,10 +2449,6 @@ pub fn process_single_slot(
 
     if let Some(slot_callback) = &opts.slot_callback {
         slot_callback(bank);
-    }
-
-    if blockstore.is_primary_access() {
-        blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     }
 
     if let Some(transaction_status_sender) = transaction_status_sender {

@@ -2403,10 +2403,7 @@ fn reconcile_blockstore_roots_with_hard_fork(
         "Reconciling slots as root based on hard-fork root: {new_roots:?} (hard fork: \
          {hard_fork_root}, blockstore: {last_blockstore_root})"
     );
-    blockstore.mark_slots_as_if_rooted_normally_at_startup(
-        new_roots.into_iter().map(|root| (root, None)).collect(),
-        false,
-    )?;
+    blockstore.set_roots(new_roots.iter())?;
     *last_blockstore_root = blockstore.max_root();
     Ok(())
 }

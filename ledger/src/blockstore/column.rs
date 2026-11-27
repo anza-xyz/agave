@@ -14,6 +14,7 @@ use {
 
 pub(crate) const DEPRECATED_PROGRAM_COSTS_COLUMN_NAME: &str = "program_costs";
 pub(crate) const DEPRECATED_TRANSACTION_STATUS_INDEX_NAME: &str = "transaction_status_index";
+pub(crate) const DEPRECATED_BANK_HASH_COLUMN_NAME: &str = "bank_hashes";
 
 // To add a new column, declare the type below and implement the applicable
 // traits for it. At the very least, Column and ColumnName will be necessary.
@@ -97,21 +98,6 @@ pub mod columns {
     /// * index type: `crate::shred::ErasureSetId` `(Slot, fec_set_index: u64)`
     /// * value type: [`blockstore_meta::ErasureMeta`]
     pub struct ErasureMeta;
-
-    #[derive(Debug)]
-    /// The bank hash column.
-    ///
-    /// This column family persists the bank hash of a given slot.  Note that
-    /// not every slot has a bank hash (e.g., a dead slot.)
-    ///
-    /// The bank hash of a slot is derived from hashing the delta state of all
-    /// the accounts in a slot combined with the bank hash of its parent slot.
-    /// A bank hash of a slot essentially represents all the account states at
-    /// that slot.
-    ///
-    /// * index type: `u64` (see [`SlotColumn`])
-    /// * value type: [`blockstore_meta::FrozenHashVersioned`]
-    pub struct BankHash;
 
     #[derive(Debug)]
     /// The root column.
@@ -647,14 +633,6 @@ impl ColumnName for columns::Orphans {
 }
 impl TypedColumn for columns::Orphans {
     type Type = bool;
-}
-
-impl SlotColumn for columns::BankHash {}
-impl ColumnName for columns::BankHash {
-    const NAME: &'static str = "bank_hashes";
-}
-impl TypedColumn for columns::BankHash {
-    type Type = blockstore_meta::FrozenHashVersioned;
 }
 
 impl SlotColumn for columns::Root {}

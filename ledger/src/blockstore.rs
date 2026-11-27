@@ -408,7 +408,6 @@ pub struct Blockstore {
     alt_merkle_root_meta_cf: LedgerColumn<cf::AlternateMerkleRootMeta>,
 
     // Block status column families
-    bank_hash_cf: LedgerColumn<cf::BankHash>,
     optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
     roots_cf: LedgerColumn<cf::Root>,
     dead_slots_cf: LedgerColumn<cf::DeadSlots>,
@@ -792,7 +791,6 @@ impl Blockstore {
         let alt_index_cf = db.column();
         let alt_merkle_root_meta_cf = db.column();
 
-        let bank_hash_cf = db.column();
         let optimistic_slots_cf = db.column();
         let roots_cf = db.column();
         let dead_slots_cf = db.column();
@@ -819,7 +817,6 @@ impl Blockstore {
             ledger_path: ledger_path.to_path_buf(),
             db,
             address_signatures_cf,
-            bank_hash_cf,
             block_height_cf,
             blocktime_cf,
             code_shred_cf,
@@ -1651,7 +1648,6 @@ impl Blockstore {
         self.alt_index_cf.submit_rocksdb_cf_metrics();
         self.alt_merkle_root_meta_cf.submit_rocksdb_cf_metrics();
 
-        self.bank_hash_cf.submit_rocksdb_cf_metrics();
         self.optimistic_slots_cf.submit_rocksdb_cf_metrics();
         self.roots_cf.submit_rocksdb_cf_metrics();
         self.dead_slots_cf.submit_rocksdb_cf_metrics();
@@ -5491,38 +5487,6 @@ impl Blockstore {
         }
     }
 
-    pub fn insert_bank_hash(&self, slot: Slot, frozen_hash: Hash, is_duplicate_confirmed: bool) {
-        if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap()
-            && prev_value.frozen_hash() == frozen_hash
-            && prev_value.is_duplicate_confirmed()
-        {
-            // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
-            // which may happen on startup when processing from blockstore processor because the
-            // blocks may not reflect earlier observed gossip votes from before the restart.
-            return;
-        }
-        let data = FrozenHashVersioned::Current(FrozenHashStatus {
-            frozen_hash,
-            is_duplicate_confirmed,
-        });
-        self.bank_hash_cf.put(slot, &data).unwrap()
-    }
-
-    pub fn get_bank_hash(&self, slot: Slot) -> Option<Hash> {
-        self.bank_hash_cf
-            .get(slot)
-            .unwrap()
-            .map(|versioned| versioned.frozen_hash())
-    }
-
-    pub fn is_duplicate_confirmed(&self, slot: Slot) -> bool {
-        self.bank_hash_cf
-            .get(slot)
-            .unwrap()
-            .map(|versioned| versioned.is_duplicate_confirmed())
-            .unwrap_or(false)
-    }
-
     pub fn insert_optimistic_slot(
         &self,
         slot: Slot,
@@ -5550,24 +5514,6 @@ impl Blockstore {
         Ok(iter.take(num).collect())
     }
 
-    pub fn set_duplicate_confirmed_slots_and_hashes(
-        &self,
-        duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
-    ) -> Result<()> {
-        let mut write_batch = self.get_write_batch();
-        for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
-            let data = FrozenHashVersioned::Current(FrozenHashStatus {
-                frozen_hash,
-                is_duplicate_confirmed: true,
-            });
-            self.bank_hash_cf
-                .put_in_batch(&mut write_batch, slot, &data)?;
-        }
-
-        self.write_batch(write_batch)?;
-        Ok(())
-    }
-
     pub fn set_roots<'a>(&self, rooted_slots: impl Iterator<Item = &'a Slot>) -> Result<()> {
         let mut write_batch = self.get_write_batch();
         let mut max_new_rooted_slot = 0;
@@ -5579,22 +5525,6 @@ impl Blockstore {
         self.write_batch(write_batch)?;
         self.max_root
             .fetch_max(max_new_rooted_slot, Ordering::Relaxed);
-        Ok(())
-    }
-
-    pub fn mark_slots_as_if_rooted_normally_at_startup(
-        &self,
-        slots: Vec<(Slot, Option<Hash>)>,
-        with_hash: bool,
-    ) -> Result<()> {
-        self.set_roots(slots.iter().map(|(slot, _hash)| slot))?;
-        if with_hash {
-            self.set_duplicate_confirmed_slots_and_hashes(
-                slots
-                    .into_iter()
-                    .map(|(slot, maybe_hash)| (slot, maybe_hash.unwrap())),
-            )?;
-        }
         Ok(())
     }
 

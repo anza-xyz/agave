@@ -284,8 +284,6 @@ impl Blockstore {
     ) -> Result<()> {
         self.meta_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
-        self.bank_hash_cf
-            .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.roots_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.data_shred_cf
@@ -364,7 +362,6 @@ impl Blockstore {
 
     fn purge_files_in_range(&self, from_slot: Slot, to_slot: Slot) -> Result<()> {
         self.meta_cf.delete_file_in_range(from_slot, to_slot)?;
-        self.bank_hash_cf.delete_file_in_range(from_slot, to_slot)?;
         self.roots_cf.delete_file_in_range(from_slot, to_slot)?;
         self.data_shred_cf
             .delete_file_in_range(from_slot, to_slot)?;
@@ -958,15 +955,6 @@ pub mod tests {
                 .unwrap_or(true)
         );
 
-        assert!(
-            blockstore
-                .bank_hash_cf
-                .iter(IteratorMode::Start)
-                .unwrap()
-                .next()
-                .map(|(slot, _)| slot >= min_slot)
-                .unwrap_or(true)
-        );
         assert!(
             blockstore
                 .optimistic_slots_cf
