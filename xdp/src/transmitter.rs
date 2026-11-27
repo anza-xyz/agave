@@ -332,6 +332,19 @@ impl XdpSender {
         #[cfg(not(target_os = "linux"))]
         true
     }
+
+    /// Senders backed by plain channels instead of TX loops, with the
+    /// receivers a TX loop would drain. The receivers must outlive the test.
+    #[cfg(all(target_os = "linux", feature = "dev-context-only-utils"))]
+    pub fn new_with_channels(
+        sender_count: usize,
+        capacity: usize,
+    ) -> (Self, Vec<tx_loop::TxReceiver<BytesTxPacket>>) {
+        let (senders, receivers) = (0..sender_count)
+            .map(|_| tx_loop::channel(capacity))
+            .unzip();
+        (XdpSender { senders }, receivers)
+    }
 }
 
 pub struct Transmitter {
@@ -819,8 +832,7 @@ mod tests {
 
     /// The receivers are returned so they stay connected for the lifetime of the test.
     fn sender_with_receivers(sender_count: usize) -> (XdpSender, Vec<TxReceiver<BytesTxPacket>>) {
-        let (senders, receivers) = (0..sender_count).map(|_| tx_loop::channel(1)).unzip();
-        (XdpSender { senders }, receivers)
+        XdpSender::new_with_channels(sender_count, 1)
     }
 
     fn packet() -> BytesTxPacket {

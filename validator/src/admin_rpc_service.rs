@@ -1,4 +1,5 @@
 use {
+    crate::shred_receiver_addresses::load_shred_receiver_addresses,
     agave_event_system::stream_policy::StreamPolicy,
     agave_votor::{
         event::VotorEvent, vote_history::VoteHistory, vote_history_storage::VoteHistoryStorage,
@@ -259,6 +260,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "setStakedNodesOverrides")]
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()>;
+
+    #[rpc(meta, name = "setShredReceiverAddresses")]
+    fn set_shred_receiver_addresses(&self, meta: Self::Metadata, path: String) -> Result<()>;
 
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
@@ -658,6 +662,23 @@ impl AdminRpc for AdminRpcImpl {
         info!("Staked nodes overrides loaded from {path}");
         debug!("overrides map: {write_staked_nodes:?}");
         Ok(())
+    }
+
+    fn set_shred_receiver_addresses(&self, meta: Self::Metadata, path: String) -> Result<()> {
+        // A file that does not load leaves the current list in place.
+        let addrs = load_shred_receiver_addresses(&path).map_err(|err| {
+            jsonrpc_core::error::Error::invalid_params(format!(
+                "Failed to load shred receiver addresses from {path}: {err}"
+            ))
+        })?;
+        meta.with_post_init(|post_init| {
+            post_init.shred_receivers.set(&addrs);
+            info!(
+                "Shred receiver addresses loaded from {path}: {:?}",
+                &addrs[..]
+            );
+            Ok(())
+        })
     }
 
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
@@ -1180,7 +1201,7 @@ mod tests {
         agave_snapshots::snapshot_config::SnapshotConfig,
         agave_votor::event::VotorEventSender,
         crossbeam_channel::bounded,
-        serde_json::Value,
+        serde_json::{Value, json},
         solana_accounts_db::{
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             accounts_index::AccountSecondaryIndexes,
@@ -1205,6 +1226,7 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
+        solana_turbine::broadcast_stage::ShredReceivers,
         std::{assert_matches, collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
         tokio::sync::mpsc,
     };
@@ -1287,6 +1309,7 @@ mod tests {
                     snapshot_controller,
                     blockstore,
                     votor_event_sender,
+                    shred_receivers: ShredReceivers::default(),
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
@@ -1404,6 +1427,51 @@ mod tests {
                 .id(),
             old_identity
         );
+    }
+
+    #[test]
+    fn test_set_shred_receiver_addresses() {
+        let RpcHandler { io, meta } = RpcHandler::start_with_config(TestConfig::default());
+        let shred_receivers = meta
+            .with_post_init(|p| Ok(p.shred_receivers.clone()))
+            .unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let request = || {
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "setShredReceiverAddresses",
+                "params": [file.path().to_str().unwrap()],
+            })
+            .to_string()
+        };
+        let call = || {
+            let response = io.handle_request_sync(&request(), meta.clone()).unwrap();
+            serde_json::from_str::<Value>(&response).unwrap()
+        };
+
+        std::fs::write(file.path(), "127.0.0.1:9001\n127.0.0.1:9002\n").unwrap();
+        assert!(call()["error"].is_null());
+        let expected: Vec<SocketAddr> = vec![
+            "127.0.0.1:9001".parse().unwrap(),
+            "127.0.0.1:9002".parse().unwrap(),
+        ];
+        assert_eq!(&shred_receivers.get()[..], &expected[..]);
+
+        // A file that does not validate is refused and the list stays.
+        std::fs::write(file.path(), "127.0.0.1:0\n").unwrap();
+        assert!(
+            call()["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("nonzero port")
+        );
+        assert_eq!(&shred_receivers.get()[..], &expected[..]);
+
+        // An empty file removes every receiver.
+        std::fs::write(file.path(), "").unwrap();
+        assert!(call()["error"].is_null());
+        assert!(shred_receivers.get().is_empty());
     }
 
     #[test]
