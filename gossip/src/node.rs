@@ -206,9 +206,6 @@ impl Node {
             2,
         )
         .expect("broadcast multi_bind");
-        let (_, ancestor_hashes_requests) =
-            bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.read_write)
-                .expect("ancestor_hashes_requests bind");
 
         let (votor_server_port, votor_server_primary) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_configs.primarily_read_quic)
@@ -303,13 +300,11 @@ impl Node {
             votor_server,
             gossip,
             tvu: tvu_sockets,
-            tpu_vote: vec![],
             broadcast,
             repair,
             retransmit_sockets,
             serve_repair,
             ip_echo: Some(ip_echo),
-            ancestor_hashes_requests,
             block_id_repair,
             tpu_quic,
             tpu_forwards_quic,

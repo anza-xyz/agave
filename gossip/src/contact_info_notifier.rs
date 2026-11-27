@@ -176,8 +176,6 @@ mod tests {
         info.set_rpc_pubsub(addr(8900)).unwrap();
         info.set_tpu(Protocol::QUIC, addr(8004)).unwrap();
         info.set_tpu_forwards(Protocol::QUIC, addr(8005)).unwrap();
-        info.set_tpu_vote(Protocol::UDP, addr(8006)).unwrap();
-        info.set_tpu_vote(Protocol::QUIC, addr(8007)).unwrap();
         info.set_tvu(Protocol::UDP, addr(8008)).unwrap();
         info.set_tvu(Protocol::QUIC, addr(8009)).unwrap();
         info.set_serve_repair(Protocol::UDP, addr(8010)).unwrap();
@@ -190,8 +188,6 @@ mod tests {
         assert_eq!(snap.rpc_pubsub, Some(addr(8900)));
         assert_eq!(snap.tpu_quic, Some(addr(8004)));
         assert_eq!(snap.tpu_forwards_quic, Some(addr(8005)));
-        assert_eq!(snap.tpu_vote_udp, Some(addr(8006)));
-        assert_eq!(snap.tpu_vote_quic, Some(addr(8007)));
         assert_eq!(snap.tvu_udp, Some(addr(8008)));
         assert_eq!(snap.tvu_quic, Some(addr(8009)));
         assert_eq!(snap.serve_repair_udp, Some(addr(8010)));
