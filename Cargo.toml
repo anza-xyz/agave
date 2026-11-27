@@ -364,7 +364,7 @@ solana-account-decoder-client-types = { path = "account-decoder-client-types", v
 solana-account-info = "3.2.0"
 solana-account-view = "3.0.0"
 solana-accounts-db = { path = "accounts-db", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
-solana-address = "2.9.0"
+solana-address = "2.9.1"
 solana-address-lookup-table-interface = "4.0.0"
 solana-banks-client = { path = "banks-client", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 solana-banks-interface = { path = "banks-interface", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
