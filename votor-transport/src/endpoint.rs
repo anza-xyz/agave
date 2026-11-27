@@ -484,6 +484,15 @@ mod tests {
                 .expect("This channel must never overflow");
         }
 
+        fn unicast(&self, peer: Pubkey, payload: &Bytes) {
+            self.egress
+                .try_send(EgressMessage::Unicast {
+                    peer,
+                    message: payload.clone(),
+                })
+                .expect("This channel must never overflow");
+        }
+
         fn set_peer_list(&self, map: HashMap<Pubkey, Option<SocketAddr>>) {
             self.set_peer_list_with_push(map, true);
         }
@@ -587,12 +596,22 @@ mod tests {
         sender: &Node,
         payload: &Bytes,
         receiver: &Receiver<Datagram>,
+        cond: impl FnMut(&Datagram) -> Option<T>,
+        timeout: Duration,
+    ) -> Result<T, ()> {
+        retry_until_received(|| sender.send(payload), receiver, cond, timeout)
+    }
+
+    /// Call `send` until `cond` matches a received datagram or `timeout` elapses.
+    fn retry_until_received<T>(
+        mut send: impl FnMut(),
+        receiver: &Receiver<Datagram>,
         mut cond: impl FnMut(&Datagram) -> Option<T>,
         timeout: Duration,
     ) -> Result<T, ()> {
         let start = Instant::now();
         while start.elapsed() < timeout {
-            sender.send(payload);
+            send();
             if let Ok(item) = receiver.recv_timeout(Duration::from_millis(100))
                 && let Some(t) = cond(&item)
             {
@@ -731,6 +750,51 @@ mod tests {
             (d.peer_pubkey == pubkey_b && d.message == from_b).then_some(())
         })
         .expect("A never received B's datagram");
+    }
+
+    #[test]
+    fn test_unicast_reaches_only_target_peer() {
+        let rt = make_runtime_for_tests();
+        let keypair_a = Keypair::new();
+        let keypair_b = Keypair::new();
+        let keypair_c = Keypair::new();
+        let pubkey_a = keypair_a.pubkey();
+        let pubkey_b = keypair_b.pubkey();
+        let pubkey_c = keypair_c.pubkey();
+        let node_a = Node::spawn_node(&rt, keypair_a, HashMap::new(), HIGH_PPS);
+        let node_b = Node::spawn_node(&rt, keypair_b, HashMap::new(), HIGH_PPS);
+        let node_c = Node::spawn_node(&rt, keypair_c, HashMap::new(), HIGH_PPS);
+        node_b.set_peer_list(peer_list_of(pubkey_a, node_a.addr));
+        node_c.set_peer_list(peer_list_of(pubkey_a, node_a.addr));
+        node_a.set_peer_list(HashMap::from([
+            (pubkey_b, Some(node_b.addr)),
+            (pubkey_c, Some(node_c.addr)),
+        ]));
+
+        let warmup = Bytes::from_static(b"warmup");
+        for receiver in [&node_b.ingress_receiver, &node_c.ingress_receiver] {
+            send_until_received(&node_a, &warmup, receiver, |d| {
+                (d.peer_pubkey == pubkey_a && d.message == warmup).then_some(())
+            })
+            .expect("A never connected to a peer");
+        }
+        drain_backlog(&node_b.ingress_receiver);
+        drain_backlog(&node_c.ingress_receiver);
+
+        let unicast = Bytes::from_static(b"unicast-to-B");
+        retry_until_received(
+            || node_a.unicast(pubkey_b, &unicast),
+            &node_b.ingress_receiver,
+            |d| (d.peer_pubkey == pubkey_a && d.message == unicast).then_some(()),
+            Duration::from_secs(5),
+        )
+        .expect("B never received the unicast");
+        while let Ok(d) = node_c
+            .ingress_receiver
+            .recv_timeout(Duration::from_millis(300))
+        {
+            assert_ne!(d.message, unicast, "a unicast to B must not reach C");
+        }
     }
 
     /// A peer in the server's peer_list is admitted; one that is not is rejected
