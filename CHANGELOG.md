@@ -58,6 +58,23 @@ Release channels have their own copy of this changelog:
 * `solana-keygen verify` now returns an error instead of panicking when the public key isn't
   valid base58
 
+### Geyser
+
+#### Breaking
+
+* Startup replay now emits `SlotStatus::CreatedBank` after constructing each child bank from the
+  local ledger, before replaying its entries. A plugin handling both `notify_bank_creation` and
+  `CreatedBank` can receive both, in that order, for the same bank ID.
+  Startup replay also emits block metadata after the bank freezes and passes its bank-hash check.
+  A bank that fails verification receives no metadata. Both new notifications exclude bank 0 and
+  the restored snapshot root.
+* Plugins that persist state across validator restarts can receive `CreatedBank` and block
+  metadata again for a previously observed slot. Bank IDs are unique only within one validator
+  run. These callbacks run synchronously during startup replay. Slow callbacks delay startup,
+  and plugins loaded later receive no backfill.
+* The unstable `solana-ledger` API adds a replayed entry count to `ProcessSlotCallback` and a
+  `new_bank_callback` field to `ProcessOptions`.
+
 ### solana-client
 
 #### Breaking
@@ -210,14 +227,6 @@ Release channels have their own copy of this changelog:
   Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
   can fill the shared channel and cause updates to be dropped for all subscribed plugins.
   Plugins loaded later can learn about unchanged nodes from subsequent republishes.
-* Banks replayed from the local ledger at startup are now announced like banks replayed by
-  `ReplayStage`: `SlotStatus::CreatedBank` when the bank is created, and block metadata once it is
-  frozen and its hash verified. The snapshot root and bank 0 are not announced; a bank that fails
-  verification is created but gets no metadata. Plugin callbacks run on the startup replay thread,
-  so a slow plugin delays startup. Plugins loaded after startup replay do not receive these
-  notifications.
-* `solana-ledger` (unstable API): `ProcessSlotCallback` now also receives the slot's entry count,
-  and `ProcessOptions` has a new `new_bank_callback`.
 
 ## 4.4.2
 
