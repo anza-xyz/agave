@@ -5626,20 +5626,6 @@ impl Blockstore {
         self.dead_slots_cf.delete(slot)
     }
 
-    pub fn remove_slot_duplicate_proof(&self, slot: Slot) -> Result<()> {
-        self.duplicate_slots_cf.delete(slot)
-    }
-
-    pub fn get_first_duplicate_proof(&self) -> Option<(Slot, DuplicateSlotProof)> {
-        let mut iter = self
-            .duplicate_slots_cf
-            .iter(IteratorMode::From(0, IteratorDirection::Forward))
-            .unwrap();
-        iter.next().map(|(slot, proof_bytes)| {
-            (slot, cf::DuplicateSlots::deserialize(&proof_bytes).unwrap())
-        })
-    }
-
     pub fn store_duplicate_slot<S, T>(&self, slot: Slot, shred1: S, shred2: T) -> Result<()>
     where
         shred::Payload: From<S> + From<T>,
