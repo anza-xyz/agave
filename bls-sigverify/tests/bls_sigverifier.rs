@@ -1420,7 +1420,7 @@ fn test_banlist_updates_for_invalid_votes() {
 fn test_banlist_updates_for_invalid_certificates() {
     let mut ctx = TestContext::new();
 
-    // Either compression or sort flags cause the certificate to be skipped without banning.
+    // Either compression or sort flags cause the certificate fail verification and get banned.
     let invalid_signature_bytes = [0x00, 0x01, 0x20, 0x80, 0xA0, 0xA1];
     let invalid_indexes = 0..11;
     let exempt_indexes = [2, 3, 4, 5, 8, 9, 10];
@@ -1484,10 +1484,7 @@ fn test_banlist_updates_for_invalid_certificates() {
     let banned = ctx.banned_pubkeys();
     for (i, (_, sender)) in messages.iter().enumerate() {
         if exempt_indexes.contains(&i) {
-            assert!(
-                !banned.contains(sender),
-                "rollout-exempt sender {i} should not be banned"
-            );
+            assert!(banned.contains(sender));
         } else if invalid_indexes.contains(&i) {
             assert!(
                 banned.contains(sender),

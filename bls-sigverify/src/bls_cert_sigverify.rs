@@ -144,14 +144,6 @@ fn verify_cert_group(
     let mut failures = Vec::new();
 
     for cert_payload in certs {
-        // Agave 4.4 can accept a compressed encoding in this uncompressed
-        // Signature field and relay the original certificate bytes. The sender
-        // may therefore be an honest 4.4 relay. Agave 4.5 rejects this encoding,
-        // so reject without banning during rollout. Remove this exception in 5.0.
-        let signature_has_compression_or_sort_flag = cert_payload.cert.signature.0[0] & 0xA0 != 0;
-        if signature_has_compression_or_sort_flag {
-            continue;
-        }
         match verify_cert(cert_payload.cert, root_bank, thread_pool) {
             Ok(cert) => {
                 return CertVerifyOutcome {
