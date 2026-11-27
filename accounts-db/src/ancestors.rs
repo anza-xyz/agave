@@ -64,6 +64,13 @@ impl Ancestors {
             .is_ok()
     }
 
+    pub fn bank_id(&self, slot: Slot) -> Option<BankId> {
+        self.ancestors
+            .binary_search_by_key(&slot, |(slot, _bank_id)| *slot)
+            .ok()
+            .map(|index| self.ancestors[index].1)
+    }
+
     pub fn len(&self) -> usize {
         self.ancestors.len()
     }
@@ -103,6 +110,16 @@ impl Ancestors {
 #[cfg(test)]
 mod tests {
     use {super::*, log::*, solana_measure::measure::Measure, std::collections::HashSet};
+
+    #[test]
+    fn test_bank_identity_lookup() {
+        let ancestors = Ancestors::from(vec![(7, BankId::new(42)), (9, BankId::new(84))]);
+        assert_eq!(ancestors.bank_id(7), Some(BankId::new(42)));
+        assert_eq!(ancestors.bank_id(9), Some(BankId::new(84)));
+        assert_eq!(ancestors.bank_id(8), None);
+        assert_eq!(ancestors.bank_id(6), None);
+        assert_eq!(Ancestors::default().bank_id(0), None);
+    }
 
     #[test]
     fn test_ancestors_permutations() {

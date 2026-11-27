@@ -184,6 +184,7 @@ fn test_account_subscription() {
         root: 1,
         highest_confirmed_slot: 1,
         highest_super_majority_root: 1,
+        ..CommitmentSlots::default()
     };
     subscriptions.notify_subscribers(commitment_slots);
 
@@ -388,6 +389,7 @@ fn test_program_subscription() {
         root: 1,
         highest_confirmed_slot: 1,
         highest_super_majority_root: 1,
+        ..CommitmentSlots::default()
     };
     subscriptions.notify_subscribers(commitment_slots);
 
