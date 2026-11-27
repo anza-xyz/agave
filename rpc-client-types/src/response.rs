@@ -31,18 +31,26 @@ pub use {
         TransactionBinaryEncoding,        // used in EncodedTransaction
         TransactionConfirmationStatus,
         UiAccountsList,        // used in EncodedTransaction
+        UiBlockFooter,         // used in UiBlockMarker
+        UiBlockHeader,         // used in UiBlockMarker
+        UiBlockMarker,         // used in UiConfirmedBlock
         UiCompiledInstruction, // used in UiInstruction
         UiConfirmedBlock,
+        UiFinalCert,          // used in UiBlockFooter
+        UiGenesisCertificate, // used in UiBlockMarker
         UiInnerInstructions,
         UiInstruction, // used in UiInnerInstructions
         UiLoadedAddresses,
+        UiNotarRewards,                // used in UiBlockFooter
         UiParsedInstruction,           // used in UiInstruction
         UiPartiallyDecodedInstruction, // used in UiParsedInstruction
         UiReturnDataEncoding,          // used in UiTransactionReturnData
+        UiSkipRewards,                 // used in UiBlockFooter
         UiTransactionError,
         UiTransactionReturnData,
         UiTransactionStatusMeta, // used in EncodedTransactionWithStatusMeta
         UiTransactionTokenBalance,
+        UiUpdateParent,                      // used in UiBlockMarker
         option_serializer::OptionSerializer, // used in UiTransactionStatusMeta
     },
 };

@@ -10,11 +10,12 @@ pub use {
         EncodedTransactionWithStatusMeta, InnerInstruction, InnerInstructions, Reward, Rewards,
         TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionDetails,
         TransactionStatus, TransactionStatusMeta, TransactionTokenBalance, UiAccountsList,
-        UiAddressTableLookup, UiCompiledInstruction, UiConfirmedBlock, UiInnerInstructions,
-        UiInstruction, UiLoadedAddresses, UiMessage, UiParsedInstruction, UiParsedMessage,
-        UiPartiallyDecodedInstruction, UiRawMessage, UiReturnDataEncoding, UiTransaction,
-        UiTransactionEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
-        UiTransactionTokenBalance, option_serializer,
+        UiAddressTableLookup, UiBlockFooter, UiBlockHeader, UiBlockMarker, UiCompiledInstruction,
+        UiConfirmedBlock, UiFinalCert, UiGenesisCertificate, UiInnerInstructions, UiInstruction,
+        UiLoadedAddresses, UiMessage, UiNotarRewards, UiParsedInstruction, UiParsedMessage,
+        UiPartiallyDecodedInstruction, UiRawMessage, UiReturnDataEncoding, UiSkipRewards,
+        UiTransaction, UiTransactionEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
+        UiTransactionTokenBalance, UiUpdateParent, option_serializer,
     },
 };
 use {
@@ -29,7 +30,10 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     serde::{Deserialize, Serialize},
     solana_clock::{Slot, UnixTimestamp},
-    solana_entry::block_component::VersionedBlockMarker,
+    solana_entry::block_component::{
+        BlockFooterV1, BlockMarkerV1, VersionedBlockFooter, VersionedBlockHeader,
+        VersionedBlockMarker, VersionedUpdateParent,
+    },
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_message::{
@@ -39,6 +43,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
+    solana_signer_store::{DecodeError, Decoded, decode},
     solana_transaction::{
         Transaction,
         versioned::{TransactionVersion, VersionedTransaction},
@@ -249,6 +254,107 @@ pub enum ConvertBlockError {
     TransactionsMissing(usize, usize),
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ConvertBlockMarkerError {
+    #[error("unable to decode validator bitmap ({0:?})")]
+    BitmapDecode(DecodeError),
+}
+
+const MAXIMUM_VALIDATORS: usize = 4096;
+
+pub fn convert_block_marker(
+    marker: VersionedBlockMarker,
+) -> Result<UiBlockMarker, ConvertBlockMarkerError> {
+    let VersionedBlockMarker::V1(block_marker) = marker;
+    match block_marker {
+        BlockMarkerV1::BlockFooter(footer) => {
+            let VersionedBlockFooter::V1(footer) = footer.into_inner();
+            Ok(UiBlockMarker::BlockFooter(encode_block_footer(footer)?))
+        }
+        BlockMarkerV1::BlockHeader(header) => {
+            let VersionedBlockHeader::V1(header) = header.into_inner();
+            Ok(UiBlockMarker::BlockHeader(UiBlockHeader {
+                parent_slot: header.parent_slot,
+                parent_block_id: header.parent_block_id.to_string(),
+            }))
+        }
+        BlockMarkerV1::UpdateParent(update_parent) => {
+            let VersionedUpdateParent::V1(update_parent) = update_parent.into_inner();
+            Ok(UiBlockMarker::UpdateParent(UiUpdateParent {
+                new_parent_slot: update_parent.new_parent_slot,
+                new_parent_block_id: update_parent.new_parent_block_id.to_string(),
+            }))
+        }
+        BlockMarkerV1::GenesisCertificate(certificate) => {
+            let certificate = certificate.into_inner();
+            Ok(UiBlockMarker::GenesisCertificate(UiGenesisCertificate {
+                slot: certificate.slot,
+                block_id: certificate.block_id.to_string(),
+            }))
+        }
+    }
+}
+
+fn encode_block_footer(footer: BlockFooterV1) -> Result<UiBlockFooter, ConvertBlockMarkerError> {
+    let BlockFooterV1 {
+        bank_hash,
+        block_producer_time_nanos,
+        block_user_agent,
+        block_final_cert,
+        skip_reward_cert,
+        notar_reward_cert,
+    } = footer;
+
+    let final_cert = if let Some(cert) = block_final_cert {
+        Some(UiFinalCert {
+            slot: cert.slot,
+            block_id: cert.block_id.to_string(),
+            final_validators: validator_count(&cert.final_aggregate.into_bitmap())?,
+            notar_validators: match cert.notar_aggregate {
+                Some(notar_aggregate) => validator_count(&notar_aggregate.into_bitmap())?,
+                None => 0,
+            },
+        })
+    } else {
+        None
+    };
+
+    let skip_reward = if let Some(cert) = skip_reward_cert {
+        Some(UiSkipRewards {
+            slot: cert.slot,
+            validators: validator_count(cert.to_bitmap())?,
+        })
+    } else {
+        None
+    };
+
+    let notar_reward = if let Some(cert) = notar_reward_cert {
+        Some(UiNotarRewards {
+            slot: cert.slot,
+            validators: validator_count(cert.bitmap())?,
+            block_id: cert.block_id.to_string(),
+        })
+    } else {
+        None
+    };
+
+    Ok(UiBlockFooter {
+        bank_hash: bank_hash.to_string(),
+        block_producer_time_nanos,
+        block_user_agent: String::from_utf8_lossy(&block_user_agent).into_owned(),
+        final_cert,
+        skip_reward,
+        notar_reward,
+    })
+}
+
+fn validator_count(bitmap: &[u8]) -> Result<usize, ConvertBlockMarkerError> {
+    match decode(bitmap, MAXIMUM_VALIDATORS).map_err(ConvertBlockMarkerError::BitmapDecode)? {
+        Decoded::Base2(validators) => Ok(validators.count_ones()),
+        Decoded::Base3(first, second) => Ok(first.count_ones().saturating_add(second.count_ones())),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfirmedBlock {
     pub previous_blockhash: String,
@@ -388,6 +494,7 @@ impl ConfirmedBlock {
                 None
             },
             num_reward_partitions: self.num_partitions,
+            block_markers: None,
             block_time: self.block_time,
             block_height: self.block_height,
         })
@@ -885,6 +992,66 @@ pub struct TransactionByAddrInfo {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_convert_block_marker() {
+        use solana_entry::block_component::{BlockHeaderV1, UpdateParentV1};
+
+        let parent_block_id = Hash::new_unique();
+        assert_eq!(
+            convert_block_marker(VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+                parent_slot: 1,
+                parent_block_id: parent_block_id.into(),
+            })),
+            Ok(UiBlockMarker::BlockHeader(UiBlockHeader {
+                parent_slot: 1,
+                parent_block_id: parent_block_id.to_string(),
+            }))
+        );
+
+        let new_parent_block_id = Hash::new_unique();
+        assert_eq!(
+            convert_block_marker(VersionedBlockMarker::from_update_parent(UpdateParentV1 {
+                new_parent_slot: 2,
+                new_parent_block_id: new_parent_block_id.into(),
+            })),
+            Ok(UiBlockMarker::UpdateParent(UiUpdateParent {
+                new_parent_slot: 2,
+                new_parent_block_id: new_parent_block_id.to_string(),
+            }))
+        );
+
+        let bank_hash = Hash::new_unique();
+        assert_eq!(
+            convert_block_marker(VersionedBlockMarker::from_block_footer(BlockFooterV1 {
+                bank_hash,
+                block_producer_time_nanos: 3,
+                block_user_agent: b"agave\xFF".to_vec(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            })),
+            Ok(UiBlockMarker::BlockFooter(UiBlockFooter {
+                bank_hash: bank_hash.to_string(),
+                block_producer_time_nanos: 3,
+                block_user_agent: "agave\u{FFFD}".to_string(),
+                final_cert: None,
+                skip_reward: None,
+                notar_reward: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_validator_count() {
+        assert_eq!(validator_count(&[0, 4, 0, 0b1101]), Ok(3));
+        assert_eq!(
+            validator_count(&[]),
+            Err(ConvertBlockMarkerError::BitmapDecode(
+                DecodeError::InputTooShort
+            ))
+        );
+    }
 
     #[test]
     fn test_ui_transaction_status_meta_ctors_serialization() {

@@ -13,11 +13,12 @@ pub use solana_rpc_client_types::response::{
     RpcVatActiveSetRankMapEntry, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
     SlotInfo, SlotTransactionStats, SlotUpdate, StakeActivationState, TransactionBinaryEncoding,
     TransactionConfirmationStatus, TransactionError, TransactionParsedAccount, TransactionResult,
-    UiAccount, UiAccountData, UiAccountEncoding, UiAccountsList, UiCompiledInstruction,
-    UiConfirmedBlock, UiInnerInstructions, UiInstruction, UiLoadedAddresses, UiParsedInstruction,
-    UiPartiallyDecodedInstruction, UiReturnDataEncoding, UiTokenAmount, UiTransactionError,
-    UiTransactionReturnData, UiTransactionStatusMeta, UiTransactionTokenBalance, Value,
-    transaction,
+    UiAccount, UiAccountData, UiAccountEncoding, UiAccountsList, UiBlockFooter, UiBlockHeader,
+    UiBlockMarker, UiCompiledInstruction, UiConfirmedBlock, UiFinalCert, UiGenesisCertificate,
+    UiInnerInstructions, UiInstruction, UiLoadedAddresses, UiNotarRewards, UiParsedInstruction,
+    UiPartiallyDecodedInstruction, UiReturnDataEncoding, UiSkipRewards, UiTokenAmount,
+    UiTransactionError, UiTransactionReturnData, UiTransactionStatusMeta,
+    UiTransactionTokenBalance, UiUpdateParent, Value, transaction,
 };
 
 pub type RpcResult<T> = client_error::Result<Response<T>>;

@@ -9794,6 +9794,7 @@ dependencies = [
  "solana-reward-info",
  "solana-sdk-ids",
  "solana-signature",
+ "solana-signer-store",
  "solana-stake-interface",
  "solana-system-interface",
  "solana-transaction",

@@ -31,7 +31,7 @@ use {
     solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
-    solana_entry::entry::Entry,
+    solana_entry::{block_component::VersionedBlockMarker, entry::Entry},
     solana_epoch_info::EpochInfo,
     solana_epoch_rewards_hasher::EpochRewardsHasher,
     solana_epoch_schedule::EpochSchedule,
@@ -40,7 +40,10 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
-        blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
+        blockstore::{
+            Blockstore, BlockstoreError, ConfirmedBlockComponent, SignatureInfosForAddress,
+            VersionedConfirmedBlockWithComponents,
+        },
         blockstore_meta::PerfSample,
         leader_schedule_cache::LeaderScheduleCache,
     },
@@ -81,7 +84,8 @@ use {
         BlockEncodingOptions, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta, Reward,
         RewardType, TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
-        UiConfirmedBlock, UiTransactionEncoding, map_inner_instructions,
+        UiBlockMarker, UiConfirmedBlock, UiTransactionEncoding, VersionedConfirmedBlock,
+        convert_block_marker, map_inner_instructions,
     },
     solana_validator_exit::Exit,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
@@ -164,6 +168,38 @@ fn rank_map_response(epoch: Epoch, stakes: &VersionedEpochStakes) -> Arc<RpcVatA
         total_stake: rank_map.total_stake().get(),
         validators,
     })
+}
+
+fn split_block_markers(
+    confirmed_block: VersionedConfirmedBlockWithComponents,
+) -> (VersionedConfirmedBlock, Option<Vec<VersionedBlockMarker>>) {
+    let VersionedConfirmedBlockWithComponents { block, components } = confirmed_block;
+    let block_markers = components
+        .into_iter()
+        .filter_map(|component| match component {
+            ConfirmedBlockComponent::BlockMarker(marker) => Some(marker),
+            ConfirmedBlockComponent::EntryBatch(_) => None,
+        })
+        .collect();
+    (block, Some(block_markers))
+}
+
+fn encode_block_markers(
+    slot: Slot,
+    block_markers: Option<Vec<VersionedBlockMarker>>,
+) -> Result<Option<Vec<UiBlockMarker>>> {
+    block_markers
+        .map(|markers| {
+            markers
+                .into_iter()
+                .map(convert_block_marker)
+                .collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map_err(|err| {
+            warn!("Failed to convert block markers for slot {slot}: {err:?}");
+            Error::internal_error()
+        })
 }
 
 fn is_finalized(
@@ -1207,6 +1243,7 @@ impl JsonRpcRequestProcessor {
             show_rewards: config.rewards.unwrap_or(true),
             max_supported_transaction_version: config.max_supported_transaction_version,
         };
+        let show_block_markers = config.show_block_markers.unwrap_or_default();
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
@@ -1226,12 +1263,23 @@ impl JsonRpcRequestProcessor {
                 .runtime
                 .spawn_blocking({
                     let blockstore = Arc::clone(&self.blockstore);
-                    move || blockstore.get_rooted_block(slot, true)
+                    move || {
+                        if show_block_markers {
+                            blockstore
+                                .get_rooted_block_with_components(slot, true)
+                                .map(split_block_markers)
+                        } else {
+                            blockstore
+                                .get_rooted_block(slot, true)
+                                .map(|block| (block, None))
+                        }
+                    }
                 })
                 .await
                 .expect("Failed to spawn blocking task");
             self.check_blockstore_root(&result, slot)?;
-            let encode_block = |confirmed_block: ConfirmedBlock| async move {
+            let encode_block = |confirmed_block: ConfirmedBlock, block_markers| async move {
+                let block_markers = encode_block_markers(slot, block_markers)?;
                 let mut encoded_block = self
                     .runtime
                     .spawn_blocking(move || {
@@ -1241,6 +1289,7 @@ impl JsonRpcRequestProcessor {
                     })
                     .await
                     .expect("Failed to spawn blocking task")?;
+                encoded_block.block_markers = block_markers;
                 if slot == 0 {
                     encoded_block.block_time = Some(self.genesis_creation_time());
                     encoded_block.block_height = Some(0);
@@ -1252,15 +1301,30 @@ impl JsonRpcRequestProcessor {
             {
                 let bigtable_result = bigtable_ledger_storage.get_confirmed_block(slot).await;
                 self.check_bigtable_result(&bigtable_result)?;
-                let encoded_block_future: OptionFuture<_> =
-                    bigtable_result.ok().map(encode_block).into();
+                let block_markers = if show_block_markers && bigtable_result.is_ok() {
+                    match bigtable_ledger_storage.get_block_markers(slot).await {
+                        Ok(markers) => Some(markers),
+                        Err(StorageError::BlockNotFound(_)) => Some(Vec::new()),
+                        Err(err) => {
+                            warn!("Failed to query Bigtable block markers: {err:?}");
+                            return Err(RpcCustomError::LongTermStorageUnreachable.into());
+                        }
+                    }
+                } else {
+                    None
+                };
+                let encoded_block_future: OptionFuture<_> = bigtable_result
+                    .ok()
+                    .map(|block| encode_block(block, block_markers))
+                    .into();
                 return encoded_block_future.await.transpose();
             }
             self.check_slot_cleaned_up(&result, slot)?;
             let encoded_block_future: OptionFuture<_> = result
                 .ok()
-                .map(ConfirmedBlock::from)
-                .map(encode_block)
+                .map(|(block, block_markers)| {
+                    encode_block(ConfirmedBlock::from(block), block_markers)
+                })
                 .into();
             return encoded_block_future.await.transpose();
         } else if commitment.is_confirmed() {
@@ -1283,38 +1347,53 @@ impl JsonRpcRequestProcessor {
                     .runtime
                     .spawn_blocking({
                         let blockstore = Arc::clone(&self.blockstore);
-                        move || blockstore.get_complete_block(slot, true)
+                        move || {
+                            if show_block_markers {
+                                blockstore
+                                    .get_complete_block_with_components(slot, true, true, false)
+                                    .map(split_block_markers)
+                            } else {
+                                blockstore
+                                    .get_complete_block(slot, true)
+                                    .map(|block| (block, None))
+                            }
+                        }
                     })
                     .await
                     .expect("Failed to spawn blocking task");
                 let encoded_block_future: OptionFuture<_> = result
                     .ok()
-                    .map(ConfirmedBlock::from)
-                    .map(|mut confirmed_block| async move {
-                        if confirmed_block.block_time.is_none()
-                            || confirmed_block.block_height.is_none()
-                        {
-                            let r_bank_forks = self.bank_forks.read().unwrap();
-                            if let Some(bank) = r_bank_forks.get(slot) {
-                                if confirmed_block.block_time.is_none() {
-                                    confirmed_block.block_time = Some(bank.clock().unix_timestamp);
-                                }
-                                if confirmed_block.block_height.is_none() {
-                                    confirmed_block.block_height = Some(bank.block_height());
+                    .map(|(block, block_markers)| {
+                        let mut confirmed_block = ConfirmedBlock::from(block);
+                        async move {
+                            if confirmed_block.block_time.is_none()
+                                || confirmed_block.block_height.is_none()
+                            {
+                                let r_bank_forks = self.bank_forks.read().unwrap();
+                                if let Some(bank) = r_bank_forks.get(slot) {
+                                    if confirmed_block.block_time.is_none() {
+                                        confirmed_block.block_time =
+                                            Some(bank.clock().unix_timestamp);
+                                    }
+                                    if confirmed_block.block_height.is_none() {
+                                        confirmed_block.block_height = Some(bank.block_height());
+                                    }
                                 }
                             }
-                        }
-                        let encoded_block = self
-                            .runtime
-                            .spawn_blocking(move || {
-                                confirmed_block
-                                    .encode_with_options(encoding, encoding_options)
-                                    .map_err(RpcCustomError::from)
-                            })
-                            .await
-                            .expect("Failed to spawn blocking task")?;
+                            let mut encoded_block = self
+                                .runtime
+                                .spawn_blocking(move || {
+                                    confirmed_block
+                                        .encode_with_options(encoding, encoding_options)
+                                        .map_err(RpcCustomError::from)
+                                })
+                                .await
+                                .expect("Failed to spawn blocking task")?;
+                            let block_markers = encode_block_markers(slot, block_markers)?;
+                            encoded_block.block_markers = block_markers;
 
-                        Ok(encoded_block)
+                            Ok(encoded_block)
+                        }
                     })
                     .into();
                 return encoded_block_future.await.transpose();
@@ -4045,7 +4124,10 @@ pub mod tests {
             state::{AddressLookupTable, LookupTableMeta},
         },
         solana_compute_budget_interface::ComputeBudgetInstruction,
-        solana_entry::entry::next_versioned_entry,
+        solana_entry::{
+            block_component::{BlockComponent, BlockFooterV1, BlockHeaderV1},
+            entry::{create_ticks, next_versioned_entry},
+        },
         solana_fee_calculator::FeeRateGovernor,
         solana_gossip::{contact_info::ContactInfo, socketaddr},
         solana_instruction::{AccountMeta, Instruction},
@@ -4056,6 +4138,7 @@ pub mod tests {
             blockstore_processor::fill_blockstore_slot_with_ticks,
             genesis_utils::{GenesisConfigInfo, create_genesis_config},
             get_tmp_ledger_path,
+            shred::{ProcessShredsStats, Shred, Shredder},
         },
         solana_message::{
             Message, MessageHeader, VersionedMessage,
@@ -4102,7 +4185,8 @@ pub mod tests {
         solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
-            RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta,
+            RewardsAndNumPartitions, TransactionDetails, TransactionStatusMeta, UiBlockFooter,
+            UiBlockHeader,
         },
         solana_vote_interface::state::VoteStateV4,
         solana_vote_program::vote_state::{
@@ -7687,6 +7771,7 @@ pub mod tests {
                     encoding: None,
                     transaction_details: Some(TransactionDetails::Signatures),
                     rewards: Some(false),
+                    show_block_markers: None,
                     commitment: None,
                     max_supported_transaction_version: None,
                 },
@@ -7710,6 +7795,7 @@ pub mod tests {
                     encoding: None,
                     transaction_details: Some(TransactionDetails::None),
                     rewards: Some(true),
+                    show_block_markers: None,
                     commitment: None,
                     max_supported_transaction_version: None,
                 },
@@ -7721,6 +7807,98 @@ pub mod tests {
         assert!(confirmed_block.transactions.is_none());
         assert!(confirmed_block.signatures.is_none());
         assert_eq!(confirmed_block.rewards.unwrap(), vec![]);
+
+        for config in [json!({}), json!({ "showBlockMarkers": false })] {
+            let request = create_test_request("getBlock", Some(json!([0u64, config])));
+            let result: Value = parse_success_result(rpc.handle_request_sync(request));
+            assert!(result.get("blockMarkers").is_none());
+        }
+
+        let request = create_test_request(
+            "getBlock",
+            Some(json!([0u64, { "showBlockMarkers": true }])),
+        );
+        let result: Option<UiConfirmedBlock> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(result.unwrap().block_markers, Some(vec![]));
+    }
+
+    #[test]
+    fn test_get_block_config_show_block_markers() {
+        let rpc = RpcHandler::start();
+        let slot = 0;
+        let parent_slot = 0;
+        let parent_block_id = Hash::new_unique();
+        let bank_hash = Hash::new_unique();
+        let block_user_agent = b"agave/test".to_vec();
+
+        let make_shreds = |component: BlockComponent, index: u32, is_last_in_slot| {
+            Shredder::new(slot, parent_slot, 0, 0)
+                .unwrap()
+                .make_merkle_shreds_from_component(
+                    &Keypair::new(),
+                    &component,
+                    is_last_in_slot,
+                    Hash::new_unique(),
+                    index,
+                    index,
+                    &mut ProcessShredsStats::default(),
+                )
+                .into_iter()
+                .filter(Shred::is_data)
+                .collect::<Vec<_>>()
+        };
+
+        let header = BlockComponent::new_block_marker(VersionedBlockMarker::from_block_header(
+            BlockHeaderV1 {
+                parent_slot,
+                parent_block_id: parent_block_id.into(),
+            },
+        ));
+        let mut shreds = make_shreds(header, 0, false);
+        let entry_index = shreds.last().unwrap().index() + 1;
+        let entries =
+            BlockComponent::new_entry_batch(create_ticks(1, 0, Hash::new_unique())).unwrap();
+        let entry_shreds = make_shreds(entries, entry_index, false);
+        let footer_index = entry_shreds.last().unwrap().index() + 1;
+        shreds.extend(entry_shreds);
+        let footer = BlockComponent::new_block_marker(VersionedBlockMarker::from_block_footer(
+            BlockFooterV1 {
+                bank_hash,
+                block_producer_time_nanos: 42,
+                block_user_agent: block_user_agent.clone(),
+                block_final_cert: None,
+                skip_reward_cert: None,
+                notar_reward_cert: None,
+            },
+        ));
+        shreds.extend(make_shreds(footer, footer_index, true));
+        rpc.blockstore.insert_shreds(shreds, true).unwrap();
+        rpc.blockstore.set_roots(std::iter::once(&slot)).unwrap();
+
+        let request = create_test_request(
+            "getBlock",
+            Some(json!([slot, { "showBlockMarkers": true }])),
+        );
+        let result: Option<UiConfirmedBlock> =
+            parse_success_result(rpc.handle_request_sync(request));
+        assert_eq!(
+            result.unwrap().block_markers,
+            Some(vec![
+                UiBlockMarker::BlockHeader(UiBlockHeader {
+                    parent_slot,
+                    parent_block_id: parent_block_id.to_string(),
+                }),
+                UiBlockMarker::BlockFooter(UiBlockFooter {
+                    bank_hash: bank_hash.to_string(),
+                    block_producer_time_nanos: 42,
+                    block_user_agent: String::from_utf8(block_user_agent).unwrap(),
+                    final_cert: None,
+                    skip_reward: None,
+                    notar_reward: None,
+                }),
+            ])
+        );
     }
 
     #[test]
