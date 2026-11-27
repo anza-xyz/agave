@@ -677,7 +677,6 @@ pub mod tests {
             poh_bank.ticks_per_slot(),
             blockstore.clone(),
             &leader_schedule_cache,
-            &genesis_config.poh_config,
             exit.clone(),
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));

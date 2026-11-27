@@ -129,7 +129,6 @@ solana-nonce = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
-solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc = { workspace = true }

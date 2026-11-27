@@ -310,12 +310,6 @@ fn start_loop(config: BlockCreationLoopConfig, reward_certs_requestor: CertsRequ
         highest_finalized,
     };
 
-    // Configure PoH before any Alpenglow leader calls `set_bank()`. At this point,
-    // BlockCreationLoop is the sole modifier of poh_recorder.
-    {
-        let mut w_poh_recorder = ctx.poh_recorder.write().unwrap();
-        w_poh_recorder.enable_alpenglow();
-    }
     reset_poh_recorder(&ctx.bank_forks.read().unwrap().working_bank(), &ctx);
 
     while !ctx.exit.load(Ordering::Relaxed) {
@@ -1499,7 +1493,6 @@ mod tests {
             poh_recorder::{PohRecorder, Record, WorkingBankMessage},
             record_channels::{RecordSender, record_channels},
         },
-        solana_poh_config::PohConfig,
         solana_runtime::{
             bank::Bank, bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader,
             installed_scheduler_pool::BankWithScheduler,
@@ -1596,8 +1589,7 @@ mod tests {
             let leader_schedule_cache = fixed_leader_schedule(scheduled_leader, &root_bank);
 
             let exit = Arc::new(AtomicBool::new(false));
-            let poh_config = PohConfig::default();
-            let (mut poh_recorder, entry_receiver) = PohRecorder::new(
+            let (poh_recorder, entry_receiver) = PohRecorder::new(
                 root_bank.tick_height(),
                 root_bank.last_blockhash(),
                 root_bank.clone(),
@@ -1605,10 +1597,8 @@ mod tests {
                 root_bank.ticks_per_slot(),
                 blockstore.clone(),
                 &leader_schedule_cache,
-                &poh_config,
                 exit.clone(),
             );
-            poh_recorder.enable_alpenglow();
             let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
             let (record_sender, record_receiver) = record_channels(false);

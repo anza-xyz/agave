@@ -6487,7 +6487,6 @@ dependencies = [
  "solana-packet",
  "solana-perf",
  "solana-poh",
- "solana-poh-config",
  "solana-pubkey 4.4.0",
  "solana-rayon-threadlimit",
  "solana-rpc",
@@ -7524,9 +7523,9 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
- "solana-poh-config",
  "solana-pubkey 4.4.0",
  "solana-runtime",
+ "solana-sha256-hasher",
  "solana-transaction",
  "thiserror 2.0.21",
 ]
