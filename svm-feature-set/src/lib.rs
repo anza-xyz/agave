@@ -49,6 +49,7 @@ pub struct SVMFeatureSet {
     pub loader_v3_remove_extend_program: bool,
     pub invoke_signed_v2: bool,
     pub loaderv3_programdata_size_floor: bool,
+    pub disable_sol_alloc_free: bool,
 }
 
 impl SVMFeatureSet {
@@ -102,6 +103,7 @@ impl SVMFeatureSet {
             loader_v3_remove_extend_program: true,
             invoke_signed_v2: true,
             loaderv3_programdata_size_floor: true,
+            disable_sol_alloc_free: true,
         }
     }
 }
