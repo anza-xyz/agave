@@ -458,9 +458,15 @@ fn notify_block_subscription(
                         false,
                     );
                     num_notified += 1;
-                    // Resume at the following slot on the next notification.
-                    *last_unnotified_slot = slot + 1;
                 }
+                // The slot is fully processed whether or not it matched: a
+                // `mentionsAccountOrProgram` filter that matches nothing yields
+                // `Ok(None)`, and a complete block is immutable, so re-reading
+                // the slot can only reproduce the same result. Advance past it.
+                // Leaving it parked made every later notification rebuild and
+                // re-scan the growing `last_unnotified_slot..slot` range. The
+                // `Err` arm below does not advance, so a failed read is retried.
+                *last_unnotified_slot = slot + 1;
             }
             Err(err) => {
                 // Do not advance the cursor for this error.
@@ -1883,6 +1889,82 @@ pub(crate) mod tests {
         subscriptions
             .control
             .assert_unsubscribed(&SubscriptionParams::Block(params));
+    }
+
+    // A block subscription whose filter matches no transactions in a slot must
+    // still advance its notification cursor past that slot.
+    #[test]
+    #[serial]
+    fn test_block_subscription_cursor_advances_past_unmatched_slot() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+
+        // The subscription filters on a key that never appears in the block.
+        let filter_key = Keypair::new();
+        let params = BlockSubscriptionParams {
+            kind: BlockSubscriptionKind::MentionsAccountOrProgram(filter_key.pubkey()),
+            commitment: CommitmentConfig::confirmed(),
+            encoding: UiTransactionEncoding::Json,
+            transaction_details: TransactionDetails::Signatures,
+            show_rewards: false,
+            max_supported_transaction_version: None,
+        };
+
+        // Produce a block at slot 0 whose transactions do not mention `filter_key`.
+        let bank = bank_forks.read().unwrap().working_bank();
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+        let keypair3 = Keypair::new();
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
+        bank.transfer(rent_exempt_amount, &mint_keypair, &keypair2.pubkey())
+            .unwrap();
+        populate_blockstore_for_tests(
+            create_test_transaction_entries(
+                vec![&mint_keypair, &keypair1, &keypair2, &keypair3],
+                bank.clone(),
+            )
+            .0,
+            bank,
+            blockstore.clone(),
+            max_complete_transaction_status_slot.clone(),
+        );
+
+        let max_complete_and_rooted_transaction_status_slot = Arc::new(AtomicU64::new(0));
+        let (broadcast_sender, _broadcast_receiver) = broadcast::channel(64);
+        let notifier = RpcNotifier {
+            sender: broadcast_sender,
+            recent_items: Mutex::new(RecentItems::new(64, 64 * 1024)),
+        };
+        let context = BlockNotificationContext {
+            bank_forks: &bank_forks,
+            blockstore: &blockstore,
+            alpenglow_enabled: false,
+            max_complete_transaction_status_slot: &max_complete_transaction_status_slot,
+            max_complete_and_rooted_transaction_status_slot:
+                &max_complete_and_rooted_transaction_status_slot,
+            notifier: &notifier,
+        };
+
+        let subscription = SubscriptionInfo::new_for_tests(
+            SubscriptionId::from(0),
+            SubscriptionParams::Block(params.clone()),
+        );
+
+        let slot = 0;
+        let num_notified = notify_block_subscription(&params, &subscription, slot, &context);
+
+        // Nothing matched, so no notification was emitted...
+        assert_eq!(num_notified, 0);
+        // ...but the cursor still advanced past the processed slot.
+        assert_eq!(*subscription.last_notified_slot.read().unwrap(), slot + 1);
     }
 
     #[test]

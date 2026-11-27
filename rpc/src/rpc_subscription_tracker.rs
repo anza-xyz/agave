@@ -352,6 +352,17 @@ impl SubscriptionInfo {
     pub fn commitment(&self) -> Option<CommitmentConfig> {
         self.commitment
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(id: SubscriptionId, params: SubscriptionParams) -> Self {
+        Self {
+            id,
+            method: params.method(),
+            commitment: params.commitment(),
+            last_notified_slot: RwLock::new(0),
+            params,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
