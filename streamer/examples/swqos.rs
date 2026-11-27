@@ -13,7 +13,7 @@ use {
     crossbeam_channel::bounded,
     log::{debug, info},
     solana_keypair::Keypair,
-    solana_net_utils::sockets::{SocketConfiguration, bind_to_with_config},
+    solana_net_utils::sockets::SocketConfiguration,
     solana_pubkey::Pubkey,
     solana_streamer::{
         nonblocking::{quic::SpawnNonBlockingServerResult, swqos::SwQosConfig},
@@ -91,12 +91,9 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     agave_logger::setup();
     let cli = Cli::parse();
-    let socket = bind_to_with_config(
-        cli.bind_to.ip(),
-        cli.bind_to.port(),
-        SocketConfiguration::default(),
-    )
-    .expect("should bind");
+    let socket = SocketConfiguration::default()
+        .bind_udp_to(cli.bind_to.ip(), cli.bind_to.port())
+        .expect("should bind");
 
     let (sender, receiver) = bounded(1024);
     let keypair = Keypair::new();

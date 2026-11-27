@@ -7,7 +7,7 @@ use {
         GetSockOpt, SetSockOpt, setsockopt,
         sockopt::{RcvBuf, ReusePort, SndBuf},
     },
-    socket2::{Domain, SockAddr, Socket, Type},
+    socket2::{Domain, Socket, Type},
     std::{
         io,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
@@ -38,37 +38,10 @@ pub fn localhost_port_range_for_tests() -> (u16, u16) {
 
 /// Bind a `UdpSocket` to a unique port.
 pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
-    bind_to(
+    SocketConfiguration::default().bind_udp_to(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         unique_port_range_for_tests(1).start,
     )
-}
-
-pub fn bind_gossip_port_in_range(
-    gossip_addr: &SocketAddr,
-    port_range: PortRange,
-    bind_ip_addr: IpAddr,
-) -> (u16, (UdpSocket, TcpListener)) {
-    let config = SocketConfiguration::default();
-    bind_gossip_port_in_range_with_config(gossip_addr, port_range, bind_ip_addr, config)
-}
-
-pub fn bind_gossip_port_in_range_with_config(
-    gossip_addr: &SocketAddr,
-    port_range: PortRange,
-    bind_ip_addr: IpAddr,
-    config: SocketConfiguration,
-) -> (u16, (UdpSocket, TcpListener)) {
-    if gossip_addr.port() != 0 {
-        (
-            gossip_addr.port(),
-            bind_common_with_config(bind_ip_addr, gossip_addr.port(), config).unwrap_or_else(|e| {
-                panic!("gossip_addr bind_to port {}: {}", gossip_addr.port(), e)
-            }),
-        )
-    } else {
-        bind_common_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
-    }
 }
 
 /// True on platforms that support advanced socket configuration
@@ -130,6 +103,111 @@ impl SocketConfiguration {
         }
         sock.set_nonblocking(self.non_blocking)?;
         Ok(sock)
+    }
+
+    /// Create a UDP socket bound to a given IP address and port
+    pub fn bind_udp_to(&self, ip_addr: IpAddr, port: u16) -> io::Result<UdpSocket> {
+        let sock = self.build_udp_socket()?;
+        let addr = SocketAddr::new(ip_addr, port);
+        sock.bind(&addr.into())?;
+        Ok(sock.into())
+    }
+
+    /// Create a UDP socket and a TCP listening socket,
+    /// both bound to the same IP address and port
+    pub fn bind_udp_tcp_to(
+        &self,
+        ip_addr: IpAddr,
+        port: u16,
+    ) -> io::Result<(UdpSocket, TcpListener)> {
+        let addr = SocketAddr::new(ip_addr, port);
+        let udp = self.build_udp_socket()?;
+        udp.bind(&addr.into())?;
+        let tcp = TcpListener::bind(addr)?;
+        tcp.set_nonblocking(self.non_blocking)?;
+        Ok((udp.into(), tcp))
+    }
+
+    /// Create a UDP socket and attempt to bind it to the first available port in the given range.
+    /// If no port is available, the socket is closed and an error is returned.
+    pub fn bind_udp_range(&self, ip_addr: IpAddr, range: PortRange) -> io::Result<UdpSocket> {
+        let sock = self.build_udp_socket()?;
+        for port in range.0..range.1 {
+            let addr = SocketAddr::new(ip_addr, port).into();
+            if sock.bind(&addr).is_ok() {
+                return Ok(sock.into());
+            }
+        }
+
+        Err(io::Error::other(format!(
+            "No available UDP ports in {range:?}"
+        )))
+    }
+
+    /// Create a UDP socket and a TCP listening socket, both bound to the same port in the given range.
+    /// If no port is availble for both UDP and TCP, the sockets are closed and an error is returned.
+    pub fn bind_udp_tcp_range(
+        &self,
+        ip_addr: IpAddr,
+        range: PortRange,
+    ) -> io::Result<(UdpSocket, TcpListener)> {
+        for port in range.0..range.1 {
+            if let Ok(pair) = self.bind_udp_tcp_to(ip_addr, port) {
+                return Ok(pair);
+            }
+        }
+
+        Err(io::Error::other(format!(
+            "No available TCP/UDP ports in {range:?}"
+        )))
+    }
+
+    /// Create a UDP socket and a TCP listening socket, both bound to the same IP address and port.
+    /// If non-zero, use the given port otherwise use the first available port in the given range.
+    pub fn bind_udp_tcp_to_or_range(
+        &self,
+        bind_ip_addr: IpAddr,
+        port: u16,
+        port_range: PortRange,
+    ) -> io::Result<(UdpSocket, TcpListener)> {
+        if port != 0 {
+            self.bind_udp_tcp_to(bind_ip_addr, port)
+        } else {
+            self.bind_udp_tcp_range(bind_ip_addr, port_range)
+        }
+    }
+
+    /// Take a bound UDP socket, set the SO_REUSEPORT socket option on it, and create N-1 additional
+    /// UDP sockets bound to the same port. Note other socket options are set from the current
+    /// SocketConfiguration object and are not copied from the passed in socket.
+    pub fn bind_udp_reuse(&self, socket: UdpSocket, mut num: usize) -> io::Result<Vec<UdpSocket>> {
+        if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num > 1 {
+            warn!("bind_udp_reuse() only supports 1 socket on this platform ({num} requested)");
+            num = 1;
+        }
+        set_reuse_port(&socket)?;
+        let config = SocketConfiguration {
+            reuseport: true,
+            ..*self
+        };
+        let addr = socket.local_addr().unwrap();
+        let ip = addr.ip();
+        let port = addr.port();
+        std::iter::once(Ok(socket))
+            .chain((1..num).map(|_| config.bind_udp_to(ip, port)))
+            .collect()
+    }
+
+    /// Return a vector of N UDP sockets bound to the same port in the given range.
+    /// Note all sockets have the SO_REUSEPORT socket option set (depending on platfrom support).
+    pub fn multi_bind_udp_range(
+        &self,
+        ip_addr: IpAddr,
+        range: PortRange,
+        num: usize,
+    ) -> io::Result<Vec<UdpSocket>> {
+        let sock = self.bind_udp_range(ip_addr, range)?;
+        self.bind_udp_reuse(sock, num)
     }
 }
 
@@ -277,78 +355,15 @@ where
     Ok(sz)
 }
 
-/// Find a port in the given range with a socket config that is available for both TCP and UDP
-pub fn bind_common_in_range_with_config(
-    ip_addr: IpAddr,
-    range: PortRange,
-    config: SocketConfiguration,
-) -> io::Result<(u16, (UdpSocket, TcpListener))> {
-    for port in range.0..range.1 {
-        if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
-            return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
-        }
-    }
-
-    Err(io::Error::other(format!(
-        "No available TCP/UDP ports in {range:?}"
-    )))
-}
-
-pub fn bind_in_range_with_config(
-    ip_addr: IpAddr,
-    range: PortRange,
-    config: SocketConfiguration,
-) -> io::Result<(u16, UdpSocket)> {
-    let socket = config.build_udp_socket()?;
-
-    for port in range.0..range.1 {
-        let addr = SocketAddr::new(ip_addr, port);
-
-        if socket.bind(&SockAddr::from(addr)).is_ok() {
-            let udp_socket: UdpSocket = socket.into();
-            return Result::Ok((udp_socket.local_addr().unwrap().port(), udp_socket));
-        }
-    }
-
-    Err(io::Error::other(format!(
-        "No available UDP ports in {range:?}"
-    )))
-}
-
-/// binds num sockets to the same port in a range with config
-pub fn multi_bind_in_range_with_config(
-    ip_addr: IpAddr,
-    range: PortRange,
-    config: SocketConfiguration,
-    mut num: usize,
-) -> io::Result<(u16, Vec<UdpSocket>)> {
-    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
-        // See https://github.com/solana-labs/solana/issues/4607
-        warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({num} \
-             requested)"
-        );
-        num = 1;
-    }
-    let (port, socket) = bind_in_range_with_config(ip_addr, range, config)?;
-    let sockets = bind_more_with_config(socket, num, config)?;
-    Ok((port, sockets))
-}
-
 pub fn bind_to(ip_addr: IpAddr, port: u16) -> io::Result<UdpSocket> {
-    let config = SocketConfiguration {
-        ..Default::default()
-    };
-    bind_to_with_config(ip_addr, port, config)
+    SocketConfiguration::default().bind_udp_to(ip_addr, port)
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_async(ip_addr: IpAddr, port: u16) -> io::Result<TokioUdpSocket> {
-    let config = SocketConfiguration {
-        non_blocking: true,
-        ..Default::default()
-    };
-    let socket = bind_to_with_config(ip_addr, port, config)?;
+    let socket = SocketConfiguration::default()
+        .set_non_blocking(true)
+        .bind_udp_to(ip_addr, port)?;
     TokioUdpSocket::from_std(socket)
 }
 
@@ -358,64 +373,13 @@ pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
     bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), port).await
 }
 
-pub fn bind_to_with_config(
-    ip_addr: IpAddr,
-    port: u16,
-    config: SocketConfiguration,
-) -> io::Result<UdpSocket> {
-    let sock = config.build_udp_socket()?;
-
-    let addr = SocketAddr::new(ip_addr, port);
-
-    sock.bind(&SockAddr::from(addr)).map(|_| sock.into())
-}
-
-/// binds both a UdpSocket and a TcpListener on the same port
-pub fn bind_common_with_config(
-    ip_addr: IpAddr,
-    port: u16,
-    config: SocketConfiguration,
-) -> io::Result<(UdpSocket, TcpListener)> {
-    let sock = config.build_udp_socket()?;
-
-    let addr = SocketAddr::new(ip_addr, port);
-    let sock_addr = SockAddr::from(addr);
-    sock.bind(&sock_addr)
-        .and_then(|_| TcpListener::bind(addr).map(|listener| (sock.into(), listener)))
-}
-
-pub fn bind_more_with_config(
-    socket: UdpSocket,
-    num: usize,
-    mut config: SocketConfiguration,
-) -> io::Result<Vec<UdpSocket>> {
-    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
-        if num > 1 {
-            warn!(
-                "bind_more_with_config() only supports 1 socket on this platform ({num} requested)"
-            );
-        }
-        Ok(vec![socket])
-    } else {
-        set_reuse_port(&socket)?;
-        config.reuseport = true;
-        let addr = socket.local_addr().unwrap();
-        let ip = addr.ip();
-        let port = addr.port();
-        std::iter::once(Ok(socket))
-            .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::{
-            DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_VERIFY_THREADS, bind_in_range,
-            get_cluster_shred_version, get_public_ip_addr_with_binding, ip_echo_client,
-            ip_echo_server, parse_host,
+            DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_VERIFY_THREADS, get_cluster_shred_version,
+            get_public_ip_addr_with_binding, ip_echo_client, ip_echo_server, parse_host,
             sockets::{localhost_port_range_for_tests, unique_port_range_for_tests},
             verify_all_reachable_tcp, verify_all_reachable_udp,
         },
@@ -436,20 +400,25 @@ mod tests {
         let (pr_s, pr_e) = localhost_port_range_for_tests();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = SocketConfiguration::default();
-        let s = bind_in_range(ip_addr, (pr_s, pr_e)).unwrap();
-        assert_eq!(s.0, pr_s, "bind_in_range should use first available port");
+        let s = config.bind_udp_range(ip_addr, (pr_s, pr_e)).unwrap();
+        let p = s.local_addr().unwrap().port();
+        assert_eq!(p, pr_s, "bind_udp_range should use first available port");
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let x = bind_to_with_config(ip_addr, pr_s + 1, config).unwrap();
-        let y = bind_more_with_config(x, 2, config).unwrap();
+        let x = config.bind_udp_to(ip_addr, pr_s + 1).unwrap();
+        let y = config.bind_udp_reuse(x, 2).unwrap();
         assert_eq!(
             y[0].local_addr().unwrap().port(),
             y[1].local_addr().unwrap().port()
         );
-        bind_to_with_config(ip_addr, pr_s, SocketConfiguration::default()).unwrap_err();
-        bind_in_range(ip_addr, (pr_s, pr_s + 2)).unwrap_err();
+        config.bind_udp_to(ip_addr, pr_s).unwrap_err();
+        config
+            .bind_udp_range(ip_addr, (pr_s, pr_s + 2))
+            .unwrap_err();
 
-        let (port, v) =
-            multi_bind_in_range_with_config(ip_addr, (pr_s + 5, pr_e), config, 10).unwrap();
+        let v = config
+            .multi_bind_udp_range(ip_addr, (pr_s + 5, pr_e), 10)
+            .unwrap();
+        let port = v.first().unwrap().local_addr().unwrap().port();
         for sock in &v {
             assert_eq!(port, sock.local_addr().unwrap().port());
         }
@@ -469,8 +438,13 @@ mod tests {
     fn test_bind_in_range_nil() {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let range = unique_port_range_for_tests(2);
-        bind_in_range(ip_addr, (range.end, range.end)).unwrap_err();
-        bind_in_range(ip_addr, (range.end, range.start)).unwrap_err();
+        let config = SocketConfiguration::default();
+        config
+            .bind_udp_range(ip_addr, (range.end, range.end))
+            .unwrap_err();
+        config
+            .bind_udp_range(ip_addr, (range.end, range.start))
+            .unwrap_err();
     }
 
     #[test]
@@ -478,10 +452,12 @@ mod tests {
         let config = SocketConfiguration::default();
         let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
-        let (_p, s) = bind_in_range_with_config(localhost, port_range, config).unwrap();
-        let _socks = bind_more_with_config(s, 8, config).unwrap();
+        let s = config.bind_udp_range(localhost, port_range).unwrap();
+        let _socks = config.bind_udp_reuse(s, 8).unwrap();
 
-        let _socks2 = multi_bind_in_range_with_config(localhost, port_range, config, 8).unwrap();
+        let _socks2 = config
+            .multi_bind_udp_range(localhost, port_range, 8)
+            .unwrap();
     }
 
     #[test]
@@ -489,10 +465,15 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let range = unique_port_range_for_tests(5);
         let config = SocketConfiguration::default();
-        let (port, _sockets) =
-            bind_common_in_range_with_config(ip_addr, (range.start, range.end), config).unwrap();
+        let sockets = config
+            .bind_udp_tcp_range(ip_addr, (range.start, range.end))
+            .unwrap();
+        let port = sockets.0.local_addr().unwrap().port();
+        assert_eq!(port, sockets.1.local_addr().unwrap().port());
         assert!(range.contains(&port));
-        bind_common_in_range_with_config(ip_addr, (port, port + 1), config).unwrap_err();
+        config
+            .bind_udp_tcp_range(ip_addr, (port, port + 1))
+            .unwrap_err();
     }
 
     #[test]
@@ -501,8 +482,8 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let (pr_s, pr_e) = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
-        let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (pr_s, pr_e), config).unwrap();
+        let (server_udp_socket, server_tcp_listener) =
+            config.bind_udp_tcp_range(ip_addr, (pr_s, pr_e)).unwrap();
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
@@ -530,10 +511,10 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
-        let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, port_range, config).unwrap();
-        let (_client_port, (client_udp_socket, client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, port_range, config).unwrap();
+        let (server_udp_socket, server_tcp_listener) =
+            config.bind_udp_tcp_range(ip_addr, port_range).unwrap();
+        let (client_udp_socket, client_tcp_listener) =
+            config.bind_udp_tcp_range(ip_addr, port_range).unwrap();
 
         let _runtime = ip_echo_server(
             server_tcp_listener,
@@ -570,14 +551,14 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
-        let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, port_range, config).unwrap();
+        let (server_udp_socket, _server_tcp_listener) =
+            config.bind_udp_tcp_range(ip_addr, port_range).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
-        let (_, (_client_udp_socket, client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, port_range, config).unwrap();
+        let (_client_udp_socket, client_tcp_listener) =
+            config.bind_udp_tcp_range(ip_addr, port_range).unwrap();
 
         let rt = runtime();
         assert!(!rt.block_on(ip_echo_client::verify_all_reachable_tcp(
@@ -593,16 +574,16 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = unique_port_range_for_tests(2);
         let config = SocketConfiguration::default();
-        let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (port_range.start, port_range.end), config)
-                .unwrap();
+        let (server_udp_socket, _server_tcp_listener) = config
+            .bind_udp_tcp_range(ip_addr, (port_range.start, port_range.end))
+            .unwrap();
 
         // make the socket unreachable by not running the ip echo server!
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
 
-        let (_correct_client_port, (client_udp_socket, _client_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (port_range.start, port_range.end), config)
-                .unwrap();
+        let (client_udp_socket, _client_tcp_listener) = config
+            .bind_udp_tcp_range(ip_addr, (port_range.start, port_range.end))
+            .unwrap();
 
         let rt = runtime();
         assert!(!rt.block_on(ip_echo_client::verify_all_reachable_udp(
@@ -622,17 +603,13 @@ mod tests {
         let mut udp_sockets = vec![];
 
         let port_range = unique_port_range_for_tests(1);
-        let (_server_port, (_, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (port_range.start, port_range.end), config)
-                .unwrap();
+        let (_, server_tcp_listener) = config
+            .bind_udp_tcp_range(ip_addr, (port_range.start, port_range.end))
+            .unwrap();
         for _ in 0..MAX_PORT_VERIFY_THREADS * 2 {
             let port_range = unique_port_range_for_tests(1);
-            let (_client_port, (client_udp_socket, client_tcp_listener)) =
-                bind_common_in_range_with_config(
-                    ip_addr,
-                    (port_range.start, port_range.end),
-                    config,
-                )
+            let (client_udp_socket, client_tcp_listener) = config
+                .bind_udp_tcp_range(ip_addr, (port_range.start, port_range.end))
                 .unwrap();
             tcp_listeners.push(client_tcp_listener);
             udp_sockets.push(client_udp_socket);

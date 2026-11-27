@@ -32,7 +32,7 @@ use {
     rand::{Rng, rng},
     std::{
         io::{self},
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
+        net::{IpAddr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
     },
     url::Url,
 };
@@ -259,16 +259,6 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
-pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
-    let config = sockets::SocketConfiguration::default();
-    sockets::bind_in_range_with_config(ip_addr, range, config)
-}
-
-pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
-    let config = sockets::SocketConfiguration::default();
-    sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, config)
-}
-
 /// Searches for an open port on a given binding ip_addr in the provided range.
 ///
 /// This will start at a random point in the range provided, and search sequenctially.
@@ -300,7 +290,7 @@ pub fn find_available_ports_in_range<const N: usize>(
     let config = sockets::SocketConfiguration::default();
     while num < N {
         let port_to_try = next_port_to_try.next().unwrap(); // this unwrap never fails since we exit earlier
-        let bind = sockets::bind_common_with_config(ip_addr, port_to_try, config);
+        let bind = config.bind_udp_tcp_to(ip_addr, port_to_try);
         match bind {
             Ok(_) => {
                 result[num] = port_to_try;
@@ -465,7 +455,9 @@ mod tests {
         let port = find_available_port_in_range(ip_addr, (pr_s, pr_e)).unwrap();
         assert!((pr_s..pr_e).contains(&port));
 
-        let _socket = sockets::bind_to(ip_addr, port).unwrap();
+        let _socket = sockets::SocketConfiguration::default()
+            .bind_udp_to(ip_addr, port)
+            .unwrap();
         find_available_port_in_range(ip_addr, (port, port + 1)).unwrap_err();
     }
 
@@ -475,12 +467,9 @@ mod tests {
         let port_range = sockets::localhost_port_range_for_tests();
         assert!(port_range.1 - port_range.0 > 16);
         // reserve 1 port to make it non-trivial
-        let sock = sockets::bind_to_with_config(
-            ip_addr,
-            port_range.0 + 2,
-            sockets::SocketConfiguration::default(),
-        )
-        .unwrap();
+        let sock = sockets::SocketConfiguration::default()
+            .bind_udp_to(ip_addr, port_range.0 + 2)
+            .unwrap();
         let ports: [u16; 15] = find_available_ports_in_range(ip_addr, port_range).unwrap();
         let mut ports_vec = Vec::from(ports);
         ports_vec.push(sock.local_addr().unwrap().port());

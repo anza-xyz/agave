@@ -51,8 +51,8 @@ use {
     solana_hash::Hash,
     solana_keypair::{Keypair, signable::Signable},
     solana_net_utils::{
-        PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
-        sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
+        PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE,
+        sockets::{SocketConfiguration, bind_to_localhost_unique},
         token_bucket::{KeyedRateLimiter, TokenBucket},
     },
     solana_perf::{
@@ -2078,8 +2078,11 @@ impl ClusterInfo {
         shred_version: u16,
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let (port, (gossip_socket, ip_echo)) =
-            bind_gossip_port_in_range(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
+        let gossip_port = gossip_addr.port();
+        let (gossip_socket, ip_echo) = SocketConfiguration::default()
+            .bind_udp_tcp_to_or_range(bind_ip_addr, gossip_port, VALIDATOR_PORT_RANGE)
+            .expect("gossip bind_udp_to_or_range");
+        let port = gossip_socket.local_addr().unwrap().port();
         let contact_info =
             Self::gossip_contact_info(id, SocketAddr::new(gossip_addr.ip(), port), shred_version);
 
@@ -2092,7 +2095,13 @@ impl ClusterInfo {
         shred_version: u16,
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let (port, gossip_socket) = bind_in_range(bind_ip_addr, VALIDATOR_PORT_RANGE).unwrap();
+        let gossip_socket = SocketConfiguration::default()
+            .bind_udp_range(bind_ip_addr, VALIDATOR_PORT_RANGE)
+            .expect("bad gossip socket");
+        let port = gossip_socket
+            .local_addr()
+            .expect("bad gossip socket local_addr")
+            .port();
         let contact_info = Self::gossip_contact_info(
             id,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
@@ -2739,7 +2748,7 @@ mod tests {
     #[test]
     fn new_with_external_ip_test_gossip() {
         // Can't use VALIDATOR_PORT_RANGE because if this test runs in parallel with others, the
-        // port returned by `bind_in_range()` might be snatched up before `Node::new_with_external_ip()` runs
+        // port returned by `bind_udp_range()` might be snatched up before `Node::new_with_external_ip()` runs
         let port_range = localhost_port_range_for_tests();
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port = port_range.0;
