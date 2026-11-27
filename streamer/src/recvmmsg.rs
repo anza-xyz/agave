@@ -1,10 +1,10 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use {
     crate::msghdr::create_msghdr,
     itertools::izip,
-    libc::{AF_INET, AF_INET6, MSG_WAITFORONE, iovec, mmsghdr, sockaddr_storage, socklen_t},
+    libc::{AF_INET, AF_INET6, iovec, mmsghdr, sockaddr_storage, socklen_t},
     std::{
         mem::{self, MaybeUninit},
         net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -49,7 +49,7 @@ impl PacketBufferPool {
 /// Fallback for platforms without `recvmmsg(2)`, see the linux implementation for the
 /// contract. One `recvfrom(2)` per packet, so this one only ever takes a buffer out of
 /// `pool` when it has a packet to put in it.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub(crate) fn recv_mmsg(
     socket: &UdpSocket,
     packets: &mut BytesPacketBatch,
@@ -88,7 +88,7 @@ pub(crate) fn recv_mmsg(
     Ok(i)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr> {
     use libc::{sa_family_t, sockaddr_in, sockaddr_in6};
     const SOCKADDR_IN_SIZE: usize = std::mem::size_of::<sockaddr_in>();
@@ -137,7 +137,7 @@ automatically as buffers are consumed.
  You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
  prior to calling this function if you require this to actually time out after 1 second.
 */
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn recv_mmsg(
     sock: &UdpSocket,
     packets: &mut BytesPacketBatch,
@@ -174,19 +174,43 @@ pub(crate) fn recv_mmsg(
         });
     }
 
-    let mut ts = libc::timespec {
+    // recvmmsg(2) *timeout parameter is const on FreeBSD, non-const on Linux
+    let ts = libc::timespec {
         tv_sec: 1,
         tv_nsec: 0,
     };
-    // TODO: remove .try_into().unwrap() once rust libc fixes recvmmsg types for musl
-    #[allow(clippy::useless_conversion)]
+    #[cfg(target_os = "linux")]
+    let mut ts = ts;
     let nrecv = unsafe {
+        #[cfg(target_os = "linux")]
+        let count = count as u32;
+
+        #[cfg(not(target_env = "musl"))]
+        use libc::MSG_WAITFORONE;
+
+        #[cfg(target_env = "musl")]
+        const MSG_WAITFORONE: u32 = libc::MSG_WAITFORONE as u32;
+
+        // NOTE the Linux recvmmsg(2) man page documents the following BUGS:
+        // - The timeout argument does not work as intended.
+        //   The timeout is checked only after the receipt of each datagram,
+        //   so that if up to vlen-1 datagrams are received before the timeout expires,
+        //   but then no further datagrams are received, the call will block forever.
+        // - If an error occurs after at least one message has been received,
+        //   the call succeeds, and returns the number of messages received.
+        //   The error code is expected to be returned on a subsequent call to recvmmsg().
+        //   In the current implementation, however, the error code can be overwritten in the
+        //   meantime by an unrelated network event on a socket, for example an incoming ICMP packet.
+        #[cfg(target_os = "freebsd")]
+        let ref_ts = &ts;
+        #[cfg(target_os = "linux")]
+        let ref_ts = &mut ts;
         libc::recvmmsg(
             sock_fd,
             hdrs[0].assume_init_mut(),
-            count as u32,
-            MSG_WAITFORONE.try_into().unwrap(),
-            &mut ts,
+            count,
+            MSG_WAITFORONE,
+            ref_ts,
         )
     };
     let nrecv = if nrecv < 0 {
