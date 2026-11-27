@@ -215,7 +215,7 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0523
   # Solution:  Upgrade to >=0.11.19
   # Agave Ok:  upstream quinn-proto is only in Reqwest's disabled HTTP/3 deps. The active
-  # anza-quinn-proto 0.11.18-issue2860.1 lacks the fix, but Agave never accepts
+  # anza-quinn-proto 0.11.18-agave4.4.2 lacks the fix, but Agave never accepts
   # peer-initiated bidirectional streams (no accept_bi), so no streams are materialized.
   --ignore RUSTSEC-2026-0523
 
@@ -225,7 +225,7 @@ default_cargo_audit_extra_args=(
   # ID:        RUSTSEC-2026-0524
   # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0524
   # Solution:  Upgrade to >=0.11.19
-  # Agave Ok:  active QUIC uses anza-quinn-proto 0.11.18-issue2860.1 with the fix.
+  # Agave Ok:  active QUIC uses anza-quinn-proto 0.11.18-agave4.4.2 with the fix.
   # Upstream quinn-proto remains only in Reqwest's disabled HTTP/3 dependencies.
   --ignore RUSTSEC-2026-0524
 
