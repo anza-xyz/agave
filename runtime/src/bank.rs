@@ -5089,8 +5089,7 @@ impl Bank {
     /// Recomputes cost tracker limits from active feature state.
     fn apply_cost_tracker_limits_for_active_features(&mut self) {
         let params = self.current_slot_params();
-        let cost_limits =
-            params.cost_limits(self.feature_set.snapshot().raise_block_limits_to_100m);
+        let cost_limits = params.cost_limits(&self.feature_set);
 
         let mut cost_tracker = self.write_cost_tracker().unwrap();
         cost_tracker.set_limits(cost_limits);

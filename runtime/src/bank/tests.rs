@@ -68,11 +68,8 @@ use {
     },
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
-    solana_cost_model::{
-        block_cost_limits::{
-            MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0286, MAX_WRITABLE_ACCOUNT_UNITS,
-        },
-        shred_limit::{DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT},
+    solana_cost_model::shred_limit::{
+        DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     },
     solana_cpi::MAX_RETURN_DATA,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
@@ -5985,7 +5982,7 @@ fn test_bank_hash_deterministic_with_stakes_cache() {
 
     assert_eq!(
         bank2.hash().to_string(),
-        "6YG3ttHjaxksbXMRy1qHJH7H9wnzoPzkxAyAzSNAE6AT",
+        "B8N6A5pkE1oawyY2szmbFkScurzXSK3uD49pQaosT6yu",
     );
 }
 
@@ -6587,108 +6584,6 @@ fn test_reserved_account_keys() {
     );
 }
 
-#[test]
-fn test_block_limits() {
-    const MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_ENABLED: u64 = 40_000_000;
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(100_000);
-    genesis_config
-        .accounts
-        .remove(&feature_set::raise_block_limits_to_100m::id())
-        .unwrap();
-    let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let mut bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
-
-    // Ensure increased block limits features are inactive.
-    assert!(!bank.feature_set.snapshot().raise_block_limits_to_100m);
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-
-    // Activate `raise_block_limits_to_100m` feature
-    bank.store_account(
-        &feature_set::raise_block_limits_to_100m::id(),
-        &feature::create_account(&Feature::default(), 42),
-    );
-    // compute_and_apply_features_after_snapshot_restore will not cause the block limit to be updated
-    bank.compute_and_apply_features_after_snapshot_restore();
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-
-    // compute_and_apply_new_feature_activations will cause feature to be activated
-    bank.compute_and_apply_new_feature_activations();
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0286,
-        "after activating the feature, bank should have new limit"
-    );
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_ENABLED,
-        "after activating the feature, bank should have new limit"
-    );
-
-    // Make sure the limits propagate to the child-bank.
-    let bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), 2);
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0286,
-        "child bank should have new limit"
-    );
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_ENABLED,
-        "after activating the feature, bank should have new limit"
-    );
-
-    // Test starting from a genesis config with and without feature account
-    let (mut genesis_config, _keypair) = create_genesis_config(100_000);
-    genesis_config
-        .accounts
-        .remove(&feature_set::raise_block_limits_to_100m::id())
-        .unwrap();
-    // Without feature account in genesis, old limits are used.
-    let bank = Bank::new_for_tests(&genesis_config);
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS,
-        "before activating the feature, bank should have old/default limit"
-    );
-
-    activate_feature(
-        &mut genesis_config,
-        feature_set::raise_block_limits_to_100m::id(),
-    );
-    let bank = Bank::new_for_tests(&genesis_config);
-    assert!(bank.feature_set.snapshot().raise_block_limits_to_100m);
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_block_limit(),
-        MAX_BLOCK_UNITS_SIMD_0286,
-        "bank created from genesis config should have new limit"
-    );
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    assert_eq!(
-        bank.read_cost_tracker().unwrap().get_account_limit(),
-        MAX_WRITABLE_ACCOUNT_UNITS_SIMD_0306_ENABLED,
-        "bank created from genesis config should have new limit"
-    );
-}
-
 fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
     assert_eq!(bank.ns_per_slot, params.ns_per_slot());
     assert_eq!(bank.hashes_per_tick(), params.hashes_per_tick());
@@ -6710,10 +6605,7 @@ fn assert_slot_time_bank_state(bank: &Bank, params: SlotParams) {
         params.max_entry_bytes_per_slot()
     );
     let cost_tracker = bank.read_cost_tracker().unwrap();
-    let cost_limits = params.cost_limits(
-        bank.feature_set
-            .is_active(&feature_set::raise_block_limits_to_100m::id()),
-    );
+    let cost_limits = params.cost_limits(&bank.feature_set);
     assert_eq!(cost_tracker.get_limits(), cost_limits);
 }
 
