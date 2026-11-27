@@ -13,6 +13,20 @@ impl AccountsDb {
         }
     }
 
+    /// Read the final count only when a subscriber requests it.
+    pub fn notify_account_update_count(
+        &self,
+        slot: Slot,
+        bank_id: BankId,
+        count: impl FnOnce() -> u64,
+    ) {
+        if let Some(notifier) = &self.accounts_update_notifier
+            && notifier.account_update_count_notifications_enabled()
+        {
+            notifier.notify_account_update_count(slot, bank_id, count());
+        }
+    }
+
     pub fn notify_account_at_accounts_update(
         &self,
         slot: Slot,
@@ -66,11 +80,21 @@ mod tests {
         pub accounts_notified: DashMap<Pubkey, Vec<(Slot, u64, AccountSharedData)>>,
         pub is_startup_done: AtomicBool,
         pub banks_notified: DashMap<BankId, (Slot, Option<Slot>)>,
+        pub counts_enabled: AtomicBool,
+        pub counts_notified: DashMap<BankId, (Slot, u64)>,
     }
 
     impl AccountsUpdateNotifierInterface for GeyserTestPlugin {
         fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId) {
             self.banks_notified.insert(bank_id, (slot, parent));
+        }
+
+        fn account_update_count_notifications_enabled(&self) -> bool {
+            self.counts_enabled.load(Ordering::Relaxed)
+        }
+
+        fn notify_account_update_count(&self, slot: Slot, bank_id: BankId, count: u64) {
+            self.counts_notified.insert(bank_id, (slot, count));
         }
 
         fn snapshot_notifications_enabled(&self) -> bool {
@@ -111,6 +135,21 @@ mod tests {
         fn notify_end_of_restore_from_snapshot(&self) {
             self.is_startup_done.store(true, Ordering::Relaxed);
         }
+    }
+
+    #[test]
+    fn test_account_update_count_is_lazy_and_opt_in() {
+        let mut accounts_db = AccountsDb::default_for_tests();
+        let bank_id = BankId::new(7);
+        accounts_db.notify_account_update_count(42, bank_id, || panic!("no notifier"));
+        let notifier = Arc::new(GeyserTestPlugin::default());
+        accounts_db.set_geyser_plugin_notifier(Some(notifier.clone()));
+        accounts_db.notify_account_update_count(42, bank_id, || panic!("not subscribed"));
+        assert!(notifier.counts_notified.is_empty());
+
+        notifier.counts_enabled.store(true, Ordering::Relaxed);
+        accounts_db.notify_account_update_count(42, bank_id, || 3);
+        assert_eq!(*notifier.counts_notified.get(&bank_id).unwrap(), (42, 3));
     }
 
     #[test]

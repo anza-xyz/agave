@@ -3286,6 +3286,16 @@ impl Bank {
                 .accounts
                 .accounts_db
                 .mark_bank_frozen(self.bank_id());
+            // Plugins must not hold up readers of the frozen bank's hash.
+            drop(hash);
+            self.rc.accounts.accounts_db.notify_account_update_count(
+                self.slot(),
+                self.bank_id(),
+                || {
+                    let stats = self.get_bank_hash_stats();
+                    stats.num_updated_accounts + stats.num_removed_accounts
+                },
+            );
         }
     }
 

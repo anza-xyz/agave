@@ -15,6 +15,14 @@ pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
         true
     }
 
+    /// Whether to receive the expected account-update count when a bank freezes.
+    fn account_update_count_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Called once after a bank's final writes and account-update callbacks.
+    fn notify_account_update_count(&self, _slot: Slot, _bank_id: BankId, _count: u64) {}
+
     /// Called before the bank can produce account updates or other bank-scoped notifications.
     fn notify_bank_creation(&self, slot: Slot, parent: Option<Slot>, bank_id: BankId);
 

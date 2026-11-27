@@ -73,6 +73,17 @@ fn genesis_bank(genesis_config: &GenesisConfig, notifier: Arc<BankCreationNotifi
 }
 
 #[test]
+fn test_account_update_count_defaults_are_opt_out() {
+    // Existing notifiers need not implement either of the new count methods.
+    let notifier = BankCreationNotifier::default();
+    let interface: &dyn AccountsUpdateNotifierInterface = &notifier;
+    assert!(interface.account_notifications_enabled());
+    assert!(!interface.account_update_count_notifications_enabled());
+    interface.notify_account_update_count(42, BankId::new(7), 3);
+    assert!(notifier.banks.lock().unwrap().is_empty());
+}
+
+#[test]
 fn test_bank_creation_precedes_constructor_writes() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_tower_leader(100_000, &Pubkey::new_unique(), 3);

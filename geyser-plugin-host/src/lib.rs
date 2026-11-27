@@ -168,6 +168,13 @@ impl GeyserPluginHost {
         false
     }
 
+    /// Whether any loaded plugin requests the account-update count after bank freeze.
+    pub fn account_update_count_notifications_enabled(&self) -> bool {
+        self.plugins
+            .iter()
+            .any(|plugin| plugin.account_update_count_notifications_enabled())
+    }
+
     /// Check if there is any plugin interested in account data from snapshot
     pub fn account_data_snapshot_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {
@@ -361,6 +368,7 @@ mod tests {
     #[derive(Debug, Default, Clone, Copy)]
     struct Kinds {
         accounts: bool,
+        account_update_count: bool,
         snapshot: bool,
         transactions: bool,
         entries: bool,
@@ -381,6 +389,9 @@ mod tests {
         }
         fn account_data_notifications_enabled(&self) -> bool {
             self.kinds.accounts
+        }
+        fn account_update_count_notifications_enabled(&self) -> bool {
+            self.kinds.account_update_count
         }
         fn account_data_snapshot_notifications_enabled(&self) -> bool {
             self.kinds.snapshot
@@ -424,10 +435,11 @@ mod tests {
         })
     }
 
-    /// Reads all seven fan-ins of a manager in a fixed order.
-    fn enabled_kinds(manager: &GeyserPluginHost) -> [bool; 7] {
+    /// Reads all fan-ins of a manager in a fixed order.
+    fn enabled_kinds(manager: &GeyserPluginHost) -> [bool; 8] {
         [
             manager.account_data_notifications_enabled(),
+            manager.account_update_count_notifications_enabled(),
             manager.account_data_snapshot_notifications_enabled(),
             manager.transaction_notifications_enabled(),
             manager.entry_notifications_enabled(),
@@ -470,14 +482,15 @@ mod tests {
     }
 
     /// A notification kind is enabled when *any* loaded plugin asks for it, and each of the
-    /// seven kinds is answered independently of the others.
+    /// notification kinds is answered independently of the others.
     #[test]
     fn test_notifications_enabled_is_per_kind_and_any_plugin() {
         let manager = GeyserPluginHost::default();
-        assert_eq!(enabled_kinds(&manager), [false; 7]);
+        assert_eq!(enabled_kinds(&manager), [false; 8]);
 
-        let setters: [fn(&mut Kinds); 7] = [
+        let setters: [fn(&mut Kinds); 8] = [
             |k| k.accounts = true,
+            |k| k.account_update_count = true,
             |k| k.snapshot = true,
             |k| k.transactions = true,
             |k| k.entries = true,
@@ -498,7 +511,7 @@ mod tests {
                 name: "one-kind",
                 kinds,
             }));
-            let mut expected = [false; 7];
+            let mut expected = [false; 8];
             expected[i] = true;
             assert_eq!(enabled_kinds(&manager), expected, "kind index {i}");
         }

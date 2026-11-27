@@ -1,4 +1,5 @@
 #![cfg(test)]
+mod account_update_count_notifications;
 mod bank_creation_notifications;
 use {
     super::{
