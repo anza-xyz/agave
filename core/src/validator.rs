@@ -78,8 +78,8 @@ use {
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
         blockstore::{
-            Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL,
-            MAX_REPLAY_WAKE_UP_SIGNALS, MAX_UPDATE_PARENT_SIGNALS, PurgeType, UpdateParentReceiver,
+            Blockstore, BlockstoreError, MAX_COMPLETED_SLOTS_IN_CHANNEL, MAX_UPDATE_PARENT_SIGNALS,
+            PurgeType, SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY, UpdateParentReceiver,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{
@@ -910,7 +910,6 @@ impl Validator {
             bank_forks,
             blockstore,
             original_blockstore_root,
-            ledger_signal_receiver,
             update_parent_receiver,
             leader_schedule_cache,
             starting_snapshot_hashes,
@@ -940,6 +939,10 @@ impl Validator {
                 .then(|| dependency_tracker.clone()),
         )
         .map_err(ValidatorError::Other)?;
+
+        let (replay_wakeup_sender, replay_wakeup_receiver) =
+            bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
+        blockstore.set_shred_progress_signal(replay_wakeup_sender.clone());
 
         let event_system = initialize_event_system(&blockstore)?;
         let (root_slot, hard_forks) = {
@@ -1069,7 +1072,7 @@ impl Validator {
                 bank.ticks_per_slot(),
                 config.delay_leader_block_for_pending_fork,
                 blockstore.clone(),
-                blockstore.get_new_shred_signal(0),
+                Some(replay_wakeup_sender),
                 &leader_schedule_cache,
                 &genesis_config.poh_config,
                 exit.clone(),
@@ -1545,12 +1548,6 @@ impl Validator {
         let (block_creation_loop, reward_aggregates_sender) =
             BlockCreationLoop::new(block_creation_loop_config);
 
-        assert_eq!(
-            blockstore.get_new_shred_signals_len(),
-            1,
-            "New shred signal for the TVU should be the same as the clear bank signal."
-        );
-
         let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
 
         let serve_repair_service = ServeRepairService::new(
@@ -1591,7 +1588,7 @@ impl Validator {
                 block_id_repair: node.sockets.block_id_repair,
             },
             blockstore.clone(),
-            ledger_signal_receiver,
+            replay_wakeup_receiver,
             update_parent_receiver,
             rpc_subscriptions.clone(),
             poh_recorder.read().unwrap().shared_leader_state(),
@@ -1828,7 +1825,7 @@ impl Validator {
     pub fn exit(&mut self) {
         self.validator_exit.write().unwrap().exit();
 
-        // drop all signals in blockstore
+        // drop the completed-slots and update-parent senders in blockstore
         self.blockstore.drop_signal();
     }
 
@@ -2210,7 +2207,6 @@ fn load_blockstore(
         Arc<RwLock<BankForks>>,
         Arc<Blockstore>,
         Slot,
-        Receiver<bool>,
         UpdateParentReceiver,
         LeaderScheduleCache,
         Option<StartingSnapshotHashes>,
@@ -2324,8 +2320,6 @@ fn load_blockstore(
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
 
     let blockstore_root_scan = BlockstoreRootScan::new(config, blockstore.clone(), exit);
-    let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
-    blockstore.add_new_shred_signal(ledger_signal_sender);
     let (update_parent_sender, update_parent_receiver) = bounded(MAX_UPDATE_PARENT_SIGNALS);
     blockstore.add_update_parent_signal(update_parent_sender);
 
@@ -2333,7 +2327,6 @@ fn load_blockstore(
         bank_forks,
         blockstore,
         original_blockstore_root,
-        ledger_signal_receiver,
         update_parent_receiver,
         leader_schedule_cache,
         starting_snapshot_hashes,

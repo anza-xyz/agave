@@ -3,6 +3,8 @@
 //! access read to a persistent file-based ledger.
 
 #[cfg(feature = "dev-context-only-utils")]
+use crossbeam_channel::bounded;
+#[cfg(feature = "dev-context-only-utils")]
 use trees::{Tree, TreeWalk};
 use {
     crate::{
@@ -36,7 +38,7 @@ use {
         unverified_vote_message::UnverifiedCertificate,
     },
     bytes::Bytes,
-    crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
+    crossbeam_channel::{Receiver, Sender, TrySendError},
     dashmap::DashSet,
     itertools::Itertools,
     log::*,
@@ -119,7 +121,7 @@ pub use {
     rocksdb::properties as RocksProperties,
 };
 
-pub const MAX_REPLAY_WAKE_UP_SIGNALS: usize = 1;
+pub const SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY: usize = 1;
 pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 /// Maximum queued UpdateParent notifications from blockstore insertion to replay.
 ///
@@ -149,7 +151,7 @@ type UpdateParentShredParentCache =
     LruCache<UpdateParentShredParentKey, /* parent used for shred filtering */ Slot>;
 
 struct SignalUpdates {
-    should_signal: bool,
+    has_shred_progress: bool,
     newly_completed_slots_with_last_index: Vec<(u64, u64)>,
     update_parent_signals: Vec<UpdateParentSignal>,
     /// Slots with a block location that had no shreds before this batch and
@@ -364,9 +366,10 @@ pub struct CompletedDataSetInfo {
     pub indices: Range<u32>,
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub struct BlockstoreSignals {
     pub blockstore: Blockstore,
-    pub ledger_signal_receiver: Receiver<bool>,
+    pub shred_progress_receiver: Receiver<()>,
     pub completed_slots_receiver: CompletedSlotsReceiver,
     pub update_parent_receiver: UpdateParentReceiver,
 }
@@ -425,7 +428,8 @@ pub struct Blockstore {
     max_root: AtomicU64,
     insert_shreds_lock: Mutex<()>,
     switch_block_lock: SwitchBlockLock,
-    new_shreds_signals: Mutex<Vec<Sender<bool>>>,
+    /// Signals when an insert advances the contiguous shreds of a parent-connected slot.
+    shred_progress_signal: OnceLock<Sender<()>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
     slot_meta_topology_generation: AtomicU64,
     update_parent_signals: Mutex<Vec<UpdateParentSender>>,
@@ -727,6 +731,14 @@ impl Blockstore {
         &self.ledger_path
     }
 
+    /// Wires the channel used to signal when an insert advances the contiguous shreds of a
+    /// parent-connected slot.
+    pub fn set_shred_progress_signal(&self, sender: Sender<()>) {
+        self.shred_progress_signal
+            .set(sender)
+            .expect("shred progress signal already set");
+    }
+
     /// Wires the channel used to hand certificates recovered from blockstore to the BLS
     /// sigverifier.
     ///
@@ -843,7 +855,7 @@ impl Blockstore {
             alt_data_shred_cf,
             alt_merkle_root_meta_cf,
 
-            new_shreds_signals: Mutex::default(),
+            shred_progress_signal: OnceLock::new(),
             completed_slots_senders: Mutex::default(),
             slot_meta_topology_generation: AtomicU64::default(),
             update_parent_signals: Mutex::default(),
@@ -863,23 +875,25 @@ impl Blockstore {
         Ok(blockstore)
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn open_with_signal(
         ledger_path: &Path,
         options: BlockstoreOptions,
     ) -> Result<BlockstoreSignals> {
+        let (shred_progress_signal, shred_progress_receiver) =
+            bounded(SHRED_PROGRESS_SIGNAL_CHANNEL_CAPACITY);
         let blockstore = Self::open_with_options(ledger_path, options)?;
-        let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
+        blockstore.set_shred_progress_signal(shred_progress_signal);
         let (completed_slots_sender, completed_slots_receiver) =
             bounded(MAX_COMPLETED_SLOTS_IN_CHANNEL);
         let (update_parent_sender, update_parent_receiver) = bounded(MAX_UPDATE_PARENT_SIGNALS);
 
-        blockstore.add_new_shred_signal(ledger_signal_sender);
         blockstore.add_completed_slots_signal(completed_slots_sender);
         blockstore.add_update_parent_signal(update_parent_sender);
 
         Ok(BlockstoreSignals {
             blockstore,
-            ledger_signal_receiver,
+            shred_progress_receiver,
             completed_slots_receiver,
             update_parent_receiver,
         })
@@ -2458,7 +2472,7 @@ impl Blockstore {
         self.compute_double_merkle_meta_for_newly_completed_slots(&mut shred_insertion_tracker)?;
 
         let SignalUpdates {
-            should_signal,
+            has_shred_progress,
             newly_completed_slots_with_last_index,
             update_parent_signals,
             first_shred_slots,
@@ -2481,11 +2495,11 @@ impl Blockstore {
         }
 
         send_signals(
-            &self.new_shreds_signals.lock().unwrap(),
+            self.shred_progress_signal.get(),
             &self.completed_slots_senders.lock().unwrap(),
             &self.update_parent_signals.lock().unwrap(),
             self.first_shred_sender.get(),
-            should_signal,
+            has_shred_progress,
             newly_completed_slots_with_last_index,
             update_parent_signals,
             first_shred_slots,
@@ -2581,10 +2595,6 @@ impl Blockstore {
         Ok(completed_data_set_infos)
     }
 
-    pub fn add_new_shred_signal(&self, s: Sender<bool>) {
-        self.new_shreds_signals.lock().unwrap().push(s);
-    }
-
     pub fn add_completed_slots_signal(&self, s: CompletedSlotsSender) {
         self.completed_slots_senders.lock().unwrap().push(s);
     }
@@ -2605,16 +2615,7 @@ impl Blockstore {
         self.update_parent_signals.lock().unwrap().push(s);
     }
 
-    pub fn get_new_shred_signals_len(&self) -> usize {
-        self.new_shreds_signals.lock().unwrap().len()
-    }
-
-    pub fn get_new_shred_signal(&self, index: usize) -> Option<Sender<bool>> {
-        self.new_shreds_signals.lock().unwrap().get(index).cloned()
-    }
-
     pub fn drop_signal(&self) {
-        self.new_shreds_signals.lock().unwrap().clear();
         self.completed_slots_senders.lock().unwrap().clear();
         self.update_parent_signals.lock().unwrap().clear();
     }
@@ -6196,17 +6197,19 @@ impl Blockstore {
     /// - `write_batch`: the write batch which includes all the updates of the
     ///   the current write and ensures their atomicity.
     ///
-    /// On success, the function returns an Ok result with <should_signal,
-    /// newly_completed_slots> pair where:
-    ///  - `should_signal`: a boolean flag indicating whether to send signal.
-    ///  - `newly_completed_slots`: a subset of slot_meta_working_set which are
-    ///    newly completed.
+    /// On success, the function returns an Ok result with [`SignalUpdates`]:
+    ///  - `has_shred_progress`: whether an insert advanced the contiguous
+    ///    shreds of any parent-connected slot.
+    ///  - `newly_completed_slots_with_last_index`: slots in the original
+    ///    column that are newly completed, with their last shred index.
+    ///  - `update_parent_signals`: slots in the original column with a new
+    ///    `UpdateParent`.
     fn commit_slot_meta_working_set(
         &self,
         slot_meta_working_set: &HashMap<(BlockLocation, u64), SlotMetaWorkingSetEntry>,
         write_batch: &mut WriteBatch,
     ) -> Result<SignalUpdates> {
-        let mut should_signal = false;
+        let mut has_shred_progress = false;
         let mut newly_completed_slots_with_last_index = vec![];
         let mut update_parent_signals = Vec::new();
         let completed_slots_senders = self.completed_slots_senders.lock().unwrap();
@@ -6232,7 +6235,8 @@ impl Blockstore {
             }
             // Check if the working copy of the metadata has changed
             if Some(meta) != meta_backup.as_ref() {
-                should_signal = should_signal || slot_has_updates(meta, meta_backup);
+                has_shred_progress =
+                    has_shred_progress || slot_has_shred_progress(meta, meta_backup);
                 self.put_meta_in_batch(write_batch, slot, location, meta)?;
             }
 
@@ -6249,7 +6253,7 @@ impl Blockstore {
         }
 
         Ok(SignalUpdates {
-            should_signal,
+            has_shred_progress,
             newly_completed_slots_with_last_index,
             update_parent_signals,
             first_shred_slots: Vec::new(),
@@ -6536,25 +6540,23 @@ fn update_slot_meta<'a>(
 }
 
 fn send_signals(
-    new_shreds_signals: &[Sender<bool>],
+    shred_progress_signal: Option<&Sender<()>>,
     completed_slots_senders: &[Sender<Vec<u64>>],
     update_parent_senders: &[UpdateParentSender],
     first_shred_sender: Option<&FirstShredSender>,
-    should_signal: bool,
+    has_shred_progress: bool,
     newly_completed_slots: Vec<(u64, u64)>,
     update_parent_signals: Vec<UpdateParentSignal>,
     first_shred_slots: Vec<Slot>,
 ) {
-    if should_signal {
-        for signal in new_shreds_signals {
-            match signal.try_send(true) {
-                Ok(_) => {}
-                Err(TrySendError::Full(_)) => {
-                    trace!("replay wake up signal channel is full.")
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    trace!("replay wake up signal channel is disconnected.")
-                }
+    if has_shred_progress && let Some(sender) = shred_progress_signal {
+        match sender.try_send(()) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                trace!("shred progress signal channel is full.")
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                trace!("shred progress signal channel is disconnected.")
             }
         }
     }
@@ -6648,19 +6650,19 @@ fn is_newly_completed_slot(slot_meta: &SlotMeta, backup_slot_meta: &Option<SlotM
             || slot_meta.consumed != backup_slot_meta.as_ref().unwrap().consumed)
 }
 
-/// Returns a boolean indicating whether a slot has received additional shreds
-/// that can be replayed since the previous update to the slot's SlotMeta.
-fn slot_has_updates(slot_meta: &SlotMeta, slot_meta_backup: &Option<SlotMeta>) -> bool {
-    // First, this slot's parent must be connected in order to even consider
-    // starting replay; otherwise, the replayed results may not be valid.
+/// Returns whether a parent-connected slot's contiguous shred range has advanced
+/// since the previous update to its SlotMeta.
+fn slot_has_shred_progress(slot_meta: &SlotMeta, slot_meta_backup: &Option<SlotMeta>) -> bool {
+    // First, this slot's parent must be connected so its shreds belong to a
+    // connected chain.
     slot_meta.is_parent_connected() &&
         // Then,
         // If the slot didn't exist in the db before, any consecutive shreds
-        // at the start of the slot are ready to be replayed.
+        // at the start of the slot count as progress.
         ((slot_meta_backup.is_none() && slot_meta.consumed != 0) ||
         // Or,
         // If the slot has more consecutive shreds than it last did from the
-        // last update, those shreds are new and also ready to be replayed.
+        // last update, those shreds also count as progress.
         (slot_meta_backup.is_some() && slot_meta_backup.as_ref().unwrap().consumed != slot_meta.consumed))
 }
 
