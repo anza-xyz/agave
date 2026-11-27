@@ -52,7 +52,7 @@ use {
     solana_keypair::{Keypair, signable::Signable},
     solana_net_utils::{
         PortRange, SocketAddrSpace, VALIDATOR_PORT_RANGE, bind_in_range,
-        sockets::{bind_gossip_port_in_range, bind_to_localhost_unique},
+        sockets::bind_gossip_port_in_range,
         token_bucket::{KeyedRateLimiter, TokenBucket},
     },
     solana_perf::{
@@ -64,10 +64,7 @@ use {
     solana_sanitize::Sanitize,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_streamer::{
-        packet,
-        streamer::{ChannelSend, PacketBatchReceiver},
-    },
+    solana_streamer::streamer::{ChannelSend, PacketBatchReceiver},
     solana_time_utils::timestamp,
     std::{
         borrow::Borrow,
@@ -2153,21 +2150,6 @@ pub struct NodeConfig {
     pub num_quic_endpoints: NonZeroUsize,
     /// The number of QUIC endpoints for the votor transport.
     pub num_votor_quic_endpoints: NonZeroUsize,
-}
-
-pub fn push_messages_to_peer_for_tests(
-    messages: Vec<CrdsValue>,
-    self_id: Pubkey,
-    peer_gossip: SocketAddr,
-    socket_addr_space: &SocketAddrSpace,
-) -> Result<(), GossipError> {
-    let reqs: Vec<_> = split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, messages)
-        .map(move |payload| (peer_gossip, Protocol::PushMessage(self_id, payload)))
-        .collect();
-    let packet_batch = make_gossip_packet_batch(reqs, &GossipStats::default());
-    let sock = bind_to_localhost_unique().expect("should bind");
-    packet::send_to(&packet_batch, &sock, socket_addr_space)?;
-    Ok(())
 }
 
 // Checks shred-version of a pull-request caller and returns false if the
