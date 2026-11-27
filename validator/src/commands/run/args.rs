@@ -3,7 +3,7 @@ use {
         bootstrap::RpcBootstrapConfig,
         cli::{DefaultArgs, hash_validator, port_range_validator, port_validator},
         commands::{FromClapArgMatches, Result},
-        shred_receiver_addresses::parse_shred_receiver_addresses,
+        shred_receiver_addresses::{load_shred_receiver_addresses, parse_shred_receiver_addresses},
     },
     clap::{App, Arg, ArgMatches, values_t},
     solana_clap_utils::{
@@ -109,15 +109,18 @@ impl FromClapArgMatches for RunArgs {
 
         let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
 
-        let shred_receiver_addresses = parse_shred_receiver_addresses(
-            matches
-                .values_of("shred_receiver_address")
-                .into_iter()
-                .flatten(),
-        )
+        let shred_receiver_addresses = match matches.value_of("shred_receiver_address_file") {
+            Some(path) => load_shred_receiver_addresses(path),
+            None => parse_shred_receiver_addresses(
+                matches
+                    .values_of("shred_receiver_address")
+                    .into_iter()
+                    .flatten(),
+            ),
+        }
         .map_err(|err| {
             crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
-                "failed to parse --shred-receiver-address: {err}"
+                "failed to parse the shred receiver addresses: {err}"
             )))
         })?;
 
@@ -643,6 +646,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("shred_receiver_address_file")
+            .long("shred-receiver-address-file")
+            .value_name("PATH")
+            .takes_value(true)
+            .conflicts_with("shred_receiver_address")
+            .help(
+                "Read the --shred-receiver-address destinations from a file: one or more per \
+                 line, as the flag takes them; blank lines and lines starting with # are skipped. \
+                 `agave-validator shred-receiver-addresses PATH` replaces the list while the \
+                 validator runs.",
+            ),
+    )
+    .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
             .value_name("HOST")
@@ -1136,6 +1152,37 @@ mod tests {
         verify_args_struct_by_command_run_is_error_with_identity_setup(
             RunArgs::default(),
             vec!["--shred-receiver-address", "[::1]:9001"],
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_shred_receiver_address_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "# receivers\n127.0.0.1:9001\n127.0.0.1:9002\n").unwrap();
+        let path = file.path().to_str().unwrap();
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            shred_receiver_addresses: ShredReceiverAddresses::new([
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9002),
+            ])
+            .unwrap(),
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--shred-receiver-address-file", path],
+            expected_args,
+        );
+        // The file and the flag do not mix.
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            RunArgs::default(),
+            vec![
+                "--shred-receiver-address-file",
+                path,
+                "--shred-receiver-address",
+                "127.0.0.1:9003",
+            ],
         );
     }
 

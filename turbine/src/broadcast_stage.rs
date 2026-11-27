@@ -448,18 +448,28 @@ const SHRED_RECEIVER_MULTICAST_TTL: u32 = 64;
 /// Extra destinations for this node's own leader shreds
 /// (`--shred-receiver-address`): a copy of every shred goes to each address,
 /// after the turbine packets and through the same socket or XDP sender.
-#[derive(Clone)]
+///
+/// Clones share one list, which `set` replaces while the validator runs (the
+/// admin RPC holds a clone). An empty list sends nothing.
+#[derive(Clone, Debug, Default)]
 pub struct ShredReceivers {
-    addrs: Arc<[SocketAddr]>,
+    addrs: Arc<RwLock<Arc<[SocketAddr]>>>,
 }
 
 impl ShredReceivers {
-    /// `None` when no address is configured: `broadcast_shreds` then sends
-    /// nothing extra.
-    pub fn new(addrs: ShredReceiverAddresses) -> Option<Self> {
-        (!addrs.is_empty()).then(|| Self {
-            addrs: Arc::from(&addrs[..]),
-        })
+    pub fn new(addrs: &ShredReceiverAddresses) -> Self {
+        let receivers = Self::default();
+        receivers.set(addrs);
+        receivers
+    }
+
+    /// Replaces the list; the next `broadcast_shreds` call uses the new one.
+    pub fn set(&self, addrs: &ShredReceiverAddresses) {
+        *self.addrs.write().unwrap() = Arc::from(&addrs[..]);
+    }
+
+    pub fn get(&self) -> Arc<[SocketAddr]> {
+        self.addrs.read().unwrap().clone()
     }
 }
 
@@ -563,13 +573,13 @@ pub fn broadcast_shreds(
             }
         }
     }
-    if let Some(receivers) = shred_receivers {
-        let num_receivers = receivers.addrs.len();
+    let receiver_addrs = shred_receivers.map(ShredReceivers::get).unwrap_or_default();
+    if !receiver_addrs.is_empty() {
+        let num_receivers = receiver_addrs.len();
         transmit_stats.mirrored_packets += num_receivers * shreds.len();
         match socket {
             BroadcastSocket::Udp(s) => {
-                let mirrored: Vec<_> = receivers
-                    .addrs
+                let mirrored: Vec<_> = receiver_addrs
                     .iter()
                     .flat_map(|addr| shreds.iter().map(move |shred| (shred.payload(), *addr)))
                     .collect();
@@ -582,7 +592,7 @@ pub fn broadcast_shreds(
                 for (idx, shred) in shreds.iter().enumerate() {
                     if s.try_send(
                         num_packets + idx,
-                        receivers.addrs.clone(),
+                        receiver_addrs.clone(),
                         shred.payload().bytes.clone(),
                     )
                     .is_err()
@@ -764,9 +774,42 @@ pub mod test {
         }
     }
 
+    fn bind_receiver() -> UdpSocket {
+        let socket = bind_to_localhost_unique().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        socket
+    }
+
+    /// Datagrams waiting on `socket`, read until its timeout.
+    fn drain(socket: &UdpSocket) -> usize {
+        let mut buf = [0u8; 2048];
+        std::iter::from_fn(|| socket.recv_from(&mut buf).ok()).count()
+    }
+
     #[test]
-    fn test_shred_receivers_none_when_unconfigured() {
-        assert!(ShredReceivers::new(ShredReceiverAddresses::default()).is_none());
+    fn test_shred_receivers_replaced_while_running() {
+        let receiver_sockets = [bind_receiver(), bind_receiver()];
+        let addresses = |socket: &UdpSocket| {
+            ShredReceiverAddresses::new([socket.local_addr().unwrap()]).unwrap()
+        };
+        let receivers = ShredReceivers::new(&addresses(&receiver_sockets[0]));
+        // The admin RPC holds a clone; setting the list through it reaches the
+        // broadcast path.
+        let admin = receivers.clone();
+        let turbine_socket = bind_to_localhost_unique().unwrap();
+        let (broadcast, payloads) = leader_broadcast();
+
+        broadcast(BroadcastSocket::Udp(&turbine_socket), &receivers).unwrap();
+        admin.set(&addresses(&receiver_sockets[1]));
+        broadcast(BroadcastSocket::Udp(&turbine_socket), &receivers).unwrap();
+        admin.set(&ShredReceiverAddresses::default());
+        let transmit_stats = broadcast(BroadcastSocket::Udp(&turbine_socket), &receivers).unwrap();
+
+        assert_eq!(transmit_stats.mirrored_packets, 0);
+        assert_eq!(drain(&receiver_sockets[0]), payloads.len());
+        assert_eq!(drain(&receiver_sockets[1]), payloads.len());
     }
 
     /// A leader alone in its cluster, so turbine has no destination: every
@@ -833,23 +876,15 @@ pub mod test {
 
     #[test]
     fn test_shred_receiver_addresses_get_every_shred_once() {
-        let bind_receiver = || {
-            let socket = bind_to_localhost_unique().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_millis(200)))
-                .unwrap();
-            socket
-        };
         let receiver_sockets = [bind_receiver(), bind_receiver()];
         let receivers = ShredReceivers::new(
-            ShredReceiverAddresses::new(
+            &ShredReceiverAddresses::new(
                 receiver_sockets
                     .iter()
                     .map(|socket| socket.local_addr().unwrap()),
             )
             .unwrap(),
-        )
-        .unwrap();
+        );
         let turbine_socket = bind_to_localhost_unique().unwrap();
         let (broadcast, payloads) = leader_broadcast();
 
@@ -893,8 +928,7 @@ pub mod test {
             .map(|port| SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
             .collect();
         let receivers =
-            ShredReceivers::new(ShredReceiverAddresses::new(receiver_addrs.clone()).unwrap())
-                .unwrap();
+            ShredReceivers::new(&ShredReceiverAddresses::new(receiver_addrs.clone()).unwrap());
         let (broadcast, payloads) = leader_broadcast();
         // The channels hold one call's copies and no more.
         let (queues_sender, queues) =

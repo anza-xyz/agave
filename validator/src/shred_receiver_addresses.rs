@@ -8,8 +8,28 @@
 
 use {
     solana_turbine::ShredReceiverAddresses,
-    std::net::{SocketAddr, ToSocketAddrs},
+    std::{
+        net::{SocketAddr, ToSocketAddrs},
+        path::Path,
+    },
 };
+
+/// Reads `--shred-receiver-address-file`: one or more entries per line, as
+/// the flag takes them; blank lines and lines starting with `#` are skipped.
+/// An empty file is an empty list.
+pub fn load_shred_receiver_addresses(
+    path: impl AsRef<Path>,
+) -> Result<ShredReceiverAddresses, String> {
+    let path = path.as_ref();
+    let contents = std::fs::read_to_string(path)
+        .map_err(|err| format!("unable to read {}: {err}", path.display()))?;
+    parse_shred_receiver_addresses(
+        contents
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with('#')),
+    )
+}
 
 /// Parses `--shred-receiver-address` values: each value holds one or more
 /// comma-separated `ip:port` or `host:port` entries. A hostname is resolved
@@ -107,6 +127,32 @@ mod tests {
         let err = parse_shred_receiver_addresses(&values).unwrap_err();
         assert!(err.contains("too many shred receiver addresses"));
         assert!(parse_shred_receiver_addresses(&values[1..]).is_ok());
+    }
+
+    #[test]
+    fn test_load_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            "# receivers\n127.0.0.1:9001\n\n  127.0.0.1:9002,127.0.0.1:9003  \n#127.0.0.1:9004\n",
+        )
+        .unwrap();
+        let addrs = load_shred_receiver_addresses(file.path()).unwrap();
+        let expected: Vec<SocketAddr> = (9001..=9003)
+            .map(|port| format!("127.0.0.1:{port}").parse().unwrap())
+            .collect();
+        assert_eq!(&addrs[..], &expected[..]);
+
+        std::fs::write(file.path(), "# nothing\n").unwrap();
+        assert!(
+            load_shred_receiver_addresses(file.path())
+                .unwrap()
+                .is_empty()
+        );
+
+        std::fs::write(file.path(), "[::1]:9001\n").unwrap();
+        assert!(load_shred_receiver_addresses(file.path()).is_err());
+        assert!(load_shred_receiver_addresses(file.path().with_extension("missing")).is_err());
     }
 
     #[test]

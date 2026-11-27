@@ -69,7 +69,7 @@ $ sudo setcap 'cap_net_admin,cap_net_raw,cap_bpf,cap_perfmon+eip' <path-to-agave
 
 # Mirroring leader shreds to extra receivers
 
-`--shred-receiver-address HOST:PORT` (repeatable, IPv4 only, startup only) sends a copy of every
+`--shred-receiver-address HOST:PORT` (repeatable, IPv4 only) sends a copy of every
 shred this validator broadcasts as leader to each listed destination, after the turbine packets:
 
 ```bash
@@ -80,6 +80,17 @@ At most 8 distinct addresses are accepted. Each is one more full copy of the lea
 stream, so size the uplink for it. The copies take the path of the turbine packets: with XDP they leave through
 the XDP interface, so every receiver must be reachable through it, and without XDP they leave
 through the broadcast socket on `--bind-address`.
+
+To change the list while the validator runs, keep it in a file, one or more entries per line
+(blank lines and lines starting with `#` are skipped), start with
+`--shred-receiver-address-file PATH` instead of the flag, and after editing the file run:
+
+```bash
+$ agave-validator --ledger <LEDGER> shred-receiver-addresses PATH
+```
+
+The next broadcast uses the new list. A file that does not load leaves the current list in
+place, and an empty file removes every receiver.
 
 # Testing
 

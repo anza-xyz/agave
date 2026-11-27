@@ -57,6 +57,7 @@ use {
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::runtime_config::RuntimeConfig,
     solana_signer::Signer,
+    solana_turbine::broadcast_stage::ShredReceivers,
     solana_validator_exit::Exit,
     std::{
         collections::HashSet,
@@ -512,7 +513,7 @@ pub fn execute(
         delay_leader_block_for_pending_fork: !matches
             .is_present("no_delay_leader_block_for_pending_fork"),
         turbine_mode: TurbineMode::default(),
-        shred_receiver_addresses: run_args.shred_receiver_addresses,
+        shred_receivers: ShredReceivers::new(&run_args.shred_receiver_addresses),
         block_verification_method: value_t_or_exit!(
             matches,
             "block_verification_method",

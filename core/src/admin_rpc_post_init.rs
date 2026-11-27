@@ -7,6 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_runtime::{bank_forks::BankForks, snapshot_controller::SnapshotController},
     solana_tls_utils::NotifyKeyUpdate,
+    solana_turbine::broadcast_stage::ShredReceivers,
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
@@ -85,4 +86,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub snapshot_controller: Arc<SnapshotController>,
     pub blockstore: Arc<Blockstore>,
     pub votor_event_sender: VotorEventSender,
+    pub shred_receivers: ShredReceivers,
 }
