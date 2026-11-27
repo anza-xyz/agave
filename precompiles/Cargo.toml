@@ -20,7 +20,7 @@ agave-unstable-api = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
-libsecp256k1 = { workspace = true, features = ["hmac"] }
+k256 = { workspace = true }
 openssl = { workspace = true }
 solana-ed25519 = { workspace = true }
 solana-ed25519-program = { workspace = true }
@@ -42,6 +42,7 @@ criterion = { workspace = true }
 # to `solana-ed25519`, so the consistency test compares against it.
 ed25519-dalek = "=1.0.1"
 hex = { workspace = true }
+libsecp256k1 = { workspace = true, features = ["hmac"] }
 rand = { workspace = true }
 solana-instruction = { workspace = true }
 
