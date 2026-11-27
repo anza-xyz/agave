@@ -711,16 +711,12 @@ impl<'ix_data> TransactionContext<'ix_data> {
                     debug_assert!(false);
                     return;
                 };
-                if accounts.touch(index_in_transaction).is_err() {
-                    debug_assert!(false);
-                    return;
-                }
 
                 let remaining_allowed_growth = MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION
                     .saturating_sub(accounts.resize_delta())
                     .max(0) as usize;
 
-                if requested_length > region.len() {
+                let new_len = if requested_length > region.len() {
                     // Realloc immediately here to fit the requested access,
                     // then later in CPI or deserialization realloc again to the
                     // account length the program stored in AccountInfo.
@@ -730,13 +726,24 @@ impl<'ix_data> TransactionContext<'ix_data> {
                         .min(old_len.saturating_add(remaining_allowed_growth));
                     // The last two min operations ensure the following:
                     debug_assert!(accounts.can_data_be_resized(old_len, new_len).is_ok());
-                    if accounts
-                        .update_accounts_resize_delta(old_len, new_len)
-                        .is_err()
+                    if requested_length > new_len
+                        || accounts
+                            .update_accounts_resize_delta(old_len, new_len)
+                            .is_err()
                     {
                         return;
                     }
+                    Some(new_len)
+                } else {
+                    None
+                };
 
+                if accounts.touch(index_in_transaction).is_err() {
+                    debug_assert!(false);
+                    return;
+                }
+
+                if let Some(new_len) = new_len {
                     account.resize(new_len, 0);
                     let data_ptr = region.host_buffer().ptr() as *mut u8;
                     let new_buffer = std::ptr::slice_from_raw_parts_mut(data_ptr, new_len);
@@ -1951,5 +1958,280 @@ mod tests {
         } else {
             assert!(result.is_ok());
         }
+    }
+}
+
+/// Tests for account growth through the access violation handler.
+///
+/// The handler is driven as during program execution, through sbpf's
+/// `map_with_access_violation_handler`, which calls the handler on a copy of the region, retries
+/// the access once, and installs the copy in the mapping if the retry succeeds.
+///
+/// After every access, the account's region in the mapping is expected to cover exactly the
+/// account's current data (same length and, with direct mapping, the same host buffer).
+#[cfg(all(test, not(target_arch = "sbf"), not(target_arch = "bpf")))]
+#[expect(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+mod access_violation_handler_tests {
+    use {
+        super::*,
+        crate::MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION,
+        solana_sbpf::{
+            ebpf::MM_INPUT_START,
+            memory_region::MemoryMapping,
+            program::SBPFVersion,
+            vm::{Config, ContextObject},
+        },
+        std::ptr::NonNull,
+        test_case::test_case,
+    };
+
+    /// Address space reserved past an account's data for it to grow into (ABI V1).
+    const REALLOC_PADDING: usize = MAX_ACCOUNT_DATA_GROWTH_PER_INSTRUCTION;
+    const MAX_LEN: usize = MAX_ACCOUNT_DATA_LEN as usize;
+    const VADDR: u64 = MM_INPUT_START;
+
+    struct MockVm {
+        mapping: Option<MemoryMapping>,
+    }
+
+    impl ContextObject for MockVm {
+        fn consume(&mut self, _amount: u64) {}
+        fn get_remaining(&self) -> u64 {
+            u64::MAX
+        }
+        fn active_mapping_ptr(&mut self) -> NonNull<MemoryMapping> {
+            NonNull::from(self.mapping.as_mut().unwrap())
+        }
+    }
+
+    struct Setup {
+        transaction_context: TransactionContext<'static>,
+        vm: MockVm,
+        direct_mapping: bool,
+        /// Keeps the account's buffer shared, if requested.
+        _other_owner: Option<AccountSharedData>,
+        /// Backing memory of the serialized region (without direct mapping) and of the next region.
+        _serialized: Vec<u8>,
+        _next: Box<[u8; 16]>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct State {
+        data_ptr: *const u8,
+        data_len: usize,
+        is_shared: bool,
+        resize_delta: i64,
+    }
+
+    impl Setup {
+        /// One writable account of `len` bytes, mapped at `VADDR` with a reserved window of
+        /// `len + REALLOC_PADDING`, followed by the next region.
+        fn new(len: usize, shared: bool, direct_mapping: bool, resize_delta: i64) -> Self {
+            let account =
+                AccountSharedData::new_with_data(1, vec![0xAB_u8; len], &Pubkey::new_unique());
+            let other_owner = shared.then(|| account.clone());
+            let transaction_context = TransactionContext::new(
+                vec![(Pubkey::new_unique(), account)],
+                Rent::default(),
+                1,
+                1,
+                1,
+            );
+            let accounts = transaction_context.accounts();
+            accounts
+                .update_accounts_resize_delta(0, resize_delta as usize)
+                .unwrap();
+
+            let mut serialized = Vec::new();
+            let mut region = if direct_mapping {
+                // As `create_memory_region_of_account` in program-runtime.
+                let account = accounts.try_borrow(0).unwrap();
+                if shared {
+                    MemoryRegion::new(&raw const account.data()[..], VADDR)
+                } else {
+                    let data = account.data();
+                    MemoryRegion::new(
+                        std::ptr::slice_from_raw_parts_mut(data.as_ptr() as *mut u8, data.len()),
+                        VADDR,
+                    )
+                }
+            } else {
+                // Serialized copy with the padding the handler may grow into.
+                serialized = vec![0xAB_u8; len + REALLOC_PADDING];
+                MemoryRegion::new(&raw mut serialized[..len], VADDR)
+            };
+            region.access_violation_handler_payload = Some(0);
+            let mut next = Box::new([0_u8; 16]);
+            let next_region =
+                MemoryRegion::new(&raw mut next[..], VADDR + (len + REALLOC_PADDING) as u64);
+
+            let config = Config {
+                aligned_memory_mapping: false,
+                ..Config::default()
+            };
+            let handler = transaction_context.access_violation_handler(true, direct_mapping);
+            let mapping = unsafe {
+                MemoryMapping::new_with_access_violation_handler(
+                    vec![MemoryRegion::new_empty(0), region, next_region],
+                    &config,
+                    SBPFVersion::V3,
+                    handler,
+                )
+                .unwrap()
+            };
+            Self {
+                transaction_context,
+                vm: MockVm {
+                    mapping: Some(mapping),
+                },
+                direct_mapping,
+                _other_owner: other_owner,
+                _serialized: serialized,
+                _next: next,
+            }
+        }
+
+        /// A store of `len` bytes at offset `offset` of the account, as done by a program.
+        fn store(&mut self, offset: usize, len: u64) -> bool {
+            let memory_mapping = unsafe { self.vm.active_mapping_ptr().as_mut() };
+            let result: Result<_, _> = memory_mapping
+                .map_with_access_violation_handler(AccessType::Store, VADDR + offset as u64, len)
+                .into();
+            self.assert_region_matches_account();
+            result.is_ok()
+        }
+
+        fn state(&self) -> State {
+            let accounts = self.transaction_context.accounts();
+            let account = accounts.try_borrow_mut(0).unwrap();
+            State {
+                data_ptr: account.data().as_ptr(),
+                data_len: account.data().len(),
+                is_shared: account.is_shared(),
+                resize_delta: accounts.resize_delta(),
+            }
+        }
+
+        fn assert_region_matches_account(&self) {
+            let (_, region) = self
+                .vm
+                .mapping
+                .as_ref()
+                .unwrap()
+                .find_region(VADDR)
+                .unwrap();
+            let accounts = self.transaction_context.accounts();
+            let account = accounts.try_borrow(0).unwrap();
+            assert_eq!(
+                region.len(),
+                account.data().len(),
+                "region length differs from the account's data length",
+            );
+            if self.direct_mapping {
+                assert_eq!(
+                    region.host_buffer().ptr() as *const u8,
+                    account.data().as_ptr(),
+                    "region does not map the account's data buffer",
+                );
+            }
+        }
+
+        fn into_touched(self) -> bool {
+            drop(self.vm); // Drops the handler, which holds a reference to the accounts.
+            ExecutionRecord::from(self.transaction_context).touched_flags[0]
+        }
+    }
+
+    /// How the account is mapped into the VM.
+    #[derive(Clone, Copy, Debug)]
+    enum Mapping {
+        /// Direct mapping of the account's own (unique) buffer, writable.
+        Direct,
+        /// Direct mapping of a buffer shared with another owner (copy-on-write), read-only.
+        DirectShared,
+        /// No direct mapping: a serialized copy with padding to grow into.
+        Serialized,
+    }
+
+    impl Setup {
+        fn with(len: usize, mapping: Mapping, resize_delta: i64) -> Self {
+            match mapping {
+                Mapping::Direct => Self::new(len, false, true, resize_delta),
+                Mapping::DirectShared => Self::new(len, true, true, resize_delta),
+                Mapping::Serialized => Self::new(len, false, false, resize_delta),
+            }
+        }
+    }
+
+    /// Growth beyond the limits: the store is inside the reserved window but does not fit within
+    /// `MAX_ACCOUNT_DATA_LEN` or the remaining growth budget of the transaction. The store fails,
+    /// and the account, the budget and the touched flag are left as they were.
+    #[test_case(MAX_LEN - 2, 0, MAX_LEN + 1, Mapping::Direct ; "max account len, direct")]
+    #[test_case(MAX_LEN - 2, 0, MAX_LEN + 1, Mapping::DirectShared ; "max account len, direct shared")]
+    #[test_case(MAX_LEN - 2, 0, MAX_LEN + 1, Mapping::Serialized ; "max account len, serialized")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION - 0x10, 0x110, Mapping::Direct ; "budget partially left, direct")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION - 0x10, 0x110, Mapping::DirectShared ; "budget partially left, direct shared")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION - 0x10, 0x110, Mapping::Serialized ; "budget partially left, serialized")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, 0x100, Mapping::Direct ; "budget exhausted, direct")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, 0x100, Mapping::DirectShared ; "budget exhausted, direct shared")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION, 0x100, Mapping::Serialized ; "budget exhausted, serialized")]
+    fn test_growth_beyond_limits(len: usize, resize_delta: i64, offset: usize, mapping: Mapping) {
+        assert!(offset < len + REALLOC_PADDING); // Inside the reserved window.
+        let mut setup = Setup::with(len, mapping, resize_delta);
+        let before = setup.state();
+        assert!(!setup.store(offset, 1), "store at {offset:#x} must fail");
+        assert_eq!(setup.state(), before, "account or budget changed");
+        assert!(!setup.into_touched(), "account touched");
+    }
+
+    /// Growth beyond the limits, for an account that a previous store has un-shared.
+    #[test]
+    fn test_growth_beyond_limits_after_unshare() {
+        let mut setup = Setup::with(MAX_LEN - 2, Mapping::DirectShared, 0);
+        assert!(setup.store(0, 1));
+        let before = setup.state();
+        assert!(!before.is_shared);
+        assert!(!setup.store(MAX_LEN + 1, 1));
+        assert_eq!(setup.state(), before);
+    }
+
+    /// Growth within the limits: the account grows to the largest length the limits allow, the
+    /// budget is charged, the account is touched, and the region in the mapping covers the grown
+    /// data.
+    #[test_case(0x100, 0, 0x100, 0x100 + REALLOC_PADDING, Mapping::Direct ; "to the window, direct")]
+    #[test_case(0x100, 0, 0x100, 0x100 + REALLOC_PADDING, Mapping::DirectShared ; "to the window, direct shared")]
+    #[test_case(0x100, 0, 0x100, 0x100 + REALLOC_PADDING, Mapping::Serialized ; "to the window, serialized")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION - 0x10, 0x10F, 0x110, Mapping::Direct ; "to the budget, direct")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION - 0x10, 0x10F, 0x110, Mapping::DirectShared ; "to the budget, direct shared")]
+    #[test_case(0x100, MAX_ACCOUNT_DATA_GROWTH_PER_TRANSACTION - 0x10, 0x10F, 0x110, Mapping::Serialized ; "to the budget, serialized")]
+    #[test_case(MAX_LEN - 2, 0, MAX_LEN - 1, MAX_LEN, Mapping::Direct ; "to max account len, direct")]
+    #[test_case(MAX_LEN - 2, 0, MAX_LEN - 1, MAX_LEN, Mapping::DirectShared ; "to max account len, direct shared")]
+    #[test_case(MAX_LEN - 2, 0, MAX_LEN - 1, MAX_LEN, Mapping::Serialized ; "to max account len, serialized")]
+    fn test_growth_within_limits(
+        len: usize,
+        resize_delta: i64,
+        offset: usize,
+        grown_len: usize,
+        mapping: Mapping,
+    ) {
+        let mut setup = Setup::with(len, mapping, resize_delta);
+        assert!(setup.store(offset, 1), "store at {offset:#x} must succeed");
+        let after = setup.state();
+        assert_eq!(after.data_len, grown_len);
+        assert_eq!(after.resize_delta, resize_delta + (grown_len - len) as i64);
+        assert!(!after.is_shared);
+        assert!(setup.into_touched());
+    }
+
+    /// A store inside the current length of a shared account un-shares it and is served.
+    #[test]
+    fn test_store_to_shared_account_unshares() {
+        let mut setup = Setup::with(0x100, Mapping::DirectShared, 0);
+        assert!(setup.store(0x10, 8));
+        let after = setup.state();
+        assert_eq!(after.data_len, 0x100);
+        assert_eq!(after.resize_delta, 0);
+        assert!(!after.is_shared);
+        assert!(setup.into_touched());
     }
 }
