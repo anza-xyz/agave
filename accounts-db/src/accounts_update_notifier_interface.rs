@@ -54,7 +54,6 @@ pub struct AccountForGeyser<'a> {
     pub lamports: u64,
     pub owner: &'a Pubkey,
     pub executable: bool,
-    pub rent_epoch: Epoch,
     pub data: &'a [u8],
 }
 
@@ -72,6 +71,7 @@ impl ReadableAccount for AccountForGeyser<'_> {
         self.executable
     }
     fn rent_epoch(&self) -> Epoch {
-        self.rent_epoch
+        // AccountForGeyser does not contain a rent_epoch field
+        Epoch::MAX
     }
 }
