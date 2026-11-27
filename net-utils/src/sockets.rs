@@ -111,6 +111,26 @@ impl SocketConfiguration {
         self.non_blocking = non_blocking;
         self
     }
+
+    /// Create an unbound UDP socket and set the socket options
+    fn build_udp_socket(&self) -> io::Result<Socket> {
+        let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+        if PLATFORM_SUPPORTS_SOCKET_CONFIGS {
+            // Set buffer sizes
+            if let Some(recv_buffer_size) = self.recv_buffer_size {
+                sock.set_recv_buffer_size(recv_buffer_size)?;
+            }
+            if let Some(send_buffer_size) = self.send_buffer_size {
+                sock.set_send_buffer_size(send_buffer_size)?;
+            }
+
+            if self.reuseport {
+                set_reuse_port(&sock)?;
+            }
+        }
+        sock.set_nonblocking(self.non_blocking)?;
+        Ok(sock)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -170,31 +190,6 @@ where
     T: std::os::fd::AsFd,
 {
     setsockopt(socket, ReusePort, &true).map_err(io::Error::from)
-}
-
-pub(crate) fn udp_socket_with_config(config: SocketConfiguration) -> io::Result<Socket> {
-    let SocketConfiguration {
-        reuseport,
-        recv_buffer_size,
-        send_buffer_size,
-        non_blocking,
-    } = config;
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    if PLATFORM_SUPPORTS_SOCKET_CONFIGS {
-        // Set buffer sizes
-        if let Some(recv_buffer_size) = recv_buffer_size {
-            sock.set_recv_buffer_size(recv_buffer_size)?;
-        }
-        if let Some(send_buffer_size) = send_buffer_size {
-            sock.set_send_buffer_size(send_buffer_size)?;
-        }
-
-        if reuseport {
-            set_reuse_port(&sock)?;
-        }
-    }
-    sock.set_nonblocking(non_blocking)?;
-    Ok(sock)
 }
 
 /// The probe_max_udp_socket_buffer_size() functions below will probe buffer sizes
@@ -304,7 +299,7 @@ pub fn bind_in_range_with_config(
     range: PortRange,
     config: SocketConfiguration,
 ) -> io::Result<(u16, UdpSocket)> {
-    let socket = udp_socket_with_config(config)?;
+    let socket = config.build_udp_socket()?;
 
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
@@ -363,18 +358,12 @@ pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
     bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), port).await
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
-    let port = unique_port_range_for_tests(1).start;
-    bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port).await
-}
-
 pub fn bind_to_with_config(
     ip_addr: IpAddr,
     port: u16,
     config: SocketConfiguration,
 ) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = config.build_udp_socket()?;
 
     let addr = SocketAddr::new(ip_addr, port);
 
@@ -387,44 +376,12 @@ pub fn bind_common_with_config(
     port: u16,
     config: SocketConfiguration,
 ) -> io::Result<(UdpSocket, TcpListener)> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = config.build_udp_socket()?;
 
     let addr = SocketAddr::new(ip_addr, port);
     let sock_addr = SockAddr::from(addr);
     sock.bind(&sock_addr)
         .and_then(|_| TcpListener::bind(addr).map(|listener| (sock.into(), listener)))
-}
-
-pub fn bind_two_in_range_with_offset_and_config(
-    ip_addr: IpAddr,
-    range: PortRange,
-    offset: u16,
-    sock1_config: SocketConfiguration,
-    sock2_config: SocketConfiguration,
-) -> io::Result<((u16, UdpSocket), (u16, UdpSocket))> {
-    if range.1.saturating_sub(range.0) < offset {
-        return Err(io::Error::other(
-            "range too small to find two ports with the correct offset".to_string(),
-        ));
-    }
-
-    let max_start_port = range.1.saturating_sub(offset);
-    for port in range.0..=max_start_port {
-        let first_bind_result = bind_to_with_config(ip_addr, port, sock1_config);
-        if let Ok(first_bind) = first_bind_result {
-            let second_port = port.saturating_add(offset);
-            let second_bind_result = bind_to_with_config(ip_addr, second_port, sock2_config);
-            if let Ok(second_bind) = second_bind_result {
-                return Ok((
-                    (first_bind.local_addr().unwrap().port(), first_bind),
-                    (second_bind.local_addr().unwrap().port(), second_bind),
-                ));
-            }
-        }
-    }
-    Err(io::Error::other(format!(
-        "couldn't find two unused ports with offset {offset} in range {range:?}"
-    )))
 }
 
 pub fn bind_more_with_config(
@@ -536,44 +493,6 @@ mod tests {
             bind_common_in_range_with_config(ip_addr, (range.start, range.end), config).unwrap();
         assert!(range.contains(&port));
         bind_common_in_range_with_config(ip_addr, (port, port + 1), config).unwrap_err();
-    }
-
-    #[test]
-    fn test_bind_two_in_range_with_offset() {
-        agave_logger::setup();
-        let config = SocketConfiguration::default();
-        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let offset = 6;
-        let port_range = unique_port_range_for_tests(10);
-        if let Ok(((port1, _), (port2, _))) = bind_two_in_range_with_offset_and_config(
-            ip_addr,
-            (port_range.start, port_range.end),
-            offset,
-            config,
-            config,
-        ) {
-            assert!(port2 == port1 + offset);
-        }
-        let offset = 42;
-        if let Ok(((port1, _), (port2, _))) = bind_two_in_range_with_offset_and_config(
-            ip_addr,
-            (port_range.start, port_range.end),
-            offset,
-            config,
-            config,
-        ) {
-            assert!(port2 == port1 + offset);
-        }
-        assert!(
-            bind_two_in_range_with_offset_and_config(
-                ip_addr,
-                (port_range.start, port_range.start + 5),
-                offset,
-                config,
-                config
-            )
-            .is_err()
-        );
     }
 
     #[test]
