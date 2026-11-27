@@ -78,6 +78,7 @@ async fn setup_connection_worker_scheduler(
     JoinHandle<Result<Arc<SendTransactionStats>, ConnectionWorkersSchedulerError>>,
     watch::Sender<Option<StakeIdentity>>,
     CancellationToken,
+    Arc<SendTransactionStats>,
 ) {
     let config = test_config(stake_identity);
 
@@ -92,9 +93,10 @@ async fn setup_connection_worker_scheduler(
         update_identity_receiver,
         cancel.clone(),
     );
+    let stats = scheduler.get_stats();
     let scheduler = tokio::spawn(scheduler.run(config));
 
-    (scheduler, update_identity_sender, cancel)
+    (scheduler, update_identity_sender, cancel, stats)
 }
 
 async fn join_scheduler(
@@ -214,7 +216,7 @@ async fn test_basic_transactions_sending() {
         Duration::from_millis(10),
     );
 
-    let (scheduler_handle, update_identity_sender, _scheduler_cancel) =
+    let (scheduler_handle, update_identity_sender, _scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
     // dropping sender will not lead to stop the scheduler.
     drop(update_identity_sender);
@@ -318,7 +320,7 @@ async fn test_connection_denied_until_allowed() {
         ..
     } = spawn_transaction_sender(transaction_size, num_transactions, time_per_transaction);
 
-    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     // Check results
@@ -395,7 +397,7 @@ async fn test_connection_pruned_and_reopened() {
         Duration::from_millis(100),
     );
 
-    let (scheduler_handle, _update_identity_sender, _scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, _scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     sleep(Duration::from_millis(400)).await;
@@ -462,7 +464,7 @@ async fn test_staked_connection() {
         Duration::from_millis(100),
     );
 
-    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel, _) =
         setup_connection_worker_scheduler(
             server_address,
             transaction_receiver,
@@ -522,7 +524,7 @@ async fn test_connection_throttling() {
         Duration::from_millis(1),
     );
 
-    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     // Check results
@@ -568,7 +570,7 @@ async fn test_no_host() {
         Duration::from_millis(10),
     );
 
-    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, _scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     // Wait for all the transactions to be sent, and some extra time for the delivery to be
@@ -634,7 +636,7 @@ async fn test_rate_limiting() {
         Duration::from_millis(100),
     );
 
-    let (scheduler_handle, _update_certificate_sender, scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     let actual_num_packets =
@@ -702,7 +704,7 @@ async fn test_rate_limiting_establish_connection() {
         Duration::from_millis(1000),
     );
 
-    let (scheduler_handle, _update_certificate_sender, scheduler_cancel) =
+    let (scheduler_handle, _update_certificate_sender, scheduler_cancel, _) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     let actual_num_packets =
@@ -791,7 +793,7 @@ async fn test_update_identity() {
         Duration::from_millis(50),
     );
 
-    let (scheduler_handle, update_identity_sender, scheduler_cancel) =
+    let (scheduler_handle, update_identity_sender, scheduler_cancel, _) =
         setup_connection_worker_scheduler(
             server_address,
             transaction_receiver,
@@ -825,7 +827,6 @@ async fn test_update_identity() {
 // Test that connection close events are detected immediately via
 // connection.closed() monitoring, not only when send operations fail.
 #[tokio::test]
-#[ignore = "Enable after we introduce TaskTracker to streamer."]
 async fn test_proactive_connection_close_detection() {
     let SpawnTestServerResult {
         join_handle: server_handle,
@@ -849,7 +850,7 @@ async fn test_proactive_connection_close_detection() {
     let transaction_size = 1;
     let (transaction_sender, transaction_receiver) = channel(10);
 
-    let (scheduler_handle, _update_identity_sender, scheduler_cancel) =
+    let (scheduler_handle, _update_identity_sender, scheduler_cancel, client_stats) =
         setup_connection_worker_scheduler(server_address, transaction_receiver, None).await;
 
     // Send first transaction to establish connection
@@ -876,23 +877,33 @@ async fn test_proactive_connection_close_detection() {
     cancel.cancel();
     server_handle.await.unwrap();
 
-    transaction_sender
-        .send(vec![2u8; transaction_size].into())
-        .await
-        .expect("Second transaction should be sent");
-    transaction_sender
-        .send(vec![3u8; transaction_size].into())
-        .await
-        .expect("Third transaction should be sent");
+    // Nothing is sent after the server exits, so the close can only be
+    // detected by monitoring `connection.closed()`. Wait for it before
+    // cancelling the scheduler, because that also stops its workers.
+    let start = Instant::now();
+    while client_stats
+        .connection_error_application_closed
+        .load(Ordering::Relaxed)
+        == 0
+    {
+        assert!(
+            start.elapsed() < TEST_MAX_TIME,
+            "Connection close was not detected in {TEST_MAX_TIME:?}"
+        );
+        sleep(Duration::from_millis(10)).await;
+    }
 
     // Clean up
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
-    // Verify proactive close detection
-    assert!(
-        stats.connection_error_application_closed > 0 || stats.write_error_connection_lost > 0,
-        "Should detect connection close proactively. Stats: {stats:?}"
+    assert_eq!(
+        stats,
+        SendTransactionStatsNonAtomic {
+            successfully_sent: 1,
+            connection_error_application_closed: 1,
+            ..Default::default()
+        }
     );
 }
 

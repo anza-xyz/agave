@@ -90,8 +90,7 @@ impl ConnectionWorker {
     /// [`ConnectionWorker`] maintains a connection to a `peer` and processes
     /// transactions from `transaction_receiver`. The `max_reconnect_attempts`
     /// parameter controls how many times the worker will attempt to reconnect
-    /// in case of connection failure. Returns the created `ConnectionWorker`
-    /// along with a cancellation token that can be used by the caller to stop
+    /// in case of connection failure. The `cancel` token can be used to stop
     /// the worker.
     pub fn new(
         endpoint: Endpoint,
@@ -100,9 +99,9 @@ impl ConnectionWorker {
         max_reconnect_attempts: usize,
         send_transaction_stats: Arc<SendTransactionStats>,
         handshake_timeout: Duration,
-    ) -> (Self, CancellationToken) {
-        let cancel = CancellationToken::new();
-        let this = Self {
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
             endpoint,
             peer,
             transaction_receiver,
@@ -111,10 +110,8 @@ impl ConnectionWorker {
             max_reconnect_attempts,
             send_transaction_stats,
             handshake_timeout,
-            cancel: cancel.clone(),
-        };
-
-        (this, cancel)
+            cancel,
+        }
     }
 
     /// Starts the main loop of the [`ConnectionWorker`].
@@ -184,9 +181,6 @@ impl ConnectionWorker {
             () = main_loop => (),
             () = cancel.cancelled() => (),
         }
-        // Cancel it additionally here so that in WorkerInfo we can check if
-        // this worker is active.
-        cancel.cancel();
     }
 
     /// Handles connection closure events detected by the connection monitor.
