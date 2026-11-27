@@ -902,9 +902,9 @@ dependencies = [
 
 [[package]]
 name = "anza-quinn"
-version = "0.11.12-vendor.1"
+version = "0.11.12-vendor.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2995b1182fcfcc8fe8cd8f5a48b867442db5bd6a306393a2cbf6eeab4f69c1d"
+checksum = "1e7b9bc1172ad60155504b1cb1d1bb12cd81bef5954a1e6cf9d48494caa0a926"
 dependencies = [
  "anza-quinn-proto",
  "bytes",
@@ -922,9 +922,9 @@ dependencies = [
 
 [[package]]
 name = "anza-quinn-proto"
-version = "0.11.19-vendor.1"
+version = "0.11.19-vendor.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da740799e2d83bbca540e98735389d9b77113ca1180e39c6b22cf775563638f3"
+checksum = "7875802f6f47d4918cf7cd8d1d57aee54c9c329772e4169886b7cafb73e0a01c"
 dependencies = [
  "bytes",
  "fastbloom",
