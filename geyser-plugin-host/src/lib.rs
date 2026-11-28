@@ -188,6 +188,12 @@ impl GeyserPluginHost {
         false
     }
 
+    pub fn leader_transaction_notifications_enabled(&self) -> bool {
+        self.plugins
+            .iter()
+            .any(|plugin| plugin.leader_transaction_notifications_enabled())
+    }
+
     /// Check if there is any plugin interested in entry data
     pub fn entry_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {

@@ -184,9 +184,8 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-plugin-interface"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "697f615044b06f88a2cead13f4a1e4a23d23b724a0916ac713b9fbda2df46252"
+version = "9.0.0-alpha.0"
+source = "git+https://github.com/sam0x17/agave-sdk?rev=cf47062a0f768c76674eacbd14bb4441534ea00b#cf47062a0f768c76674eacbd14bb4441534ea00b"
 dependencies = [
  "log",
  "solana-bls-signatures",
@@ -6926,9 +6925,11 @@ dependencies = [
  "solana-ledger",
  "solana-measure",
  "solana-message",
+ "solana-metrics",
  "solana-pubkey 4.4.0",
  "solana-rpc",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-context",
@@ -7527,6 +7528,7 @@ dependencies = [
  "solana-poh-config",
  "solana-pubkey 4.4.0",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-transaction",
  "thiserror 2.0.21",
 ]
@@ -8165,8 +8167,10 @@ dependencies = [
  "agave-transaction-view",
  "ahash 0.8.12",
  "bytes",
+ "crossbeam-channel",
  "lazy-lru",
  "rand 0.9.4",
+ "solana-clock",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-hash",

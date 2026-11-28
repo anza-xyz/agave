@@ -7,6 +7,7 @@ use {
     solana_hash::Hash,
     solana_measure::measure_us,
     solana_runtime::bank::BankId,
+    solana_runtime_transaction::leader_transaction_notifier::LeaderTransactionNotifier,
     solana_transaction::versioned::VersionedTransaction,
     std::num::Saturating,
 };
@@ -40,11 +41,15 @@ pub struct RecordTransactionsSummary {
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
     pub record_sender: RecordSender,
+    pub leader_transaction_notifier: Option<LeaderTransactionNotifier>,
 }
 
 impl TransactionRecorder {
     pub fn new(record_sender: RecordSender) -> Self {
-        Self { record_sender }
+        Self {
+            record_sender,
+            leader_transaction_notifier: None,
+        }
     }
 
     /// Hashes `transactions` and sends them to the block creation loop for recording. Waits for

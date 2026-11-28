@@ -48,6 +48,7 @@ pub fn record_channels(track_transaction_indexes: bool) -> (RecordSender, Record
             transaction_indexes: transaction_indexes.clone(),
         },
         RecordReceiver {
+            recorded_bank_id: None,
             active_senders,
             bank_id_allowed_insertions,
             receiver,
@@ -161,6 +162,7 @@ impl RecordSender {
 /// The receiver can shutdown the channel, preventing any further sends,
 /// and can restart the channel for a new bank id, re-enabling sends.
 pub struct RecordReceiver {
+    recorded_bank_id: Option<BankId>,
     /// Maximum number of records that may be reserved for the active bank.
     capacity: u64,
     /// Number of senders between reservation and channel insertion.
@@ -174,6 +176,18 @@ pub struct RecordReceiver {
 }
 
 impl RecordReceiver {
+    /// Number of transactions accepted for this bank when index tracking is enabled.
+    /// Returns None if this bank has not started recording, or tracking is disabled.
+    /// Read after shutting down intake and waiting for in-flight commits for a terminal count.
+    pub fn recorded_transaction_count(&self, bank_id: BankId) -> Option<usize> {
+        if self.recorded_bank_id != Some(bank_id) {
+            return None;
+        }
+        self.transaction_indexes
+            .as_ref()
+            .map(|indexes| *indexes.lock().unwrap())
+    }
+
     /// Returns a reference to the inner receiver for use in `select!` macros.
     /// After receiving from this, you must call `on_received_record` manually.
     pub fn inner(&self) -> &Receiver<Record> {
@@ -193,6 +207,7 @@ impl RecordReceiver {
 
     /// Re-enable the channel after a shutdown.
     pub fn restart(&mut self, bank_id: BankId) {
+        self.recorded_bank_id = Some(bank_id);
         let bank_id = EncodedBankId::new(bank_id);
         assert!(self.receiver.is_empty()); // Should be empty before restarting.
 
@@ -376,6 +391,7 @@ mod tests {
     #[test]
     fn test_record_channels() {
         let (sender, mut receiver) = record_channels(false);
+        assert_eq!(receiver.recorded_transaction_count(BankId::new(0)), None);
 
         // Initially shutdown.
         assert!(matches!(
@@ -451,6 +467,12 @@ mod tests {
         ));
 
         assert!(*sender.transaction_indexes.as_ref().unwrap().lock().unwrap() == 4);
+        assert_eq!(receiver.recorded_transaction_count(BankId::new(1)), Some(4));
+        receiver.shutdown();
+        for _ in receiver.drain_after_shutdown() {}
+        assert_eq!(receiver.recorded_transaction_count(BankId::new(2)), None);
+        receiver.restart(BankId::new(2));
+        assert_eq!(receiver.recorded_transaction_count(BankId::new(2)), Some(0));
     }
 }
 

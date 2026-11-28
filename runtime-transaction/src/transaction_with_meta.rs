@@ -59,6 +59,15 @@ pub trait StaticTransactionWithMeta: TransactionMeta + SVMStaticTransaction {
     /// performs numerous allocations that negatively impact performance.
     fn to_versioned_transaction(&self) -> VersionedTransaction;
 
+    /// Append canonical wire bytes. Transaction views override this to copy directly
+    /// from their input buffer without reconstructing a VersionedTransaction.
+    fn append_transaction_bytes(&self, output: &mut Vec<u8>) {
+        output.extend(
+            wincode::serialize(&self.to_versioned_transaction())
+                .expect("sanitized transaction serialization should succeed"),
+        );
+    }
+
     /// Returns the serialized transaction size in bytes.
     /// Runtime metadata is not included.
     fn serialized_size(&self) -> usize;

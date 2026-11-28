@@ -6,6 +6,7 @@ use {
         deshred_transaction_notifier::DeshredTransactionNotifierImpl,
         entry_notifier::EntryNotifierImpl,
         geyser_plugin_manager::{self, GeyserPluginManagerRequest},
+        leader_transaction_notifier::LeaderNotificationService,
         slot_status_notifier::SlotStatusNotifierImpl,
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
@@ -42,6 +43,7 @@ pub(crate) const ARC_TRY_UNWRAP_ATTEMPT_SLEEP_DURATION: Duration = Duration::fro
 /// The service managing the Geyser plugin workflow.
 pub struct GeyserPluginService {
     slot_status_observer: Option<SlotStatusObserver>,
+    leader_notification_service: Option<LeaderNotificationService>,
     plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
@@ -94,6 +96,12 @@ impl GeyserPluginService {
         for geyser_plugin_config_file in geyser_plugin_config_files {
             Self::load_plugin(&plugin_manager, geyser_plugin_config_file)?;
         }
+
+        let leader_notification_service = (geyser_plugin_always_enabled
+            || plugin_manager
+                .load()
+                .leader_transaction_notifications_enabled())
+        .then(|| LeaderNotificationService::new(plugin_manager.clone()));
 
         let account_data_notifications_enabled =
             plugin_manager.load().account_data_notifications_enabled()
@@ -185,6 +193,7 @@ impl GeyserPluginService {
 
         info!("Started GeyserPluginService");
         Ok(GeyserPluginService {
+            leader_notification_service,
             slot_status_observer,
             plugin_manager,
             accounts_update_notifier,
@@ -218,6 +227,15 @@ impl GeyserPluginService {
         self.plugin_manager.clone()
     }
 
+    pub fn get_leader_transaction_notifier(
+        &self,
+    ) -> Option<solana_runtime_transaction::leader_transaction_notifier::LeaderTransactionNotifier>
+    {
+        self.leader_notification_service
+            .as_ref()
+            .map(|service| service.notifier.clone())
+    }
+
     pub fn get_transaction_notifier(&self) -> Option<TransactionNotifierArc> {
         self.transaction_notifier.clone()
     }
@@ -238,7 +256,8 @@ impl GeyserPluginService {
         self.slot_status_notifier.clone()
     }
 
-    pub fn join(self) -> thread::Result<()> {
+    pub fn join(mut self) -> thread::Result<()> {
+        drop(self.leader_notification_service.take());
         if let Some(mut slot_status_observer) = self.slot_status_observer {
             slot_status_observer.join()?;
         }
@@ -381,6 +400,7 @@ mod tests {
         assert!(service.get_accounts_update_notifier().is_some());
         assert!(service.get_transaction_notifier().is_some());
         assert!(service.get_deshred_transaction_notifier().is_some());
+        assert!(service.get_leader_transaction_notifier().is_some());
         assert!(service.get_entry_notifier().is_some());
         assert!(service.get_block_metadata_notifier().is_some());
         assert!(service.get_slot_status_notifier().is_some());
@@ -427,10 +447,28 @@ mod tests {
     fn test_service_without_plugins_keeps_notifier_for_dynamic_loading() {
         let (sender, receiver) = unbounded();
         let service = GeyserPluginService::new(receiver, true, &[]).unwrap();
+        assert!(service.get_leader_transaction_notifier().is_some());
         let notifier = service.get_accounts_update_notifier().unwrap();
         assert!(notifier.account_notifications_enabled());
         assert!(!notifier.snapshot_notifications_enabled());
         drop(notifier);
+        drop(sender);
+        service.join().unwrap();
+    }
+
+    #[test]
+    fn test_existing_plugin_does_not_enable_leader_notifications() {
+        let (sender, receiver) = unbounded();
+        let service =
+            GeyserPluginService::new(receiver, false, &[PathBuf::from(TESTPLUGIN_CONFIG)]).unwrap();
+        assert!(
+            service
+                .get_accounts_update_notifier()
+                .unwrap()
+                .account_notifications_enabled()
+        );
+        assert!(service.get_transaction_notifier().is_none());
+        assert!(service.get_leader_transaction_notifier().is_none());
         drop(sender);
         service.join().unwrap();
     }
@@ -442,6 +480,7 @@ mod tests {
         assert!(service.get_accounts_update_notifier().is_none());
         assert!(service.get_transaction_notifier().is_none());
         assert!(service.get_deshred_transaction_notifier().is_none());
+        assert!(service.get_leader_transaction_notifier().is_none());
         assert!(service.get_entry_notifier().is_none());
         assert!(service.get_block_metadata_notifier().is_none());
         assert!(service.get_slot_status_notifier().is_none());
