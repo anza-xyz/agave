@@ -36,6 +36,8 @@ agave-snapshots = { workspace = true }
 agave-transaction-view = { workspace = true }
 agave-votor-messages = { workspace = true }
 agave-worker-pool = { workspace = true }
+ahash = { workspace = true }
+anyhow = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
@@ -45,6 +47,7 @@ crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 eager = { workspace = true }
 futures = { workspace = true }
+indexmap = { workspace = true }
 itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
