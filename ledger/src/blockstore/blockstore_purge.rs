@@ -151,18 +151,31 @@ impl Blockstore {
     /// the parent's `next_slots`. We reinsert an orphaned `slot_meta` for `slot`
     /// that preserves `slot`'s `next_slots`. This ensures that `slot`'s fork is
     /// replayable upon repair of `slot`.
-    pub(crate) fn purge_slot_cleanup_chaining(&self, slot: Slot) -> Result<()> {
-        self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ true)
+    pub(crate) fn purge_slot_cleanup_chaining(
+        &self,
+        slot: Slot,
+        lock: &mut MutexGuard<'_, ShredInsertionState>,
+    ) -> Result<()> {
+        self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ true, lock)
     }
 
     /// Like `purge_slot_cleanup_chaining` but preserves alternate block columns and the duplicate
     /// proof. Used when switching from an alternate block to allow repair data and the historical
     /// equivocation evidence to be retained.
-    pub(crate) fn purge_slot_cleanup_chaining_keep_alt(&self, slot: Slot) -> Result<()> {
-        self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ false)
+    pub(crate) fn purge_slot_cleanup_chaining_keep_alt(
+        &self,
+        slot: Slot,
+        lock: &mut MutexGuard<'_, ShredInsertionState>,
+    ) -> Result<()> {
+        self.do_purge_slot_cleanup_chaining(slot, /* purge_alt_columns */ false, lock)
     }
 
-    fn do_purge_slot_cleanup_chaining(&self, slot: Slot, purge_alt_columns: bool) -> Result<()> {
+    fn do_purge_slot_cleanup_chaining(
+        &self,
+        slot: Slot,
+        purge_alt_columns: bool,
+        lock: &mut MutexGuard<'_, ShredInsertionState>,
+    ) -> Result<()> {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
@@ -203,6 +216,7 @@ impl Blockstore {
             error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
 
+        lock.discard_slots(slot, slot);
         self.advance_slot_meta_topology_generation();
 
         Ok(())
@@ -240,6 +254,9 @@ impl Blockstore {
         }
         delete_range_timer.stop();
 
+        // Hold the insertion lock while writing the purge batch and removing held shreds.
+        // Build the purge batch and delete files outside this lock.
+        let mut lock = self.insert_shreds_lock.lock().unwrap();
         let mut write_timer = Measure::start("write_batch");
         self.write_batch(write_batch).inspect_err(|e| {
             error!(
@@ -247,6 +264,8 @@ impl Blockstore {
                  to_slot {to_slot}"
             )
         })?;
+        lock.discard_slots(from_slot, to_slot);
+        drop(lock);
         self.advance_slot_meta_topology_generation();
         write_timer.stop();
 
@@ -1716,7 +1735,9 @@ pub mod tests {
         blockstore.insert_shreds(shreds, false).unwrap();
 
         assert!(matches!(
-            blockstore.purge_slot_cleanup_chaining(11).unwrap_err(),
+            blockstore
+                .purge_slot_cleanup_chaining(11, &mut blockstore.insert_shreds_lock.lock().unwrap())
+                .unwrap_err(),
             BlockstoreError::SlotUnavailable
         ));
     }
@@ -1738,7 +1759,9 @@ pub mod tests {
         assert!(blockstore.has_duplicate_shreds_in_slot(5));
 
         let slot_meta_topology_generation = blockstore.slot_meta_topology_generation();
-        blockstore.purge_slot_cleanup_chaining(5).unwrap();
+        blockstore
+            .purge_slot_cleanup_chaining(5, &mut blockstore.insert_shreds_lock.lock().unwrap())
+            .unwrap();
         assert_ne!(
             slot_meta_topology_generation,
             blockstore.slot_meta_topology_generation()
