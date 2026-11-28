@@ -1,11 +1,7 @@
 //! A stage to broadcast data from a leader node to validators
 #![allow(clippy::rc_buffer)]
 use {
-    self::{
-        broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
-        broadcast_metrics::*,
-        standard_broadcast_run::StandardBroadcastRun,
-    },
+    self::{broadcast_metrics::*, standard_broadcast_run::StandardBroadcastRun},
     crate::{
         XdpSender,
         cluster_nodes::{ClusterNodes, ClusterNodesCache},
@@ -49,7 +45,6 @@ use {
     thiserror::Error,
 };
 
-pub mod broadcast_duplicates_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
 pub(crate) mod standard_broadcast_run;
@@ -152,7 +147,6 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Clone, Debug)]
 pub enum BroadcastStageType {
     Standard,
-    BroadcastDuplicates(BroadcastDuplicatesConfig),
 }
 
 impl BroadcastStageType {
@@ -179,17 +173,6 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 StandardBroadcastRun::new(shred_version, votor_event_sender, leader_schedule_cache),
-                xdp_sender,
-            ),
-
-            BroadcastStageType::BroadcastDuplicates(config) => BroadcastStage::new(
-                sock,
-                cluster_info,
-                receiver,
-                exit_sender,
-                blockstore,
-                bank_forks,
-                BroadcastDuplicatesRun::new(shred_version, config.clone(), votor_event_sender),
                 xdp_sender,
             ),
         }
