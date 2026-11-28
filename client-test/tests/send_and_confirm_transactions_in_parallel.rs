@@ -1,12 +1,10 @@
 use {
     async_trait::async_trait,
     solana_client::{
-        nonblocking::tpu_client::TpuClient,
+        nonblocking::tpu_client::{TpuClient, TpuClientConfig},
         rpc_config::RpcSendTransactionConfig,
         send_and_confirm_transactions_in_parallel::{
-            SendAndConfirmConfigV2, SendAndConfirmConfigV3, SendTransport,
-            send_and_confirm_transactions_in_parallel_blocking_v2,
-            send_and_confirm_transactions_in_parallel_v3,
+            SendAndConfirmConfigV3, SendTransport, send_and_confirm_transactions_in_parallel_v3,
         },
     },
     solana_commitment_config::CommitmentConfig,
@@ -42,14 +40,14 @@ use {
 
 const NUM_TRANSACTIONS: usize = 1000;
 
-fn create_messages(from: Pubkey, to: Pubkey) -> (Vec<Message>, u64) {
+fn create_messages(from: Pubkey, to: Pubkey) -> (Vec<VersionedMessage>, u64) {
     let mut messages = vec![];
     let mut sum = 0u64;
     for i in 1..NUM_TRANSACTIONS {
         let amount_to_transfer = (i as u64).checked_mul(LAMPORTS_PER_SOL).unwrap();
         let ix = system_instruction::transfer(&from, &to, amount_to_transfer);
         let message = Message::new(&[ix], Some(&from));
-        messages.push(message);
+        messages.push(VersionedMessage::Legacy(message));
         sum = sum.checked_add(amount_to_transfer).unwrap();
     }
     (messages, sum)
@@ -76,29 +74,30 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
     let (messages, sum) = create_messages(alice_pubkey, bob_pubkey);
     let mut fee_message = messages.first().unwrap().clone();
-    fee_message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+    fee_message.set_recent_blockhash(rpc_client.get_latest_blockhash().unwrap());
     let total_fees = rpc_client
-        .get_fee_for_versioned_message(&VersionedMessage::Legacy(fee_message))
+        .get_fee_for_versioned_message(&fee_message)
         .unwrap()
         .saturating_mul(messages.len() as u64);
 
-    let txs_errors = send_and_confirm_transactions_in_parallel_blocking_v2(
-        rpc_client.clone(),
-        None,
-        &messages,
-        &[&alice],
-        SendAndConfirmConfigV2 {
-            with_spinner: false,
-            resign_txs_count: Some(5),
-            rpc_send_transaction_config: RpcSendTransactionConfig {
+    let txs_errors = rpc_client
+        .runtime()
+        .block_on(send_and_confirm_transactions_in_parallel_v3(
+            rpc_client.get_inner_client().clone(),
+            SendTransport::Rpc(RpcSendTransactionConfig {
                 skip_preflight: false,
                 preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
                 encoding: None,
                 max_retries: None,
                 min_context_slot: None,
+            }),
+            messages,
+            &[&alice],
+            SendAndConfirmConfigV3 {
+                max_sign_attempts: NonZeroUsize::new(5).unwrap(),
+                ..SendAndConfirmConfigV3::default()
             },
-        },
-    );
+        ));
     assert!(txs_errors.is_ok());
     assert!(txs_errors.unwrap().iter().all(|x| x.is_none()));
 
@@ -139,37 +138,35 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
     let original_alice_balance = rpc_client.get_balance(&alice.pubkey()).unwrap();
     let (messages, sum) = create_messages(alice_pubkey, bob_pubkey);
     let mut fee_message = messages.first().unwrap().clone();
-    fee_message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+    fee_message.set_recent_blockhash(rpc_client.get_latest_blockhash().unwrap());
     let total_fees = rpc_client
-        .get_fee_for_versioned_message(&VersionedMessage::Legacy(fee_message))
+        .get_fee_for_versioned_message(&fee_message)
         .unwrap()
         .saturating_mul(messages.len() as u64);
     let ws_url = test_validator.rpc_pubsub_url();
-    let tpu_client_fut = TpuClient::new(
-        "temp",
-        rpc_client.get_inner_client().clone(),
-        ws_url.as_str(),
-        solana_client::tpu_client::TpuClientConfig::default(),
-    );
-    let tpu_client = rpc_client.runtime().block_on(tpu_client_fut).unwrap();
 
-    let txs_errors = send_and_confirm_transactions_in_parallel_blocking_v2(
-        rpc_client.clone(),
-        Some(tpu_client),
-        &messages,
-        &[&alice],
-        SendAndConfirmConfigV2 {
-            with_spinner: false,
-            resign_txs_count: Some(5),
-            rpc_send_transaction_config: RpcSendTransactionConfig {
-                skip_preflight: false,
-                preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
-                encoding: None,
-                max_retries: None,
-                min_context_slot: None,
+    let txs_errors = rpc_client.runtime().block_on(async {
+        let tpu_client = TpuClient::new(
+            rpc_client.get_inner_client().clone(),
+            ws_url,
+            TpuClientConfig::default(),
+        )
+        .await
+        .unwrap();
+        let txs_errors = send_and_confirm_transactions_in_parallel_v3(
+            rpc_client.get_inner_client().clone(),
+            SendTransport::Tpu(tpu_client.transaction_sender()),
+            messages,
+            &[&alice],
+            SendAndConfirmConfigV3 {
+                max_sign_attempts: NonZeroUsize::new(5).unwrap(),
+                ..SendAndConfirmConfigV3::default()
             },
-        },
-    );
+        )
+        .await;
+        tpu_client.shutdown().await.unwrap();
+        txs_errors
+    });
     assert!(txs_errors.is_ok());
     assert!(txs_errors.unwrap().iter().all(|x| x.is_none()));
 

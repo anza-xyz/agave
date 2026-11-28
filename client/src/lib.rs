@@ -1,9 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-pub mod connection_cache;
 pub mod nonblocking;
 pub mod send_and_confirm_transactions_in_parallel;
-pub mod tpu_client;
 pub mod transaction_executor;
 
 pub use solana_rpc_client::mock_sender_for_cli;
