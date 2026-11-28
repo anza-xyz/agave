@@ -1660,24 +1660,28 @@ mod tests {
         let memory_mapping = vm.context().memory_contexts.memory_mapping_mut().unwrap();
 
         // Reading readonly account is allowed
-        memory_mapping
-            .load_first_attempt::<u32>(account_start_offsets[0])
-            .unwrap();
+        assert!(
+            memory_mapping
+                .load_first_attempt::<u32>(account_start_offsets[0])
+                .is_some()
+        );
 
         // Reading writable account is allowed
-        memory_mapping
-            .load_first_attempt::<u32>(account_start_offsets[1])
-            .unwrap();
+        assert!(
+            memory_mapping
+                .load_first_attempt::<u32>(account_start_offsets[1])
+                .is_some()
+        );
 
         // Reading beyond readonly accounts current size is denied
-        memory_mapping
-            .load_first_attempt::<u32>(account_start_offsets[0] + 4)
-            .unwrap_err();
+        assert!(
+            memory_mapping
+                .load_first_attempt::<u32>(account_start_offsets[0] + 4)
+                .is_none()
+        );
 
         // Writing to readonly account is denied
-        memory_mapping
-            .store_first_attempt::<u32>(0, account_start_offsets[0])
-            .unwrap_err();
+        assert!(!memory_mapping.store_first_attempt::<u32>(0, account_start_offsets[0]));
 
         // Writing to shared writable account makes it unique (CoW logic.)
         // It has been previously been made non-unique at the beginning of
@@ -1696,9 +1700,11 @@ mod tests {
         // Reading beyond writable accounts current size grows is denied
         let encrypted_vm = vm.encrypted_host_address();
         let memory_mapping = vm.context().memory_contexts.memory_mapping_mut().unwrap();
-        memory_mapping
-            .load_first_attempt::<u32>(account_start_offsets[1] + 4)
-            .unwrap_err();
+        assert!(
+            memory_mapping
+                .load_first_attempt::<u32>(account_start_offsets[1] + 4)
+                .is_none()
+        );
 
         // Writing beyond writable accounts current size grows it
         // to original length plus MAX_PERMITTED_DATA_INCREASE
@@ -1735,9 +1741,11 @@ mod tests {
         // the almost max sized writable account is denied
         let encrypted_vm = vm.encrypted_host_address();
         let memory_mapping = vm.context().memory_contexts.memory_mapping_mut().unwrap();
-        memory_mapping
-            .load_first_attempt::<u32>(account_start_offsets[3] + MAX_PERMITTED_DATA_LENGTH)
-            .unwrap_err();
+        assert!(
+            memory_mapping
+                .load_first_attempt::<u32>(account_start_offsets[3] + MAX_PERMITTED_DATA_LENGTH)
+                .is_none()
+        );
         memory_mapping.store_second_attempt::<u32, _>(
             0,
             account_start_offsets[3] + MAX_PERMITTED_DATA_LENGTH,

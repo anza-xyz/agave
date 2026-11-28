@@ -109,7 +109,7 @@ solana-rpc-client-api = { path = "../rpc-client-api", version = "=5.0.0-alpha.1"
 solana-runtime = { path = "../runtime", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 solana-runtime-transaction = { path = "../runtime-transaction", version = "=5.0.0-alpha.1", features = ["agave-unstable-api"] }
 solana-sanitize = "3.0.1"
-solana-sbpf = { version = "=0.28.0", default-features = false }
+solana-sbpf = { git = "https://github.com/anza-xyz/sbpf.git", branch = "main", default-features = false }
 solana-sdk-ids = "3.1.0"
 solana-shred-version = "3.0.1"
 solana-signature = { version = "3.4.1", default-features = false }

@@ -278,11 +278,6 @@ unsafe fn create_memory_mapping(
     sbpf_version: SBPFVersion,
     acces_violation_handler: AccessViolationHandler,
 ) -> MemoryMapping {
-    let stack_frame_gap = if sbpf_version.stack_frame_gaps() && config.enable_stack_frame_gaps {
-        config.stack_frame_size as u64
-    } else {
-        0
-    };
     // V3 maps rodata at vaddr 0, earlier versions at 0x100000000.
     let rodata_start = if sbpf_version.enable_lower_rodata_vaddr() {
         MM_RODATA_START
@@ -291,11 +286,7 @@ unsafe fn create_memory_mapping(
     };
     let regions = [
         MemoryRegion::new(rodata.as_slice() as *const [u8], rodata_start),
-        MemoryRegion::new_gapped(
-            stack.as_slice_mut() as *mut [u8],
-            MM_STACK_START,
-            stack_frame_gap,
-        ),
+        MemoryRegion::new(stack.as_slice_mut() as *mut [u8], MM_STACK_START),
         MemoryRegion::new(heap.as_slice_mut() as *mut [u8], MM_HEAP_START),
     ]
     .into_iter()
