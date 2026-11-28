@@ -2611,6 +2611,13 @@ mod tests {
         };
         assert!(process_command(&config).await.is_ok());
 
+        // Airdrop with JSON output returns a single JSON document
+        config.output_format = OutputFormat::Json;
+        let result = process_command(&config).await.unwrap();
+        let json: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(json["signature"].is_string(), "{result}");
+        config.output_format = OutputFormat::Display;
+
         // sig_not_found case
         config.rpc_client = Some(Arc::new(RpcClient::new_mock("sig_not_found".to_string())));
         let missing_signature = bs58::decode("5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW")

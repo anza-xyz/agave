@@ -763,10 +763,16 @@ pub async fn process_airdrop(
     } else {
         config.pubkey()?
     };
-    writeln_stdout(format_args!(
-        "Requesting airdrop of {}",
-        build_balance_message(lamports, false, true),
-    ))?;
+    let is_json = matches!(
+        config.output_format,
+        OutputFormat::Json | OutputFormat::JsonCompact
+    );
+    if !is_json {
+        writeln_stdout(format_args!(
+            "Requesting airdrop of {}",
+            build_balance_message(lamports, false, true),
+        ))?;
+    }
 
     let pre_balance = rpc_client.get_balance(&pubkey).await?;
 
@@ -774,6 +780,11 @@ pub async fn process_airdrop(
         Ok(signature) => {
             let signature_cli_message =
                 log_instruction_custom_error::<SystemError>(Ok(signature), config)?;
+            if is_json {
+                // A single JSON document, like `transfer`; the balance is
+                // available from `solana balance --output json`.
+                return Ok(signature_cli_message);
+            }
             writeln_stdout(format_args!("{signature_cli_message}"))?;
 
             let current_balance = rpc_client.get_balance(&pubkey).await?;

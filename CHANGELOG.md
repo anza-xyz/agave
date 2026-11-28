@@ -57,6 +57,8 @@ Release channels have their own copy of this changelog:
 
 * `solana-keygen verify` now returns an error instead of panicking when the public key isn't
   valid base58
+* `airdrop --output json` and `--output json-compact` now print a single JSON object with the
+  signature, without the "Requesting airdrop" status line and the plain-text balance
 
 ### solana-client
 
