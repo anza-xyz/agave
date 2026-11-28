@@ -6,7 +6,7 @@ use {
     },
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     std::{
-        collections::HashMap,
+        collections::{BTreeSet, HashMap},
         sync::{Arc, RwLock},
     },
 };
@@ -81,6 +81,9 @@ pub struct ProgressMap {
     /// Number of times a slot was switched from an alternate location. This
     /// persists while the slot's previous progress entry is being replaced.
     bank_switch_counts: HashMap<Slot, u64>,
+    /// Slots above the root whose replay was cancelled because finality proved they were skipped.
+    /// Replay never creates a bank for these slots again, even if their bank is cleared.
+    replay_cancelled_slots: BTreeSet<Slot>,
 }
 
 impl std::ops::Deref for ProgressMap {
@@ -116,10 +119,22 @@ impl ProgressMap {
         self.bank_switch_counts.get(&slot).copied().unwrap_or(0)
     }
 
+    /// Records that replay of `slot` is cancelled. Returns whether it wasn't already.
+    pub fn cancel_replay(&mut self, slot: Slot) -> bool {
+        self.replay_cancelled_slots.insert(slot)
+    }
+
+    pub fn is_replay_cancelled(&self, slot: Slot) -> bool {
+        self.replay_cancelled_slots.contains(&slot)
+    }
+
     pub fn handle_new_root(&mut self, bank_forks: &BankForks) {
         self.progress_map
             .retain(|slot, _| bank_forks.get(*slot).is_some());
         self.bank_switch_counts
             .retain(|slot, _| bank_forks.get(*slot).is_some());
+        // Banks are only created for slots above the root.
+        let root = bank_forks.root();
+        self.replay_cancelled_slots.retain(|slot| *slot > root);
     }
 }
