@@ -241,6 +241,7 @@ impl ClusterNodes<RetransmitStage> {
             let mut rng = turbine_rng(slot_leader, shred);
             let (index, peers) = get_retransmit_peers(
                 fanout,
+                self.nodes.len(),
                 |k| self.nodes[k].pubkey() == &self.pubkey,
                 weighted_shuffle.shuffle(&mut rng),
             );
@@ -459,6 +460,8 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
 // fanout + k, 2*fanout + k, ..., fanout*fanout + k
 fn get_retransmit_peers<T>(
     fanout: usize,
+    // Upper bound on the number of nodes in the shuffle.
+    num_nodes: usize,
     // Predicate fn which identifies this node in the shuffle.
     pred: impl Fn(T) -> bool,
     nodes: impl IntoIterator<Item = T>,
@@ -475,7 +478,12 @@ fn get_retransmit_peers<T>(
     // First node in the neighborhood.
     let anchor = index - offset;
     let step = if index == 0 { 1 } else { fanout };
-    let peers = (anchor * fanout + offset + 1..)
+    let first = anchor * fanout + offset + 1;
+    // Children would sit past the end of the shuffle, so this node has none.
+    if first >= num_nodes {
+        return (index, Either::Right(std::iter::empty()));
+    }
+    let peers = (first..)
         .step_by(step)
         .take(fanout)
         .scan(index, move |state, k| -> Option<T> {
@@ -729,6 +737,7 @@ mod tests {
             }
             let (_, peers) = get_retransmit_peers(
                 fanout,
+                shuffled_nodes.len(),
                 |n: &Node| n.pubkey() == &addr,
                 shuffled_nodes.clone(),
             );
@@ -864,7 +873,7 @@ mod tests {
         for (k, peers) in peers.into_iter().enumerate() {
             {
                 let (index, retransmit_peers) =
-                    get_retransmit_peers(fanout, |node| node == &nodes[k], nodes);
+                    get_retransmit_peers(fanout, nodes.len(), |node| node == &nodes[k], nodes);
                 assert_eq!(peers, retransmit_peers.copied().collect::<Vec<_>>());
                 assert_eq!(index, k);
             }
@@ -875,7 +884,8 @@ mod tests {
         }
         // Remaining nodes have no children.
         for k in offset..nodes.len() {
-            let (index, mut peers) = get_retransmit_peers(fanout, |node| node == &nodes[k], nodes);
+            let (index, mut peers) =
+                get_retransmit_peers(fanout, nodes.len(), |node| node == &nodes[k], nodes);
             assert_eq!(peers.next(), None);
             assert_eq!(index, k);
         }
@@ -1016,13 +1026,15 @@ mod tests {
         assert_eq!(get_retransmit_parent(fanout, /*index:*/ 0, &nodes), None);
         for k in 1..size {
             let parent = get_retransmit_parent(fanout, k, &nodes).unwrap();
-            let (index, mut peers) = get_retransmit_peers(fanout, |node| node == &parent, &nodes);
+            let (index, mut peers) =
+                get_retransmit_peers(fanout, nodes.len(), |node| node == &parent, &nodes);
             assert_eq!(index, cache[&parent]);
             assert_eq!(peers.find(|&&peer| peer == nodes[k]), Some(&nodes[k]));
         }
         for k in 0..size {
             let parent = Some(nodes[k]);
-            let (index, peers) = get_retransmit_peers(fanout, |node| node == &nodes[k], &nodes);
+            let (index, peers) =
+                get_retransmit_peers(fanout, nodes.len(), |node| node == &nodes[k], &nodes);
             assert_eq!(index, k);
             for peer in peers {
                 assert_eq!(get_retransmit_parent(fanout, cache[peer], &nodes), parent);
