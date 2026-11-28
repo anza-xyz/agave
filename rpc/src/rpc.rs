@@ -4121,6 +4121,7 @@ pub mod tests {
             borrow::Cow,
             collections::{HashMap, HashSet},
             net::Ipv4Addr,
+            num::NonZero,
         },
         test_case::test_case,
     };
@@ -7995,7 +7996,7 @@ pub mod tests {
             }
         }
 
-        let credits_per_slot = VOTE_CREDITS_MAXIMUM_PER_SLOT as u64;
+        let credits_per_slot = NonZero::new(VOTE_CREDITS_MAXIMUM_PER_SLOT as u64).unwrap();
         let mut advance_bank = || {
             let vote_slot = bank.slot();
             bank.freeze();
@@ -8046,12 +8047,16 @@ pub mod tests {
             .unwrap();
         assert_ne!(leader_info.activated_stake, 0);
         // Subtract one because the final vote lands in the next epoch.
-        let expected_credits = (TEST_SLOTS_PER_EPOCH - 1) * credits_per_slot;
+        let expected_credits = (TEST_SLOTS_PER_EPOCH - 1) * credits_per_slot.get();
         assert_eq!(
             leader_info.epoch_credits,
             vec![
                 (0, expected_credits, 0),
-                (1, expected_credits + credits_per_slot, expected_credits) // one vote in current epoch
+                (
+                    1,
+                    expected_credits + credits_per_slot.get(),
+                    expected_credits
+                ) // one vote in current epoch
             ]
         );
 

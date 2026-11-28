@@ -1,13 +1,12 @@
 use {
     crate::{bank::Bank, validated_reward_certificate::ValidatedRewardCert},
-    agave_votor_messages::migration::AG_MIGRATION_EPOCH_CREDIT,
     epoch_inflation_account_state::{EpochInflationAccountState, EpochInflationState},
     log::info,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
-    solana_vote_interface::state::{BlockTimestamp, MAX_EPOCH_CREDITS_HISTORY},
+    solana_vote_interface::state::BlockTimestamp,
     solana_vote_program::vote_state::handler::VoteStateHandler,
     std::{
         collections::{HashMap, HashSet, hash_map::Entry},
@@ -252,11 +251,9 @@ impl<'a> RewardState<'a> {
             let reward =
                 self.calculate_reward(vote_state.vote_pubkey, accumulating_leader_reward)?;
             if let Some(reward) = NonZero::new(reward) {
-                increment_credits(
-                    vote_state.handler.epoch_credits_mut(),
-                    self.current_epoch,
-                    reward,
-                );
+                vote_state
+                    .handler
+                    .increment_credits(self.current_epoch, reward);
             };
             Ok(true)
         } else {
@@ -268,11 +265,9 @@ impl<'a> RewardState<'a> {
     /// `leader_rewards` to the account.
     fn update_leader(&self, vote_state: &mut VoteState, leader_reward: NonZero<u64>) {
         debug_assert_eq!(vote_state.vote_pubkey, self.leader_vote_pubkey);
-        increment_credits(
-            vote_state.handler.epoch_credits_mut(),
-            self.current_epoch,
-            leader_reward,
-        );
+        vote_state
+            .handler
+            .increment_credits(self.current_epoch, leader_reward);
     }
 }
 
@@ -495,66 +490,6 @@ fn calc_slot_timestamp(bank: &Bank, slot: Slot, block_producer_time_nanos: i64) 
     )
 }
 
-fn increment_credits(
-    epoch_credits: &mut Vec<(Epoch, u64, u64)>,
-    epoch: Epoch,
-    new_credits: NonZero<u64>,
-) {
-    let Some(entry) = epoch_credits.last_mut() else {
-        // no entries, insert a new entry and we are done.
-        epoch_credits.push((epoch, new_credits.get(), 0));
-        return;
-    };
-
-    // Latest element is the marker, start a new entry.
-    if *entry == AG_MIGRATION_EPOCH_CREDIT {
-        // If there was a tower entry before, its final credits forms this entry's initial credits.
-        let len = epoch_credits.len();
-        let final_tower_credits = if len >= 2 {
-            assert_ne!(epoch_credits[len - 2], AG_MIGRATION_EPOCH_CREDIT);
-            epoch_credits[len - 2].1
-        } else {
-            0
-        };
-        epoch_credits.push((
-            epoch,
-            new_credits.get().saturating_add(final_tower_credits),
-            final_tower_credits,
-        ));
-        while epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-            epoch_credits.remove(0);
-        }
-        return;
-    }
-
-    let (entry_epoch, final_credits, initial_credits) = entry;
-
-    // Latest element is the same epoch, simply increment final credits.
-    if *entry_epoch == epoch {
-        *final_credits = final_credits.saturating_add(new_credits.get());
-        return;
-    }
-
-    // Different epochs but the latest epoch didn't earn any credits, reuse the entry.
-    if final_credits == initial_credits {
-        *entry_epoch = epoch;
-        *final_credits = final_credits.saturating_add(new_credits.get());
-        return;
-    }
-
-    // Different epochs and the latest epoch earned credits, insert a new entry.
-    let entry = (
-        epoch,
-        new_credits.get().saturating_add(*final_credits),
-        *final_credits,
-    );
-    epoch_credits.push(entry);
-
-    while epoch_credits.len() > MAX_EPOCH_CREDITS_HISTORY {
-        epoch_credits.remove(0);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -672,48 +607,12 @@ mod tests {
         let mut handle = VoteStateHandler::default_v4();
         let epoch = 1234;
         let credits = 543432;
-        increment_credits(
-            handle.epoch_credits_mut(),
-            epoch,
-            NonZero::new(credits).unwrap(),
-        );
+        handle.increment_credits(epoch, NonZero::new(credits).unwrap());
         let (got_epoch, got_final_credits, got_initial_credits) =
             *handle.epoch_credits().last().unwrap();
         assert_eq!(got_epoch, epoch);
         assert_eq!(got_final_credits, credits);
         assert_eq!(got_initial_credits, 0);
-    }
-
-    #[test]
-    fn increment_credits_preserves_migration_marker() {
-        for tower_history_len in [0, 1, MAX_EPOCH_CREDITS_HISTORY - 1] {
-            let mut epoch_credits = (0..tower_history_len as u64)
-                .map(|epoch| (epoch, (epoch + 1) * 10, epoch * 10))
-                .collect::<Vec<_>>();
-            let initial_credits = epoch_credits.last().map_or(0, |entry| entry.1);
-            epoch_credits.push(AG_MIGRATION_EPOCH_CREDIT);
-            let mut expected = epoch_credits.clone();
-            let epoch = MAX_EPOCH_CREDITS_HISTORY as u64;
-
-            increment_credits(&mut epoch_credits, epoch, NonZero::new(7).unwrap());
-            expected.push((epoch, initial_credits + 7, initial_credits));
-            if expected.len() > MAX_EPOCH_CREDITS_HISTORY {
-                expected.remove(0);
-            }
-            assert_eq!(epoch_credits, expected);
-
-            increment_credits(&mut epoch_credits, epoch, NonZero::new(3).unwrap());
-            expected.last_mut().unwrap().1 += 3;
-            assert_eq!(epoch_credits, expected);
-
-            increment_credits(&mut epoch_credits, epoch + 1, NonZero::new(5).unwrap());
-            expected.push((epoch + 1, initial_credits + 15, initial_credits + 10));
-            if expected.len() > MAX_EPOCH_CREDITS_HISTORY {
-                expected.remove(0);
-            }
-            assert_eq!(epoch_credits, expected);
-            assert!(epoch_credits.contains(&AG_MIGRATION_EPOCH_CREDIT));
-        }
     }
 
     fn calc_reward_for_test(

@@ -493,6 +493,7 @@ mod tests {
         std::{
             assert_matches,
             collections::HashSet,
+            num::NonZero,
             sync::{Arc, RwLock},
         },
     };
@@ -1022,7 +1023,7 @@ mod tests {
                 VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap(),
             );
             vote_state.set_commission(commission);
-            vote_state.increment_credits(bank.epoch(), 42);
+            vote_state.increment_credits(bank.epoch(), NonZero::new(42).unwrap());
             let versioned = VoteStateVersions::V4(Box::new(vote_state.as_ref_v4().clone()));
             vote_account.set_state(&versioned).unwrap();
             bank.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
