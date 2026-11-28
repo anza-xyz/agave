@@ -43,7 +43,7 @@ use {
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         account_storage_entry::AccountStorageEntry,
-        accounts_db::{AccountsDb, AccountsFileId, AtomicAccountsFileId},
+        accounts_db::{AccountsFileId, AtomicAccountsFileId},
         utils::{ACCOUNTS_SNAPSHOT_DIR, move_and_async_delete_path},
     },
     solana_clock::Slot,
@@ -1365,7 +1365,7 @@ fn unarchive_snapshot(
 /// removes the storage files in `account_paths` that are not in `expected_storages`.
 ///
 /// Files whose names do not parse as a storage are left alone.
-fn list_storages_and_prune_stale(
+fn collect_storages_and_prune_stale(
     account_paths: &[PathBuf],
     expected_storages: &HashMap<(Slot, AccountsFileId), StorageListItem>,
 ) -> Result<Vec<(PathBuf, StorageListItem)>> {
@@ -1426,46 +1426,39 @@ fn list_storages_and_prune_stale(
     Ok(storages)
 }
 
-/// Performs the common tasks when deserializing a snapshot dir
-///
-/// Handles reading the snapshot file and version file, then returning those fields, the accounts
-/// db from `new_accounts_db`, and the storages for index generation to open.  `new_accounts_db`
-/// runs while another thread lists the storage files.
-pub(crate) fn list_storages_from_snapshot_dir(
-    snapshot_info: &BankSnapshotInfo,
-    account_paths: &[PathBuf],
-    new_accounts_db: impl FnOnce() -> AccountsDb,
-) -> Result<(
-    AccountsDb,
+/// The storages for index generation to open and the fields of a bank snapshot
+type SnapshotDirContents = (
     Vec<StorageToOpen>,
     BankFieldsToDeserialize,
     AccountsDbFields,
-)> {
+);
+
+/// Spawns a thread in `scope` that reads the snapshot dir and lists its storages.
+///
+/// The thread reads the bank snapshot in `snapshot_info` and lists its storages in `account_paths`,
+/// pruning the storage files of other snapshots.
+///
+/// Returns the thread handle, which yields the storages to open and the snapshot fields.
+pub(crate) fn spawn_read_snapshot_dir<'scope, 'env>(
+    scope: &'scope thread::Scope<'scope, 'env>,
+    snapshot_info: &'env BankSnapshotInfo,
+    account_paths: &'env [PathBuf],
+) -> thread::ScopedJoinHandle<'scope, Result<SnapshotDirContents>> {
     // it is a programmer error if `snapshot_info` is incompatible
     debug_assert!(is_bank_snapshot_loadable(snapshot_info.fastboot_version.as_ref()).unwrap());
 
-    thread::scope(|scope| {
-        let list_handle = thread::Builder::new()
-            .name("solSnapDirFiles".to_string())
-            .spawn_scoped(scope, || list_snapshot_dir(snapshot_info, account_paths))
-            .expect("should spawn thread");
-        let accounts_db = new_accounts_db();
-        let (storages, bank_fields, accounts_db_fields) =
-            list_handle.join().expect("must join dir thread")?;
-        Ok((accounts_db, storages, bank_fields, accounts_db_fields))
-    })
+    thread::Builder::new()
+        .name("solSnapDirRead".to_string())
+        .spawn_scoped(scope, || read_snapshot_dir(snapshot_info, account_paths))
+        .expect("must spawn the snapshot dir reader")
 }
 
 /// Reads the bank snapshot in `snapshot_info` and lists its storages in `account_paths`, pruning
 /// the storage files of other snapshots.
-fn list_snapshot_dir(
+fn read_snapshot_dir(
     snapshot_info: &BankSnapshotInfo,
     account_paths: &[PathBuf],
-) -> Result<(
-    Vec<StorageToOpen>,
-    BankFieldsToDeserialize,
-    AccountsDbFields,
-)> {
+) -> Result<SnapshotDirContents> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
 
     // With fastboot_version >= 2, obsolete accounts are tracked and stored in the snapshot
@@ -1505,7 +1498,7 @@ fn list_snapshot_dir(
             .expect("fastboot requires a version"),
     )?;
     let storages_map = storages_list_to_map(&storages_list);
-    let storages = list_storages_and_prune_stale(account_paths, &storages_map)?
+    let storages = collect_storages_and_prune_stale(account_paths, &storages_map)?
         .into_iter()
         .map(|(path, item)| StorageToOpen {
             path,
@@ -2839,7 +2832,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_storages_and_prune_stale() {
+    fn test_collect_storages_and_prune_stale() {
         let account_path = tempfile::TempDir::new().unwrap();
         // Files that belong to the snapshot.
         let append_vec_1_keep = account_path.path().join("101.1");
@@ -2881,7 +2874,7 @@ mod tests {
             ],
         };
         let storages_map = storages_list_to_map(&storages_list);
-        let mut storages = list_storages_and_prune_stale(
+        let mut storages = collect_storages_and_prune_stale(
             slice::from_ref(&account_path.path().to_path_buf()),
             &storages_map,
         )
@@ -2909,7 +2902,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_storages_and_prune_stale_missing_files() {
+    fn test_collect_storages_and_prune_stale_missing_files() {
         let account_path = tempfile::TempDir::new().unwrap();
         let account_paths = [account_path.path().to_path_buf()];
         let storages_map = HashMap::from([(
@@ -2920,11 +2913,11 @@ mod tests {
                 has_data_file: true,
             },
         )]);
-        let err = list_storages_and_prune_stale(&account_paths, &storages_map).unwrap_err();
+        let err = collect_storages_and_prune_stale(&account_paths, &storages_map).unwrap_err();
         assert!(err.to_string().contains("found 0 of 1 expected storages"));
 
         fs::write(account_path.path().join("123.456.data"), b"x").unwrap();
-        let err = list_storages_and_prune_stale(&account_paths, &storages_map).unwrap_err();
+        let err = collect_storages_and_prune_stale(&account_paths, &storages_map).unwrap_err();
         assert!(err.to_string().contains("found 0 of 1 expected storages"));
     }
 }

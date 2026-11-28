@@ -21,8 +21,8 @@ use {
         },
         snapshot_package::SnapshotPackage,
         snapshot_utils::{
-            self, BankSnapshotInfo, UnarchivedSnapshots, list_storages_from_snapshot_dir,
-            snapshot_storage_rebuilder::StorageToOpen, verify_and_unarchive_snapshots,
+            self, BankSnapshotInfo, UnarchivedSnapshots, snapshot_storage_rebuilder::StorageToOpen,
+            spawn_read_snapshot_dir, verify_and_unarchive_snapshots,
         },
     },
     agave_fs::io_setup::IoSetupState,
@@ -59,6 +59,7 @@ use {
         ops::RangeInclusive,
         path::PathBuf,
         sync::{Arc, Mutex, atomic::AtomicBool},
+        thread,
     },
 };
 
@@ -381,19 +382,25 @@ pub fn bank_from_snapshot_dir(
 
     // Storages from this snapshot already live under `account_paths`; the storages list
     // inside the bank snapshot dir tells us which ones belong to it, and stale files
-    // (e.g. from later slots) are pruned by `list_storages_from_snapshot_dir`.
-    let ((accounts_db, storages_to_open, bank_fields, accounts_db_fields), measure_list_storages) = measure_time!(
-        list_storages_from_snapshot_dir(bank_snapshot, account_paths, || {
-            AccountsDb::new_with_config(
+    // (e.g. from later slots) are pruned by `spawn_read_snapshot_dir`.
+    let ((accounts_db, snapshot_dir), measure_read_dir) = measure_time!(
+        thread::scope(|scope| {
+            let reader = spawn_read_snapshot_dir(scope, bank_snapshot, account_paths);
+            let accounts_db = AccountsDb::new_with_config(
                 account_paths.to_vec(),
                 accounts_db_config,
                 accounts_update_notifier,
                 exit,
+            );
+            (
+                accounts_db,
+                reader.join().expect("must join the snapshot dir reader"),
             )
-        })?,
-        "list storages from snapshot dir"
+        }),
+        "read snapshot dir"
     );
-    info!("{measure_list_storages}");
+    info!("{measure_read_dir}, ok: {}", snapshot_dir.is_ok());
+    let (storages_to_open, bank_fields, accounts_db_fields) = snapshot_dir?;
 
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
@@ -451,7 +458,7 @@ pub fn bank_from_snapshot_dir(
 
     datapoint_info!(
         "bank_from_snapshot_dir",
-        ("list_storages_us", measure_list_storages.as_us(), i64),
+        ("read_snapshot_dir_us", measure_read_dir.as_us(), i64),
         ("rebuild_bank_us", measure_rebuild_bank.as_us(), i64),
     );
     Ok(bank)
