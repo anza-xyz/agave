@@ -8,10 +8,6 @@ pub mod pinned_xdp_sender;
 pub mod quic_socket;
 pub mod socket_addr_space;
 pub mod sockets;
-#[cfg(any(target_os = "android", target_os = "windows"))]
-#[path = "test_port_allocator_legacy.rs"]
-pub(crate) mod test_port_allocator;
-#[cfg(not(any(target_os = "android", target_os = "windows")))]
 pub(crate) mod test_port_allocator;
 pub mod token_bucket;
 #[cfg(feature = "dev-context-only-utils")]
