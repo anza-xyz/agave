@@ -47,7 +47,7 @@ agave-votor-messages = { path = "../votor-messages", version = "=5.0.0-alpha.1",
 ahash = "0.8.11"
 assert_cmd = "2.2.2"
 bv = "0.11.1"
-bytes = "1.12.1"
+bytes = "1.12.2"
 chrono = { version = "0.4.42", default-features = false }
 clap = { version = "2.33.1", default-features = false, features = ["suggestions"] }
 crossbeam-channel = "0.5.17"
