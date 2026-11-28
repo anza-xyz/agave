@@ -282,6 +282,12 @@ impl Blockstore {
         purge_type: PurgeType,
         purge_alt_columns: bool,
     ) -> Result<()> {
+        // Erasure sets of the purged slots are checked again if their shreds
+        // are inserted again.
+        self.fec_set_status
+            .lock()
+            .unwrap()
+            .retain(|slot, _| !(from_slot..=to_slot).contains(slot));
         self.meta_cf
             .delete_range_in_batch(write_batch, from_slot, to_slot);
         self.bank_hash_cf

@@ -44,6 +44,9 @@ pub struct BlockstoreInsertionMetrics {
     /// Subset of `num_fec_set_checks_failed`: FEC sets that could not be
     /// rebuilt despite enough shreds being available.
     pub num_fec_set_checks_rebuild_failed: usize,
+    /// FEC set checks dropped because the slot was purged and the set
+    /// inserted again from another block while it was checked.
+    pub num_fec_set_checks_stale: usize,
     pub num_repaired_data_shreds_exists: usize,
     pub num_turbine_data_shreds_exists: usize,
     pub num_data_shreds_invalid: usize,
@@ -83,8 +86,14 @@ impl BlockstoreInsertionMetrics {
     const NAME: &str = "blockstore-insert-shreds";
 
     pub fn report_metrics(&self) {
+        self.report_metrics_as(Self::NAME);
+    }
+
+    /// Reports the metrics under the given datapoint name, so that threads
+    /// doing different parts of the insertion report separately.
+    pub fn report_metrics_as(&self, name: &'static str) {
         datapoint_info!(
-            Self::NAME,
+            name,
             ("num_shreds", self.num_shreds as i64, i64),
             ("total_elapsed_us", self.total_elapsed_us as i64, i64),
             (
@@ -163,6 +172,11 @@ impl BlockstoreInsertionMetrics {
             (
                 "num_fec_set_checks_rebuild_failed",
                 self.num_fec_set_checks_rebuild_failed,
+                i64
+            ),
+            (
+                "num_fec_set_checks_stale",
+                self.num_fec_set_checks_stale,
                 i64
             ),
             (

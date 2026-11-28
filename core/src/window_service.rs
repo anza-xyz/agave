@@ -2,6 +2,8 @@
 //!   blockstore and retransmitting where required
 //!
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         completed_data_sets_service::CompletedDataSetsSender,
@@ -13,11 +15,15 @@ use {
         },
         result::{Error, Result},
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded},
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded},
+    solana_clock::{DEFAULT_MS_PER_SLOT, Slot},
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
         blockstore_db::{DBPinnableSlice, WriteBatch},
-        shred::filter::{RetransmitSender, ShredRecoveryContext},
+        shred::{
+            ErasureSetId, MAX_FEC_SETS_PER_SLOT,
+            filter::{RetransmitSender, ShredFilterContext, ShredRecoveryContext},
+        },
         sigverify_shreds::VerifiedShred,
     },
     solana_measure::measure::Measure,
@@ -45,6 +51,9 @@ struct WindowServiceMetrics {
     num_errors_cross_beam_recv_timeout: u64,
     num_errors_other: u64,
     num_errors_try_crossbeam_send: u64,
+    num_fec_sets_to_check: usize,
+    // Time blocked on a full FEC set check channel.
+    fec_check_send_elapsed_us: u64,
 }
 
 impl WindowServiceMetrics {
@@ -56,6 +65,12 @@ impl WindowServiceMetrics {
             ("run_insert_count", self.run_insert_count as i64, i64),
             ("num_repairs", self.num_repairs, i64),
             ("num_shreds_received", self.num_shreds_received, i64),
+            ("num_fec_sets_to_check", self.num_fec_sets_to_check, i64),
+            (
+                "fec_check_send_elapsed_us",
+                self.fec_check_send_elapsed_us as i64,
+                i64
+            ),
             (
                 "shred_receiver_elapsed_us",
                 self.shred_receiver_elapsed_us as i64,
@@ -91,6 +106,54 @@ impl WindowServiceMetrics {
     }
 }
 
+/// Time of max load the FEC set check channel absorbs.
+const FEC_CHECK_CHANNEL_BUFFER_MS: u64 = 100;
+
+/// Capacity of the FEC set check channel. Each message carries at least one
+/// erasure set, so this holds `FEC_CHECK_CHANNEL_BUFFER_MS` of full slots.
+/// The insert thread blocks when the channel is full: a dropped message would
+/// leave its erasure sets unchecked and stall `consumed` of their slots.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+const FEC_CHECK_CHANNEL_CAPACITY: usize =
+    (MAX_FEC_SETS_PER_SLOT as u64 * FEC_CHECK_CHANNEL_BUFFER_MS / DEFAULT_MS_PER_SLOT) as usize;
+
+/// Erasure sets which received shreds in one inserted batch, sent from the
+/// insert thread to the FEC set check thread.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+struct FecSetsToCheck {
+    fec_sets: Vec<ErasureSetId>,
+    inserted_at: Instant,
+}
+
+#[derive(Default)]
+struct FecCheckMetrics {
+    run_check_count: u64,
+    num_fec_sets: usize,
+    max_fec_sets_per_run: usize,
+    // Time from the insert of a batch to the start of its checks.
+    max_queue_latency_us: u64,
+    num_errors: u64,
+}
+
+impl FecCheckMetrics {
+    const NAME: &str = "recv-window-check-fec-sets";
+
+    fn report_metrics(&self) {
+        datapoint_info!(
+            Self::NAME,
+            ("run_check_count", self.run_check_count as i64, i64),
+            ("num_fec_sets", self.num_fec_sets, i64),
+            ("max_fec_sets_per_run", self.max_fec_sets_per_run, i64),
+            (
+                "max_queue_latency_us",
+                self.max_queue_latency_us as i64,
+                i64
+            ),
+            ("num_errors", self.num_errors as i64, i64),
+        );
+    }
+}
+
 fn run_check_duplicate(
     blockstore: &Blockstore,
     shred_receiver: &Receiver<PossibleDuplicateShred>,
@@ -111,7 +174,8 @@ fn run_check_duplicate(
 fn run_insert<'db, F>(
     verified_receiver: &Receiver<Vec<VerifiedShred>>,
     blockstore: &'db Blockstore,
-    shred_recovery_context: &mut ShredRecoveryContext,
+    stricter_shred_validation_from: Option<Slot>,
+    fec_check_sender: &Sender<FecSetsToCheck>,
     pinnable_slice: &mut DBPinnableSlice<'db>,
     write_batch: &mut WriteBatch,
     handle_duplicate: F,
@@ -134,9 +198,72 @@ where
         .filter(|verified_shred| verified_shred.is_repaired)
         .count();
     ws_metrics.num_shreds_received += shreds.len();
-    let completed_data_sets = blockstore.insert_shreds_at_location_handle_duplicate(
+    let is_trusted = false;
+    let (completed_data_sets, fec_sets) = blockstore.insert_shreds_at_location_handle_duplicate(
         shreds,
-        false, // is_trusted
+        is_trusted,
+        stricter_shred_validation_from,
+        pinnable_slice,
+        write_batch,
+        &handle_duplicate,
+        metrics,
+    )?;
+
+    // Sent after the shreds are committed, so the checks can read them.
+    // Sent outside insert_shreds_lock, so blocking here can't stall the check
+    // thread.
+    if !fec_sets.is_empty() {
+        ws_metrics.num_fec_sets_to_check += fec_sets.len();
+        let mut send_elapsed = Measure::start("fec_check_send_elapsed");
+        fec_check_sender.send(FecSetsToCheck {
+            fec_sets,
+            inserted_at: Instant::now(),
+        })?;
+        send_elapsed.stop();
+        ws_metrics.fec_check_send_elapsed_us += send_elapsed.as_us();
+    }
+
+    if let Some(sender) = completed_data_sets_sender {
+        sender.try_send(completed_data_sets)?;
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_check_fec_sets<'db, F>(
+    fec_check_receiver: &Receiver<FecSetsToCheck>,
+    blockstore: &'db Blockstore,
+    shred_recovery_context: &mut ShredRecoveryContext,
+    pinnable_slice: &mut DBPinnableSlice<'db>,
+    write_batch: &mut WriteBatch,
+    handle_duplicate: F,
+    metrics: &mut BlockstoreInsertionMetrics,
+    fec_check_metrics: &mut FecCheckMetrics,
+    completed_data_sets_sender: Option<&CompletedDataSetsSender>,
+) -> Result<()>
+where
+    F: Fn(PossibleDuplicateShred),
+{
+    const RECV_TIMEOUT: Duration = Duration::from_millis(200);
+    let mut fec_sets = Vec::new();
+    for FecSetsToCheck {
+        fec_sets: batch,
+        inserted_at,
+    } in std::iter::once(fec_check_receiver.recv_timeout(RECV_TIMEOUT)?)
+        .chain(fec_check_receiver.try_iter())
+    {
+        fec_check_metrics.max_queue_latency_us = fec_check_metrics
+            .max_queue_latency_us
+            .max(inserted_at.elapsed().as_micros() as u64);
+        fec_sets.extend(batch);
+    }
+    fec_check_metrics.run_check_count += 1;
+    fec_check_metrics.num_fec_sets += fec_sets.len();
+    fec_check_metrics.max_fec_sets_per_run =
+        fec_check_metrics.max_fec_sets_per_run.max(fec_sets.len());
+    let completed_data_sets = blockstore.check_fec_sets_handle_duplicate(
+        fec_sets,
         shred_recovery_context,
         pinnable_slice,
         write_batch,
@@ -144,7 +271,9 @@ where
         metrics,
     )?;
 
-    if let Some(sender) = completed_data_sets_sender {
+    if let Some(sender) = completed_data_sets_sender
+        && !completed_data_sets.is_empty()
+    {
         sender.try_send(completed_data_sets)?;
     }
 
@@ -177,8 +306,10 @@ impl WindowServiceChannels {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct WindowService {
     t_insert: JoinHandle<()>,
+    t_check_fec_sets: JoinHandle<()>,
     t_check_duplicate: JoinHandle<()>,
     repair_service: RepairService,
     block_id_repair_service: BlockIdRepairService,
@@ -236,19 +367,31 @@ impl WindowService {
         );
 
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
+        let (fec_check_sender, fec_check_receiver) = bounded(FEC_CHECK_CHANNEL_CAPACITY);
+        let t_check_fec_sets = Self::start_check_fec_sets_thread(
+            exit.clone(),
+            blockstore.clone(),
+            sharable_banks.clone(),
+            shred_version,
+            fec_check_receiver,
+            duplicate_sender.clone(),
+            completed_data_sets_sender.clone(),
+            retransmit_sender,
+        );
         let t_insert = Self::start_window_insert_thread(
             exit,
             blockstore,
             sharable_banks,
             shred_version,
             verified_receiver,
+            fec_check_sender,
             duplicate_sender,
             completed_data_sets_sender,
-            retransmit_sender,
         );
 
         WindowService {
             t_insert,
+            t_check_fec_sets,
             t_check_duplicate,
             repair_service,
             block_id_repair_service,
@@ -274,15 +417,17 @@ impl WindowService {
             .unwrap()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn start_window_insert_thread(
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         sharable_banks: SharableBanks,
         shred_version: u16,
         verified_receiver: Receiver<Vec<VerifiedShred>>,
+        fec_check_sender: Sender<FecSetsToCheck>,
         check_duplicate_sender: Sender<PossibleDuplicateShred>,
         completed_data_sets_sender: Option<CompletedDataSetsSender>,
-        retransmit_sender: RetransmitSender,
     ) -> JoinHandle<()> {
         Builder::new()
             .name("solWinInsert".to_string())
@@ -295,21 +440,20 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
-                let mut shred_recovery_context = ShredRecoveryContext::new(
-                    retransmit_sender,
-                    sharable_banks.root(),
-                    shred_version,
-                );
+                // Only used for the SIMD-0504 activation slot.
+                let mut shred_filter_context =
+                    ShredFilterContext::new(sharable_banks.root(), shred_version);
                 let mut pinnable_slice = blockstore.new_pinnable_slice();
                 let mut write_batch = blockstore.get_write_batch();
 
                 while !exit.load(Ordering::Relaxed) {
-                    shred_recovery_context.maybe_update(sharable_banks.root());
+                    shred_filter_context.maybe_update(sharable_banks.root());
 
                     if let Err(e) = run_insert(
                         &verified_receiver,
                         &blockstore,
-                        &mut shred_recovery_context,
+                        shred_filter_context.stricter_shred_validation_from(),
+                        &fec_check_sender,
                         &mut pinnable_slice,
                         &mut write_batch,
                         handle_duplicate,
@@ -328,6 +472,94 @@ impl WindowService {
                         metrics = BlockstoreInsertionMetrics::default();
                         ws_metrics.report_metrics();
                         ws_metrics = WindowServiceMetrics::default();
+                        last_print = Instant::now();
+                    }
+                }
+            })
+            .unwrap()
+    }
+
+    /// Recovers and checks the erasure sets inserted by the insert thread, and
+    /// advances `SlotMeta::consumed` over the accepted ones.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn start_check_fec_sets_thread(
+        exit: Arc<AtomicBool>,
+        blockstore: Arc<Blockstore>,
+        sharable_banks: SharableBanks,
+        shred_version: u16,
+        fec_check_receiver: Receiver<FecSetsToCheck>,
+        check_duplicate_sender: Sender<PossibleDuplicateShred>,
+        completed_data_sets_sender: Option<CompletedDataSetsSender>,
+        retransmit_sender: RetransmitSender,
+    ) -> JoinHandle<()> {
+        Builder::new()
+            .name("solWinFecChk".to_string())
+            .spawn(move || {
+                let handle_duplicate = |possible_duplicate_shred| {
+                    let _ = check_duplicate_sender.send(possible_duplicate_shred);
+                };
+
+                const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(2);
+                const METRICS_NAME: &str = "blockstore-check-fec-sets";
+                let mut metrics = BlockstoreInsertionMetrics::default();
+                let mut fec_check_metrics = FecCheckMetrics::default();
+                let mut last_print = Instant::now();
+                let mut shred_recovery_context = ShredRecoveryContext::new(
+                    retransmit_sender,
+                    sharable_banks.root(),
+                    shred_version,
+                );
+                let mut pinnable_slice = blockstore.new_pinnable_slice();
+                let mut write_batch = blockstore.get_write_batch();
+
+                // Erasure sets inserted before a restart might not have been
+                // checked, so `consumed` would never advance over them.
+                match blockstore.fec_sets_pending_checks().and_then(|fec_sets| {
+                    blockstore.check_fec_sets_handle_duplicate(
+                        fec_sets,
+                        &mut shred_recovery_context,
+                        &mut pinnable_slice,
+                        &mut write_batch,
+                        &handle_duplicate,
+                        &mut metrics,
+                    )
+                }) {
+                    Ok(completed_data_sets) => {
+                        if let Some(sender) = &completed_data_sets_sender {
+                            let _ = sender.try_send(completed_data_sets);
+                        }
+                    }
+                    Err(err) => error!("failed to check FEC sets pending since startup: {err}"),
+                }
+
+                while !exit.load(Ordering::Relaxed) {
+                    shred_recovery_context.maybe_update(sharable_banks.root());
+
+                    if let Err(e) = run_check_fec_sets(
+                        &fec_check_receiver,
+                        &blockstore,
+                        &mut shred_recovery_context,
+                        &mut pinnable_slice,
+                        &mut write_batch,
+                        handle_duplicate,
+                        &mut metrics,
+                        &mut fec_check_metrics,
+                        completed_data_sets_sender.as_ref(),
+                    ) {
+                        if !matches!(e, Error::RecvTimeout(RecvTimeoutError::Timeout)) {
+                            fec_check_metrics.num_errors += 1;
+                        }
+                        if Self::should_exit_on_error(e) {
+                            break;
+                        }
+                    }
+
+                    if last_print.elapsed() > METRICS_REPORTING_INTERVAL {
+                        metrics.report_metrics_as(METRICS_NAME);
+                        metrics = BlockstoreInsertionMetrics::default();
+                        fec_check_metrics.report_metrics();
+                        fec_check_metrics = FecCheckMetrics::default();
                         last_print = Instant::now();
                     }
                     shred_recovery_context.maybe_submit_stats();
@@ -357,6 +589,7 @@ impl WindowService {
 
     pub(crate) fn join(self) -> thread::Result<()> {
         self.t_insert.join()?;
+        self.t_check_fec_sets.join()?;
         self.t_check_duplicate.join()?;
         self.repair_service.join()?;
         self.block_id_repair_service.join()
@@ -367,6 +600,7 @@ impl WindowService {
 mod test {
     use {
         super::*,
+        agave_shred_wire_format::constants::DATA_SHREDS_PER_FEC_BLOCK,
         crossbeam_channel::bounded,
         rand::Rng,
         solana_clock::Slot,
@@ -375,6 +609,7 @@ mod test {
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{Blockstore, make_many_slot_entries},
+            blockstore_meta::BlockLocation,
             get_tmp_ledger_path_auto_delete,
             shred::{ProcessShredsStats, Shred, Shredder, filter::new_dummy_retransmit_sender},
         },
@@ -466,6 +701,68 @@ mod test {
         assert!(
             blockstore.is_dead(slot),
             "duplicate slot that is not full must be marked dead"
+        );
+    }
+
+    /// A full FEC set check channel blocks the insert thread rather than drop
+    /// the erasure sets, which would never be checked otherwise.
+    #[test]
+    fn test_run_insert_blocks_on_full_fec_check_channel() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let (verified_sender, verified_receiver) = unbounded();
+        let (fec_check_sender, fec_check_receiver) = bounded(1);
+        fec_check_sender
+            .send(FecSetsToCheck {
+                fec_sets: Vec::new(),
+                inserted_at: Instant::now(),
+            })
+            .unwrap();
+        let slot = 1;
+        let num_entries = 1000;
+        let (shreds, _) = make_many_slot_entries(slot, 1, num_entries);
+        let shreds: Vec<_> = shreds
+            .into_iter()
+            .filter(|shred| shred.fec_set_index() == 0)
+            .map(|shred| VerifiedShred {
+                merkle_root: shred.merkle_root().unwrap(),
+                shred,
+                is_repaired: false,
+                location: BlockLocation::Original,
+            })
+            .collect();
+        assert_eq!(shreds.len(), DATA_SHREDS_PER_FEC_BLOCK);
+        verified_sender.send(shreds).unwrap();
+
+        let t_insert = thread::spawn(move || {
+            let stricter_shred_validation_from = None;
+            run_insert(
+                &verified_receiver,
+                &blockstore,
+                stricter_shred_validation_from,
+                &fec_check_sender,
+                &mut blockstore.new_pinnable_slice(),
+                &mut blockstore.get_write_batch(),
+                |_| {},
+                &mut BlockstoreInsertionMetrics::default(),
+                &mut WindowServiceMetrics::default(),
+                None, // completed_data_sets_sender
+            )
+        });
+        let wait = Duration::from_millis(100);
+        thread::sleep(wait);
+        assert!(
+            !t_insert.is_finished(),
+            "the insert thread should block on the full channel"
+        );
+        let queued = fec_check_receiver.recv().unwrap();
+        assert!(queued.fec_sets.is_empty());
+        t_insert.join().unwrap().unwrap();
+        let sent = fec_check_receiver.try_recv().unwrap();
+        assert_eq!(
+            sent.fec_sets,
+            vec![ErasureSetId::new(slot, 0)],
+            "the erasure set should be sent once the channel has room"
         );
     }
 

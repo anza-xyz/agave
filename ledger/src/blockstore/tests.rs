@@ -5164,6 +5164,53 @@ impl RecoveryTestBlockstore {
             .unwrap();
         metrics
     }
+
+    /// Inserts `shreds` into the Original columns like `insert`, but does not
+    /// check the erasure sets, as if the node stopped before the checks ran.
+    fn insert_without_checks(&mut self, shreds: Vec<Shred>) {
+        let is_repaired = false;
+        let is_trusted = false;
+        let defer_consumed = true;
+        let precomputed_merkle_root = None; // gets computed on demand
+        let shreds = shreds.into_iter().map(|shred| {
+            (
+                shred,
+                is_repaired,
+                BlockLocation::Original,
+                precomputed_merkle_root,
+            )
+        });
+        let lock = self.blockstore.insert_shreds_lock.lock().unwrap();
+        self.blockstore
+            .do_insert_shreds_locked(
+                &lock,
+                shreds,
+                is_trusted,
+                self.shred_recovery_context.stricter_shred_validation_from(),
+                defer_consumed,
+                &mut self.blockstore.new_pinnable_slice(),
+                &mut self.blockstore.get_write_batch(),
+                &mut BlockstoreInsertionMetrics::default(),
+            )
+            .unwrap();
+    }
+
+    /// Checks the erasure sets returned by `fec_sets_pending_checks`, as on
+    /// startup, and returns the metrics of the checks.
+    fn check_pending_fec_sets(&mut self) -> BlockstoreInsertionMetrics {
+        let mut metrics = BlockstoreInsertionMetrics::default();
+        let fec_sets = self.blockstore.fec_sets_pending_checks().unwrap();
+        self.blockstore
+            .check_fec_sets(
+                fec_sets,
+                &mut self.shred_recovery_context,
+                &mut self.blockstore.new_pinnable_slice(),
+                &mut self.blockstore.get_write_batch(),
+                &mut metrics,
+            )
+            .unwrap();
+        metrics
+    }
 }
 
 impl Deref for RecoveryTestBlockstore {
@@ -5581,6 +5628,252 @@ fn test_fec_set_check_failure_marks_slot_dead(slot: Slot, gate_active: bool) {
     assert_eq!(blockstore.is_dead(slot), gate_active);
 }
 
+/// Inserting shreds does not advance `consumed`, so the entries of an erasure set are only
+/// readable for replay once the set is checked. A slot whose last erasure set fails the
+/// checks is not full while the set is unchecked, even with all data shreds present. Once
+/// SIMD-0504 is effective for the slot, the failed check marks it dead. Before that, the
+/// set is accepted since all its data shreds are present, and the slot becomes full. The
+/// test genesis activates all features at slot 0, which are effective from epoch 1 on.
+#[test_case(1, false; "before activation")]
+#[test_case(100, true; "after activation")]
+fn test_consumed_waits_for_fec_set_checks(slot: Slot, gate_active: bool) {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
+    assert_eq!(
+        blockstore
+            .shred_recovery_context
+            .is_stricter_shred_validation_active(slot),
+        gate_active
+    );
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 500);
+    let last_fec_set_index = data_shreds.last().unwrap().fec_set_index();
+    assert!(
+        last_fec_set_index > 0,
+        "the slot should span several erasure sets"
+    );
+    let (mut last_fec_set, shreds): (Vec<_>, Vec<_>) = data_shreds
+        .into_iter()
+        .chain(coding_shreds)
+        .partition(|shred| shred.fec_set_index() == last_fec_set_index);
+    sign_with_invalid_parity_for_tests(
+        &Keypair::new(),
+        &mut last_fec_set,
+        0..CODING_SHREDS_PER_FEC_BLOCK,
+    );
+    last_fec_set.truncate(DATA_SHREDS_PER_FEC_BLOCK);
+    let last_index = u64::from(last_fec_set.last().unwrap().index());
+    let num_fec_sets_before_last = last_fec_set_index as usize / DATA_SHREDS_PER_FEC_BLOCK;
+
+    blockstore.insert_without_checks(shreds);
+    let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+    assert_eq!(
+        slot_meta.consumed, 0,
+        "no erasure set should be consumed before it is checked"
+    );
+    assert!(blockstore.get_slot_entries(slot, 0).unwrap().is_empty());
+
+    let metrics = blockstore.check_pending_fec_sets();
+    assert_eq!(metrics.num_fec_set_checks_passed, num_fec_sets_before_last);
+    let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+    assert_eq!(slot_meta.consumed, u64::from(last_fec_set_index));
+    assert!(!slot_meta.is_full());
+
+    blockstore.insert_without_checks(last_fec_set);
+    let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+    assert_eq!(slot_meta.last_index, Some(last_index));
+    assert_eq!(slot_meta.received, last_index + 1);
+    assert_eq!(
+        slot_meta.consumed,
+        u64::from(last_fec_set_index),
+        "the unchecked last erasure set should not be consumed"
+    );
+    assert!(
+        !slot_meta.is_full(),
+        "the slot should not be full before its last erasure set is checked"
+    );
+    assert!(
+        blockstore.get_slot_entries(slot, 0).unwrap().is_empty(),
+        "the entries ending in the unchecked erasure set should not be readable for replay"
+    );
+    assert!(!blockstore.is_dead(slot));
+
+    let metrics = blockstore.check_pending_fec_sets();
+    assert_eq!(metrics.num_fec_set_checks_rebuild_failed, 1);
+    assert_eq!(metrics.num_fec_set_checks_failed, 1);
+    assert_eq!(metrics.num_fec_set_checks_passed, 0);
+    assert_eq!(blockstore.is_dead(slot), gate_active);
+    if gate_active {
+        assert!(!blockstore.meta(slot).unwrap().unwrap().is_full());
+    } else {
+        assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+        assert!(
+            !blockstore.get_slot_entries(slot, 0).unwrap().is_empty(),
+            "the entries of the accepted slot should be readable for replay"
+        );
+    }
+}
+
+/// Shreds inserted but not checked before a restart are checked on startup: the erasure
+/// sets above `consumed`, including the ones with coding shreds only, are recovered and
+/// checked, and `consumed` advances over them.
+#[test]
+fn test_fec_sets_pending_checks_after_restart() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let slot = 1;
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 500);
+    let last_fec_set_index = data_shreds.last().unwrap().fec_set_index();
+    assert!(
+        last_fec_set_index > 0,
+        "the slot should span several erasure sets"
+    );
+    // The data shreds of all but the last erasure set, and the coding shreds of
+    // the last one.
+    let shreds: Vec<_> = data_shreds
+        .iter()
+        .filter(|shred| shred.fec_set_index() != last_fec_set_index)
+        .chain(
+            coding_shreds
+                .iter()
+                .filter(|shred| shred.fec_set_index() == last_fec_set_index),
+        )
+        .cloned()
+        .collect();
+    {
+        let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
+        blockstore.insert_without_checks(shreds);
+        let slot_meta = blockstore.meta(slot).unwrap().unwrap();
+        assert_eq!(slot_meta.consumed, 0);
+        assert_eq!(slot_meta.received, u64::from(last_fec_set_index));
+    }
+
+    let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
+    let pending_fec_sets: Vec<_> = (0..=last_fec_set_index)
+        .step_by(DATA_SHREDS_PER_FEC_BLOCK)
+        .map(|fec_set_index| ErasureSetId::new(slot, fec_set_index))
+        .collect();
+    assert_eq!(
+        blockstore.fec_sets_pending_checks().unwrap(),
+        pending_fec_sets
+    );
+    let metrics = blockstore.check_pending_fec_sets();
+    assert_eq!(metrics.num_fec_set_checks_passed, pending_fec_sets.len());
+    assert_eq!(metrics.num_fec_set_checks_failed, 0);
+    assert_eq!(
+        metrics.num_recovered_data_shreds, DATA_SHREDS_PER_FEC_BLOCK,
+        "the data shreds of the erasure set with coding shreds only should be recovered"
+    );
+    assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
+    for shred in &data_shreds {
+        assert_eq!(
+            blockstore
+                .get_data_shred(slot, u64::from(shred.index()))
+                .unwrap()
+                .as_deref(),
+            Some(shred.payload().as_ref()),
+        );
+    }
+    assert!(
+        blockstore.fec_sets_pending_checks().unwrap().is_empty(),
+        "a full slot should have no erasure sets pending checks"
+    );
+}
+
+/// Returns the shreds of the first erasure set of a new block, split into data and coding.
+fn first_fec_set_of_new_block(slot: Slot) -> (Vec<Shred>, Vec<Shred>) {
+    let (data_shreds, coding_shreds) = setup_erasure_shreds(slot, 0, 100);
+    let first_fec_set = |shreds: Vec<Shred>| -> Vec<Shred> {
+        shreds
+            .into_iter()
+            .filter(|shred| shred.fec_set_index() == 0)
+            .collect()
+    };
+    (first_fec_set(data_shreds), first_fec_set(coding_shreds))
+}
+
+/// If the slot is purged and an erasure set inserted again from another block while the set
+/// is checked, the verdict on the old block applies to neither the shreds nor the slot of the
+/// new block, which is checked on its own.
+#[test]
+fn test_stale_fec_set_verdict_after_block_replacement() {
+    let ledger_path = get_tmp_ledger_path_auto_delete!();
+    let mut blockstore = RecoveryTestBlockstore::new(ledger_path.path());
+    let slot = 100;
+    assert!(
+        blockstore
+            .shred_recovery_context
+            .is_stricter_shred_validation_active(slot)
+    );
+    let erasure_set = ErasureSetId::new(slot, 0);
+
+    // Block A, with one data shred to recover.
+    let (data_a, code_a) = first_fec_set_of_new_block(slot);
+    let (recovered_a, received_a) = data_a.split_last().unwrap();
+    blockstore.insert_without_checks([received_a, &code_a[..1]].concat());
+    let verdict_a = FecSetVerdict {
+        erasure_set,
+        merkle_root: blockstore
+            .merkle_root_meta(erasure_set)
+            .unwrap()
+            .unwrap()
+            .merkle_root(),
+        erasure_meta: blockstore.erasure_meta_cf.get((slot, 0)).unwrap(),
+        rejected: true,
+    };
+
+    // The slot is purged and the erasure set inserted from block B while
+    // the set of block A is checked.
+    blockstore.clear_unconfirmed_slot(slot);
+    let (data_b, code_b) = first_fec_set_of_new_block(slot);
+    let (missing_b, received_b) = data_b.split_last().unwrap();
+    blockstore.insert_without_checks([received_b, &code_b[..1]].concat());
+
+    let mut metrics = BlockstoreInsertionMetrics::default();
+    {
+        let lock = blockstore.insert_shreds_lock.lock().unwrap();
+        blockstore
+            .accept_fec_sets_locked(
+                &lock,
+                vec![verdict_a],
+                vec![recovered_a.clone()],
+                blockstore
+                    .shred_recovery_context
+                    .stricter_shred_validation_from(),
+                &mut blockstore.new_pinnable_slice(),
+                &mut blockstore.get_write_batch(),
+                &mut metrics,
+            )
+            .unwrap();
+    }
+    assert_eq!(metrics.num_fec_set_checks_stale, 1);
+    assert_eq!(metrics.num_recovered_inserted, 0);
+    assert!(
+        !blockstore.is_dead(slot),
+        "the rejection of block A should not mark block B dead"
+    );
+    assert!(
+        blockstore
+            .get_data_shred(slot, u64::from(recovered_a.index()))
+            .unwrap()
+            .is_none(),
+        "the recovered shred of block A should not be inserted into block B"
+    );
+    assert_eq!(blockstore.meta(slot).unwrap().unwrap().consumed, 0);
+
+    let metrics = blockstore.check_pending_fec_sets();
+    assert_eq!(metrics.num_fec_set_checks_passed, 1);
+    assert_eq!(
+        blockstore
+            .get_data_shred(slot, u64::from(missing_b.index()))
+            .unwrap()
+            .as_deref(),
+        Some(missing_b.payload().as_ref()),
+    );
+    assert_eq!(
+        blockstore.meta(slot).unwrap().unwrap().consumed,
+        DATA_SHREDS_PER_FEC_BLOCK as u64
+    );
+}
+
 /// A properly signed erasure set whose coding shreds do not match the data shreds fails
 /// to rebuild when it crosses the threshold. Its data shreds are still inserted once all
 /// of them are received, and the set is not checked for SIMD-0504 again.
@@ -5638,63 +5931,6 @@ fn test_fec_set_rebuild_failure_invalid_parity() {
         );
     }
     verify_index_integrity(&blockstore, slot);
-}
-
-/// The erasure set has `num_data` data and `num_coding` coding shreds in the
-/// index, the last `num_inserted` of which arrived in the current batch.
-/// Without `has_erasure_meta` the set is treated as data-only, as when no coding
-/// shred of it was ever inserted.
-/// Expects `run_fec_checks` only in the batch which brings the set to the
-/// rebuild threshold. Expects `recover_missing_data_shreds` when data shreds
-/// are missing and the set can be rebuilt; once SIMD-0504 is active for the
-/// slot (`stricter_shred_validation_active`) recovery is restricted to the
-/// crossing batch, since a later failed rebuild would be pure waste (issue
-/// #16444), whereas without the feature it keeps being attempted every batch.
-#[test_case(31, 0, 31, false, true, false, false; "too few shreds")]
-#[test_case(32, 0, 1, false, false, false, true; "data only, crossing the threshold")]
-#[test_case(32, 0, 32, false, false, false, true; "data only, in a single batch")]
-#[test_case(31, 1, 1, false, true, true, true; "crossing the threshold")]
-#[test_case(0, 32, 32, false, true, true, true; "coding only, in a single batch")]
-#[test_case(31, 2, 1, false, true, true, false; "already over the threshold, feature off")]
-#[test_case(31, 2, 1, true, true, false, false; "already over the threshold, feature on")]
-#[test_case(32, 32, 64, false, true, false, true; "all shreds in a single batch")]
-#[test_case(32, 32, 32, false, true, false, false; "all shreds, already over the threshold")]
-fn test_fec_set_actions(
-    num_data: usize,
-    num_coding: usize,
-    num_inserted: usize,
-    stricter_shred_validation_active: bool,
-    has_erasure_meta: bool,
-    recover_missing_data_shreds: bool,
-    run_fec_checks: bool,
-) {
-    let slot = 1;
-    let fec_set_index = 32;
-    let (_, coding_shreds) = setup_erasure_shreds_with_index(slot, 0, 100, fec_set_index);
-    let erasure_meta = ErasureMeta::from_coding_shred(&coding_shreds[0]).unwrap();
-    let erasure_set = ErasureSetId::new(slot, fec_set_index);
-    let mut index = Index::new(slot);
-    for i in erasure_set.data_shred_indices().take(num_data) {
-        index.data_mut().insert(u64::from(i));
-    }
-    for i in erasure_meta.coding_shreds_indices().take(num_coding) {
-        index.coding_mut().insert(i);
-    }
-    let erasure_meta = has_erasure_meta.then_some(&erasure_meta);
-    let FecSetActions {
-        recover_missing_data_shreds: actual_recover,
-        run_fec_checks: actual_check,
-    } = fec_set_actions(
-        &index,
-        erasure_set,
-        erasure_meta,
-        num_inserted,
-        stricter_shred_validation_active,
-    );
-    assert_eq!(
-        (actual_recover, actual_check),
-        (recover_missing_data_shreds, run_fec_checks)
-    );
 }
 
 #[test]
