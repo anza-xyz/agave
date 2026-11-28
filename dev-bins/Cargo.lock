@@ -7481,7 +7481,6 @@ dependencies = [
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-context",
- "solana-vote",
  "solana-vote-program",
  "wincode",
 ]
@@ -9037,12 +9036,10 @@ dependencies = [
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
  "solana-keypair",
- "solana-packet",
  "solana-pubkey 4.4.0",
  "solana-sdk-ids",
  "solana-serialize-utils 4.0.0",
  "solana-signer",
- "solana-svm-transaction",
  "solana-transaction",
  "solana-vote-interface",
  "thiserror 2.0.21",
@@ -9051,9 +9048,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "7.3.0"
+version = "7.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91bf90031e7387f9a57f8c4203d433a3ca08b9c1f24d95424e9bab38d5b2620"
+checksum = "e7c23ddb8428acee504c610e66d9352e4ab249ef0440fc3007336aa824c1a80b"
 dependencies = [
  "cfg_eval",
  "num-derive 0.4.2",

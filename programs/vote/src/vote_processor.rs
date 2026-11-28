@@ -161,6 +161,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         VoteInstruction::UpdateCommission(commission) => {
             vote_state::update_commission(&mut me, target_version, commission, &signers)
         }
+        #[allow(deprecated)]
         VoteInstruction::Vote(_)
         | VoteInstruction::VoteSwitch(_, _)
         | VoteInstruction::UpdateVoteState(_)
@@ -280,15 +281,12 @@ mod tests {
             vote_error::VoteError,
             vote_instruction::{
                 CreateVoteAccountConfig, VoteInstruction, authorize, authorize_checked,
-                compact_update_vote_state, compact_update_vote_state_switch,
-                create_account_with_config, update_commission, update_validator_identity,
-                update_vote_state, update_vote_state_switch, vote, vote_switch, withdraw,
+                create_account_with_config, update_commission, update_validator_identity, withdraw,
             },
             vote_state::{
-                self, TowerSync, Vote, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs,
-                VoteAuthorizeWithSeedArgs, VoteInit, VoteInitV2, VoteStateUpdate, VoteStateV3,
-                VoteStateV4, VoteStateVersions, create_bls_pubkey_and_proof_of_possession,
-                handler::VoteStateHandler,
+                self, VoteAuthorize, VoteAuthorizeCheckedWithSeedArgs, VoteAuthorizeWithSeedArgs,
+                VoteInit, VoteInitV2, VoteStateV3, VoteStateV4, VoteStateVersions,
+                create_bls_pubkey_and_proof_of_possession, handler::VoteStateHandler,
             },
         },
         solana_account::{
@@ -312,7 +310,7 @@ mod tests {
         solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS as SYSTEM_PROGRAM_COMPUTE_UNITS,
         solana_sysvar_id::SysvarId,
         solana_vote_interface::{
-            instruction::{CommissionKind, tower_sync, tower_sync_switch},
+            instruction::CommissionKind,
             state::{
                 BLS_PROOF_OF_POSSESSION_COMPRESSED_SIZE, BLS_PUBLIC_KEY_COMPRESSED_SIZE,
                 VoterWithBLSArgs,
@@ -320,6 +318,18 @@ mod tests {
         },
         std::{cell::RefCell, collections::HashSet, str::FromStr, sync::Arc},
         test_case::test_matrix,
+    };
+    // The Tower vote items stay only to check that the program rejects them.
+    #[allow(deprecated)]
+    use {
+        crate::{
+            vote_instruction::{
+                compact_update_vote_state, compact_update_vote_state_switch, update_vote_state,
+                update_vote_state_switch, vote, vote_switch,
+            },
+            vote_state::{TowerSync, Vote, VoteStateUpdate},
+        },
+        solana_vote_interface::instruction::{tower_sync, tower_sync_switch},
     };
 
     fn create_sysvar_account<T>(value: &T) -> AccountSharedData
@@ -3505,6 +3515,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_spoofed_vote() {
         let features = VoteProgramFeatures {
             ..Default::default()
@@ -3635,6 +3646,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_vote_process_instruction() {
         agave_logger::setup();
         let instructions = create_account_with_config(

@@ -537,7 +537,6 @@ mod tests {
     #[test]
     fn test_is_simple_vote_transaction() {
         agave_logger::setup();
-        let mut rng = rand::rng();
 
         // transfer tx is not
         {
@@ -551,8 +550,7 @@ mod tests {
 
         // single legacy vote tx is
         {
-            let mut tx = new_test_vote_tx(&mut rng);
-            tx.message.instructions[0].data = vec![1, 2, 3];
+            let tx = new_test_vote_tx();
             let packet = BytesPacket::from_data(tx).unwrap();
             let view =
                 SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
@@ -593,10 +591,9 @@ mod tests {
 
         // single legacy vote tx with extra (invalid) signature is not
         {
-            let mut tx = new_test_vote_tx(&mut rng);
+            let mut tx = new_test_vote_tx();
             tx.signatures.push(Signature::default());
             tx.message.header.num_required_signatures = 3;
-            tx.message.instructions[0].data = vec![1, 2, 3];
             let packet = BytesPacket::from_data(tx).unwrap();
             let view =
                 SanitizedTransactionView::try_new_sanitized(packet.data(..).unwrap()).unwrap();
