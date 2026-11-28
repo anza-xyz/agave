@@ -9,7 +9,7 @@ use {
     solana_pubkey::Pubkey,
     solana_rpc_client_api::filter::RpcFilterType,
     solana_runtime::{
-        bank::{TransactionLogCollectorConfig, TransactionLogCollectorFilter},
+        bank::{BankId, TransactionLogCollectorConfig, TransactionLogCollectorFilter},
         bank_forks::BankForks,
     },
     solana_signature::Signature,
@@ -181,6 +181,7 @@ struct SubscriptionControlInner {
     // duplicate subscribers to the same params separately so the configured
     // cap is enforced per subscriber, not per deduplicated upstream stream.
     subscriber_count: AtomicUsize,
+    delta_subscriptions: AtomicUsize,
     sender: crossbeam_channel::Sender<TimestampedNotificationEntry>,
     broadcast_sender: broadcast::Sender<RpcNotification>,
     counter: TokenCounter,
@@ -197,6 +198,7 @@ impl SubscriptionControl {
             next_id: AtomicU64::new(0),
             max_active_subscriptions,
             subscriber_count: AtomicUsize::new(0),
+            delta_subscriptions: AtomicUsize::new(0),
             sender,
             broadcast_sender,
             counter: TokenCounter::new("rpc_pubsub_total_subscriptions"),
@@ -253,6 +255,12 @@ impl SubscriptionControl {
                 let id = SubscriptionId::from(self.0.next_id.fetch_add(1, Ordering::AcqRel));
                 let inner = create_inner(id, entry.key().clone());
                 let weak_ref = WeakSubscriptionTokenRef(Arc::downgrade(&inner), id);
+                if matches!(
+                    inner.params,
+                    SubscriptionParams::Program(_) | SubscriptionParams::Logs(_)
+                ) {
+                    self.0.delta_subscriptions.fetch_add(1, Ordering::Relaxed);
+                }
                 let _ = self
                     .0
                     .sender
@@ -273,6 +281,10 @@ impl SubscriptionControl {
 
     pub fn subscriber_total(&self) -> usize {
         self.0.subscriber_count.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn has_delta_subscriptions(&self) -> bool {
+        self.0.delta_subscriptions.load(Ordering::Relaxed) != 0
     }
 
     pub fn total(&self) -> usize {
@@ -333,6 +345,7 @@ pub struct SubscriptionInfo {
     params: SubscriptionParams,
     method: &'static str,
     pub last_notified_slot: RwLock<Slot>,
+    pub notified_banks: RwLock<HashMap<BankId, Slot>>,
     commitment: Option<CommitmentConfig>,
 }
 
@@ -453,6 +466,7 @@ impl SubscriptionsTracker {
     ) {
         let info = Arc::new(SubscriptionInfo {
             last_notified_slot: RwLock::new(last_notified_slot()),
+            notified_banks: RwLock::default(),
             id,
             commitment: params.commitment(),
             method: params.method(),
@@ -556,6 +570,9 @@ impl Drop for SubscriptionTokenInner {
             // Check the strong refs count to ensure no other thread recreated this subscription (not token)
             // while we were acquiring the lock.
             DashEntry::Occupied(entry) if entry.get().0.strong_count() == 0 => {
+                if matches!(self.params, SubscriptionParams::Program(_) | SubscriptionParams::Logs(_)) {
+                    self.control.delta_subscriptions.fetch_sub(1, Ordering::Relaxed);
+                }
                 let _ = self
                     .control
                     .sender
