@@ -1891,6 +1891,80 @@ mod tests {
     }
 
     #[test]
+    fn test_blockstore_first_shred_reaches_event_handler() {
+        let EventHandlerTestContext {
+            bls_receiver,
+            commitment_receiver: _commitment_receiver,
+            own_vote_receiver: _own_vote_receiver,
+            own_reward_aggregates_receiver: _own_reward_aggregates_receiver,
+            bank_forks,
+            my_bls_keypair: _my_bls_keypair,
+            timer_manager,
+            leader_window_info_receiver: _leader_window_info_receiver,
+            highest_parent_ready: _highest_parent_ready,
+            drop_bank_receiver: _drop_bank_receiver,
+            cluster_info: _cluster_info,
+            consensus_metrics_receiver: _consensus_metrics_receiver,
+            repair_event_receiver: _repair_event_receiver,
+            shared_context,
+            voting_context,
+            root_context,
+            local_context: _local_context,
+            bls_ops: _bls_ops,
+            vote_history_storage: _vote_history_storage,
+            _test_dir,
+        } = setup();
+        let exit = Arc::new(AtomicBool::new(false));
+        let (event_sender, event_receiver) = bounded(1024);
+        let (first_shred_sender, first_shred_receiver) = bounded(1024);
+        let blockstore = shared_context.blockstore.clone();
+        blockstore.set_first_shred_sender(first_shred_sender);
+        let event_handler = EventHandler::new(EventHandlerContext {
+            exit: exit.clone(),
+            validator_exit: Arc::default(),
+            migration_status: Arc::new(MigrationStatus::post_migration_status()),
+            event_receiver,
+            first_shred_receiver,
+            timer_manager,
+            shared_context,
+            voting_context,
+            root_context,
+        });
+
+        // The first crashed leader window has no shreds, so it produces skip votes. Inserting
+        // shreds for the next window through Blockstore must deliver FirstShred and suppress its
+        // skip votes. A third empty window proves that the no-vote result was caused by FirstShred,
+        // not by a stopped event loop. Injecting VotorEvent::FirstShred directly would not catch a
+        // broken Blockstore-to-Votor connection.
+        event_sender
+            .send(VotorEvent::TimeoutCrashedLeader(4))
+            .unwrap();
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        let bank = Arc::new(Bank::new_from_parent(root_bank, SlotLeader::default(), 8));
+        blockstore.insert_shreds_for_bank(bank);
+        event_sender
+            .send(VotorEvent::TimeoutCrashedLeader(8))
+            .unwrap();
+        event_sender
+            .send(VotorEvent::TimeoutCrashedLeader(12))
+            .unwrap();
+
+        let vote_slots = (0..8)
+            .map(
+                |_| match bls_receiver.recv_timeout(Duration::from_secs(5)).unwrap() {
+                    BLSOp::PushVote { vote } => vote.vote.slot(),
+                    operation => panic!("unexpected BLS operation: {operation:?}"),
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(vote_slots, vec![4, 5, 6, 7, 12, 13, 14, 15]);
+        assert!(bls_receiver.is_empty());
+
+        exit.store(true, Ordering::Relaxed);
+        event_handler.join().unwrap();
+    }
+
+    #[test]
     fn test_try_skip_window_starts_after_unaligned_genesis() {
         let mut test_context = setup();
         let genesis_slot = 1;

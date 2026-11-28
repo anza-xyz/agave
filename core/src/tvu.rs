@@ -715,7 +715,7 @@ pub mod tests {
                 fetch: target1.sockets.tvu,
                 block_id_repair: target1.sockets.block_id_repair,
             },
-            blockstore,
+            blockstore.clone(),
             ledger_signal_receiver,
             update_parent_receiver,
             Some(Arc::new(RpcSubscriptions::new_for_tests(
@@ -767,6 +767,10 @@ pub mod tests {
             reward_vote_aggregates_sender,
         )
         .expect("assume success");
+        // Blockstore intentionally works without a first-shred consumer, so deleting TVU's
+        // registration still compiles. Constructing the full TVU must install this link; the
+        // end-to-end channel behavior is covered by Votor's event-handler test.
+        assert!(blockstore.has_first_shred_sender());
         exit.store(true, Ordering::Relaxed);
         tvu.join().unwrap();
     }

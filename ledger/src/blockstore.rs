@@ -759,6 +759,12 @@ impl Blockstore {
             .expect("first shred sender already set");
     }
 
+    /// Returns whether a first-shred notification sender has been registered.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn has_first_shred_sender(&self) -> bool {
+        self.first_shred_sender.get().is_some()
+    }
+
     /// Opens a Ledger in directory, provides "infinite" window of shreds
     pub fn open(ledger_path: &Path) -> Result<Blockstore> {
         Self::do_open(ledger_path, BlockstoreOptions::default())
