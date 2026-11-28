@@ -913,6 +913,11 @@ fn do_test_dead_slot_on_complete_bank(failure: CompleteBankFailure) {
                         TransactionError::SignatureFailure
                     ))
             );
+            // The bank is only completed once its transactions have finished executing, which the
+            // replay loop is notified of.
+            while !bank.is_scheduler_session_ended() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             ReplaySlotFromBlockstore {
                 is_slot_dead: false,
                 bank_slot: slot,

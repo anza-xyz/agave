@@ -286,6 +286,10 @@ impl BankForks {
         self.sharable_banks.root()
     }
 
+    pub fn scheduler_pool(&self) -> Option<&InstalledSchedulerPoolArc> {
+        self.scheduler_pool.as_ref()
+    }
+
     pub fn install_scheduler_pool(&mut self, pool: InstalledSchedulerPoolArc) {
         info!("Installed new scheduler_pool into bank_forks: {pool:?}");
         assert!(
@@ -859,6 +863,14 @@ mod tests {
         }
 
         fn pause_for_recent_blockhash(&mut self) {}
+
+        fn request_session_ending(&self) {
+            unimplemented!()
+        }
+
+        fn is_session_ended(&self) -> bool {
+            unimplemented!()
+        }
 
         fn unpause_after_taken(&self) {}
     }

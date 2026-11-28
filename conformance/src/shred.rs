@@ -241,7 +241,16 @@ pub fn execute_shred_parse(ctx: &ShredParseContext) -> ShredParseEffects {
             }
         }
         let mut tick_hash_count = 0u64;
-        if verify_ticks(&bank, &entries, is_full, &mut tick_hash_count, &migration).is_err() {
+        if verify_ticks(
+            &bank,
+            bank.tick_height(),
+            &entries,
+            is_full,
+            &mut tick_hash_count,
+            &migration,
+        )
+        .is_err()
+        {
             effects.block_parse_result = BlockParseResult::RejectedInvalidHeader as i32;
         }
     }

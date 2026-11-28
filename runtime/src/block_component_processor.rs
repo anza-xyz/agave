@@ -31,8 +31,6 @@ use {
     solana_hash::Hash,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
-    solana_svm_timings::ExecuteTimings,
-    solana_transaction_error::TransactionError,
     std::{collections::HashSet, sync::Arc},
     thiserror::Error,
 };
@@ -102,8 +100,6 @@ pub enum BlockComponentProcessorError {
     InvalidRewardCerts(#[from] ValidatedRewardCertError),
     #[error("updating bank footer failed with \"{0}\"")]
     UpdateBankFooter(#[from] BankFooterError),
-    #[error("transaction execution failed with \"{0}\"")]
-    TransactionExecution(#[from] TransactionError),
 }
 
 impl BlockComponentProcessorError {
@@ -131,8 +127,7 @@ impl BlockComponentProcessorError {
             | BlockComponentProcessorError::AbandonedBank(_)
             | BlockComponentProcessorError::InvalidRewardCerts(_)
             | BlockComponentProcessorError::UpdateBankFooter(_)
-            | BlockComponentProcessorError::InvalidFinalizationCertificate(_)
-            | BlockComponentProcessorError::TransactionExecution(_) => true,
+            | BlockComponentProcessorError::InvalidFinalizationCertificate(_) => true,
             BlockComponentProcessorError::BlockComponentPreMigration
             | BlockComponentProcessorError::MissingBlockFooter
             | BlockComponentProcessorError::MissingGenesisCertificateMarker
@@ -323,6 +318,17 @@ impl BlockComponentStage {
 pub struct BlockComponentProcessor {
     stage: BlockComponentStage,
     has_genesis_certificate_marker: bool,
+    pending_footer: Option<PendingFooter>,
+}
+
+/// The validated fields of a block footer, which are applied to the bank by
+/// [`BlockComponentProcessor::apply_pending_footer`] once all of the block's transactions have
+/// executed.
+struct PendingFooter {
+    block_producer_time_nanos: i64,
+    bank_hash: Hash,
+    reward_cert: Option<ValidatedRewardCert>,
+    final_cert_input: Option<(HashSet<Pubkey>, Slot)>,
 }
 
 impl BlockComponentProcessor {
@@ -411,7 +417,6 @@ impl BlockComponentProcessor {
         allow_initial_update_parent: bool,
         finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
         migration_status: &MigrationStatus,
-        execute_timings: &mut ExecuteTimings,
     ) -> Result<(), BlockComponentProcessorError> {
         let slot = bank.slot();
         let VersionedBlockMarker::V1(marker) = marker;
@@ -447,7 +452,6 @@ impl BlockComponentProcessor {
                 shred_version,
                 footer.into_inner(),
                 finalization_cert_sender,
-                execute_timings,
             ),
 
             BlockMarkerV1::UpdateParent(update_parent) if markers_fully_enabled => {
@@ -593,12 +597,11 @@ impl BlockComponentProcessor {
     fn on_footer(
         &mut self,
         my_pubkey: &Pubkey,
-        bank: &BankWithScheduler,
+        bank: &Bank,
         parent_bank: Arc<Bank>,
         shred_version: u16,
         footer: VersionedBlockFooter,
         finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
-        execute_timings: &mut ExecuteTimings,
     ) -> Result<(), BlockComponentProcessorError> {
         self.stage.on_footer()?;
 
@@ -630,7 +633,7 @@ impl BlockComponentProcessor {
             })
             .transpose()?;
 
-        let (footer_input, pool_input) = match final_cert {
+        let (final_cert_input, pool_input) = match final_cert {
             None => (None, None),
             Some(cert) => {
                 let (signers, finalize_cert, notarize_cert) = cert.into_parts();
@@ -642,23 +645,19 @@ impl BlockComponentProcessor {
             }
         };
 
-        // We need to wait for any in progress execution before modifying account state
-        if let Some((result, execute_time)) = bank.wait_for_completed_scheduler() {
-            execute_timings.accumulate(&execute_time);
-            result?;
-        }
-
-        let _ = Self::update_bank_with_footer_fields(
-            bank,
+        // Applying the footer modifies account state, so it must wait until all of the block's
+        // transactions have executed. Defer it to `apply_pending_footer()` instead of waiting here,
+        // so that the replay thread isn't blocked on expensive blocks.
+        assert!(self.pending_footer.is_none());
+        self.pending_footer = Some(PendingFooter {
             block_producer_time_nanos,
-            Some(bank_hash),
+            bank_hash,
             reward_cert,
-            footer_input
-                .as_ref()
-                .map(|(validators, slot)| (validators, *slot)),
-        )?;
+            final_cert_input,
+        });
 
-        // Send finalization cert(s) to consensus pool
+        // Send finalization cert(s) to consensus pool. The certificates are verified
+        // independently of the block's contents, so they needn't wait for the block's execution.
         if let Some((finalize_cert, notarize_cert)) = pool_input
             && let Some(sender) = finalization_cert_sender
         {
@@ -778,6 +777,33 @@ impl BlockComponentProcessor {
         let max_working_bank_time = parent_time_nanos.saturating_add(max_working_bank_time_offset);
 
         (min_working_bank_time, max_working_bank_time)
+    }
+
+    /// Applies the footer previously received by [`Self::on_marker`] to `bank`, if any.
+    ///
+    /// This modifies account state, so it must only be called once all of the block's transactions
+    /// have finished executing.
+    pub fn apply_pending_footer(&mut self, bank: &Bank) -> Result<(), BankFooterError> {
+        let Some(PendingFooter {
+            block_producer_time_nanos,
+            bank_hash,
+            reward_cert,
+            final_cert_input,
+        }) = self.pending_footer.take()
+        else {
+            return Ok(());
+        };
+
+        Self::update_bank_with_footer_fields(
+            bank,
+            block_producer_time_nanos,
+            Some(bank_hash),
+            reward_cert,
+            final_cert_input
+                .as_ref()
+                .map(|(validators, slot)| (validators, *slot)),
+        )?;
+        Ok(())
     }
 
     pub fn update_bank_with_footer_fields(
@@ -992,31 +1018,32 @@ mod tests {
         let footer_time_nanos = parent_time_nanos + 200_000_000; // parent + 200ms
         let expected_time_secs = footer_time_nanos / 1_000_000_000;
 
+        let bank_hash = Hash::new_unique();
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {
-            bank_hash: Hash::new_unique(),
+            bank_hash,
             block_producer_time_nanos: footer_time_nanos as u64,
             block_user_agent: vec![],
             block_final_cert: None,
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
-        let bank_with_scheduler = BankWithScheduler::new_without_scheduler(bank.clone());
         processor
-            .on_footer(
-                &my_pubkey,
-                &bank_with_scheduler,
-                parent,
-                shred_version,
-                footer,
-                None,
-                &mut ExecuteTimings::default(),
-            )
+            .on_footer(&my_pubkey, &bank, parent, shred_version, footer, None)
             .unwrap();
 
         assert_eq!(processor.stage, BlockComponentStage::AcceptingAlpentick);
 
+        // The footer is only applied once the block's transactions have executed
+        assert_eq!(bank.expected_bank_hash(), None);
+        processor.apply_pending_footer(&bank).unwrap();
+
         // Verify clock sysvar was updated with correct timestamp (nanos converted to seconds)
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
+        assert_eq!(bank.expected_bank_hash(), Some(bank_hash));
+
+        // Applying the footer is done only once
+        assert!(processor.pending_footer.is_none());
+        processor.apply_pending_footer(&bank).unwrap();
     }
 
     #[test]
@@ -1069,18 +1096,10 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
-        let bank_with_scheduler = BankWithScheduler::new_without_scheduler(bank.clone());
         processor
-            .on_footer(
-                &my_pubkey,
-                &bank_with_scheduler,
-                parent,
-                shred_version,
-                footer,
-                None,
-                &mut ExecuteTimings::default(),
-            )
+            .on_footer(&my_pubkey, &bank, parent, shred_version, footer, None)
             .unwrap();
+        processor.apply_pending_footer(&bank).unwrap();
 
         // Verify clock sysvar was updated
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
@@ -1135,15 +1154,7 @@ mod tests {
             notar_reward_cert: None,
         });
         let bank = BankWithScheduler::new_without_scheduler(bank);
-        let result = processor.on_footer(
-            &my_pubkey,
-            &bank,
-            parent,
-            shred_version,
-            footer,
-            None,
-            &mut ExecuteTimings::default(),
-        );
+        let result = processor.on_footer(&my_pubkey, &bank, parent, shred_version, footer, None);
         if should_pass {
             result.unwrap();
         } else {
@@ -1183,15 +1194,7 @@ mod tests {
         let bank = BankWithScheduler::new_without_scheduler(bank);
         assert!(matches!(
             processor
-                .on_footer(
-                    &my_pubkey,
-                    &bank,
-                    parent,
-                    shred_version,
-                    footer,
-                    None,
-                    &mut ExecuteTimings::default(),
-                )
+                .on_footer(&my_pubkey, &bank, parent, shred_version, footer, None,)
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1219,15 +1222,7 @@ mod tests {
         let bank = BankWithScheduler::new_without_scheduler(bank);
         assert!(matches!(
             processor
-                .on_footer(
-                    &my_pubkey,
-                    &bank,
-                    parent,
-                    shred_version,
-                    footer,
-                    None,
-                    &mut ExecuteTimings::default(),
-                )
+                .on_footer(&my_pubkey, &bank, parent, shred_version, footer, None,)
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1339,7 +1334,6 @@ mod tests {
                         allow_initial_update_parent,
                         None,
                         migration_status,
-                        &mut ExecuteTimings::default(),
                     )
                 })
             }
@@ -1396,7 +1390,6 @@ mod tests {
                         allow_initial_update_parent,
                         None,
                         migration_status,
-                        &mut ExecuteTimings::default(),
                     )
                 })
             }
