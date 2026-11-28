@@ -1,26 +1,29 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::cluster_info::DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS,
+    solana_net_utils::{find_available_ports_in_range, sockets::localhost_port_range_for_tests},
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
+    std::{
+        net::{IpAddr, Ipv4Addr},
+        num::NonZero,
+    },
+};
 use {
     crate::{
-        cluster_info::{DEFAULT_NUM_VOTOR_QUIC_ENDPOINTS, NodeConfig, Sockets},
+        cluster_info::{NodeConfig, Sockets},
         contact_info::{
             ContactInfo,
             Protocol::{QUIC, UDP},
         },
     },
-    solana_net_utils::{
-        find_available_ports_in_range,
-        sockets::{
-            SocketConfiguration as SocketConfig, UdpSocketBufferLimits,
-            bind_gossip_port_in_range_with_config, bind_in_range_with_config,
-            bind_more_with_config, localhost_port_range_for_tests, multi_bind_in_range_with_config,
-        },
+    solana_net_utils::sockets::{
+        SocketConfiguration as SocketConfig, UdpSocketBufferLimits,
+        bind_gossip_port_in_range_with_config, bind_in_range_with_config, bind_more_with_config,
+        multi_bind_in_range_with_config,
     },
     solana_pubkey::Pubkey,
-    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_time_utils::timestamp,
-    std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        num::NonZero,
-    },
+    std::net::SocketAddr,
 };
 
 /// Socket configurations for different usage patterns
@@ -100,6 +103,7 @@ impl Node {
     }
 
     /// create localhost node for tests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_localhost() -> Self {
         let pubkey = solana_pubkey::new_rand();
         Self::new_localhost_with_pubkey(&pubkey)
@@ -107,6 +111,7 @@ impl Node {
 
     /// create localhost node for tests with provided pubkey
     /// unlike the [`Node::new_with_external_ip`], this will also bind RPC sockets.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
         let port_range = localhost_port_range_for_tests();
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
