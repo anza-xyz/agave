@@ -33,7 +33,6 @@ struct AccountSharedFields {
 #[derive(Debug, PartialEq)]
 #[cfg(not(any(target_arch = "bpf", target_arch = "sbf")))]
 struct AccountPrivateFields {
-    rent_epoch: u64,
     executable: bool,
     payload: Arc<Vec<u8>>,
 }
@@ -80,7 +79,7 @@ impl ReadableAccount for TransactionAccountView<'_> {
     }
 
     fn rent_epoch(&self) -> u64 {
-        self.private_fields.rent_epoch
+        u64::MAX
     }
 }
 
@@ -91,7 +90,6 @@ impl PartialEq<AccountSharedData> for TransactionAccountView<'_> {
             && other.data() == self.data()
             && other.owner() == self.owner()
             && other.executable() == self.executable()
-            && other.rent_epoch() == self.rent_epoch()
     }
 }
 
@@ -230,7 +228,7 @@ impl ReadableAccount for TransactionAccountViewMut<'_> {
     }
 
     fn rent_epoch(&self) -> u64 {
-        self.private_fields.rent_epoch
+        u64::MAX
     }
 }
 
@@ -256,9 +254,7 @@ impl WritableAccount for TransactionAccountViewMut<'_> {
         self.private_fields.executable = executable;
     }
 
-    fn set_rent_epoch(&mut self, epoch: u64) {
-        self.private_fields.rent_epoch = epoch;
-    }
+    fn set_rent_epoch(&mut self, _epoch: u64) {}
 }
 
 /// An account key and the matching account
@@ -303,7 +299,6 @@ impl TransactionAccounts {
                         ),
                     }),
                     UnsafeCell::new(AccountPrivateFields {
-                        rent_epoch: item.1.rent_epoch(),
                         executable: item.1.executable(),
                         payload: item.1.data_clone(),
                     }),
