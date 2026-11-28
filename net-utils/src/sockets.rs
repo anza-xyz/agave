@@ -1,7 +1,5 @@
-#[cfg(feature = "dev-context-only-utils")]
-use tokio::net::UdpSocket as TokioUdpSocket;
 use {
-    crate::{PortRange, test_port_allocator::unique_port_range_for_tests_internal},
+    crate::PortRange,
     log::{error, info, warn},
     nix::sys::socket::{
         GetSockOpt, SetSockOpt, setsockopt,
@@ -10,14 +8,20 @@ use {
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
         io,
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
-        ops::Range,
+        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
     },
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::test_port_allocator::unique_port_range_for_tests_internal, std::net::Ipv4Addr,
+    std::ops::Range, tokio::net::UdpSocket as TokioUdpSocket,
+};
+
 // base port for deconflicted allocations
 pub(crate) const UNIQUE_ALLOC_BASE_PORT: u16 = 2000;
 
 /// Allocates a unique range of `size` ports for use in tests.
+#[cfg(feature = "dev-context-only-utils")]
 pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
     unique_port_range_for_tests_internal(size)
 }
@@ -31,12 +35,14 @@ pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
 ///
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
+#[cfg(feature = "dev-context-only-utils")]
 pub fn localhost_port_range_for_tests() -> (u16, u16) {
     let pr = unique_port_range_for_tests(26);
     (pr.start, pr.end)
 }
 
 /// Bind a `UdpSocket` to a unique port.
+#[cfg(feature = "dev-context-only-utils")]
 pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
     bind_to(
         IpAddr::V4(Ipv4Addr::LOCALHOST),

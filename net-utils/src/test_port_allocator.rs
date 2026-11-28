@@ -1,3 +1,4 @@
+#![cfg(feature = "dev-context-only-utils")]
 use {
     crate::sockets::UNIQUE_ALLOC_BASE_PORT,
     nix::{

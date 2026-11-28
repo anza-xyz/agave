@@ -33,6 +33,7 @@ agave-unstable-api = []
 dev-context-only-utils = [
     "dep:qualifier_attr",
     "solana-bloom/dev-context-only-utils",
+    "solana-net-utils/dev-context-only-utils",
 ]
 
 [dependencies]
