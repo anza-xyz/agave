@@ -1292,7 +1292,6 @@ mod tests {
             .collect(),
         };
         let ag_epoch_type = AlpenglowEpochType::Alpenglow {
-            migration_epoch: rewarded_epoch - 1,
             reward_epoch_delegated_stakes: &reward_epoch_delegated_stakes,
         };
         let stake_history: &StakeHistory = &StakeHistory::default();

@@ -16,9 +16,7 @@ use {
         block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
         inflation_rewards::{
             delegation_may_need_adjustment,
-            points::{
-                CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points_for_tower,
-            },
+            points::{CalculationEnvironment, DelegatedVoteState, PointValue},
             redeem_rewards,
         },
         reward_info::RewardInfo,
@@ -1008,14 +1006,7 @@ impl Bank {
                     if vote_account.owner() != &solana_vote_program {
                         return 0;
                     }
-
-                    calculate_points_for_tower(
-                        stake_account.stake_state(),
-                        DelegatedVoteState::from(vote_account.vote_state_view()),
-                        stake_history,
-                        new_warmup_cooldown_rate_epoch,
-                    )
-                    .unwrap_or(0)
+                    0
                 })
                 .sum::<u128>()
         }));
@@ -1429,7 +1420,6 @@ mod tests {
         };
         let reward_epoch_delegated_stakes = reward_epoch_delegated_stakes_for_tests(rewarded_epoch);
         let ag_epoch_type = AlpenglowEpochType::Alpenglow {
-            migration_epoch: rewarded_epoch - 1,
             reward_epoch_delegated_stakes: &reward_epoch_delegated_stakes,
         };
 
@@ -4035,7 +4025,6 @@ mod tests {
             .into_iter()
             .collect();
         let ag_epoch_type = AlpenglowEpochType::Alpenglow {
-            migration_epoch: 0,
             reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes {
                 epoch: rewarded_epoch,
                 delegated_stakes: [(voter_pubkey, total_stake)].into_iter().collect(),
