@@ -95,12 +95,40 @@ pub(crate) fn precheck_transaction(
     working_bank: &Bank,
     filter_keys: &HashSet<Pubkey>,
 ) -> PrecheckResult {
-    let transaction_account_lock_limits = working_bank.get_transaction_account_lock_limits();
+    let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
+        return Err(IngressCheckError::PacketHandling(
+            PacketHandlingError::Sanitization,
+        ));
+    };
+    let (view, transaction_account_lock_limit) =
+        sanitized_to_static_runtime_view(view, working_bank.get_transaction_account_lock_limits())
+            .map_err(IngressCheckError::PacketHandling)?;
+    let transaction_configuration = view
+        .transaction_configuration(&working_bank.feature_set)
+        .map_err(|_| IngressCheckError::PacketHandling(PacketHandlingError::ComputeBudget))?;
+
+    // The age, nonce and fee payer checks only read static account keys. Run
+    // them before loading address lookup tables, so that a transaction that
+    // cannot pay or has an unknown blockhash does not cost one account load
+    // per lookup table.
+    let mut error_counters = TransactionErrorMetrics::default();
+    let validated_nonce_address = working_bank
+        .check_transaction_without_status_cache(
+            &view,
+            working_bank.max_processing_age(),
+            &mut error_counters,
+        )
+        .map_err(IngressCheckError::Transaction)?;
+
+    Consumer::check_fee_payer_unlocked(working_bank, &view, &mut error_counters)
+        .map_err(|_| IngressCheckError::FeePayer)?;
+
     // Buffered transactions may outlive the working bank; only drop locks after activation is rooted.
-    let (view, deactivation_slot) = translate_to_runtime_view(
-        bytes,
+    let (view, deactivation_slot) = resolve_static_runtime_view(
+        view,
         root_bank,
-        transaction_account_lock_limits,
+        transaction_account_lock_limit,
+        None,
         !root_bank
             .feature_set
             .snapshot()
@@ -119,25 +147,10 @@ pub(crate) fn precheck_transaction(
         ));
     }
 
-    let transaction_configuration = view
-        .transaction_configuration(&working_bank.feature_set)
-        .map_err(|_| IngressCheckError::PacketHandling(PacketHandlingError::ComputeBudget))?;
     let max_age = calculate_max_age(root_bank.epoch(), deactivation_slot, root_bank.slot());
     let (priority, cost) =
         calculate_priority_and_cost(working_bank, &view, &transaction_configuration);
     let state = TransactionState::new(view, max_age, priority, cost);
-
-    let mut error_counters = TransactionErrorMetrics::default();
-    let validated_nonce_address = working_bank
-        .check_transaction_without_status_cache(
-            state.transaction(),
-            working_bank.max_processing_age(),
-            &mut error_counters,
-        )
-        .map_err(IngressCheckError::Transaction)?;
-
-    Consumer::check_fee_payer_unlocked(working_bank, state.transaction(), &mut error_counters)
-        .map_err(|_| IngressCheckError::FeePayer)?;
 
     Ok(PrecheckedTransaction {
         state,
@@ -177,6 +190,23 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: AsRef<[u8]>>(
     preloaded_addresses: Option<(Option<LoadedAddresses>, Slot)>,
     enable_implicit_read_locks: bool,
 ) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
+    let (view, transaction_account_lock_limit) =
+        sanitized_to_static_runtime_view(view, transaction_account_lock_limits)?;
+    resolve_static_runtime_view(
+        view,
+        bank,
+        transaction_account_lock_limit,
+        preloaded_addresses,
+        enable_implicit_read_locks,
+    )
+}
+
+/// Load runtime metadata and run the checks that do not need resolved
+/// addresses. Returns the account lock limit for the transaction version.
+fn sanitized_to_static_runtime_view<D: AsRef<[u8]>>(
+    view: SanitizedTransactionView<D>,
+    transaction_account_lock_limits: TransactionAccountLockLimits,
+) -> Result<(RuntimeTransaction<SanitizedTransactionView<D>>, usize), PacketHandlingError> {
     let Ok(view) =
         RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(view, MessageHash::Compute)
     else {
@@ -194,6 +224,18 @@ pub(crate) fn translate_sanitized_to_runtime_view<D: AsRef<[u8]>>(
         return Err(PacketHandlingError::LockValidation);
     }
 
+    Ok((view, transaction_account_lock_limit))
+}
+
+/// Load addresses for a transaction with runtime metadata and resolve it.
+/// Returns the minimum ALT deactivation slot, or `Slot::MAX` if none.
+fn resolve_static_runtime_view<D: AsRef<[u8]>>(
+    view: RuntimeTransaction<SanitizedTransactionView<D>>,
+    bank: &Bank,
+    transaction_account_lock_limit: usize,
+    preloaded_addresses: Option<(Option<LoadedAddresses>, Slot)>,
+    enable_implicit_read_locks: bool,
+) -> Result<(RuntimeTransaction<ResolvedTransactionView<D>>, Slot), PacketHandlingError> {
     let (loaded_addresses, deactivation_slot) = match preloaded_addresses {
         Some(addresses) => addresses,
         None => load_addresses_for_view(&view, bank)?,
@@ -694,6 +736,61 @@ mod tests {
         assert_eq!(state.transaction().get_durable_nonce(true), None);
         assert_eq!(validated_nonce_address, None);
         assert_eq!(state.nonce_address(), None);
+    }
+
+    fn transfer_with_missing_lookup_table(payer: &Keypair, recent_blockhash: Hash) -> Bytes {
+        let to_pubkey = Pubkey::new_unique();
+        let transaction = VersionedTransaction::try_new(
+            VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &payer.pubkey(),
+                    &[system_instruction::transfer(&payer.pubkey(), &to_pubkey, 1)],
+                    &[AddressLookupTableAccount {
+                        key: Pubkey::new_unique(), // not stored in the bank
+                        addresses: vec![to_pubkey],
+                    }],
+                    recent_blockhash,
+                )
+                .unwrap(),
+            ),
+            &[payer],
+        )
+        .unwrap();
+        BytesPacket::from_data(transaction)
+            .unwrap()
+            .buffer()
+            .clone()
+    }
+
+    #[test]
+    fn test_precheck_checks_age_and_fee_payer_before_address_lookup_tables() {
+        let (bank_forks, mint_keypair) = test_bank_forks_with_fee();
+        let bank = bank_forks.read().unwrap().root_bank();
+
+        // Baseline: only the lookup table is missing.
+        let bytes = transfer_with_missing_lookup_table(&mint_keypair, bank.last_blockhash());
+        assert!(matches!(
+            precheck_transaction(bytes, &bank, &bank, &HashSet::new()),
+            Err(IngressCheckError::PacketHandling(
+                PacketHandlingError::ALTResolution
+            )),
+        ));
+
+        // Unknown blockhash is reported without loading the lookup table.
+        let bytes = transfer_with_missing_lookup_table(&mint_keypair, Hash::new_unique());
+        assert!(matches!(
+            precheck_transaction(bytes, &bank, &bank, &HashSet::new()),
+            Err(IngressCheckError::Transaction(
+                TransactionError::BlockhashNotFound
+            )),
+        ));
+
+        // Unfunded fee payer is reported without loading the lookup table.
+        let bytes = transfer_with_missing_lookup_table(&Keypair::new(), bank.last_blockhash());
+        assert!(matches!(
+            precheck_transaction(bytes, &bank, &bank, &HashSet::new()),
+            Err(IngressCheckError::FeePayer),
+        ));
     }
 
     #[test]
