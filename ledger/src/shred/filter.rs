@@ -184,7 +184,7 @@ pub struct ShredFilterContext {
 
     // Earliest shred slot for which SIMD-0504 `stricter_shred_validation` is
     // effective, or None while the feature is inactive.
-    stricter_shred_validation_from: Option<Slot>,
+    stricter_shred_validation: StricterShredValidation,
 
     pub stats: ShredFetchStats,
 }
@@ -217,10 +217,7 @@ impl ShredFilterContext {
                 &feature_set::enforce_correct_proof_size::id(),
                 &root_bank,
             ),
-            stricter_shred_validation_from: feature_first_effective_slot(
-                &feature_set::stricter_shred_validation::id(),
-                &root_bank,
-            ),
+            stricter_shred_validation: StricterShredValidation::new(&root_bank),
             shred_limit_context: ShredLimitContext::new(root_bank),
             stats: ShredFetchStats::default(),
         }
@@ -245,10 +242,7 @@ impl ShredFilterContext {
                 &feature_set::enforce_correct_proof_size::id(),
                 &root_bank,
             );
-            self.stricter_shred_validation_from = feature_first_effective_slot(
-                &feature_set::stricter_shred_validation::id(),
-                &root_bank,
-            );
+            self.stricter_shred_validation = StricterShredValidation::new(&root_bank);
             self.shred_limit_context = ShredLimitContext::new(root_bank);
         }
     }
@@ -256,8 +250,7 @@ impl ShredFilterContext {
     /// Returns true if SIMD-0504 `stricter_shred_validation` is effective for
     /// shreds of the given slot.
     pub(crate) fn is_stricter_shred_validation_active(&self, slot: Slot) -> bool {
-        self.stricter_shred_validation_from
-            .is_some_and(|first_slot| slot >= first_slot)
+        self.stricter_shred_validation.is_active(slot)
     }
 
     fn shred_limits(&self, slot: Slot) -> ShredLimits {
@@ -535,15 +528,34 @@ fn check_last_data_shred_index(index: u32) -> bool {
     (index + 1).is_multiple_of(DATA_SHREDS_PER_FEC_BLOCK as u32)
 }
 
+/// First slot at which SIMD-0504 stricter shred validation is effective, or None while the feature
+/// is inactive.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct StricterShredValidation {
+    from: Option<Slot>,
+}
+
+impl StricterShredValidation {
+    fn new(root_bank: &Bank) -> Self {
+        Self {
+            from: feature_first_effective_slot(
+                &feature_set::stricter_shred_validation::id(),
+                root_bank,
+            ),
+        }
+    }
+
+    pub(crate) fn is_active(self, slot: Slot) -> bool {
+        self.from.is_some_and(|first_slot| slot >= first_slot)
+    }
+}
+
 /// Holds the context to perform filtering on shred recovery
 pub struct ShredRecoveryContext {
     /// Sender to retransmit the recovered shreds
     retransmit_sender: RetransmitSender,
     /// Used for filtering recovered shreds
     shred_filter_ctx: ShredFilterContext,
-    /// Scratch space for the parity check of erasure batches, reused across
-    /// recoveries.
-    parity_buffer: Vec<u8>,
 }
 
 /// Maximum number of shreds sent to retransmit workers in one job.
@@ -576,7 +588,6 @@ impl ShredRecoveryContext {
         Self {
             retransmit_sender,
             shred_filter_ctx,
-            parity_buffer: Vec::new(),
         }
     }
 
@@ -597,7 +608,7 @@ impl ShredRecoveryContext {
     /// Returns the first slot for which SIMD-0504 `stricter_shred_validation`
     /// is effective.
     pub(crate) fn stricter_shred_validation_from(&self) -> Option<Slot> {
-        self.shred_filter_ctx.stricter_shred_validation_from
+        self.shred_filter_ctx.stricter_shred_validation.from
     }
 
     /// Submit stats at most every two seconds
@@ -620,6 +631,10 @@ impl ShredRecoveryContext {
         Ok(())
     }
 
+    pub(crate) fn stricter_shred_validation(&self) -> StricterShredValidation {
+        self.shred_filter_ctx.stricter_shred_validation
+    }
+
     /// Rebuild the whole erasure batch from the given shreds, after applying
     /// filtering to them.
     ///
@@ -635,19 +650,12 @@ impl ShredRecoveryContext {
         &mut self,
         shreds: T,
     ) -> Result<ErasureBatch, Error> {
-        let shreds: Vec<_> = shreds
+        let stricter = self.stricter_shred_validation();
+        let shreds = shreds
             .into_iter()
-            .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()))
-            .collect();
-        let must_match_signatures = !shreds
-            .first()
-            .is_some_and(|shred| self.is_stricter_shred_validation_active(shred.slot()));
+            .filter(|shred| !self.shred_filter_ctx.should_discard_shred(shred.payload()));
 
-        merkle::rebuild_erasure_batch_with_buffer(
-            shreds,
-            must_match_signatures,
-            &mut self.parity_buffer,
-        )
+        merkle::rebuild_erasure_batch(shreds, |slot| !stricter.is_active(slot))
     }
 
     /// Checks the reconstructed shreds of the erasure batch.
@@ -1001,9 +1009,7 @@ mod tests {
                 &mut recovered_shreds,
                 &mut recovered_data_shreds,
             ),
-            Err(Error::Erasure(
-                reed_solomon_erasure::Error::TooFewShardsPresent
-            ))
+            Err(Error::TooFewDataShards)
         );
         assert!(recovered_shreds.is_empty());
         assert!(recovered_data_shreds.is_empty());

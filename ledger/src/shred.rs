@@ -53,12 +53,12 @@ pub(crate) use self::merkle_tree::PROOF_ENTRIES_FOR_32_32_BATCH;
 #[cfg(test)]
 use rand::Rng;
 #[cfg(feature = "stable-abi")]
-use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
+use solana_frozen_abi_macro::{frozen_abi, StableAbi, StableAbiSample};
 use {
     self::traits::{Shred as _, ShredData as _},
     crate::shred::payload::PayloadMutGuard,
     agave_shred_wire_format::{
-        constants::{DATA_SHREDS_PER_FEC_BLOCK, MerkleProofEntry},
+        constants::{MerkleProofEntry, DATA_SHREDS_PER_FEC_BLOCK},
         error::ParseError,
     },
     bitflags::bitflags,
@@ -70,7 +70,7 @@ use {
     solana_cost_model::shred_limit::{
         DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     },
-    solana_entry::entry::{Entry, create_ticks},
+    solana_entry::entry::{create_ticks, Entry},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
@@ -78,9 +78,8 @@ use {
     std::{fmt::Debug, mem::MaybeUninit, ops::Range},
     thiserror::Error,
     wincode::{
-        SchemaRead, SchemaWrite, TypeMeta,
         io::{Reader, Writer},
-        pod_wrapper,
+        pod_wrapper, SchemaRead, SchemaWrite, TypeMeta,
     },
 };
 pub use {
@@ -205,8 +204,6 @@ pub enum Error {
     WincodeRead(#[from] wincode::ReadError),
     #[error(transparent)]
     WincodeWrite(#[from] wincode::WriteError),
-    #[error(transparent)]
-    Erasure(#[from] reed_solomon_erasure::Error),
     #[error("Invalid data size: {size}, payload: {payload}")]
     InvalidDataSize { size: u16, payload: usize },
     #[error("Invalid deshred set")]
@@ -249,6 +246,20 @@ pub enum Error {
     UnknownProofSize,
     #[error("Empty shreds list")]
     EmptyIterator,
+    #[error("Invalid shred index")]
+    InvalidIndex,
+    #[error("Too few data shards")]
+    TooFewDataShards,
+    #[error("Too few parity shards")]
+    TooFewParityShards,
+    #[error("Too many erased shards")]
+    TooManyErasures,
+    #[error("Invalid num data shreds: {0}")]
+    InvalidNumDataShreds(u16),
+    #[error("Invalid Merkle proof node for index {0} and nodes count {1}")]
+    InvalidMerkleProofNode(usize, usize),
+    #[error("Invalid Merkle proof shape with offset {0} and nodes count {1}")]
+    InvalidMerkleProofShape(usize, usize),
 }
 
 impl From<ParseError> for Error {
@@ -612,7 +623,6 @@ impl Shred {
 
     dispatch!(fn erasure_shard_mut(&mut self) -> Result<PayloadMutGuard<'_, Range<usize>>, Error>);
     dispatch!(fn erasure_shard_index(&self) -> Result<usize, Error>);
-    #[cfg(test)]
     dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
 
     pub(super) fn from_payload<T: AsRef<[u8]>>(shred: T) -> Result<Self, Error>
@@ -973,7 +983,7 @@ mod tests {
             constants::{OFFSET_OF_KIND_HEADER, SIZE_OF_SIGNATURE},
             kind::{Code, Data, ShredLayout as _},
         },
-        rand_chacha::{ChaChaRng, rand_core::SeedableRng},
+        rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         solana_keypair::keypair_from_seed,
         solana_perf::packet::BytesPacket,
         std::assert_matches,
