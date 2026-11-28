@@ -325,7 +325,7 @@ dependencies = [
  "libsecp256k1",
  "openssl",
  "rand 0.9.4",
- "solana-ed25519 0.2.4",
+ "solana-ed25519 0.3.0",
  "solana-ed25519-program",
  "solana-instruction 4.0.0",
  "solana-keccak-hasher",
@@ -8231,11 +8231,15 @@ dependencies = [
  "cfg-if 1.0.5",
  "cpufeatures 0.3.0",
  "curve25519-dalek-derive",
+ "digest 0.11.3",
  "ed25519 2.2.3",
  "hashbrown 0.15.1",
+ "rand 0.10.2",
+ "rand_core 0.10.1",
  "rustc_version 0.4.1",
  "sha2 0.11.0",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -8701,7 +8705,7 @@ dependencies = [
  "serial_test",
  "solana-bloom",
  "solana-clock",
- "solana-ed25519 0.2.4",
+ "solana-ed25519 0.3.0",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-gossip",
@@ -12218,7 +12222,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.0",
